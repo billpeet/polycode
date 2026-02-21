@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { ClaudeDriver } from '../driver/claude'
 import { OutputEvent, ThreadStatus } from '../../shared/types'
-import { updateThreadStatus, updateThreadName, insertMessage, listMessages } from '../db/queries'
+import { updateThreadStatus, updateThreadName, insertMessage, getThreadSessionId, updateThreadSessionId, getThreadModel } from '../db/queries'
 
 export class Session {
   readonly threadId: string
@@ -14,7 +14,15 @@ export class Session {
     this.threadId = threadId
     this.workingDir = workingDir
     this.window = window
-    this.driver = new ClaudeDriver({ workingDir, threadId })
+    const initialSessionId = getThreadSessionId(threadId)
+    const model = getThreadModel(threadId)
+    this.driver = new ClaudeDriver({
+      workingDir,
+      threadId,
+      model,
+      initialSessionId,
+      onSessionId: (sid) => updateThreadSessionId(threadId, sid),
+    })
   }
 
   start(): void {
@@ -28,10 +36,14 @@ export class Session {
     this.messageCount++
     const isFirst = this.messageCount === 1
 
+    if (isFirst) {
+      this.triggerAutoTitle(content)
+    }
+
     this.driver.sendMessage(
       content,
       (event: OutputEvent) => this.handleEvent(event),
-      (error?: Error) => this.handleDone(error, isFirst)
+      (error?: Error) => this.handleDone(error)
     )
   }
 
@@ -67,7 +79,7 @@ export class Session {
     }
   }
 
-  private handleDone(error?: Error, isFirst = false): void {
+  private handleDone(error?: Error): void {
     if (error) {
       this.window.webContents.send(`thread:output:${this.threadId}`, {
         type: 'error',
@@ -77,9 +89,6 @@ export class Session {
     } else {
       // Response complete — idle and ready for next message
       this.setStatus('idle')
-      if (isFirst) {
-        this.triggerAutoTitle()
-      }
     }
     this.window.webContents.send(`thread:complete:${this.threadId}`)
   }
@@ -89,15 +98,10 @@ export class Session {
     this.window.webContents.send(`thread:status:${this.threadId}`, status)
   }
 
-  private triggerAutoTitle(): void {
-    const messages = listMessages(this.threadId)
-    const firstUser = messages.find((m) => m.role === 'user')
-    if (!firstUser) return
-
-    const seed = firstUser.content.slice(0, 500)
+  private triggerAutoTitle(seed: string): void {
     const prompt =
       `In 5 words or fewer, write a short title for a coding session that started with this request. ` +
-      `Reply with ONLY the title, no quotes, no punctuation at the end:\n\n${seed}`
+      `Reply with ONLY the title, no quotes, no punctuation at the end:\n\n${seed.slice(0, 500)}`
 
     const titleDriver = new ClaudeDriver({
       workingDir: this.workingDir,

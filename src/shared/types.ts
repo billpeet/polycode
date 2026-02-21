@@ -6,12 +6,22 @@ export interface Project {
   updated_at: string
 }
 
+export const ANTHROPIC_MODELS = [
+  { id: 'claude-opus-4-5', label: 'Opus 4.5' },
+  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
+] as const
+
+export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
+
 export interface Thread {
   id: string
   project_id: string
   name: string
   provider: string
+  model: string
   status: 'idle' | 'running' | 'error' | 'stopped'
+  archived: boolean
   created_at: string
   updated_at: string
 }
@@ -34,3 +44,19 @@ export interface OutputEvent {
 }
 
 export type ThreadStatus = 'idle' | 'running' | 'error' | 'stopped'
+
+export interface GitFileChange {
+  status: 'M' | 'A' | 'D' | 'R' | 'U' | '?'
+  path: string
+  oldPath?: string
+  staged: boolean
+}
+
+export interface GitStatus {
+  branch: string
+  ahead: number
+  behind: number
+  additions: number
+  deletions: number
+  files: GitFileChange[]
+}

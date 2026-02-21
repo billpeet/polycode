@@ -11,7 +11,9 @@ export interface ThreadRow {
   project_id: string
   name: string
   provider: string
+  model: string
   status: string
+  archived: number
   created_at: string
   updated_at: string
 }

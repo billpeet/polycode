@@ -1,8 +1,11 @@
 import { useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
+import RightPanel from './components/RightPanel'
+import ToastStack from './components/Toast'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
+import { useUiStore } from './stores/ui'
 
 const STORAGE_PROJECT_KEY = 'polycode:selectedProjectId'
 const STORAGE_THREAD_KEY = 'polycode:selectedThreadId'
@@ -17,6 +20,10 @@ export default function App() {
   const byProject = useThreadStore((s) => s.byProject)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const selectThread = useThreadStore((s) => s.select)
+
+  const isTodoPanelOpen = useUiStore((s) =>
+    selectedThreadId ? (s.todoPanelOpenByThread[selectedThreadId] ?? true) : false
+  )
 
   // Track whether we've attempted restore yet
   const restored = useRef(false)
@@ -64,6 +71,34 @@ export default function App() {
     }
   }, [byProject, selectedProjectId, selectThread])
 
+  // Keyboard shortcuts
+  useEffect(() => {
+    function handler(e: KeyboardEvent): void {
+      if (!e.ctrlKey) return
+
+      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
+      const isInputField = tag === 'input' || tag === 'textarea'
+
+      if (e.key === 't' || e.key === 'T') {
+        if (isInputField) return
+        e.preventDefault()
+        if (selectedProjectId) {
+          useThreadStore.getState().create(selectedProjectId, 'New thread')
+        }
+      } else if (e.key === 'w' || e.key === 'W') {
+        if (isInputField) return
+        e.preventDefault()
+        useThreadStore.getState().select(null)
+      } else if (e.key === 'k' || e.key === 'K') {
+        e.preventDefault()
+        window.dispatchEvent(new CustomEvent('focus-input'))
+      }
+    }
+
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectedProjectId])
+
   // 4. Persist selections whenever they change (after initial restore)
   useEffect(() => {
     if (selectedProjectId) {
@@ -78,19 +113,27 @@ export default function App() {
   }, [selectedThreadId])
 
   return (
-    <div className="flex h-full w-full overflow-hidden" style={{ background: 'var(--color-bg)' }}>
-      <Sidebar />
-      <main className="flex flex-1 flex-col overflow-hidden">
-        {selectedThreadId ? (
-          <ThreadView threadId={selectedThreadId} />
-        ) : (
-          <div className="flex flex-1 items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-            {selectedProjectId
-              ? 'Select or create a thread to get started'
-              : 'Select or create a project to get started'}
-          </div>
-        )}
-      </main>
-    </div>
+    <>
+      <div className="flex h-full w-full overflow-hidden" style={{ background: 'var(--color-bg)' }}>
+        <Sidebar />
+        <main className="flex flex-1 overflow-hidden">
+          {selectedThreadId ? (
+            <>
+              <div className="flex flex-1 flex-col overflow-hidden">
+                <ThreadView threadId={selectedThreadId} />
+              </div>
+              {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
+            </>
+          ) : (
+            <div className="flex flex-1 items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
+              {selectedProjectId
+                ? 'Select or create a thread to get started'
+                : 'Select or create a project to get started'}
+            </div>
+          )}
+        </main>
+      </div>
+      <ToastStack />
+    </>
   )
 }

@@ -5,12 +5,20 @@ import {
   updateProject,
   deleteProject,
   listThreads,
+  listArchivedThreads,
+  archivedThreadCount,
   createThread,
   deleteThread,
-  updateThreadName
+  updateThreadName,
+  updateThreadModel,
+  updateThreadStatus,
+  threadHasMessages,
+  archiveThread,
+  unarchiveThread,
+  listMessages
 } from '../db/queries'
-import { listMessages } from '../db/queries'
 import { sessionManager } from '../session/manager'
+import { getGitStatus, commitChanges } from '../git'
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -47,8 +55,37 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return deleteThread(id)
   })
 
+  ipcMain.handle('threads:archivedCount', (_event, projectId: string) => {
+    return archivedThreadCount(projectId)
+  })
+
+  ipcMain.handle('threads:listArchived', (_event, projectId: string) => {
+    return listArchivedThreads(projectId)
+  })
+
+  ipcMain.handle('threads:archive', (_event, id: string) => {
+    sessionManager.remove(id)
+    if (threadHasMessages(id)) {
+      archiveThread(id)
+      return 'archived'
+    } else {
+      deleteThread(id)
+      return 'deleted'
+    }
+  })
+
+  ipcMain.handle('threads:unarchive', (_event, id: string) => {
+    return unarchiveThread(id)
+  })
+
   ipcMain.handle('threads:updateName', (_event, id: string, name: string) => {
     return updateThreadName(id, name)
+  })
+
+  ipcMain.handle('threads:updateModel', (_event, id: string, model: string) => {
+    // Drop any live session so next message picks up the new model
+    sessionManager.remove(id)
+    return updateThreadModel(id, model)
   })
 
   ipcMain.handle('threads:start', (_event, threadId: string, workingDir: string) => {
@@ -62,6 +99,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const session = sessionManager.get(threadId)
     if (session?.isRunning()) {
       session.stop()
+    } else {
+      // No live session (e.g. after restart) — force-reset stuck status in DB and notify renderer
+      updateThreadStatus(threadId, 'idle')
+      window.webContents.send(`thread:status:${threadId}`, 'idle')
     }
   })
 
@@ -83,5 +124,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       properties: ['openDirectory']
     })
     return result.canceled ? null : result.filePaths[0] ?? null
+  })
+
+  // ── Git ───────────────────────────────────────────────────────────────────
+
+  ipcMain.handle('git:status', (_event, repoPath: string) => {
+    return getGitStatus(repoPath)
+  })
+
+  ipcMain.handle('git:commit', (_event, repoPath: string, message: string) => {
+    return commitChanges(repoPath, message)
   })
 }

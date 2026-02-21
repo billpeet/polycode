@@ -10,6 +10,9 @@ export class ClaudeDriver implements CLIDriver {
 
   constructor(options: DriverOptions) {
     this.options = options
+    if (options.initialSessionId) {
+      this.sessionId = options.initialSessionId
+    }
   }
 
   sendMessage(
@@ -18,7 +21,16 @@ export class ClaudeDriver implements CLIDriver {
     onDone: (error?: Error) => void
   ): void {
     // Build args: first message vs resume
-    const args = ['--output-format', 'stream-json', '--verbose', '--print', '--dangerously-skip-permissions']
+    const args = [
+      '--output-format', 'stream-json',
+      '--verbose',
+      '--print',
+      '--dangerously-skip-permissions',
+      '--append-system-prompt', 'Never enter plan mode. Execute all tasks directly without a planning phase.'
+    ]
+    if (this.options.model) {
+      args.push('--model', this.options.model)
+    }
     if (this.sessionId) {
       args.push('--resume', this.sessionId)
     }
@@ -100,7 +112,10 @@ export class ClaudeDriver implements CLIDriver {
         const subtype = data.subtype as string | undefined
         if (subtype === 'init') {
           const sid = data.session_id as string | undefined
-          if (sid) this.sessionId = sid
+          if (sid) {
+            this.sessionId = sid
+            this.options.onSessionId?.(sid)
+          }
         }
         break
       }
@@ -160,7 +175,10 @@ export class ClaudeDriver implements CLIDriver {
         const subtype = data.subtype as string | undefined
         // Always try to capture session_id from result
         const sid = data.session_id as string | undefined
-        if (sid) this.sessionId = sid
+        if (sid) {
+          this.sessionId = sid
+          this.options.onSessionId?.(sid)
+        }
 
         if (subtype === 'error') {
           events.push({

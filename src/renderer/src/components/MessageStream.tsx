@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import MessageBubble from './MessageBubble'
+import ToolCallGroupBlock from './ToolCallGroupBlock'
 import { Message } from '../types/ipc'
 
 interface Props {
@@ -9,6 +10,7 @@ interface Props {
 }
 
 const EMPTY: Message[] = []
+const GROUP_THRESHOLD = 5
 
 function safeParseJson(str: string | null): Record<string, unknown> | null {
   if (!str) return null
@@ -16,6 +18,7 @@ function safeParseJson(str: string | null): Record<string, unknown> | null {
 }
 
 export interface MessageEntry {
+  kind: 'single'
   key: string
   message: Message
   metadata: Record<string, unknown> | null
@@ -23,8 +26,15 @@ export interface MessageEntry {
   resultMetadata: Record<string, unknown> | null
 }
 
+export interface MessageGroup {
+  kind: 'group'
+  key: string
+  toolName: string
+  entries: MessageEntry[]
+}
+
 /** Pair tool_call messages with their matching tool_result by tool_use_id. */
-function pairMessages(messages: Message[]): MessageEntry[] {
+function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   // Build a lookup of tool_result messages by tool_use_id
   const resultByToolUseId = new Map<string, Message>()
   for (const msg of messages) {
@@ -35,7 +45,7 @@ function pairMessages(messages: Message[]): MessageEntry[] {
     }
   }
 
-  const entries: MessageEntry[] = []
+  const flat: MessageEntry[] = []
   const consumedIds = new Set<string>()
 
   for (const msg of messages) {
@@ -51,7 +61,8 @@ function pairMessages(messages: Message[]): MessageEntry[] {
       const toolUseId = meta.id as string | undefined
       const result = toolUseId ? resultByToolUseId.get(toolUseId) ?? null : null
       if (result && toolUseId) consumedIds.add(toolUseId)
-      entries.push({
+      flat.push({
+        kind: 'single',
         key: msg.id,
         message: msg,
         metadata: meta,
@@ -59,7 +70,8 @@ function pairMessages(messages: Message[]): MessageEntry[] {
         resultMetadata: safeParseJson(result?.metadata ?? null),
       })
     } else {
-      entries.push({
+      flat.push({
+        kind: 'single',
         key: msg.id,
         message: msg,
         metadata: meta,
@@ -69,7 +81,42 @@ function pairMessages(messages: Message[]): MessageEntry[] {
     }
   }
 
-  return entries
+  // Group consecutive tool call entries with the same tool name when count > threshold
+  const grouped: (MessageEntry | MessageGroup)[] = []
+  let i = 0
+  while (i < flat.length) {
+    const entry = flat[i]
+    const isToolCall = entry.metadata?.type === 'tool_call' || entry.metadata?.type === 'tool_use'
+    if (!isToolCall) {
+      grouped.push(entry)
+      i++
+      continue
+    }
+    const toolName = (entry.metadata?.name as string) ?? entry.message.content
+    // Find the run of consecutive same-tool entries
+    let j = i + 1
+    while (
+      j < flat.length &&
+      (flat[j].metadata?.type === 'tool_call' || flat[j].metadata?.type === 'tool_use') &&
+      ((flat[j].metadata?.name as string) ?? flat[j].message.content) === toolName
+    ) {
+      j++
+    }
+    const runLength = j - i
+    if (runLength > GROUP_THRESHOLD) {
+      grouped.push({
+        kind: 'group',
+        key: `group-${entry.key}`,
+        toolName,
+        entries: flat.slice(i, j),
+      })
+    } else {
+      for (let k = i; k < j; k++) grouped.push(flat[k])
+    }
+    i = j
+  }
+
+  return grouped
 }
 
 export default function MessageStream({ threadId }: Props) {
@@ -121,9 +168,13 @@ export default function MessageStream({ threadId }: Props) {
             No messages yet. Send a message to get started.
           </p>
         )}
-        {entries.map((entry) => (
-          <MessageBubble key={entry.key} entry={entry} />
-        ))}
+        {entries.map((entry) =>
+          entry.kind === 'group' ? (
+            <ToolCallGroupBlock key={entry.key} group={entry} />
+          ) : (
+            <MessageBubble key={entry.key} entry={entry} />
+          )
+        )}
 
         {/* Streaming indicator */}
         {isAwaitingResponse && (

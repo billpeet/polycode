@@ -92,6 +92,7 @@ CREATE TABLE threads (
   name TEXT NOT NULL,
   provider TEXT NOT NULL DEFAULT 'claude-code',
   status TEXT NOT NULL DEFAULT 'idle',
+  claude_session_id TEXT,           -- persisted Claude CLI session ID for --resume
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -133,9 +134,10 @@ DB file: `{userData}/polycode.db` (WAL mode, foreign keys on)
 ### Phase 3 — Polish & UX
 - [ ] Diff rendering for code changes
 - [x] Thread rename inline UI
-- [ ] Keyboard shortcuts
+- [x] Keyboard shortcuts (Ctrl+T new thread, Ctrl+W deselect, Ctrl+K focus input)
 - [x] Loading / streaming indicators (spinner, skeleton)
-- [ ] Toast notifications for errors
+- [x] Toast notifications for errors and completion alerts
+- [x] Session persistence across app restarts (claude_session_id stored in DB, passed via --resume)
 
 ### Phase 4 — Multi-provider
 - [ ] OpenCode CLI driver

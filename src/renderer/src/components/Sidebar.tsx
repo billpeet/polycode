@@ -1,9 +1,23 @@
 import { useState } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
-import { useMessageStore } from '../stores/messages'
-import { Project } from '../types/ipc'
+import { Project, Thread } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
+
+function relativeTime(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  if (days === 1) return 'yesterday'
+  if (days < 30) return `${days}d ago`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months}mo ago`
+  return `${Math.floor(months / 12)}y ago`
+}
 
 export default function Sidebar() {
   const projects = useProjectStore((s) => s.projects)
@@ -11,18 +25,22 @@ export default function Sidebar() {
   const selectProject = useProjectStore((s) => s.select)
   const removeProject = useProjectStore((s) => s.remove)
 
-  const messagesByThread = useMessageStore((s) => s.messagesByThread)
-
   const byProject = useThreadStore((s) => s.byProject)
+  const archivedByProject = useThreadStore((s) => s.archivedByProject)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const statusMap = useThreadStore((s) => s.statusMap)
+  const showArchived = useThreadStore((s) => s.showArchived)
+  const archivedCountByProject = useThreadStore((s) => s.archivedCountByProject)
   const fetchThreads = useThreadStore((s) => s.fetch)
   const createThread = useThreadStore((s) => s.create)
   const removeThread = useThreadStore((s) => s.remove)
+  const archiveThread = useThreadStore((s) => s.archive)
+  const unarchiveThread = useThreadStore((s) => s.unarchive)
+  const toggleShowArchived = useThreadStore((s) => s.toggleShowArchived)
   const selectThread = useThreadStore((s) => s.select)
 
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; archived?: boolean } | null>(null)
 
   function handleSelectProject(id: string): void {
     selectProject(id)
@@ -32,6 +50,7 @@ export default function Sidebar() {
   async function handleNewThread(): Promise<void> {
     if (!selectedProjectId) return
     await createThread(selectedProjectId, 'New thread')
+    window.dispatchEvent(new Event('focus-input'))
   }
 
   async function handleDeleteProject(id: string): Promise<void> {
@@ -39,13 +58,100 @@ export default function Sidebar() {
     setConfirmDelete(null)
   }
 
-  async function handleDeleteThread(id: string): Promise<void> {
-    if (!selectedProjectId) return
-    await removeThread(id, selectedProjectId)
+  async function handleDeleteThread(id: string, projectId: string): Promise<void> {
+    await removeThread(id, projectId)
     setConfirmDelete(null)
   }
 
+  async function handleArchiveThread(thread: Thread): Promise<void> {
+    if (!selectedProjectId) return
+    await archiveThread(thread.id, selectedProjectId)
+  }
+
+  async function handleUnarchiveThread(thread: Thread): Promise<void> {
+    if (!selectedProjectId) return
+    await unarchiveThread(thread.id, selectedProjectId)
+  }
+
   const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
+  const archivedThreads = selectedProjectId ? (archivedByProject[selectedProjectId] ?? []) : []
+  const archivedCount = selectedProjectId ? (archivedCountByProject[selectedProjectId] ?? 0) : 0
+
+  function renderThread(thread: Thread, isArchived: boolean) {
+    const status = statusMap[thread.id] ?? 'idle'
+    const statusColor =
+      status === 'running' ? '#4ade80'
+      : status === 'error' ? '#f87171'
+      : status === 'stopped' ? '#facc15'
+      : 'var(--color-text-muted)'
+
+    return (
+      <div
+        key={thread.id}
+        className="group relative"
+        style={{ opacity: isArchived ? 0.6 : 1 }}
+      >
+        <button
+          onClick={() => selectThread(thread.id)}
+          className="flex w-full items-center pl-8 pr-2 py-1.5 text-left text-xs transition-colors min-w-0"
+          style={{
+            background: selectedThreadId === thread.id ? 'var(--color-border)' : 'transparent',
+            color: 'var(--color-text-muted)'
+          }}
+        >
+          <span
+            className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
+            style={{ background: isArchived ? 'var(--color-text-muted)' : statusColor }}
+          />
+          <span className="flex flex-col min-w-0">
+            <span className="truncate">{thread.name}</span>
+            <span
+              className="text-[10px] leading-tight"
+              style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}
+            >
+              {relativeTime(thread.updated_at)}
+            </span>
+          </span>
+        </button>
+
+        {/* Thread actions — absolutely positioned, overlay on hover */}
+        <div
+          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover:opacity-100 transition-opacity"
+          style={{ background: selectedThreadId === thread.id ? 'var(--color-border)' : 'var(--color-surface)' }}
+        >
+          {isArchived ? (
+            <button
+              onClick={() => handleUnarchiveThread(thread)}
+              className="rounded p-1 hover:bg-white/10 transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Unarchive thread"
+            >
+              {/* Unarchive: box with up arrow */}
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="7" width="14" height="8" rx="1" />
+                <path d="M1 7l2-4h10l2 4" />
+                <path d="M8 11V4M5.5 6.5L8 4l2.5 2.5" />
+              </svg>
+            </button>
+          ) : (
+            <button
+              onClick={() => handleArchiveThread(thread)}
+              className="rounded p-1 hover:bg-white/10 transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Archive thread"
+            >
+              {/* Archive: box with down arrow */}
+              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="7" width="14" height="8" rx="1" />
+                <path d="M1 7l2-4h10l2 4" />
+                <path d="M8 9v6M5.5 12.5L8 15l2.5-2.5" />
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <aside
@@ -75,10 +181,10 @@ export default function Sidebar() {
         {projects.map((project) => (
           <div key={project.id}>
             {/* Project row */}
-            <div className="group flex items-center">
+            <div className="group relative">
               <button
                 onClick={() => handleSelectProject(project.id)}
-                className="flex flex-1 items-center px-4 py-2 text-left text-sm transition-colors min-w-0"
+                className="flex w-full items-center px-4 py-2 text-left text-sm transition-colors min-w-0"
                 style={{
                   background: selectedProjectId === project.id ? 'var(--color-surface-2)' : 'transparent',
                   color: 'var(--color-text)'
@@ -87,8 +193,11 @@ export default function Sidebar() {
                 <span className="mr-2 text-xs flex-shrink-0">📁</span>
                 <span className="truncate">{project.name}</span>
               </button>
-              {/* Project actions — visible on hover */}
-              <div className="flex-shrink-0 flex items-center gap-0.5 pr-2 opacity-0 group-hover:opacity-100 transition-opacity">
+              {/* Project actions — absolutely positioned, overlay on hover */}
+              <div
+                className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                style={{ background: selectedProjectId === project.id ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
+              >
                 <button
                   onClick={() => setProjectDialog({ mode: 'edit', project })}
                   className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
@@ -111,50 +220,7 @@ export default function Sidebar() {
             {/* Threads under selected project */}
             {selectedProjectId === project.id && (
               <div>
-                {threads.map((thread) => {
-                  const status = statusMap[thread.id] ?? 'idle'
-                  const statusColor =
-                    status === 'running' ? '#4ade80'
-                    : status === 'error' ? '#f87171'
-                    : status === 'stopped' ? '#facc15'
-                    : 'var(--color-text-muted)'
-                  return (
-                    <div key={thread.id} className="group flex items-center">
-                      <button
-                        onClick={() => selectThread(thread.id)}
-                        className="flex flex-1 items-center pl-8 pr-2 py-1.5 text-left text-xs transition-colors min-w-0"
-                        style={{
-                          background: selectedThreadId === thread.id ? 'var(--color-border)' : 'transparent',
-                          color: 'var(--color-text-muted)'
-                        }}
-                      >
-                        <span
-                          className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
-                          style={{ background: statusColor }}
-                        />
-                        <span className="truncate">{thread.name}</span>
-                      </button>
-                      {/* Thread delete — visible on hover */}
-                      <button
-                        onClick={() => {
-                          const msgs = messagesByThread[thread.id]
-                          const isEmpty = !msgs || msgs.length === 0
-                          if (isEmpty) {
-                            handleDeleteThread(thread.id)
-                          } else {
-                            setConfirmDelete({ type: 'thread', id: thread.id, name: thread.name })
-                          }
-                        }}
-                        className="flex-shrink-0 mr-2 rounded p-1 text-xs opacity-0 group-hover:opacity-100 hover:bg-white/10 transition-all"
-                        style={{ color: 'var(--color-text-muted)' }}
-                        title="Delete thread"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  )
-                })}
-
+                {/* New thread button — at the top so new threads are visible immediately */}
                 <button
                   onClick={handleNewThread}
                   className="flex w-full items-center pl-8 pr-4 py-1.5 text-left text-xs opacity-50 hover:opacity-80 transition-opacity"
@@ -162,6 +228,23 @@ export default function Sidebar() {
                 >
                   + New thread
                 </button>
+
+                {/* Active threads */}
+                {threads.map((thread) => renderThread(thread, false))}
+
+                {/* Archive toggle — only shown when there are archived threads or section is open */}
+                {(archivedCount > 0 || showArchived) && (
+                  <button
+                    onClick={() => toggleShowArchived(project.id)}
+                    className="flex w-full items-center pl-8 pr-4 py-1 text-left text-[10px] opacity-40 hover:opacity-70 transition-opacity"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    {showArchived ? `▾ Hide archived` : `▸ Archived (${archivedCount})`}
+                  </button>
+                )}
+
+                {/* Archived threads */}
+                {showArchived && archivedThreads.map((thread) => renderThread(thread, true))}
               </div>
             )}
           </div>
@@ -214,9 +297,10 @@ export default function Sidebar() {
                 Cancel
               </button>
               <button
-                onClick={() => confirmDelete.type === 'project'
-                  ? handleDeleteProject(confirmDelete.id)
-                  : handleDeleteThread(confirmDelete.id)
+                onClick={() =>
+                  confirmDelete.type === 'project'
+                    ? handleDeleteProject(confirmDelete.id)
+                    : handleDeleteThread(confirmDelete.id, selectedProjectId!)
                 }
                 className="rounded px-3 py-1.5 text-xs font-medium"
                 style={{ background: '#dc2626', color: '#fff' }}

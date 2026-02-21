@@ -1,5 +1,6 @@
 import { Message } from '../types/ipc'
 import { useState, useMemo, type CSSProperties } from 'react'
+import EditDiffView from './EditDiffView'
 
 interface Props {
   message: Message
@@ -125,23 +126,26 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
     wordBreak: 'break-all',
   }
 
-  // Write: show file path label + content rendered via BodyContent
-  if (toolName === 'Write' && inp && typeof inp.file_path === 'string') {
-    const offset = inp.offset != null ? Number(inp.offset) : null
-    const limit = inp.limit != null ? Number(inp.limit) : null
+  // Edit: show inline diff view (old_string → new_string)
+  if (toolName === 'Edit' && inp && typeof inp.file_path === 'string') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-        <div>
-          <div style={labelStyle}>File</div>
-          <div style={filePathStyle}>{inp.file_path as string}</div>
-        </div>
-        {typeof inp.content === 'string' && (
-          <div>
-            <div style={labelStyle}>Content</div>
-            <BodyContent text={inp.content as string} />
-          </div>
-        )}
-      </div>
+      <EditDiffView
+        toolName="Edit"
+        filePath={inp.file_path as string}
+        oldString={typeof inp.old_string === 'string' ? inp.old_string : undefined}
+        newString={typeof inp.new_string === 'string' ? inp.new_string : ''}
+      />
+    )
+  }
+
+  // Write: show inline diff view (full file as added)
+  if (toolName === 'Write' && inp && typeof inp.file_path === 'string') {
+    return (
+      <EditDiffView
+        toolName="Write"
+        filePath={inp.file_path as string}
+        newString={typeof inp.content === 'string' ? inp.content : ''}
+      />
     )
   }
 

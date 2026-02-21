@@ -16,4 +16,7 @@ export interface CLIDriver {
 export interface DriverOptions {
   workingDir: string
   threadId: string
+  model?: string
+  initialSessionId?: string | null
+  onSessionId?: (sessionId: string) => void
 }

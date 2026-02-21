@@ -53,6 +53,21 @@ function runMigrations(database: Database.Database): void {
       created_at TEXT NOT NULL
     );
   `)
+
+  // Additive migrations — safe to run on existing databases
+  const cols = database.pragma('table_info(threads)') as Array<{ name: string }>
+  const hasSessionId = cols.some((c) => c.name === 'claude_session_id')
+  if (!hasSessionId) {
+    database.exec(`ALTER TABLE threads ADD COLUMN claude_session_id TEXT`)
+  }
+  const hasArchived = cols.some((c) => c.name === 'archived')
+  if (!hasArchived) {
+    database.exec(`ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0`)
+  }
+  const hasModel = cols.some((c) => c.name === 'model')
+  if (!hasModel) {
+    database.exec(`ALTER TABLE threads ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-4-5'`)
+  }
 }
 
 export function closeDb(): void {

@@ -1,4 +1,4 @@
-import { useState, useRef, KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, KeyboardEvent } from 'react'
 import { useThreadStore } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
 import { useProjectStore } from '../stores/projects'
@@ -21,6 +21,14 @@ export default function InputBar({ threadId }: Props) {
 
   const isProcessing = status === 'running'
   const canSend = !isProcessing && value.trim().length > 0
+
+  useEffect(() => {
+    function onFocusInput(): void {
+      textareaRef.current?.focus()
+    }
+    window.addEventListener('focus-input', onFocusInput)
+    return () => window.removeEventListener('focus-input', onFocusInput)
+  }, [])
 
   async function handleSend(): Promise<void> {
     const trimmed = value.trim()

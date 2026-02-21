@@ -1,9 +1,10 @@
 import { app, BrowserWindow, shell } from 'electron'
 import { join } from 'path'
 import { initDb, closeDb } from './db/index'
+import { resetRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 
-const isDev = !app.isPackaged
+const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -48,6 +49,7 @@ function createWindow(): BrowserWindow {
 
 app.whenReady().then(() => {
   initDb()
+  resetRunningThreads()
 
   const win = createWindow()
   registerIpcHandlers(win)

@@ -2,34 +2,59 @@ import { create } from 'zustand'
 import { Thread, ThreadStatus } from '../types/ipc'
 
 interface ThreadStore {
-  /** threads keyed by project ID */
+  /** active (non-archived) threads keyed by project ID */
   byProject: Record<string, Thread[]>
+  /** archived threads keyed by project ID */
+  archivedByProject: Record<string, Thread[]>
+  /** count of archived threads keyed by project ID — populated on fetch, no full data load required */
+  archivedCountByProject: Record<string, number>
   selectedThreadId: string | null
   statusMap: Record<string, ThreadStatus>
+  showArchived: boolean
   fetch: (projectId: string) => Promise<void>
+  fetchArchived: (projectId: string) => Promise<void>
   create: (projectId: string, name: string) => Promise<void>
   remove: (id: string, projectId: string) => Promise<void>
+  archive: (id: string, projectId: string) => Promise<void>
+  unarchive: (id: string, projectId: string) => Promise<void>
+  toggleShowArchived: (projectId: string) => void
   select: (id: string | null) => void
   setStatus: (threadId: string, status: ThreadStatus) => void
   rename: (threadId: string, name: string) => Promise<void>
+  setModel: (threadId: string, model: string) => Promise<void>
   start: (threadId: string, workingDir: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
   send: (threadId: string, content: string, workingDir: string) => Promise<void>
 }
 
-export const useThreadStore = create<ThreadStore>((set) => ({
+export const useThreadStore = create<ThreadStore>((set, get) => ({
   byProject: {},
+  archivedByProject: {},
+  archivedCountByProject: {},
   selectedThreadId: null,
   statusMap: {},
+  showArchived: false,
 
   fetch: async (projectId) => {
-    const threads = await window.api.invoke('threads:list', projectId)
+    const [threads, count] = await Promise.all([
+      window.api.invoke('threads:list', projectId),
+      window.api.invoke('threads:archivedCount', projectId),
+    ])
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: threads },
+      archivedCountByProject: { ...s.archivedCountByProject, [projectId]: count },
       statusMap: {
         ...s.statusMap,
         ...Object.fromEntries(threads.map((t: Thread) => [t.id, t.status]))
       }
+    }))
+  },
+
+  fetchArchived: async (projectId) => {
+    const threads = await window.api.invoke('threads:listArchived', projectId)
+    set((s) => ({
+      archivedByProject: { ...s.archivedByProject, [projectId]: threads },
+      archivedCountByProject: { ...s.archivedCountByProject, [projectId]: threads.length },
     }))
   },
 
@@ -48,17 +73,84 @@ export const useThreadStore = create<ThreadStore>((set) => ({
   remove: async (id, projectId) => {
     await window.api.invoke('threads:delete', id)
     set((s) => {
-      const updated = { ...s.statusMap }
-      delete updated[id]
+      const updatedStatus = { ...s.statusMap }
+      delete updatedStatus[id]
       return {
         byProject: {
           ...s.byProject,
           [projectId]: (s.byProject[projectId] ?? []).filter((t) => t.id !== id)
         },
+        archivedByProject: {
+          ...s.archivedByProject,
+          [projectId]: (s.archivedByProject[projectId] ?? []).filter((t) => t.id !== id)
+        },
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
-        statusMap: updated
+        statusMap: updatedStatus
       }
     })
+  },
+
+  archive: async (id, projectId) => {
+    const result = await window.api.invoke('threads:archive', id)
+    set((s) => {
+      const thread = (s.byProject[projectId] ?? []).find((t) => t.id === id)
+      const updatedStatus = { ...s.statusMap }
+      delete updatedStatus[id]
+      const withoutThread = (s.byProject[projectId] ?? []).filter((t) => t.id !== id)
+      if (result === 'deleted') {
+        return {
+          byProject: { ...s.byProject, [projectId]: withoutThread },
+          selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
+          statusMap: updatedStatus
+        }
+      }
+      const prevCount = s.archivedCountByProject[projectId] ?? 0
+      return {
+        byProject: { ...s.byProject, [projectId]: withoutThread },
+        archivedByProject: {
+          ...s.archivedByProject,
+          [projectId]: thread
+            ? [{ ...thread, archived: true }, ...(s.archivedByProject[projectId] ?? [])]
+            : (s.archivedByProject[projectId] ?? [])
+        },
+        archivedCountByProject: { ...s.archivedCountByProject, [projectId]: prevCount + 1 },
+        selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
+        statusMap: updatedStatus
+      }
+    })
+  },
+
+  unarchive: async (id, projectId) => {
+    await window.api.invoke('threads:unarchive', id)
+    set((s) => {
+      const thread = (s.archivedByProject[projectId] ?? []).find((t) => t.id === id)
+      const prevCount = s.archivedCountByProject[projectId] ?? 0
+      return {
+        archivedByProject: {
+          ...s.archivedByProject,
+          [projectId]: (s.archivedByProject[projectId] ?? []).filter((t) => t.id !== id)
+        },
+        archivedCountByProject: {
+          ...s.archivedCountByProject,
+          [projectId]: Math.max(0, prevCount - 1)
+        },
+        byProject: {
+          ...s.byProject,
+          [projectId]: thread
+            ? [{ ...thread, archived: false }, ...(s.byProject[projectId] ?? [])]
+            : (s.byProject[projectId] ?? [])
+        },
+        statusMap: thread ? { ...s.statusMap, [id]: thread.status } : s.statusMap
+      }
+    })
+  },
+
+  toggleShowArchived: (projectId) => {
+    const next = !get().showArchived
+    set({ showArchived: next })
+    if (next) {
+      get().fetchArchived(projectId)
+    }
   },
 
   select: (id) => set({ selectedThreadId: id }),
@@ -72,6 +164,17 @@ export const useThreadStore = create<ThreadStore>((set) => ({
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
         updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, name } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
+  setModel: async (threadId, model) => {
+    await window.api.invoke('threads:updateModel', threadId, model)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, model } : t))
       }
       return { byProject: updated }
     })
