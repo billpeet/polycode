@@ -126,15 +126,15 @@ DB file: `{userData}/polycode.db` (WAL mode, foreign keys on)
 - [x] Message streaming from Claude Code CLI
 - [ ] Markdown + syntax highlighting rendering
 - [ ] Tool call / tool result collapsible blocks
-- [ ] Auto-scroll with scroll-lock
+- [x] Auto-scroll with scroll-lock
 - [x] Thread auto-title via Claude API
 - [ ] Multi-line input with Shift+Enter
 
 ### Phase 3 — Polish & UX
 - [ ] Diff rendering for code changes
-- [ ] Thread rename inline UI
+- [x] Thread rename inline UI
 - [ ] Keyboard shortcuts
-- [ ] Loading / streaming indicators (spinner, skeleton)
+- [x] Loading / streaming indicators (spinner, skeleton)
 - [ ] Toast notifications for errors
 
 ### Phase 4 — Multi-provider

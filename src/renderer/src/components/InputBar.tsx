@@ -1,5 +1,7 @@
 import { useState, useRef, KeyboardEvent } from 'react'
 import { useThreadStore } from '../stores/threads'
+import { useMessageStore } from '../stores/messages'
+
 
 interface Props {
   threadId: string
@@ -10,14 +12,20 @@ export default function InputBar({ threadId }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const send = useThreadStore((s) => s.send)
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
+  const appendUserMessage = useMessageStore((s) => s.appendUserMessage)
 
   async function handleSend(): Promise<void> {
     const trimmed = value.trim()
     if (!trimmed || status !== 'running') return
+
     setValue('')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
+
+    // Optimistically add the user message so the streaming indicator fires immediately
+    appendUserMessage(threadId, trimmed)
+
     await send(threadId, trimmed)
   }
 
@@ -44,7 +52,7 @@ export default function InputBar({ threadId }: Props) {
     >
       {status !== 'running' && (
         <p className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          Start the session to send messages.
+          {status === 'error' ? 'Session error. Restart to continue.' : 'Starting session…'}
         </p>
       )}
       <div
@@ -58,7 +66,7 @@ export default function InputBar({ threadId }: Props) {
           onKeyDown={handleKeyDown}
           onInput={handleInput}
           rows={1}
-          placeholder={status === 'running' ? 'Message… (Enter to send, Shift+Enter for newline)' : 'Session not running'}
+          placeholder={status === 'running' ? 'Message… (Enter to send, Shift+Enter for newline)' : 'Waiting for session…'}
           disabled={status !== 'running'}
           className="flex-1 resize-none bg-transparent text-sm outline-none"
           style={{ color: 'var(--color-text)', maxHeight: '200px' }}

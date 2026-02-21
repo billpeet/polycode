@@ -37,3 +37,18 @@ body,
   background: var(--color-border);
   border-radius: 3px;
 }
+
+/* Streaming dots indicator */
+@keyframes streaming-bounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-4px); opacity: 1; }
+}
+
+.streaming-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--color-text-muted);
+  animation: streaming-bounce 1.2s ease-in-out infinite;
+}

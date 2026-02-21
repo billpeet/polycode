@@ -16,10 +16,23 @@ export default function ThreadView({ threadId }: Props) {
   const appendEvent = useMessageStore((s) => s.appendEvent)
   const setStatus = useThreadStore((s) => s.setStatus)
   const rename = useThreadStore((s) => s.rename)
+  const start = useThreadStore((s) => s.start)
+  const statusMap = useThreadStore((s) => s.statusMap)
+
+  const projects = useProjectStore((s) => s.projects)
+  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
+  const project = projects.find((p) => p.id === selectedProjectId)
+
   const cleanupRef = useRef<Array<() => void>>([])
 
   useEffect(() => {
     fetchMessages(threadId)
+
+    // Auto-start the session if not already running
+    const currentStatus = statusMap[threadId] ?? 'idle'
+    if (project && currentStatus !== 'running') {
+      start(threadId, project.path)
+    }
 
     // Subscribe to streaming events
     const unsubOutput = window.api.on(`thread:output:${threadId}`, (...args) => {
@@ -33,7 +46,7 @@ export default function ThreadView({ threadId }: Props) {
     })
 
     const unsubComplete = window.api.on(`thread:complete:${threadId}`, () => {
-      // Re-fetch messages after completion to get persisted versions
+      // Re-fetch messages after completion to replace optimistic entries with persisted ones
       fetchMessages(threadId)
     })
 
@@ -46,7 +59,8 @@ export default function ThreadView({ threadId }: Props) {
     return () => {
       cleanupRef.current.forEach((fn) => fn())
     }
-  }, [threadId, fetchMessages, appendEvent, setStatus, rename])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [threadId])
 
   return (
     <div className="flex flex-1 flex-col h-full overflow-hidden">
