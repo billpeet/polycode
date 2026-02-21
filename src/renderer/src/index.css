@@ -72,6 +72,18 @@ body,
   50% { opacity: 0.6; }
 }
 
+/* Status spinner for running threads */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.status-spinner {
+  border: 1.5px solid transparent;
+  border-top-color: #4ade80;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
 /* Diff line entrance */
 @keyframes diff-line-in {
   from { opacity: 0; }

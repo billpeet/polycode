@@ -1,7 +1,7 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession }
-export { ANTHROPIC_MODELS }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session }
+export { ANTHROPIC_MODELS, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE }
 
 /** Shape of window.api exposed by preload */
 export interface WindowApi {
@@ -26,6 +26,11 @@ export interface WindowApi {
   invoke(channel: 'threads:unarchive', id: string): Promise<void>
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
+  invoke(channel: 'messages:listBySession', sessionId: string): Promise<Message[]>
+  invoke(channel: 'sessions:list', threadId: string): Promise<Session[]>
+  invoke(channel: 'sessions:getActive', threadId: string): Promise<Session | null>
+  invoke(channel: 'sessions:switch', threadId: string, sessionId: string, workingDir: string): Promise<void>
+  invoke(channel: 'threads:executePlanInNewContext', threadId: string, workingDir: string): Promise<void>
   invoke(channel: 'dialog:open-directory'): Promise<string | null>
   invoke(channel: 'git:status', repoPath: string): Promise<GitStatus | null>
   invoke(channel: 'git:commit', repoPath: string, message: string): Promise<void>
@@ -41,6 +46,11 @@ export interface WindowApi {
   invoke(channel: 'claude-history:listSessions', encodedPath: string): Promise<ClaudeSession[]>
   invoke(channel: 'claude-history:importedIds', projectId: string): Promise<string[]>
   invoke(channel: 'claude-history:import', projectId: string, sessionFilePath: string, sessionId: string, name: string): Promise<Thread>
+  invoke(channel: 'attachments:save', dataUrl: string, filename: string, threadId: string): Promise<{ tempPath: string; id: string }>
+  invoke(channel: 'attachments:saveFromPath', sourcePath: string, threadId: string): Promise<{ tempPath: string; id: string }>
+  invoke(channel: 'attachments:cleanup', threadId: string): Promise<void>
+  invoke(channel: 'attachments:getFileInfo', filePath: string): Promise<{ size: number; mimeType: string } | null>
+  invoke(channel: 'dialog:open-files'): Promise<string[]>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

@@ -7,6 +7,7 @@ import { Message } from '../types/ipc'
 
 interface Props {
   threadId: string
+  sessionId?: string
 }
 
 const EMPTY: Message[] = []
@@ -119,8 +120,11 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   return grouped
 }
 
-export default function MessageStream({ threadId }: Props) {
-  const messages = useMessageStore((s) => s.messagesByThread[threadId] ?? EMPTY)
+export default function MessageStream({ threadId, sessionId }: Props) {
+  // Use session-based messages when sessionId is provided, otherwise fall back to thread-based
+  const sessionMessages = useMessageStore((s) => sessionId ? s.messagesBySession[sessionId] : undefined)
+  const threadMessages = useMessageStore((s) => s.messagesByThread[threadId])
+  const messages = sessionMessages ?? threadMessages ?? EMPTY
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)

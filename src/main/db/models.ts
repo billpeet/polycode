@@ -21,8 +21,19 @@ export interface ThreadRow {
 export interface MessageRow {
   id: string
   thread_id: string
+  session_id: string | null
   role: string
   content: string
   metadata: string | null
   created_at: string
+}
+
+export interface SessionRow {
+  id: string
+  thread_id: string
+  claude_session_id: string | null
+  name: string
+  is_active: number
+  created_at: string
+  updated_at: string
 }

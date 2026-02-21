@@ -1,10 +1,24 @@
-import { app, BrowserWindow, shell } from 'electron'
+import { app, BrowserWindow, shell, protocol, net } from 'electron'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { initDb, closeDb } from './db/index'
 import { resetRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
+import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
+
+// Register custom protocol for serving attachment files
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: 'attachment',
+    privileges: {
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true,
+    },
+  },
+])
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -49,6 +63,15 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  // Register protocol handler for attachment:// URLs
+  // Maps attachment://threadId/filename to the actual temp file
+  protocol.handle('attachment', (request) => {
+    // URL format: attachment://threadId/filename
+    const url = new URL(request.url)
+    const filePath = join(getAttachmentDir(), url.hostname, url.pathname)
+    return net.fetch(pathToFileURL(filePath).toString())
+  })
+
   initDb()
   resetRunningThreads()
 
@@ -64,11 +87,13 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
+    cleanupAllAttachments()
     closeDb()
     app.quit()
   }
 })
 
 app.on('before-quit', () => {
+  cleanupAllAttachments()
   closeDb()
 })

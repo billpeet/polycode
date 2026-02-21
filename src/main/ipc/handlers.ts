@@ -16,14 +16,24 @@ import {
   archiveThread,
   unarchiveThread,
   listMessages,
+  listMessagesBySession,
   importThread,
   getLastUsedModel,
-  getImportedSessionIds
+  getImportedSessionIds,
+  listSessions,
+  getActiveSession,
+  setActiveSession
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { getGitStatus, commitChanges, stageFile, unstageFile, stageAll, unstageAll, generateCommitMessage } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
+import {
+  saveAttachment,
+  copyAttachmentFromPath,
+  cleanupThreadAttachments,
+  getFileInfo,
+} from '../attachments'
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -143,10 +153,34 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
+  ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string, workingDir: string) => {
+    const session = sessionManager.getOrCreate(threadId, workingDir, window)
+    session.executePlanInNewContext()
+  })
+
+  // ── Sessions ────────────────────────────────────────────────────────────────
+
+  ipcMain.handle('sessions:list', (_event, threadId: string) => {
+    return listSessions(threadId)
+  })
+
+  ipcMain.handle('sessions:getActive', (_event, threadId: string) => {
+    return getActiveSession(threadId)
+  })
+
+  ipcMain.handle('sessions:switch', (_event, threadId: string, sessionId: string, workingDir: string) => {
+    const session = sessionManager.getOrCreate(threadId, workingDir, window)
+    session.switchSession(sessionId)
+  })
+
   // ── Messages ──────────────────────────────────────────────────────────────
 
   ipcMain.handle('messages:list', (_event, threadId: string) => {
     return listMessages(threadId)
+  })
+
+  ipcMain.handle('messages:listBySession', (_event, sessionId: string) => {
+    return listMessagesBySession(sessionId)
   })
 
   // ── Dialog ────────────────────────────────────────────────────────────────
@@ -225,5 +259,35 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       created_at: m.timestamp
     }))
     return importThread(projectId, name, sessionId, importedMessages)
+  })
+
+  // ── Attachments ─────────────────────────────────────────────────────────────
+
+  ipcMain.handle('attachments:save', (_event, dataUrl: string, filename: string, threadId: string) => {
+    return saveAttachment(dataUrl, filename, threadId)
+  })
+
+  ipcMain.handle('attachments:saveFromPath', (_event, sourcePath: string, threadId: string) => {
+    return copyAttachmentFromPath(sourcePath, threadId)
+  })
+
+  ipcMain.handle('attachments:cleanup', (_event, threadId: string) => {
+    return cleanupThreadAttachments(threadId)
+  })
+
+  ipcMain.handle('attachments:getFileInfo', (_event, filePath: string) => {
+    return getFileInfo(filePath)
+  })
+
+  ipcMain.handle('dialog:open-files', async () => {
+    const result = await dialog.showOpenDialog(window, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
+    return result.canceled ? [] : result.filePaths
   })
 }

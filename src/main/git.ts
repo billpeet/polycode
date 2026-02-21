@@ -57,11 +57,12 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus | null> 
       let i = 0
       while (i < entries.length) {
         const entry = entries[i]
-        if (!entry || entry.length < 3) { i++; continue }
-        const xy = entry.slice(0, 2)
-        const filePath = entry.slice(3)
-        const stagedCode = xy[0] ?? ' '
-        const unstagedCode = xy[1] ?? ' '
+        if (!entry || entry.length < 4) { i++; continue }
+        // Format: "XY PATH" where XY is 2 chars, then space, then path
+        // Use regex to reliably extract parts
+        const match = entry.match(/^(.)(.) (.+)$/)
+        if (!match) { i++; continue }
+        const [, stagedCode, unstagedCode, filePath] = match
 
         const isRename = stagedCode === 'R' || unstagedCode === 'R'
 
@@ -116,7 +117,8 @@ export async function stageFile(repoPath: string, filePath: string): Promise<voi
 }
 
 export async function unstageFile(repoPath: string, filePath: string): Promise<void> {
-  await git(repoPath, ['reset', 'HEAD', '--', filePath])
+  // Use restore --staged which works for both tracked and untracked files
+  await git(repoPath, ['restore', '--staged', '--', filePath])
 }
 
 export async function stageAll(repoPath: string): Promise<void> {
@@ -124,7 +126,7 @@ export async function stageAll(repoPath: string): Promise<void> {
 }
 
 export async function unstageAll(repoPath: string): Promise<void> {
-  await git(repoPath, ['reset', 'HEAD'])
+  await git(repoPath, ['restore', '--staged', '.'])
 }
 
 export async function generateCommitMessage(repoPath: string): Promise<string> {

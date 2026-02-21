@@ -1,6 +1,11 @@
 import { create } from 'zustand'
 import { Thread, ThreadStatus, SendOptions, Question } from '../types/ipc'
 
+export interface QueuedMessage {
+  content: string
+  planMode: boolean
+}
+
 interface ThreadStore {
   /** active (non-archived) threads keyed by project ID */
   byProject: Record<string, Thread[]>
@@ -13,6 +18,10 @@ interface ThreadStore {
   showArchived: boolean
   /** draft input text keyed by thread ID */
   draftByThread: Record<string, string>
+  /** plan mode toggle keyed by thread ID */
+  planModeByThread: Record<string, boolean>
+  /** queued message keyed by thread ID (sent when current session completes) */
+  queuedMessageByThread: Record<string, QueuedMessage | null>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string) => Promise<void>
   create: (projectId: string, name: string) => Promise<void>
@@ -35,6 +44,9 @@ interface ThreadStore {
   getQuestions: (threadId: string) => Promise<Question[]>
   answerQuestion: (threadId: string, answers: Record<string, string>) => Promise<void>
   setDraft: (threadId: string, draft: string) => void
+  setPlanMode: (threadId: string, planMode: boolean) => void
+  queueMessage: (threadId: string, content: string, planMode: boolean) => void
+  clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
 }
 
@@ -46,6 +58,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   statusMap: {},
   showArchived: false,
   draftByThread: {},
+  planModeByThread: {},
+  queuedMessageByThread: {},
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -87,6 +101,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => {
       const updatedStatus = { ...s.statusMap }
       delete updatedStatus[id]
+      const updatedQueue = { ...s.queuedMessageByThread }
+      delete updatedQueue[id]
+      const updatedPlanMode = { ...s.planModeByThread }
+      delete updatedPlanMode[id]
       return {
         byProject: {
           ...s.byProject,
@@ -97,7 +115,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           [projectId]: (s.archivedByProject[projectId] ?? []).filter((t) => t.id !== id)
         },
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
-        statusMap: updatedStatus
+        statusMap: updatedStatus,
+        queuedMessageByThread: updatedQueue,
+        planModeByThread: updatedPlanMode
       }
     })
   },
@@ -108,12 +128,18 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const thread = (s.byProject[projectId] ?? []).find((t) => t.id === id)
       const updatedStatus = { ...s.statusMap }
       delete updatedStatus[id]
+      const updatedQueue = { ...s.queuedMessageByThread }
+      delete updatedQueue[id]
+      const updatedPlanMode = { ...s.planModeByThread }
+      delete updatedPlanMode[id]
       const withoutThread = (s.byProject[projectId] ?? []).filter((t) => t.id !== id)
       if (result === 'deleted') {
         return {
           byProject: { ...s.byProject, [projectId]: withoutThread },
           selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
-          statusMap: updatedStatus
+          statusMap: updatedStatus,
+          queuedMessageByThread: updatedQueue,
+          planModeByThread: updatedPlanMode
         }
       }
       const prevCount = s.archivedCountByProject[projectId] ?? 0
@@ -127,7 +153,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         },
         archivedCountByProject: { ...s.archivedCountByProject, [projectId]: prevCount + 1 },
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
-        statusMap: updatedStatus
+        statusMap: updatedStatus,
+        queuedMessageByThread: updatedQueue,
+        planModeByThread: updatedPlanMode
       }
     })
   },
@@ -236,6 +264,21 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   setDraft: (threadId, draft) =>
     set((s) => ({ draftByThread: { ...s.draftByThread, [threadId]: draft } })),
+
+  setPlanMode: (threadId, planMode) =>
+    set((s) => ({ planModeByThread: { ...s.planModeByThread, [threadId]: planMode } })),
+
+  queueMessage: (threadId, content, planMode) =>
+    set((s) => ({
+      queuedMessageByThread: { ...s.queuedMessageByThread, [threadId]: { content, planMode } }
+    })),
+
+  clearQueue: (threadId) =>
+    set((s) => {
+      const updated = { ...s.queuedMessageByThread }
+      delete updated[threadId]
+      return { queuedMessageByThread: updated }
+    }),
 
   importFromHistory: async (projectId, sessionFilePath, sessionId, name) => {
     const thread = await window.api.invoke('claude-history:import', projectId, sessionFilePath, sessionId, name)

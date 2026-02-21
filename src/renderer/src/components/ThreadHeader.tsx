@@ -93,10 +93,14 @@ export default function ThreadHeader({ threadId }: Props) {
       style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
     >
       <div className="flex items-center gap-3 min-w-0">
-        <span
-          className="h-2.5 w-2.5 rounded-full flex-shrink-0"
-          style={{ background: statusColor }}
-        />
+        {status === 'running' ? (
+          <span className="h-2.5 w-2.5 flex-shrink-0 status-spinner" />
+        ) : (
+          <span
+            className="h-2.5 w-2.5 rounded-full flex-shrink-0"
+            style={{ background: statusColor }}
+          />
+        )}
         {editing ? (
           <input
             ref={inputRef}

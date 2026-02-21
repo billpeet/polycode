@@ -106,7 +106,7 @@ function LineRow({
   }, [line, language])
 
   return (
-    <tr>
+    <tr style={{ background: 'transparent' }}>
       <td
         className="select-none text-right pr-3 pl-3"
         style={{
@@ -115,6 +115,7 @@ function LineRow({
           verticalAlign: 'top',
           width: `${lineNumberWidth + 2}ch`,
           minWidth: `${lineNumberWidth + 2}ch`,
+          background: 'transparent',
         }}
       >
         {lineNumber}
@@ -124,9 +125,10 @@ function LineRow({
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
           paddingRight: '1rem',
+          background: 'transparent',
         }}
       >
-        <code ref={codeRef} className={`hljs language-${language}`}>
+        <code ref={codeRef} className={`hljs language-${language}`} style={{ background: 'transparent' }}>
           {line || '\n'}
         </code>
       </td>

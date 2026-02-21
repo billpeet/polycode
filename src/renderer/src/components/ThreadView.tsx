@@ -4,9 +4,10 @@ import { useThreadStore } from '../stores/threads'
 import { useProjectStore } from '../stores/projects'
 import { useToastStore } from '../stores/toast'
 import { useTodoStore, Todo } from '../stores/todos'
-import { useUiStore } from '../stores/ui'
+import { useSessionStore } from '../stores/sessions'
 import { OutputEvent } from '../types/ipc'
 import ThreadHeader from './ThreadHeader'
+import SessionTabs from './SessionTabs'
 import MessageStream from './MessageStream'
 import InputBar from './InputBar'
 
@@ -16,9 +17,15 @@ interface Props {
 
 export default function ThreadView({ threadId }: Props) {
   const fetchMessages = useMessageStore((s) => s.fetch)
+  const fetchMessagesBySession = useMessageStore((s) => s.fetchBySession)
   const appendEvent = useMessageStore((s) => s.appendEvent)
+  const appendEventToSession = useMessageStore((s) => s.appendEventToSession)
   const setStatus = useThreadStore((s) => s.setStatus)
   const setName = useThreadStore((s) => s.setName)
+
+  const fetchSessions = useSessionStore((s) => s.fetch)
+  const setActiveSession = useSessionStore((s) => s.setActiveSession)
+  const activeSessionId = useSessionStore((s) => s.activeSessionByThread[threadId])
 
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
@@ -26,13 +33,33 @@ export default function ThreadView({ threadId }: Props) {
 
   const cleanupRef = useRef<Array<() => void>>([])
 
+  // Fetch sessions when thread changes
   useEffect(() => {
-    fetchMessages(threadId)
+    fetchSessions(threadId)
+  }, [threadId, fetchSessions])
 
+  // Fetch messages when active session changes
+  useEffect(() => {
+    if (activeSessionId) {
+      fetchMessagesBySession(activeSessionId)
+    } else {
+      // Fallback to thread-based fetch for threads without sessions
+      fetchMessages(threadId)
+    }
+  }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession])
+
+  useEffect(() => {
     // Subscribe to streaming events
     const unsubOutput = window.api.on(`thread:output:${threadId}`, (...args) => {
       const event = args[0] as OutputEvent
-      appendEvent(threadId, event)
+      const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
+
+      // Route event to session-based store if we have an active session and event matches
+      if (event.sessionId && currentActiveSession && event.sessionId === currentActiveSession) {
+        appendEventToSession(event.sessionId, threadId, event)
+      } else {
+        appendEvent(threadId, event)
+      }
 
       // Intercept TodoWrite tool calls and update the todo store
       if (event.type === 'tool_call' && event.metadata?.name === 'TodoWrite') {
@@ -61,12 +88,50 @@ export default function ThreadView({ threadId }: Props) {
 
     const unsubComplete = window.api.on(`thread:complete:${threadId}`, () => {
       // Re-fetch messages after completion to replace optimistic entries with persisted ones
-      fetchMessages(threadId)
+      const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
+      if (currentActiveSession) {
+        useMessageStore.getState().fetchBySession(currentActiveSession)
+      } else {
+        fetchMessages(threadId)
+      }
+
+      // Re-fetch sessions in case a new one was created
+      fetchSessions(threadId)
 
       // Safety net: ensure status is reset if still running (handles edge cases where status event was missed)
       const currentStatus = useThreadStore.getState().statusMap[threadId]
       if (currentStatus === 'running') {
         setStatus(threadId, 'idle')
+      }
+
+      // Check for queued message and auto-send if session completed successfully
+      const queuedMessage = useThreadStore.getState().queuedMessageByThread[threadId]
+      const finalStatus = useThreadStore.getState().statusMap[threadId]
+
+      // Only auto-send when status is idle (not error/stopped/plan_pending/question_pending)
+      if (queuedMessage && finalStatus === 'idle') {
+        // Clear queue first to prevent double-send
+        useThreadStore.getState().clearQueue(threadId)
+
+        // Append optimistic user message
+        useMessageStore.getState().appendUserMessage(threadId, queuedMessage.content)
+
+        // Get project for working dir
+        const projectsState = useProjectStore.getState()
+        const currentProject = projectsState.projects.find(
+          (p) => p.id === projectsState.selectedProjectId
+        )
+
+        if (currentProject) {
+          useThreadStore.getState().send(
+            threadId,
+            queuedMessage.content,
+            currentProject.path,
+            { planMode: queuedMessage.planMode }
+          )
+        }
+        // Skip completion toast since we're continuing with queued message
+        return
       }
 
       // Notify only when the user isn't currently viewing this thread
@@ -90,7 +155,15 @@ export default function ThreadView({ threadId }: Props) {
       setName(threadId, args[0] as string)
     })
 
-    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle]
+    // Subscribe to session switch events from main process
+    const unsubSessionSwitch = window.api.on(`thread:session-switched:${threadId}`, (...args) => {
+      const sessionId = args[0] as string
+      setActiveSession(threadId, sessionId)
+      // Refetch sessions to update the tabs (a new session may have been created)
+      useSessionStore.getState().fetch(threadId)
+    })
+
+    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle, unsubSessionSwitch]
 
     return () => {
       cleanupRef.current.forEach((fn) => fn())
@@ -101,7 +174,8 @@ export default function ThreadView({ threadId }: Props) {
   return (
     <div className="relative flex flex-1 flex-col h-full overflow-hidden">
       <ThreadHeader threadId={threadId} />
-      <MessageStream threadId={threadId} />
+      <SessionTabs threadId={threadId} />
+      <MessageStream threadId={threadId} sessionId={activeSessionId} />
       <InputBar threadId={threadId} />
     </div>
   )

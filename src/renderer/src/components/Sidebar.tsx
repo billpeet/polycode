@@ -156,10 +156,16 @@ export default function Sidebar() {
             color: 'var(--color-text-muted)'
           }}
         >
-          <span
-            className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
-            style={{ background: isArchived ? 'var(--color-text-muted)' : statusColor }}
-          />
+          {!isArchived && status === 'running' ? (
+            <span
+              className="mr-2 h-1.5 w-1.5 flex-shrink-0 status-spinner"
+            />
+          ) : (
+            <span
+              className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
+              style={{ background: isArchived ? 'var(--color-text-muted)' : statusColor }}
+            />
+          )}
           <span className="flex flex-col min-w-0">
             <span className="truncate">{thread.name}</span>
             <span
