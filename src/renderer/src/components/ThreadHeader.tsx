@@ -9,8 +9,6 @@ interface Props {
 export default function ThreadHeader({ threadId }: Props) {
   const byProject = useThreadStore((s) => s.byProject)
   const statusMap = useThreadStore((s) => s.statusMap)
-  const start = useThreadStore((s) => s.start)
-  const stop = useThreadStore((s) => s.stop)
   const rename = useThreadStore((s) => s.rename)
 
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
@@ -39,15 +37,6 @@ export default function ThreadHeader({ threadId }: Props) {
         : status === 'stopped'
           ? '#facc15'
           : 'var(--color-text-muted)'
-
-  async function handleToggle(): Promise<void> {
-    if (!project) return
-    if (status === 'running') {
-      await stop(threadId)
-    } else {
-      await start(threadId, project.path)
-    }
-  }
 
   function startEditing(): void {
     setEditValue(thread?.name ?? '')
@@ -109,24 +98,6 @@ export default function ThreadHeader({ threadId }: Props) {
           {thread?.provider ?? 'claude-code'}
         </span>
       </div>
-
-      {status !== 'running' ? (
-        <button
-          onClick={handleToggle}
-          className="flex-shrink-0 rounded px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-80"
-          style={{ background: 'var(--color-claude)', color: '#fff' }}
-        >
-          {status === 'idle' ? 'Start' : 'Restart'}
-        </button>
-      ) : (
-        <button
-          onClick={handleToggle}
-          className="flex-shrink-0 rounded px-3 py-1.5 text-xs font-medium transition-opacity hover:opacity-80"
-          style={{ background: '#f87171', color: '#fff' }}
-        >
-          Stop
-        </button>
-      )}
     </div>
   )
 }

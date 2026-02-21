@@ -1,18 +1,24 @@
-import { Message } from '../types/ipc'
 import MarkdownContent from './MarkdownContent'
 import ToolCallBlock from './ToolCallBlock'
+import { MessageEntry } from './MessageStream'
 
 interface Props {
-  message: Message
+  entry: MessageEntry
 }
 
-export default function MessageBubble({ message }: Props) {
+export default function MessageBubble({ entry }: Props) {
+  const { message, metadata, result, resultMetadata } = entry
   const isUser = message.role === 'user'
-  const metadata = message.metadata ? safeParseJson(message.metadata) : null
-  const isToolCall = metadata?.type === 'tool_call' || metadata?.type === 'tool_result'
+  const isToolCall = metadata?.type === 'tool_call' || metadata?.type === 'tool_use'
+  const isToolResult = metadata?.type === 'tool_result'
 
   if (isToolCall) {
-    return <ToolCallBlock message={message} metadata={metadata} />
+    return <ToolCallBlock message={message} metadata={metadata} result={result} resultMetadata={resultMetadata} />
+  }
+
+  // Standalone tool_result (no matching call found) — shouldn't happen often but handle gracefully
+  if (isToolResult) {
+    return <ToolCallBlock message={message} metadata={metadata} result={null} resultMetadata={null} />
   }
 
   const isError = message.role === 'system' || metadata?.type === 'error'
@@ -49,12 +55,4 @@ export default function MessageBubble({ message }: Props) {
       </div>
     </div>
   )
-}
-
-function safeParseJson(str: string): Record<string, unknown> | null {
-  try {
-    return JSON.parse(str)
-  } catch {
-    return null
-  }
 }

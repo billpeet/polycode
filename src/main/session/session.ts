@@ -18,10 +18,11 @@ export class Session {
   }
 
   start(): void {
-    this.setStatus('running')
+    this.setStatus('idle')
   }
 
   sendMessage(content: string): void {
+    this.setStatus('running')
     // Persist to DB
     insertMessage(this.threadId, 'user', content)
     this.messageCount++
@@ -74,8 +75,8 @@ export class Session {
       } satisfies OutputEvent)
       this.setStatus('error')
     } else {
-      // Still ready for next message
-      this.setStatus('running')
+      // Response complete — idle and ready for next message
+      this.setStatus('idle')
       if (isFirst) {
         this.triggerAutoTitle()
       }

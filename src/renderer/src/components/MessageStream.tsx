@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import MessageBubble from './MessageBubble'
@@ -10,6 +10,68 @@ interface Props {
 
 const EMPTY: Message[] = []
 
+function safeParseJson(str: string | null): Record<string, unknown> | null {
+  if (!str) return null
+  try { return JSON.parse(str) } catch { return null }
+}
+
+export interface MessageEntry {
+  key: string
+  message: Message
+  metadata: Record<string, unknown> | null
+  result: Message | null
+  resultMetadata: Record<string, unknown> | null
+}
+
+/** Pair tool_call messages with their matching tool_result by tool_use_id. */
+function pairMessages(messages: Message[]): MessageEntry[] {
+  // Build a lookup of tool_result messages by tool_use_id
+  const resultByToolUseId = new Map<string, Message>()
+  for (const msg of messages) {
+    const meta = safeParseJson(msg.metadata)
+    if (meta?.type === 'tool_result') {
+      const id = meta.tool_use_id as string | undefined
+      if (id) resultByToolUseId.set(id, msg)
+    }
+  }
+
+  const entries: MessageEntry[] = []
+  const consumedIds = new Set<string>()
+
+  for (const msg of messages) {
+    const meta = safeParseJson(msg.metadata)
+
+    // Skip tool_results that have been paired — they'll be rendered inside their call
+    if (meta?.type === 'tool_result') {
+      const id = meta.tool_use_id as string | undefined
+      if (id && consumedIds.has(id)) continue
+    }
+
+    if (meta?.type === 'tool_call' || meta?.type === 'tool_use') {
+      const toolUseId = meta.id as string | undefined
+      const result = toolUseId ? resultByToolUseId.get(toolUseId) ?? null : null
+      if (result && toolUseId) consumedIds.add(toolUseId)
+      entries.push({
+        key: msg.id,
+        message: msg,
+        metadata: meta,
+        result,
+        resultMetadata: safeParseJson(result?.metadata ?? null),
+      })
+    } else {
+      entries.push({
+        key: msg.id,
+        message: msg,
+        metadata: meta,
+        result: null,
+        resultMetadata: null,
+      })
+    }
+  }
+
+  return entries
+}
+
 export default function MessageStream({ threadId }: Props) {
   const messages = useMessageStore((s) => s.messagesByThread[threadId] ?? EMPTY)
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
@@ -18,13 +80,14 @@ export default function MessageStream({ threadId }: Props) {
   const [userScrolled, setUserScrolled] = useState(false)
   const isScrolledToBottom = useRef(true)
 
+  const entries = useMemo(() => pairMessages(messages), [messages])
+
   const scrollToBottom = useCallback((smooth = true) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant' })
     setUserScrolled(false)
     isScrolledToBottom.current = true
   }, [])
 
-  // Detect user scrolling up
   function handleScroll(): void {
     const el = containerRef.current
     if (!el) return
@@ -33,21 +96,18 @@ export default function MessageStream({ threadId }: Props) {
     setUserScrolled(!atBottom)
   }
 
-  // Auto-scroll on new messages unless user has scrolled up
   useEffect(() => {
     if (!userScrolled) {
       scrollToBottom(messages.length <= 1)
     }
   }, [messages.length, userScrolled, scrollToBottom])
 
-  // Scroll to bottom instantly when switching threads
   useEffect(() => {
     setUserScrolled(false)
     scrollToBottom(false)
   }, [threadId, scrollToBottom])
 
-  const lastMessage = messages[messages.length - 1]
-  const isAwaitingResponse = status === 'running' && lastMessage?.role === 'user'
+  const isAwaitingResponse = status === 'running'
 
   return (
     <div className="relative flex-1 overflow-hidden" style={{ background: 'var(--color-bg)' }}>
@@ -58,11 +118,11 @@ export default function MessageStream({ threadId }: Props) {
       >
         {messages.length === 0 && (
           <p className="text-center text-xs pt-8" style={{ color: 'var(--color-text-muted)' }}>
-            No messages yet. Start the session and send a message.
+            No messages yet. Send a message to get started.
           </p>
         )}
-        {messages.map((msg) => (
-          <MessageBubble key={msg.id} message={msg} />
+        {entries.map((entry) => (
+          <MessageBubble key={entry.key} entry={entry} />
         ))}
 
         {/* Streaming indicator */}
@@ -79,7 +139,6 @@ export default function MessageStream({ threadId }: Props) {
         <div ref={bottomRef} />
       </div>
 
-      {/* Scroll-to-bottom button */}
       {userScrolled && (
         <button
           onClick={() => scrollToBottom(true)}

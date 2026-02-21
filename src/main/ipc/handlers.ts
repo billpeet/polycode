@@ -60,11 +60,9 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:send', (_event, threadId: string, content: string) => {
-    const session = sessionManager.get(threadId)
-    if (session) {
-      session.sendMessage(content)
-    }
+  ipcMain.handle('threads:send', (_event, threadId: string, content: string, workingDir: string) => {
+    const session = sessionManager.getOrCreate(threadId, workingDir, window)
+    session.sendMessage(content)
   })
 
   // ── Messages ──────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ interface ThreadStore {
   rename: (threadId: string, name: string) => Promise<void>
   start: (threadId: string, workingDir: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
-  send: (threadId: string, content: string) => Promise<void>
+  send: (threadId: string, content: string, workingDir: string) => Promise<void>
 }
 
 export const useThreadStore = create<ThreadStore>((set) => ({
@@ -85,7 +85,7 @@ export const useThreadStore = create<ThreadStore>((set) => ({
     await window.api.invoke('threads:stop', threadId)
   },
 
-  send: async (threadId, content) => {
-    await window.api.invoke('threads:send', threadId, content)
-  }
+  send: async (threadId, content, workingDir) => {
+    await window.api.invoke('threads:send', threadId, content, workingDir)
+  },
 }))

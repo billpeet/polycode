@@ -124,8 +124,8 @@ DB file: `{userData}/polycode.db` (WAL mode, foreign keys on)
 ### Phase 2 — Feature parity with original MVP
 - [ ] Full CRUD UI for projects and threads
 - [x] Message streaming from Claude Code CLI
-- [ ] Markdown + syntax highlighting rendering
-- [ ] Tool call / tool result collapsible blocks
+- [x] Markdown + syntax highlighting rendering
+- [x] Tool call / tool result collapsible blocks
 - [x] Auto-scroll with scroll-lock
 - [x] Thread auto-title via Claude API
 - [ ] Multi-line input with Shift+Enter

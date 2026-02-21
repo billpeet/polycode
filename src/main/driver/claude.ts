@@ -18,7 +18,7 @@ export class ClaudeDriver implements CLIDriver {
     onDone: (error?: Error) => void
   ): void {
     // Build args: first message vs resume
-    const args = ['--output-format', 'stream-json', '--verbose', '--print']
+    const args = ['--output-format', 'stream-json', '--verbose', '--print', '--dangerously-skip-permissions']
     if (this.sessionId) {
       args.push('--resume', this.sessionId)
     }
@@ -117,7 +117,8 @@ export class ClaudeDriver implements CLIDriver {
             events.push({
               type: 'tool_call',
               content: (block.name as string) ?? 'unknown',
-              metadata: block as Record<string, unknown>
+              // Normalize type to 'tool_call' so DB round-trips preserve MessageBubble detection
+              metadata: { ...block, type: 'tool_call' } as Record<string, unknown>
             })
           }
         }
@@ -130,9 +131,24 @@ export class ClaudeDriver implements CLIDriver {
         for (const block of contentBlocks) {
           const blockType = block.type as string | undefined
           if (blockType === 'tool_result') {
+            // block.content is typically [{type:"text", text:"..."}] — extract plain text
+            const raw = block.content
+            let content: string
+            if (Array.isArray(raw)) {
+              content = raw
+                .map((item: unknown) => {
+                  const i = item as Record<string, unknown>
+                  return i.type === 'text' ? String(i.text ?? '') : ''
+                })
+                .join('')
+            } else if (typeof raw === 'string') {
+              content = raw
+            } else {
+              content = JSON.stringify(raw ?? '')
+            }
             events.push({
               type: 'tool_result',
-              content: JSON.stringify(block.content ?? ''),
+              content,
               metadata: block as Record<string, unknown>
             })
           }
