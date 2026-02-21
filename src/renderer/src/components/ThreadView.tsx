@@ -15,6 +15,7 @@ export default function ThreadView({ threadId }: Props) {
   const fetchMessages = useMessageStore((s) => s.fetch)
   const appendEvent = useMessageStore((s) => s.appendEvent)
   const setStatus = useThreadStore((s) => s.setStatus)
+  const rename = useThreadStore((s) => s.rename)
   const cleanupRef = useRef<Array<() => void>>([])
 
   useEffect(() => {
@@ -36,12 +37,16 @@ export default function ThreadView({ threadId }: Props) {
       fetchMessages(threadId)
     })
 
-    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete]
+    const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
+      rename(threadId, args[0] as string)
+    })
+
+    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle]
 
     return () => {
       cleanupRef.current.forEach((fn) => fn())
     }
-  }, [threadId, fetchMessages, appendEvent, setStatus])
+  }, [threadId, fetchMessages, appendEvent, setStatus, rename])
 
   return (
     <div className="flex flex-1 flex-col h-full overflow-hidden">

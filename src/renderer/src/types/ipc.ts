@@ -13,6 +13,7 @@ export interface WindowApi {
   invoke(channel: 'threads:start', threadId: string, workingDir: string): Promise<void>
   invoke(channel: 'threads:stop', threadId: string): Promise<void>
   invoke(channel: 'threads:send', threadId: string, content: string): Promise<void>
+  invoke(channel: 'threads:updateName', id: string, name: string): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
   invoke(channel: 'dialog:open-directory'): Promise<string | null>
   // Fallback for dynamic channels

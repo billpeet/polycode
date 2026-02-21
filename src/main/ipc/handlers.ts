@@ -5,7 +5,8 @@ import {
   deleteProject,
   listThreads,
   createThread,
-  deleteThread
+  deleteThread,
+  updateThreadName
 } from '../db/queries'
 import { listMessages } from '../db/queries'
 import { sessionManager } from '../session/manager'
@@ -23,7 +24,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('projects:delete', (_event, id: string) => {
     sessionManager.stopAll()
-    deleteProject(id)
+    return deleteProject(id)
   })
 
   // ── Threads ───────────────────────────────────────────────────────────────
@@ -38,7 +39,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('threads:delete', (_event, id: string) => {
     sessionManager.remove(id)
-    deleteThread(id)
+    return deleteThread(id)
+  })
+
+  ipcMain.handle('threads:updateName', (_event, id: string, name: string) => {
+    return updateThreadName(id, name)
   })
 
   ipcMain.handle('threads:start', (_event, threadId: string, workingDir: string) => {

@@ -1,13 +1,16 @@
 import { useEffect, useRef } from 'react'
 import { useMessageStore } from '../stores/messages'
 import MessageBubble from './MessageBubble'
+import { Message } from '../types/ipc'
 
 interface Props {
   threadId: string
 }
 
+const EMPTY: Message[] = []
+
 export default function MessageStream({ threadId }: Props) {
-  const messages = useMessageStore((s) => s.messagesByThread[threadId] ?? [])
+  const messages = useMessageStore((s) => s.messagesByThread[threadId] ?? EMPTY)
   const bottomRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {

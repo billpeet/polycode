@@ -5,23 +5,31 @@ import { OutputEvent } from '../../shared/types'
 export class ClaudeDriver implements CLIDriver {
   private process: ChildProcess | null = null
   private options: DriverOptions
+  private sessionId: string | null = null
   private buffer = ''
 
   constructor(options: DriverOptions) {
     this.options = options
   }
 
-  start(onEvent: (event: OutputEvent) => void, onDone: (error?: Error) => void): void {
-    if (this.process) {
-      return
+  sendMessage(
+    content: string,
+    onEvent: (event: OutputEvent) => void,
+    onDone: (error?: Error) => void
+  ): void {
+    // Build args: first message vs resume
+    const args = ['--output-format', 'stream-json', '--verbose', '--print']
+    if (this.sessionId) {
+      args.push('--resume', this.sessionId)
     }
+    args.push(content)
 
-    // Claude Code CLI: `claude --output-format stream-json --verbose`
-    // Launched with --print so it runs non-interactively, reading from stdin
-    this.process = spawn('claude', ['--output-format', 'stream-json', '--verbose', '--print', ''], {
+    this.buffer = ''
+
+    this.process = spawn('claude', args, {
       cwd: this.options.workingDir,
       shell: false,
-      stdio: ['pipe', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe']
     })
 
     this.process.stdout?.on('data', (chunk: Buffer) => {
@@ -29,14 +37,13 @@ export class ClaudeDriver implements CLIDriver {
       this.processBuffer(onEvent)
     })
 
-    this.process.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8').trim()
-      if (text) {
-        onEvent({ type: 'error', content: text })
-      }
+    this.process.stderr?.on('data', (_chunk: Buffer) => {
+      // Verbose mode produces lots of diagnostic noise — silently drop
     })
 
     this.process.on('close', (code) => {
+      // Flush any remaining buffer content
+      this.processBuffer(onEvent)
       this.process = null
       if (code !== 0 && code !== null) {
         onDone(new Error(`Claude process exited with code ${code}`))
@@ -49,15 +56,6 @@ export class ClaudeDriver implements CLIDriver {
       this.process = null
       onDone(err)
     })
-  }
-
-  sendMessage(content: string): void {
-    if (!this.process?.stdin) {
-      return
-    }
-    // Send the message as JSON line to stdin
-    const payload = JSON.stringify({ role: 'user', content }) + '\n'
-    this.process.stdin.write(payload)
   }
 
   stop(): void {
@@ -82,55 +80,86 @@ export class ClaudeDriver implements CLIDriver {
 
       try {
         const parsed = JSON.parse(trimmed) as Record<string, unknown>
-        const event = this.parseClaudeEvent(parsed)
-        if (event) {
+        const events = this.parseClaudeEvent(parsed)
+        for (const event of events) {
           onEvent(event)
         }
       } catch {
-        // Not JSON — emit as raw text
-        onEvent({ type: 'text', content: trimmed })
+        // Non-JSON stdout line — silently skip (not raw text)
       }
     }
   }
 
-  private parseClaudeEvent(data: Record<string, unknown>): OutputEvent | null {
+  private parseClaudeEvent(data: Record<string, unknown>): OutputEvent[] {
     const type = data.type as string | undefined
+    const events: OutputEvent[] = []
 
     switch (type) {
-      case 'assistant':
-      case 'text': {
-        const content = (data.content ?? data.text ?? '') as string
-        return { type: 'text', content }
-      }
-      case 'tool_use': {
-        return {
-          type: 'tool_call',
-          content: (data.name as string) ?? 'unknown',
-          metadata: data as Record<string, unknown>
-        }
-      }
-      case 'tool_result': {
-        return {
-          type: 'tool_result',
-          content: JSON.stringify(data.content ?? ''),
-          metadata: data as Record<string, unknown>
-        }
-      }
-      case 'result': {
-        // Final result message from claude --print
+      case 'system': {
+        // Capture session_id from init event
         const subtype = data.subtype as string | undefined
-        if (subtype === 'success') {
-          const result = data.result as string | undefined
-          if (result) {
-            return { type: 'text', content: result }
-          }
-        } else if (subtype === 'error') {
-          return { type: 'error', content: (data.error as string) ?? 'Unknown error' }
+        if (subtype === 'init') {
+          const sid = data.session_id as string | undefined
+          if (sid) this.sessionId = sid
         }
-        return null
+        break
       }
+
+      case 'assistant': {
+        const message = data.message as Record<string, unknown> | undefined
+        const contentBlocks = (message?.content ?? []) as Array<Record<string, unknown>>
+        for (const block of contentBlocks) {
+          const blockType = block.type as string | undefined
+          if (blockType === 'text') {
+            const text = (block.text ?? '') as string
+            if (text) events.push({ type: 'text', content: text })
+          } else if (blockType === 'tool_use') {
+            events.push({
+              type: 'tool_call',
+              content: (block.name as string) ?? 'unknown',
+              metadata: block as Record<string, unknown>
+            })
+          }
+        }
+        break
+      }
+
+      case 'user': {
+        const message = data.message as Record<string, unknown> | undefined
+        const contentBlocks = (message?.content ?? []) as Array<Record<string, unknown>>
+        for (const block of contentBlocks) {
+          const blockType = block.type as string | undefined
+          if (blockType === 'tool_result') {
+            events.push({
+              type: 'tool_result',
+              content: JSON.stringify(block.content ?? ''),
+              metadata: block as Record<string, unknown>
+            })
+          }
+        }
+        break
+      }
+
+      case 'result': {
+        const subtype = data.subtype as string | undefined
+        // Always try to capture session_id from result
+        const sid = data.session_id as string | undefined
+        if (sid) this.sessionId = sid
+
+        if (subtype === 'error') {
+          events.push({
+            type: 'error',
+            content: (data.error as string) ?? 'Unknown error'
+          })
+        }
+        // subtype === 'success': do NOT re-emit result text (already in assistant blocks)
+        break
+      }
+
       default:
-        return null
+        break
     }
+
+    return events
   }
 }

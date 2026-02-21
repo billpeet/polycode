@@ -15,6 +15,22 @@ export default function MessageBubble({ message }: Props) {
     return <ToolCallBlock message={message} metadata={metadata} />
   }
 
+  const isError = message.role === 'system' || metadata?.type === 'error'
+
+  if (isError) {
+    return (
+      <div className="flex justify-start">
+        <div
+          className="max-w-2xl rounded-lg px-4 py-2 text-sm font-mono"
+          style={{ background: '#3b0000', color: '#f87171', border: '1px solid #7f1d1d' }}
+        >
+          <span className="mr-2 font-bold">Error:</span>
+          <span className="whitespace-pre-wrap">{message.content}</span>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       <div

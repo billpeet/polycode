@@ -11,6 +11,7 @@ interface ThreadStore {
   remove: (id: string, projectId: string) => Promise<void>
   select: (id: string | null) => void
   setStatus: (threadId: string, status: ThreadStatus) => void
+  rename: (threadId: string, name: string) => void
   start: (threadId: string, workingDir: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
   send: (threadId: string, content: string) => Promise<void>
@@ -63,6 +64,15 @@ export const useThreadStore = create<ThreadStore>((set) => ({
 
   setStatus: (threadId, status) =>
     set((s) => ({ statusMap: { ...s.statusMap, [threadId]: status } })),
+
+  rename: (threadId, name) =>
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, name } : t))
+      }
+      return { byProject: updated }
+    }),
 
   start: async (threadId, workingDir) => {
     await window.api.invoke('threads:start', threadId, workingDir)

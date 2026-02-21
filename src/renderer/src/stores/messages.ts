@@ -17,13 +17,13 @@ export const useMessageStore = create<MessageStore>((set) => ({
   },
 
   appendEvent: (threadId, event) => {
-    if (event.type !== 'text' && event.type !== 'tool_call' && event.type !== 'tool_result') {
-      return
-    }
+    if (event.type === 'status') return
+
+    const role = event.type === 'error' ? 'system' : 'assistant'
     const msg: Message = {
       id: `stream-${Date.now()}-${Math.random()}`,
       thread_id: threadId,
-      role: 'assistant',
+      role,
       content: event.content,
       metadata: event.metadata ? JSON.stringify(event.metadata) : null,
       created_at: new Date().toISOString()
