@@ -3,6 +3,7 @@ import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { Project, Thread } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
+import ImportHistoryDialog from './ImportHistoryDialog'
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -44,6 +45,7 @@ export default function Sidebar() {
 
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; archived?: boolean } | null>(null)
+  const [importDialogProject, setImportDialogProject] = useState<{ id: string; path: string } | null>(null)
 
   const setStatus = useThreadStore((s) => s.setStatus)
 
@@ -296,14 +298,25 @@ export default function Sidebar() {
               // When expanded, show everything
               return (
                 <div>
-                  {/* New thread button — at the top so new threads are visible immediately */}
-                  <button
-                    onClick={() => handleNewThread(project.id)}
-                    className="flex w-full items-center pl-8 pr-4 py-1.5 text-left text-xs opacity-50 hover:opacity-80 transition-opacity"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    + New thread
-                  </button>
+                  {/* Thread actions — at the top */}
+                  <div className="flex items-center pl-8 pr-4 py-1.5 gap-2">
+                    <button
+                      onClick={() => handleNewThread(project.id)}
+                      className="text-xs opacity-50 hover:opacity-80 transition-opacity"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      + New
+                    </button>
+                    <span className="text-xs opacity-30" style={{ color: 'var(--color-text-muted)' }}>|</span>
+                    <button
+                      onClick={() => setImportDialogProject({ id: project.id, path: project.path })}
+                      className="text-xs opacity-50 hover:opacity-80 transition-opacity"
+                      style={{ color: 'var(--color-text-muted)' }}
+                      title="Import from Claude Code CLI history"
+                    >
+                      Import
+                    </button>
+                  </div>
 
                   {/* Active threads */}
                   {projectThreads.map((thread) => renderThread(thread, false, project.id))}
@@ -387,6 +400,16 @@ export default function Sidebar() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Import history dialog */}
+      {importDialogProject && (
+        <ImportHistoryDialog
+          projectId={importDialogProject.id}
+          projectPath={importDialogProject.path}
+          onClose={() => setImportDialogProject(null)}
+          onImported={() => fetchThreads(importDialogProject.id)}
+        />
       )}
     </aside>
   )

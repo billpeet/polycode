@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question, FileEntry }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession }
 export { ANTHROPIC_MODELS }
 
 /** Shape of window.api exposed by preload */
@@ -29,8 +29,18 @@ export interface WindowApi {
   invoke(channel: 'dialog:open-directory'): Promise<string | null>
   invoke(channel: 'git:status', repoPath: string): Promise<GitStatus | null>
   invoke(channel: 'git:commit', repoPath: string, message: string): Promise<void>
+  invoke(channel: 'git:stage', repoPath: string, filePath: string): Promise<void>
+  invoke(channel: 'git:unstage', repoPath: string, filePath: string): Promise<void>
+  invoke(channel: 'git:stageAll', repoPath: string): Promise<void>
+  invoke(channel: 'git:unstageAll', repoPath: string): Promise<void>
+  invoke(channel: 'git:generateCommitMessage', repoPath: string): Promise<string>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
+  invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>
+  invoke(channel: 'claude-history:listProjects'): Promise<ClaudeProject[]>
+  invoke(channel: 'claude-history:listSessions', encodedPath: string): Promise<ClaudeSession[]>
+  invoke(channel: 'claude-history:importedIds', projectId: string): Promise<string[]>
+  invoke(channel: 'claude-history:import', projectId: string, sessionFilePath: string, sessionId: string, name: string): Promise<Thread>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

@@ -2,6 +2,7 @@ import { BrowserWindow } from 'electron'
 import { ClaudeDriver } from '../driver/claude'
 import { OutputEvent, ThreadStatus, SendOptions, Question } from '../../shared/types'
 import { updateThreadStatus, updateThreadName, insertMessage, getThreadSessionId, updateThreadSessionId, getThreadModel } from '../db/queries'
+import { generateTitle } from '../claude-sdk'
 
 export class Session {
   readonly threadId: string
@@ -200,31 +201,15 @@ export class Session {
   }
 
   private triggerAutoTitle(seed: string): void {
-    const prompt =
-      `In 5 words or fewer, write a short title for a coding session that started with this request. ` +
-      `Reply with ONLY the title, no quotes, no punctuation at the end:\n\n${seed.slice(0, 500)}`
-
-    const titleDriver = new ClaudeDriver({
-      workingDir: this.workingDir,
-      threadId: `${this.threadId}-autotitle`
-    })
-    let acc = ''
-
-    titleDriver.sendMessage(
-      prompt,
-      (event) => {
-        if (event.type === 'text') acc += event.content
-      },
-      (err) => {
-        if (err) {
-          console.error('[auto-title]', err.message)
-          return
-        }
-        const title = acc.trim().slice(0, 60)
+    // Use Claude Agent SDK with Haiku for fast, lightweight title generation
+    generateTitle(seed)
+      .then((title) => {
         if (!title) return
         updateThreadName(this.threadId, title)
         this.window.webContents.send(`thread:title:${this.threadId}`, title)
-      }
-    )
+      })
+      .catch((err) => {
+        console.error('[auto-title]', err.message)
+      })
   }
 }

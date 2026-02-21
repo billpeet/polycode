@@ -7,6 +7,8 @@ export interface Project {
 }
 
 export const ANTHROPIC_MODELS = [
+  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
   { id: 'claude-opus-4-5', label: 'Opus 4.5' },
   { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
@@ -92,4 +94,30 @@ export interface FileEntry {
   path: string
   isDirectory: boolean
   children?: FileEntry[]
+}
+
+/** A file entry for fuzzy search */
+export interface SearchableFile {
+  path: string
+  relativePath: string
+  name: string
+}
+
+// ── Claude Code History types ──────────────────────────────────────────────────
+
+/** A Claude Code session from ~/.claude/projects */
+export interface ClaudeSession {
+  sessionId: string
+  slug: string | null
+  filePath: string
+  firstMessage: string
+  messageCount: number
+  lastActivity: string
+}
+
+/** A project folder in Claude Code history */
+export interface ClaudeProject {
+  encodedPath: string
+  decodedPath: string
+  sessions: ClaudeSession[]
 }

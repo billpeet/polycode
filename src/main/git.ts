@@ -1,5 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { simpleQuery } from './claude-sdk'
 
 const execFileAsync = promisify(execFile)
 
@@ -107,6 +108,57 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus | null> 
 }
 
 export async function commitChanges(repoPath: string, message: string): Promise<void> {
-  await git(repoPath, ['add', '-A'])
   await git(repoPath, ['commit', '-m', message])
+}
+
+export async function stageFile(repoPath: string, filePath: string): Promise<void> {
+  await git(repoPath, ['add', '--', filePath])
+}
+
+export async function unstageFile(repoPath: string, filePath: string): Promise<void> {
+  await git(repoPath, ['reset', 'HEAD', '--', filePath])
+}
+
+export async function stageAll(repoPath: string): Promise<void> {
+  await git(repoPath, ['add', '-A'])
+}
+
+export async function unstageAll(repoPath: string): Promise<void> {
+  await git(repoPath, ['reset', 'HEAD'])
+}
+
+export async function generateCommitMessage(repoPath: string): Promise<string> {
+  // Get the diff of staged changes
+  let diff = ''
+  try {
+    diff = await git(repoPath, ['diff', '--cached'])
+  } catch {
+    // No staged changes
+  }
+
+  if (!diff.trim()) {
+    // If no staged changes, get diff of all changes
+    try {
+      diff = await git(repoPath, ['diff'])
+    } catch {
+      // No changes at all
+    }
+  }
+
+  if (!diff.trim()) {
+    return ''
+  }
+
+  // Truncate diff if too long (keep first ~4000 chars)
+  const maxDiffLength = 4000
+  const truncatedDiff = diff.length > maxDiffLength
+    ? diff.slice(0, maxDiffLength) + '\n... (truncated)'
+    : diff
+
+  // Use Claude Agent SDK to generate commit message
+  const prompt = `Generate a concise git commit message for the following diff. Follow conventional commit format (e.g., "feat:", "fix:", "refactor:", "docs:", "style:", "test:", "chore:"). Output ONLY the commit message, nothing else. No quotes, no explanation.
+
+${truncatedDiff}`
+
+  return simpleQuery(prompt)
 }

@@ -150,6 +150,21 @@ export function getThreadSessionId(threadId: string): string | null {
   return row?.claude_session_id ?? null
 }
 
+export function getImportedSessionIds(projectId: string): string[] {
+  const rows = getDb()
+    .prepare('SELECT claude_session_id FROM threads WHERE project_id = ? AND claude_session_id IS NOT NULL')
+    .all(projectId) as { claude_session_id: string }[]
+  return rows.map(r => r.claude_session_id)
+}
+
+/** Get the model from the most recently updated thread in a project, or default. */
+export function getLastUsedModel(projectId: string): string {
+  const row = getDb()
+    .prepare('SELECT model FROM threads WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1')
+    .get(projectId) as { model: string } | undefined
+  return row?.model ?? 'claude-opus-4-5'
+}
+
 export function updateThreadSessionId(threadId: string, sessionId: string): void {
   getDb()
     .prepare('UPDATE threads SET claude_session_id = ? WHERE id = ?')
@@ -186,4 +201,72 @@ export function insertMessage(
     )
     .run(msg.id, msg.thread_id, msg.role, msg.content, msg.metadata, msg.created_at)
   return msg as Message
+}
+
+export interface ImportedMessage {
+  role: string
+  content: string
+  metadata?: Record<string, unknown>
+  created_at: string
+}
+
+export function importThread(
+  projectId: string,
+  name: string,
+  claudeSessionId: string,
+  messages: ImportedMessage[]
+): Thread {
+  const db = getDb()
+  const now = new Date().toISOString()
+  const threadId = uuidv4()
+  const model = getLastUsedModel(projectId)
+
+  // Create thread with claude_session_id pre-set for resumption
+  const thread: ThreadRow = {
+    id: threadId,
+    project_id: projectId,
+    name,
+    provider: 'claude-code',
+    model,
+    status: 'idle',
+    archived: 0,
+    created_at: now,
+    updated_at: now
+  }
+
+  db.prepare(
+    'INSERT INTO threads (id, project_id, name, provider, model, status, claude_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+  ).run(
+    thread.id,
+    thread.project_id,
+    thread.name,
+    thread.provider,
+    thread.model,
+    thread.status,
+    claudeSessionId,
+    thread.created_at,
+    thread.updated_at
+  )
+
+  // Bulk insert messages
+  const insertStmt = db.prepare(
+    'INSERT INTO messages (id, thread_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  )
+
+  const insertMany = db.transaction((msgs: ImportedMessage[]) => {
+    for (const msg of msgs) {
+      insertStmt.run(
+        uuidv4(),
+        threadId,
+        msg.role,
+        msg.content,
+        msg.metadata ? JSON.stringify(msg.metadata) : null,
+        msg.created_at
+      )
+    }
+  })
+
+  insertMany(messages)
+
+  return { ...thread, archived: false } as Thread
 }

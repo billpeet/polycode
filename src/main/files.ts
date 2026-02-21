@@ -1,6 +1,6 @@
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { FileEntry } from '../shared/types'
+import { FileEntry, SearchableFile } from '../shared/types'
 
 const IGNORED_DIRS = new Set([
   'node_modules',
@@ -48,6 +48,51 @@ export function listDirectory(dirPath: string): FileEntry[] {
   } catch {
     return []
   }
+}
+
+const MAX_SEARCH_FILES = 5000
+
+/**
+ * Recursively list all files in a directory for fuzzy search.
+ * Returns paths relative to the root directory.
+ */
+export function listAllFiles(rootPath: string): SearchableFile[] {
+  const results: SearchableFile[] = []
+
+  function walk(dirPath: string): void {
+    if (results.length >= MAX_SEARCH_FILES) return
+
+    try {
+      const entries = fs.readdirSync(dirPath, { withFileTypes: true })
+
+      for (const entry of entries) {
+        if (results.length >= MAX_SEARCH_FILES) break
+
+        // Skip hidden files (except .env-like files)
+        if (entry.name.startsWith('.') && !entry.name.startsWith('.env')) continue
+
+        const fullPath = path.join(dirPath, entry.name)
+
+        if (entry.isDirectory()) {
+          // Skip ignored directories
+          if (IGNORED_DIRS.has(entry.name)) continue
+          walk(fullPath)
+        } else {
+          const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')
+          results.push({
+            path: fullPath,
+            relativePath,
+            name: entry.name,
+          })
+        }
+      }
+    } catch {
+      // Permission denied or other error - skip this directory
+    }
+  }
+
+  walk(rootPath)
+  return results
 }
 
 export function readFileContent(filePath: string): { content: string; truncated: boolean } | null {

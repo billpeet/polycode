@@ -1,8 +1,9 @@
-import { useState, useRef, useEffect, KeyboardEvent } from 'react'
+import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react'
 import { useThreadStore } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
 import { useProjectStore } from '../stores/projects'
-import { Question } from '../types/ipc'
+import { Question, SearchableFile } from '../types/ipc'
+import FileMentionPopup from './FileMentionPopup'
 
 interface Props {
   threadId: string
@@ -80,12 +81,25 @@ function QuestionIcon({ className }: { className?: string }) {
   )
 }
 
+interface MentionState {
+  active: boolean
+  startIndex: number
+  query: string
+  position: { top: number; left: number }
+}
+
 export default function InputBar({ threadId }: Props) {
   const [planMode, setPlanMode] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({})
+  const [mention, setMention] = useState<MentionState>({
+    active: false,
+    startIndex: -1,
+    query: '',
+    position: { top: 0, left: 0 },
+  })
 
   const send = useThreadStore((s) => s.send)
   const stop = useThreadStore((s) => s.stop)
@@ -142,6 +156,14 @@ export default function InputBar({ threadId }: Props) {
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): void {
+    // If mention popup is active, let it handle navigation keys
+    if (mention.active) {
+      if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
+        // These are handled by FileMentionPopup's document keydown listener
+        return
+      }
+    }
+
     // Ctrl+J inserts newline (Unix terminal convention)
     if (e.key === 'j' && e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault()
@@ -185,6 +207,82 @@ export default function InputBar({ threadId }: Props) {
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }
+
+  // Detect '@' trigger for file mentions
+  const checkForMention = useCallback((text: string, cursorPos: number) => {
+    // Find the '@' before the cursor
+    const textBeforeCursor = text.slice(0, cursorPos)
+    const lastAtIndex = textBeforeCursor.lastIndexOf('@')
+
+    if (lastAtIndex === -1) {
+      setMention((m) => m.active ? { ...m, active: false } : m)
+      return
+    }
+
+    // Check if '@' is at start or preceded by whitespace
+    const charBefore = lastAtIndex > 0 ? text[lastAtIndex - 1] : ' '
+    if (!/\s/.test(charBefore) && lastAtIndex > 0) {
+      setMention((m) => m.active ? { ...m, active: false } : m)
+      return
+    }
+
+    // Extract query after '@'
+    const query = text.slice(lastAtIndex + 1, cursorPos)
+
+    // Don't trigger if query contains spaces (user moved past the mention)
+    if (query.includes(' ')) {
+      setMention((m) => m.active ? { ...m, active: false } : m)
+      return
+    }
+
+    // Calculate popup position
+    const el = textareaRef.current
+    if (!el) return
+
+    const rect = el.getBoundingClientRect()
+    // Position above the input area
+    const position = {
+      top: rect.top - 8, // Will be adjusted by popup to appear above
+      left: rect.left,
+    }
+
+    setMention({
+      active: true,
+      startIndex: lastAtIndex,
+      query,
+      position,
+    })
+  }, [])
+
+  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newValue = e.target.value
+    setDraft(threadId, newValue)
+    checkForMention(newValue, e.target.selectionStart)
+  }, [threadId, setDraft, checkForMention])
+
+  const handleFileSelect = useCallback((file: SearchableFile) => {
+    const el = textareaRef.current
+    if (!el) return
+
+    // Replace @query with @relativePath
+    const before = value.slice(0, mention.startIndex)
+    const after = value.slice(el.selectionStart)
+    const newValue = `${before}@${file.relativePath} ${after}`
+
+    setDraft(threadId, newValue)
+    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
+
+    // Focus back on textarea and move cursor after inserted path
+    requestAnimationFrame(() => {
+      el.focus()
+      const newCursorPos = mention.startIndex + file.relativePath.length + 2 // +2 for '@' and space
+      el.selectionStart = el.selectionEnd = newCursorPos
+    })
+  }, [value, mention.startIndex, threadId, setDraft])
+
+  const closeMention = useCallback(() => {
+    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
+  }, [])
 
   return (
     <div className="relative flex-shrink-0 px-4 pb-4 pt-2" style={{ background: 'var(--color-bg)' }}>
@@ -394,13 +492,13 @@ export default function InputBar({ threadId }: Props) {
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => setDraft(threadId, e.target.value)}
+            onChange={handleChange}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             rows={1}
-            placeholder="Ask Claude anything..."
+            placeholder="Ask Claude anything... (@ to mention files)"
             disabled={isProcessing}
             className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
             style={{
@@ -452,6 +550,17 @@ export default function InputBar({ threadId }: Props) {
           <kbd className="rounded px-1 py-0.5" style={{ background: 'var(--color-surface-2)' }}>Ctrl+J</kbd> newline
         </span>
       </div>
+
+      {/* File mention popup */}
+      {mention.active && project && (
+        <FileMentionPopup
+          projectPath={project.path}
+          query={mention.query}
+          onSelect={handleFileSelect}
+          onClose={closeMention}
+          position={mention.position}
+        />
+      )}
     </div>
   )
 }

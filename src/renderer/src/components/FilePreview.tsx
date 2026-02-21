@@ -63,29 +63,74 @@ function basename(filePath: string): string {
 }
 
 function CodePreview({ content, language }: { content: string; language: string }) {
+  const lines = content.split('\n')
+  const lineNumberWidth = String(lines.length).length
+
+  return (
+    <div
+      className="overflow-auto text-xs leading-relaxed"
+      style={{
+        background: 'var(--color-surface)',
+        height: '100%',
+        fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
+      }}
+    >
+      <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+        <tbody>
+          {lines.map((line, i) => (
+            <LineRow key={i} lineNumber={i + 1} line={line} language={language} lineNumberWidth={lineNumberWidth} />
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function LineRow({
+  lineNumber,
+  line,
+  language,
+  lineNumberWidth,
+}: {
+  lineNumber: number
+  line: string
+  language: string
+  lineNumberWidth: number
+}) {
   const codeRef = useRef<HTMLElement>(null)
 
   useEffect(() => {
-    if (codeRef.current) {
-      codeRef.current.innerHTML = hljs.highlight(content, { language }).value
+    if (codeRef.current && line) {
+      codeRef.current.innerHTML = hljs.highlight(line, { language }).value
     }
-  }, [content, language])
+  }, [line, language])
 
   return (
-    <pre
-      className="overflow-auto p-4 text-xs leading-relaxed"
-      style={{
-        background: 'var(--color-surface)',
-        margin: 0,
-        height: '100%',
-      }}
-    >
-      <code
-        ref={codeRef}
-        className={`hljs language-${language}`}
-        style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace' }}
-      />
-    </pre>
+    <tr>
+      <td
+        className="select-none text-right pr-3 pl-3"
+        style={{
+          color: 'var(--color-text-muted)',
+          opacity: 0.5,
+          verticalAlign: 'top',
+          width: `${lineNumberWidth + 2}ch`,
+          minWidth: `${lineNumberWidth + 2}ch`,
+        }}
+      >
+        {lineNumber}
+      </td>
+      <td
+        style={{
+          whiteSpace: 'pre-wrap',
+          wordBreak: 'break-word',
+          paddingRight: '1rem',
+        }}
+      >
+        <code ref={codeRef} className={`hljs language-${language}`}>
+          {line || '\n'}
+        </code>
+      </td>
+    </tr>
   )
 }
 

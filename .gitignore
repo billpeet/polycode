@@ -4,5 +4,4 @@ dist
 .DS_Store
 *.log
 bun.lockb
-%APPDATA%/
 tsconfig.web.tsbuildinfo

@@ -20,7 +20,8 @@ export const useMessageStore = create<MessageStore>((set) => ({
   appendEvent: (threadId, event) => {
     if (event.type === 'status') return
 
-    const role = event.type === 'error' ? 'system' : 'assistant'
+    // Determine role: check metadata.role first (for question answers), then infer from type
+    const role = event.metadata?.role ?? (event.type === 'error' ? 'system' : 'assistant')
     const msg: Message = {
       id: `stream-${Date.now()}-${Math.random()}`,
       thread_id: threadId,

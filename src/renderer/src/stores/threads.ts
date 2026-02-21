@@ -35,6 +35,7 @@ interface ThreadStore {
   getQuestions: (threadId: string) => Promise<Question[]>
   answerQuestion: (threadId: string, answers: Record<string, string>) => Promise<void>
   setDraft: (threadId: string, draft: string) => void
+  importFromHistory: (projectId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -235,4 +236,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   setDraft: (threadId, draft) =>
     set((s) => ({ draftByThread: { ...s.draftByThread, [threadId]: draft } })),
+
+  importFromHistory: async (projectId, sessionFilePath, sessionId, name) => {
+    const thread = await window.api.invoke('claude-history:import', projectId, sessionFilePath, sessionId, name)
+    set((s) => ({
+      byProject: {
+        ...s.byProject,
+        [projectId]: [thread, ...(s.byProject[projectId] ?? [])]
+      },
+      statusMap: { ...s.statusMap, [thread.id]: 'idle' },
+      selectedThreadId: thread.id
+    }))
+  },
 }))

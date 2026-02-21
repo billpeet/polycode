@@ -15,11 +15,15 @@ import {
   threadHasMessages,
   archiveThread,
   unarchiveThread,
-  listMessages
+  listMessages,
+  importThread,
+  getLastUsedModel,
+  getImportedSessionIds
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
-import { getGitStatus, commitChanges } from '../git'
-import { listDirectory, readFileContent } from '../files'
+import { getGitStatus, commitChanges, stageFile, unstageFile, stageAll, unstageAll, generateCommitMessage } from '../git'
+import { listDirectory, readFileContent, listAllFiles } from '../files'
+import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -48,7 +52,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('threads:create', (_event, projectId: string, name: string) => {
-    return createThread(projectId, name)
+    const model = getLastUsedModel(projectId)
+    return createThread(projectId, name, 'claude-code', model)
   })
 
   ipcMain.handle('threads:delete', (_event, id: string) => {
@@ -163,6 +168,26 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return commitChanges(repoPath, message)
   })
 
+  ipcMain.handle('git:stage', (_event, repoPath: string, filePath: string) => {
+    return stageFile(repoPath, filePath)
+  })
+
+  ipcMain.handle('git:unstage', (_event, repoPath: string, filePath: string) => {
+    return unstageFile(repoPath, filePath)
+  })
+
+  ipcMain.handle('git:stageAll', (_event, repoPath: string) => {
+    return stageAll(repoPath)
+  })
+
+  ipcMain.handle('git:unstageAll', (_event, repoPath: string) => {
+    return unstageAll(repoPath)
+  })
+
+  ipcMain.handle('git:generateCommitMessage', (_event, repoPath: string) => {
+    return generateCommitMessage(repoPath)
+  })
+
   // ── Files ────────────────────────────────────────────────────────────────
 
   ipcMain.handle('files:list', (_event, dirPath: string) => {
@@ -171,5 +196,34 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('files:read', (_event, filePath: string) => {
     return readFileContent(filePath)
+  })
+
+  ipcMain.handle('files:searchList', (_event, rootPath: string) => {
+    return listAllFiles(rootPath)
+  })
+
+  // ── Claude History ─────────────────────────────────────────────────────────
+
+  ipcMain.handle('claude-history:listProjects', () => {
+    return listClaudeProjects()
+  })
+
+  ipcMain.handle('claude-history:listSessions', (_event, encodedPath: string) => {
+    return listClaudeSessions(encodedPath)
+  })
+
+  ipcMain.handle('claude-history:importedIds', (_event, projectId: string) => {
+    return getImportedSessionIds(projectId)
+  })
+
+  ipcMain.handle('claude-history:import', (_event, projectId: string, sessionFilePath: string, sessionId: string, name: string) => {
+    const messages = parseSessionMessages(sessionFilePath)
+    const importedMessages = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+      metadata: m.metadata,
+      created_at: m.timestamp
+    }))
+    return importThread(projectId, name, sessionId, importedMessages)
   })
 }

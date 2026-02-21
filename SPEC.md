@@ -132,7 +132,7 @@ DB file: `{userData}/polycode.db` (WAL mode, foreign keys on)
 - [x] Multi-line input with Shift+Enter
 
 ### Phase 3 — Polish & UX
-- [ ] Diff rendering for code changes
+- [x] Diff rendering for code changes
 - [x] Thread rename inline UI
 - [x] Keyboard shortcuts (Ctrl+T new thread, Ctrl+W deselect, Ctrl+K focus input)
 - [x] Loading / streaming indicators (spinner, skeleton)
