@@ -20,7 +20,9 @@ export default function ProjectDialog({ mode, project, onClose }: Props) {
     if (dir) {
       setPath(dir)
       if (!name) {
-        setName(dir.split('/').pop() ?? dir.split('\\').pop() ?? '')
+        // Extract directory name, handling both / and \ separators
+        const parts = dir.split(/[/\\]/)
+        setName(parts[parts.length - 1] || '')
       }
     }
   }
