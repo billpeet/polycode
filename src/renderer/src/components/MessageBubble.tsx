@@ -1,7 +1,6 @@
 import MarkdownContent from './MarkdownContent'
 import ToolCallBlock from './ToolCallBlock'
 import { MessageEntry } from './MessageStream'
-import { parseFileMentions } from './FileMention'
 
 interface Props {
   entry: MessageEntry
@@ -48,11 +47,7 @@ export default function MessageBubble({ entry }: Props) {
           border: isUser ? 'none' : '1px solid var(--color-border)'
         }}
       >
-        {isUser && metadata?.type !== 'question_answer' ? (
-          <p className="whitespace-pre-wrap">{parseFileMentions(message.content, 'message-user')}</p>
-        ) : (
           <MarkdownContent content={message.content} />
-        )}
       </div>
     </div>
   )
