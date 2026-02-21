@@ -2,10 +2,12 @@ import { useEffect, useRef } from 'react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
+import FilePreview from './components/FilePreview'
 import ToastStack from './components/Toast'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useUiStore } from './stores/ui'
+import { useFilesStore } from './stores/files'
 
 const STORAGE_PROJECT_KEY = 'polycode:selectedProjectId'
 const STORAGE_THREAD_KEY = 'polycode:selectedThreadId'
@@ -24,6 +26,8 @@ export default function App() {
   const isTodoPanelOpen = useUiStore((s) =>
     selectedThreadId ? (s.todoPanelOpenByThread[selectedThreadId] ?? true) : false
   )
+
+  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
 
   // Track whether we've attempted restore yet
   const restored = useRef(false)
@@ -122,6 +126,7 @@ export default function App() {
               <div className="flex flex-1 flex-col overflow-hidden">
                 <ThreadView threadId={selectedThreadId} />
               </div>
+              {selectedFilePath && <FilePreview />}
               {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
             </>
           ) : (

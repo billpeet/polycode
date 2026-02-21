@@ -84,3 +84,12 @@ export interface Question {
 export interface UserQuestion {
   questions: Question[]
 }
+
+// ── File system types ──────────────────────────────────────────────────────
+
+export interface FileEntry {
+  name: string
+  path: string
+  isDirectory: boolean
+  children?: FileEntry[]
+}

@@ -3,7 +3,9 @@ import { useTodoStore, Todo } from '../stores/todos'
 import { useGitStore } from '../stores/git'
 import { useProjectStore } from '../stores/projects'
 import { useToastStore } from '../stores/toast'
+import { useUiStore, RightPanelTab } from '../stores/ui'
 import { GitFileChange } from '../types/ipc'
+import FileTree from './FileTree'
 
 // ─── Stable fallback ──────────────────────────────────────────────────────────
 
@@ -386,6 +388,32 @@ function GitSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   )
 }
 
+// ─── Tab button ────────────────────────────────────────────────────────────────
+
+function TabButton({
+  label,
+  active,
+  onClick,
+}: {
+  label: string
+  active: boolean
+  onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider transition-colors"
+      style={{
+        color: active ? 'var(--color-text)' : 'var(--color-text-muted)',
+        borderBottom: active ? '2px solid var(--color-claude)' : '2px solid transparent',
+        marginBottom: -1,
+      }}
+    >
+      {label}
+    </button>
+  )
+}
+
 // ─── Root panel ───────────────────────────────────────────────────────────────
 
 interface Props {
@@ -396,34 +424,45 @@ export default function RightPanel({ threadId }: Props) {
   const [tasksCollapsed, setTasksCollapsed] = useState(false)
   const [gitCollapsed, setGitCollapsed] = useState(false)
 
+  const activeTab = useUiStore((s) => s.rightPanelTab)
+  const setActiveTab = useUiStore((s) => s.setRightPanelTab)
+
   return (
     <aside
-      className="flex w-64 flex-shrink-0 flex-col border-l overflow-y-auto"
+      className="flex w-64 flex-shrink-0 flex-col border-l overflow-hidden"
       style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
     >
-      {/* Top border / panel header */}
+      {/* Tab header */}
       <div
-        className="flex items-center px-3 py-2 flex-shrink-0 border-b"
+        className="flex items-center flex-shrink-0 border-b"
         style={{ borderColor: 'var(--color-border)' }}
       >
-        <span className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>
-          Panel
-        </span>
+        <TabButton label="Tasks" active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} />
+        <TabButton label="Files" active={activeTab === 'files'} onClick={() => setActiveTab('files')} />
       </div>
 
-      <TasksSection
-        threadId={threadId}
-        collapsed={tasksCollapsed}
-        onToggle={() => setTasksCollapsed((c) => !c)}
-      />
+      {/* Tab content */}
+      <div className="flex-1 overflow-y-auto">
+        {activeTab === 'tasks' ? (
+          <>
+            <TasksSection
+              threadId={threadId}
+              collapsed={tasksCollapsed}
+              onToggle={() => setTasksCollapsed((c) => !c)}
+            />
 
-      {/* Divider between sections */}
-      <div className="flex-shrink-0" style={{ height: 1, background: 'var(--color-border)' }} />
+            {/* Divider between sections */}
+            <div className="flex-shrink-0" style={{ height: 1, background: 'var(--color-border)' }} />
 
-      <GitSection
-        collapsed={gitCollapsed}
-        onToggle={() => setGitCollapsed((c) => !c)}
-      />
+            <GitSection
+              collapsed={gitCollapsed}
+              onToggle={() => setGitCollapsed((c) => !c)}
+            />
+          </>
+        ) : (
+          <FileTree />
+        )}
+      </div>
     </aside>
   )
 }

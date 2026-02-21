@@ -19,6 +19,7 @@ import {
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { getGitStatus, commitChanges } from '../git'
+import { listDirectory, readFileContent } from '../files'
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Projects ──────────────────────────────────────────────────────────────
@@ -160,5 +161,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:commit', (_event, repoPath: string, message: string) => {
     return commitChanges(repoPath, message)
+  })
+
+  // ── Files ────────────────────────────────────────────────────────────────
+
+  ipcMain.handle('files:list', (_event, dirPath: string) => {
+    return listDirectory(dirPath)
+  })
+
+  ipcMain.handle('files:read', (_event, filePath: string) => {
+    return readFileContent(filePath)
   })
 }

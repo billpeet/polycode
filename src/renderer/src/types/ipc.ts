@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question, FileEntry }
 export { ANTHROPIC_MODELS }
 
 /** Shape of window.api exposed by preload */
@@ -29,6 +29,8 @@ export interface WindowApi {
   invoke(channel: 'dialog:open-directory'): Promise<string | null>
   invoke(channel: 'git:status', repoPath: string): Promise<GitStatus | null>
   invoke(channel: 'git:commit', repoPath: string, message: string): Promise<void>
+  invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
+  invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 
