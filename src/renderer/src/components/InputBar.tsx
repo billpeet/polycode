@@ -3,6 +3,7 @@ import { useThreadStore } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
 import { useProjectStore } from '../stores/projects'
 import { useToastStore } from '../stores/toast'
+import { useSessionStore } from '../stores/sessions'
 import {
   Question,
   SearchableFile,
@@ -244,7 +245,13 @@ export default function InputBar({ threadId }: Props) {
       return
     }
 
-    appendUserMessage(threadId, finalContent)
+    // Append optimistic user message to the correct store based on active session
+    const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
+    if (activeSessionId) {
+      useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent)
+    } else {
+      appendUserMessage(threadId, finalContent)
+    }
     await send(threadId, finalContent, project.path, { planMode })
     if (planMode) setPlanMode(threadId, false)
   }

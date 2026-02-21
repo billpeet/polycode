@@ -11,7 +11,7 @@ interface Props {
 }
 
 const EMPTY: Message[] = []
-const GROUP_THRESHOLD = 5
+const GROUP_THRESHOLD = 3
 
 function safeParseJson(str: string | null): Record<string, unknown> | null {
   if (!str) return null
@@ -32,6 +32,16 @@ export interface MessageGroup {
   key: string
   toolName: string
   entries: MessageEntry[]
+}
+
+/** Tools that can be grouped together (mapped to a shared group key). */
+const TOOL_GROUP_KEY: Record<string, string> = {
+  Read: 'file-access',
+  Glob: 'file-access',
+}
+
+function getToolGroupKey(toolName: string): string {
+  return TOOL_GROUP_KEY[toolName] ?? toolName
 }
 
 /** Pair tool_call messages with their matching tool_result by tool_use_id. */
@@ -94,22 +104,27 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
       continue
     }
     const toolName = (entry.metadata?.name as string) ?? entry.message.content
-    // Find the run of consecutive same-tool entries
+    const groupKey = getToolGroupKey(toolName)
+    // Find the run of consecutive tool entries that share the same group key
     let j = i + 1
     while (
       j < flat.length &&
       (flat[j].metadata?.type === 'tool_call' || flat[j].metadata?.type === 'tool_use') &&
-      ((flat[j].metadata?.name as string) ?? flat[j].message.content) === toolName
+      getToolGroupKey((flat[j].metadata?.name as string) ?? flat[j].message.content) === groupKey
     ) {
       j++
     }
     const runLength = j - i
     if (runLength > GROUP_THRESHOLD) {
+      const groupEntries = flat.slice(i, j)
+      // For mixed groups (different tools sharing a group key), use the group key as display name
+      const uniqueTools = new Set(groupEntries.map((e) => (e.metadata?.name as string) ?? e.message.content))
+      const displayName = uniqueTools.size > 1 ? groupKey : toolName
       grouped.push({
         kind: 'group',
         key: `group-${entry.key}`,
-        toolName,
-        entries: flat.slice(i, j),
+        toolName: displayName,
+        entries: groupEntries,
       })
     } else {
       for (let k = i; k < j; k++) grouped.push(flat[k])

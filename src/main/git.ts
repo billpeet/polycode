@@ -116,6 +116,11 @@ export async function stageFile(repoPath: string, filePath: string): Promise<voi
   await git(repoPath, ['add', '--', filePath])
 }
 
+export async function stageFiles(repoPath: string, filePaths: string[]): Promise<void> {
+  if (filePaths.length === 0) return
+  await git(repoPath, ['add', '--', ...filePaths])
+}
+
 export async function unstageFile(repoPath: string, filePath: string): Promise<void> {
   // Use restore --staged which works for both tracked and untracked files
   await git(repoPath, ['restore', '--staged', '--', filePath])
@@ -127,6 +132,16 @@ export async function stageAll(repoPath: string): Promise<void> {
 
 export async function unstageAll(repoPath: string): Promise<void> {
   await git(repoPath, ['restore', '--staged', '.'])
+}
+
+export async function gitPush(repoPath: string): Promise<{ pushed: true }> {
+  await git(repoPath, ['push'])
+  return { pushed: true }
+}
+
+export async function gitPull(repoPath: string): Promise<{ pulled: true }> {
+  await git(repoPath, ['pull'])
+  return { pulled: true }
 }
 
 export async function generateCommitMessage(repoPath: string): Promise<string> {

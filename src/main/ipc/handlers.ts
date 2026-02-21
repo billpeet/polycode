@@ -22,10 +22,11 @@ import {
   getImportedSessionIds,
   listSessions,
   getActiveSession,
-  setActiveSession
+  setActiveSession,
+  getThreadModifiedFiles
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
-import { getGitStatus, commitChanges, stageFile, unstageFile, stageAll, unstageAll, generateCommitMessage } from '../git'
+import { getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, gitPush, gitPull } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import {
@@ -158,6 +159,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     session.executePlanInNewContext()
   })
 
+  ipcMain.handle('threads:getModifiedFiles', (_event, threadId: string, workingDir: string) => {
+    return getThreadModifiedFiles(threadId, workingDir)
+  })
+
   // ── Sessions ────────────────────────────────────────────────────────────────
 
   ipcMain.handle('sessions:list', (_event, threadId: string) => {
@@ -218,8 +223,20 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return unstageAll(repoPath)
   })
 
+  ipcMain.handle('git:stageFiles', (_event, repoPath: string, filePaths: string[]) => {
+    return stageFiles(repoPath, filePaths)
+  })
+
   ipcMain.handle('git:generateCommitMessage', (_event, repoPath: string) => {
     return generateCommitMessage(repoPath)
+  })
+
+  ipcMain.handle('git:push', (_event, repoPath: string) => {
+    return gitPush(repoPath)
+  })
+
+  ipcMain.handle('git:pull', (_event, repoPath: string) => {
+    return gitPull(repoPath)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────

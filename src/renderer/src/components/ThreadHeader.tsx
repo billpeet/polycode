@@ -4,6 +4,7 @@ import { useProjectStore } from '../stores/projects'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useUiStore } from '../stores/ui'
 import { useGitStore } from '../stores/git'
+import { useToastStore } from '../stores/toast'
 import { ANTHROPIC_MODELS } from '../types/ipc'
 
 const EMPTY_TODOS: Todo[] = []
@@ -37,6 +38,11 @@ export default function ThreadHeader({ threadId }: Props) {
   const gitStatus = useGitStore((s) =>
     project?.path ? (s.statusByPath[project.path] ?? null) : null
   )
+  const pushGit = useGitStore((s) => s.push)
+  const pullGit = useGitStore((s) => s.pull)
+  const isPushing = useGitStore((s) => project?.path ? (s.pushingByPath[project.path] ?? false) : false)
+  const isPulling = useGitStore((s) => project?.path ? (s.pullingByPath[project.path] ?? false) : false)
+  const addToast = useToastStore((s) => s.add)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -165,10 +171,56 @@ export default function ThreadHeader({ threadId }: Props) {
               </svg>
               <span className="max-w-[100px] truncate">{gitStatus.branch}</span>
               {gitStatus.ahead > 0 && (
-                <span style={{ color: '#4ade80' }}>↑{gitStatus.ahead}</span>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (!project?.path) return
+                    try {
+                      await pushGit(project.path)
+                      addToast({ type: 'success', message: 'Pushed successfully', duration: 3000 })
+                    } catch (err) {
+                      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 })
+                    }
+                  }}
+                  disabled={isPushing}
+                  className="hover:opacity-70 transition-opacity disabled:opacity-40"
+                  style={{ color: '#4ade80', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
+                  title={`Push (${gitStatus.ahead} ahead)`}
+                >
+                  {isPushing ? (
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin" style={{ verticalAlign: 'middle' }}>
+                      <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z"/>
+                    </svg>
+                  ) : (
+                    <>↑{gitStatus.ahead}</>
+                  )}
+                </button>
               )}
               {gitStatus.behind > 0 && (
-                <span style={{ color: '#f87171' }}>↓{gitStatus.behind}</span>
+                <button
+                  onClick={async (e) => {
+                    e.stopPropagation()
+                    if (!project?.path) return
+                    try {
+                      await pullGit(project.path)
+                      addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
+                    } catch (err) {
+                      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull failed', duration: 0 })
+                    }
+                  }}
+                  disabled={isPulling}
+                  className="hover:opacity-70 transition-opacity disabled:opacity-40"
+                  style={{ color: '#f87171', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
+                  title={`Pull (${gitStatus.behind} behind)`}
+                >
+                  {isPulling ? (
+                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin" style={{ verticalAlign: 'middle' }}>
+                      <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z"/>
+                    </svg>
+                  ) : (
+                    <>↓{gitStatus.behind}</>
+                  )}
+                </button>
               )}
             </span>
 

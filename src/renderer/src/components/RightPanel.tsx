@@ -323,7 +323,9 @@ function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, acti
   )
 }
 
-function GitSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
+const EMPTY_FILES: string[] = []
+
+function GitSection({ threadId, collapsed, onToggle }: { threadId: string; collapsed: boolean; onToggle: () => void }) {
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const project = projects.find((p) => p.id === selectedProjectId)
@@ -331,6 +333,7 @@ function GitSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const gitStatus = useGitStore((s) => project?.path ? (s.statusByPath[project.path] ?? null) : null)
   const commitMsg = useGitStore((s) => project?.path ? (s.commitMessageByPath[project.path] ?? '') : '')
   const isGeneratingMessage = useGitStore((s) => project?.path ? (s.generatingMessageByPath[project.path] ?? false) : false)
+  const modifiedFiles = useGitStore((s) => s.modifiedFilesByThread[threadId] ?? EMPTY_FILES)
   const fetchGit = useGitStore((s) => s.fetch)
   const commitGit = useGitStore((s) => s.commit)
   const setCommitMsg = useGitStore((s) => s.setCommitMessage)
@@ -339,22 +342,52 @@ function GitSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   const unstageFile = useGitStore((s) => s.unstage)
   const stageAllFiles = useGitStore((s) => s.stageAll)
   const unstageAllFiles = useGitStore((s) => s.unstageAll)
+  const stageFilesAction = useGitStore((s) => s.stageFiles)
+  const fetchModifiedFiles = useGitStore((s) => s.fetchModifiedFiles)
   const addToast = useToastStore((s) => s.add)
 
+  const pushGit = useGitStore((s) => s.push)
+  const pullGit = useGitStore((s) => s.pull)
+  const isPushing = useGitStore((s) => project?.path ? (s.pushingByPath[project.path] ?? false) : false)
+  const isPulling = useGitStore((s) => project?.path ? (s.pullingByPath[project.path] ?? false) : false)
+
   const [committing, setCommitting] = useState(false)
+  const [stageThreadFiles, setStageThreadFiles] = useState(true)
 
   useEffect(() => {
     if (project?.path) fetchGit(project.path)
   }, [project?.path, fetchGit])
 
+  useEffect(() => {
+    if (threadId && project?.path) fetchModifiedFiles(threadId, project.path)
+  }, [threadId, project?.path, fetchModifiedFiles])
+
   const handleSetCommitMsg = useCallback((msg: string) => {
     if (project?.path) setCommitMsg(project.path, msg)
   }, [project?.path, setCommitMsg])
+
+  // Compute unstaged files that were modified by this thread
+  const unstagedFiles = gitStatus?.files.filter((f) => !f.staged) ?? []
+  const unstagedPaths = new Set(unstagedFiles.map((f) => f.path))
+  const threadFilesUnstaged = modifiedFiles.filter((f) => {
+    // Compare paths: modified files are absolute, git status paths are relative
+    const relPath = project?.path ? f.replace(project.path + '/', '').replace(project.path + '\\', '') : f
+    return unstagedPaths.has(relPath) || unstagedPaths.has(f)
+  })
+  const showStageCheckbox = threadFilesUnstaged.length > 0 && (gitStatus?.files.filter((f) => f.staged).length ?? 0) === 0
 
   async function handleCommit(): Promise<void> {
     if (!project?.path || !commitMsg.trim()) return
     setCommitting(true)
     try {
+      // If checkbox is checked and there are thread files to stage, stage them first
+      if (stageThreadFiles && threadFilesUnstaged.length > 0) {
+        // Convert absolute paths to relative paths for git
+        const relativePaths = threadFilesUnstaged.map((f) => {
+          return f.replace(project.path + '/', '').replace(project.path + '\\', '')
+        })
+        await stageFilesAction(project.path, relativePaths)
+      }
       await commitGit(project.path, commitMsg.trim())
       addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
     } catch (err) {
@@ -410,7 +443,6 @@ function GitSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
   }, [project?.path, unstageAllFiles, addToast])
 
   const stagedFiles = gitStatus?.files.filter((f) => f.staged) ?? []
-  const unstagedFiles = gitStatus?.files.filter((f) => !f.staged) ?? []
   const totalChanges = gitStatus?.files.length ?? 0
 
   const refreshButton = (
@@ -480,14 +512,101 @@ function GitSection({ collapsed, onToggle }: { collapsed: boolean; onToggle: () 
                     )}
                   </button>
                 </div>
+                {showStageCheckbox && (
+                  <label
+                    className="flex items-center gap-2 mt-2 mb-1 cursor-pointer text-xs"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={stageThreadFiles}
+                      onChange={(e) => setStageThreadFiles(e.target.checked)}
+                      className="rounded"
+                      style={{ accentColor: 'var(--color-claude)' }}
+                    />
+                    <span>Stage {threadFilesUnstaged.length} file{threadFilesUnstaged.length !== 1 ? 's' : ''} from this thread</span>
+                  </label>
+                )}
                 <button
                   onClick={handleCommit}
-                  disabled={!commitMsg.trim() || committing || stagedFiles.length === 0}
+                  disabled={
+                    !commitMsg.trim() ||
+                    committing ||
+                    (stagedFiles.length === 0 && !(showStageCheckbox && stageThreadFiles && threadFilesUnstaged.length > 0))
+                  }
                   className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
                   style={{ background: 'var(--color-claude)', color: '#fff' }}
                 >
-                  {committing ? 'Committing…' : 'Commit'}
+                  {committing
+                    ? 'Committing…'
+                    : showStageCheckbox && stageThreadFiles && threadFilesUnstaged.length > 0
+                      ? `Stage & Commit (${threadFilesUnstaged.length})`
+                      : 'Commit'}
                 </button>
+
+                {/* Push / Pull row */}
+                <div className="flex gap-1.5 mt-1.5">
+                  <button
+                    onClick={async () => {
+                      if (!project?.path) return
+                      try {
+                        await pullGit(project.path)
+                        addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
+                      } catch (err) {
+                        addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull failed', duration: 0 })
+                      }
+                    }}
+                    disabled={isPulling}
+                    className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                    style={{
+                      background: 'var(--color-surface-2)',
+                      border: '1px solid var(--color-border)',
+                      color: gitStatus.behind > 0 ? '#f87171' : 'var(--color-text-muted)',
+                    }}
+                    title="Pull from remote"
+                  >
+                    {isPulling ? (
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
+                        <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z"/>
+                      </svg>
+                    ) : (
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 12l-4-4h2.5V4h3v4H12L8 12z"/>
+                      </svg>
+                    )}
+                    Pull{gitStatus.behind > 0 ? ` ↓${gitStatus.behind}` : ''}
+                  </button>
+                  <button
+                    onClick={async () => {
+                      if (!project?.path) return
+                      try {
+                        await pushGit(project.path)
+                        addToast({ type: 'success', message: 'Pushed successfully', duration: 3000 })
+                      } catch (err) {
+                        addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 })
+                      }
+                    }}
+                    disabled={isPushing}
+                    className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                    style={{
+                      background: 'var(--color-surface-2)',
+                      border: '1px solid var(--color-border)',
+                      color: gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)',
+                    }}
+                    title="Push to remote"
+                  >
+                    {isPushing ? (
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
+                        <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z"/>
+                      </svg>
+                    ) : (
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 4l4 4H9.5v4h-3V8H4l4-4z"/>
+                      </svg>
+                    )}
+                    Push{gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}
+                  </button>
+                </div>
               </>
             )}
           </div>
@@ -598,6 +717,7 @@ export default function RightPanel({ threadId }: Props) {
             <div className="flex-shrink-0" style={{ height: 1, background: 'var(--color-border)' }} />
 
             <GitSection
+              threadId={threadId}
               collapsed={gitCollapsed}
               onToggle={() => setGitCollapsed((c) => !c)}
             />

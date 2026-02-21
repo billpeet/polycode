@@ -194,6 +194,39 @@ body,
   border: 1px solid var(--color-border);
 }
 
+/* ── Task list checkboxes ─────────────────────────────────────────────────── */
+
+.prose-content input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--color-text-muted);
+  border-radius: 3px;
+  background: transparent;
+  vertical-align: middle;
+  margin-right: 6px;
+  position: relative;
+  cursor: default;
+  flex-shrink: 0;
+}
+
+.prose-content input[type="checkbox"]:checked {
+  background: var(--color-claude);
+  border-color: var(--color-claude);
+}
+
+.prose-content input[type="checkbox"]:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
 /* ── Code block chrome ────────────────────────────────────────────────────── */
 
 .prose-content .code-block-wrapper {

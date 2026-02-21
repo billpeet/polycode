@@ -31,6 +31,7 @@ export interface WindowApi {
   invoke(channel: 'sessions:getActive', threadId: string): Promise<Session | null>
   invoke(channel: 'sessions:switch', threadId: string, sessionId: string, workingDir: string): Promise<void>
   invoke(channel: 'threads:executePlanInNewContext', threadId: string, workingDir: string): Promise<void>
+  invoke(channel: 'threads:getModifiedFiles', threadId: string, workingDir: string): Promise<string[]>
   invoke(channel: 'dialog:open-directory'): Promise<string | null>
   invoke(channel: 'git:status', repoPath: string): Promise<GitStatus | null>
   invoke(channel: 'git:commit', repoPath: string, message: string): Promise<void>
@@ -38,7 +39,10 @@ export interface WindowApi {
   invoke(channel: 'git:unstage', repoPath: string, filePath: string): Promise<void>
   invoke(channel: 'git:stageAll', repoPath: string): Promise<void>
   invoke(channel: 'git:unstageAll', repoPath: string): Promise<void>
+  invoke(channel: 'git:stageFiles', repoPath: string, filePaths: string[]): Promise<void>
   invoke(channel: 'git:generateCommitMessage', repoPath: string): Promise<string>
+  invoke(channel: 'git:push', repoPath: string): Promise<void>
+  invoke(channel: 'git:pull', repoPath: string): Promise<void>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>

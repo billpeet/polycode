@@ -284,6 +284,73 @@ export interface ImportedMessage {
   created_at: string
 }
 
+// ── Thread Modified Files ────────────────────────────────────────────────────
+
+interface ToolCallMetadata {
+  type: 'tool_call'
+  name: string
+  tool_use_id: string
+  input?: { file_path?: string }
+}
+
+interface ToolResultMetadata {
+  type: 'tool_result'
+  tool_use_id: string
+  is_error?: boolean
+}
+
+/**
+ * Extract file paths from successful Edit/Write tool calls in a thread.
+ * Returns deduplicated absolute paths, resolving relative paths against workingDir.
+ */
+export function getThreadModifiedFiles(threadId: string, workingDir: string): string[] {
+  const messages = listMessages(threadId)
+
+  // Map tool_use_id -> file_path for Edit/Write calls
+  const toolCallFiles = new Map<string, string>()
+  // Set of tool_use_ids that had successful results
+  const successfulToolIds = new Set<string>()
+
+  for (const msg of messages) {
+    if (!msg.metadata) continue
+
+    let meta: ToolCallMetadata | ToolResultMetadata | undefined
+    try {
+      meta = typeof msg.metadata === 'string' ? JSON.parse(msg.metadata) : msg.metadata
+    } catch {
+      continue
+    }
+
+    if (!meta || typeof meta !== 'object' || !('type' in meta)) continue
+
+    if (meta.type === 'tool_call' && (meta.name === 'Edit' || meta.name === 'Write')) {
+      const filePath = meta.input?.file_path
+      if (filePath && meta.tool_use_id) {
+        toolCallFiles.set(meta.tool_use_id, filePath)
+      }
+    } else if (meta.type === 'tool_result' && meta.tool_use_id) {
+      // Consider it successful if is_error is not true
+      if (meta.is_error !== true) {
+        successfulToolIds.add(meta.tool_use_id)
+      }
+    }
+  }
+
+  // Collect unique file paths from successful tool calls
+  const files = new Set<string>()
+  for (const [toolId, filePath] of toolCallFiles) {
+    if (successfulToolIds.has(toolId)) {
+      // Resolve relative paths against workingDir
+      const resolved = filePath.startsWith('/') || /^[a-zA-Z]:/.test(filePath)
+        ? filePath
+        : `${workingDir}/${filePath}`
+      files.add(resolved)
+    }
+  }
+
+  return Array.from(files)
+}
+
 export function importThread(
   projectId: string,
   name: string,

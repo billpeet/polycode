@@ -7,6 +7,10 @@ interface GitStore {
   loadingByPath: Record<string, boolean>
   commitMessageByPath: Record<string, string>
   generatingMessageByPath: Record<string, boolean>
+  pushingByPath: Record<string, boolean>
+  pullingByPath: Record<string, boolean>
+  // Keyed by threadId
+  modifiedFilesByThread: Record<string, string[]>
 
   fetch: (repoPath: string) => Promise<void>
   commit: (repoPath: string, message: string) => Promise<void>
@@ -14,8 +18,12 @@ interface GitStore {
   unstage: (repoPath: string, filePath: string) => Promise<void>
   stageAll: (repoPath: string) => Promise<void>
   unstageAll: (repoPath: string) => Promise<void>
+  stageFiles: (repoPath: string, filePaths: string[]) => Promise<void>
   setCommitMessage: (repoPath: string, message: string) => void
   generateCommitMessage: (repoPath: string) => Promise<void>
+  push: (repoPath: string) => Promise<void>
+  pull: (repoPath: string) => Promise<void>
+  fetchModifiedFiles: (threadId: string, workingDir: string) => Promise<void>
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
@@ -23,6 +31,9 @@ export const useGitStore = create<GitStore>((set, get) => ({
   loadingByPath: {},
   commitMessageByPath: {},
   generatingMessageByPath: {},
+  pushingByPath: {},
+  pullingByPath: {},
+  modifiedFilesByThread: {},
 
   fetch: async (repoPath) => {
     if (get().loadingByPath[repoPath]) return
@@ -65,6 +76,11 @@ export const useGitStore = create<GitStore>((set, get) => ({
     await get().fetch(repoPath)
   },
 
+  stageFiles: async (repoPath, filePaths) => {
+    await window.api.invoke('git:stageFiles', repoPath, filePaths)
+    await get().fetch(repoPath)
+  },
+
   setCommitMessage: (repoPath, message) => {
     set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: message } }))
   },
@@ -80,6 +96,39 @@ export const useGitStore = create<GitStore>((set, get) => ({
       }))
     } catch {
       set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false } }))
+    }
+  },
+
+  push: async (repoPath) => {
+    if (get().pushingByPath[repoPath]) return
+    set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:push', repoPath)
+    } finally {
+      set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: false } }))
+      await get().fetch(repoPath)
+    }
+  },
+
+  pull: async (repoPath) => {
+    if (get().pullingByPath[repoPath]) return
+    set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:pull', repoPath)
+    } finally {
+      set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
+      await get().fetch(repoPath)
+    }
+  },
+
+  fetchModifiedFiles: async (threadId, workingDir) => {
+    try {
+      const files = await window.api.invoke('threads:getModifiedFiles', threadId, workingDir)
+      set((s) => ({
+        modifiedFilesByThread: { ...s.modifiedFilesByThread, [threadId]: files },
+      }))
+    } catch {
+      // Silently ignore errors
     }
   },
 }))

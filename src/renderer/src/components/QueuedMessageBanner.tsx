@@ -1,6 +1,7 @@
 import { useThreadStore, QueuedMessage } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
 import { useProjectStore } from '../stores/projects'
+import { useSessionStore } from '../stores/sessions'
 
 interface Props {
   threadId: string
@@ -54,7 +55,15 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
     setTimeout(async () => {
       const msg = queuedMessage
       clearQueue(threadId)
-      appendUserMessage(threadId, msg.content)
+
+      // Append optimistic user message to the correct store based on active session
+      const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
+      if (activeSessionId) {
+        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, msg.content)
+      } else {
+        appendUserMessage(threadId, msg.content)
+      }
+
       await send(threadId, msg.content, project.path, { planMode: msg.planMode })
     }, 100)
   }

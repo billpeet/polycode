@@ -5,6 +5,7 @@ import { useProjectStore } from '../stores/projects'
 import { useToastStore } from '../stores/toast'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useSessionStore } from '../stores/sessions'
+import { useGitStore } from '../stores/git'
 import { OutputEvent } from '../types/ipc'
 import ThreadHeader from './ThreadHeader'
 import SessionTabs from './SessionTabs'
@@ -98,6 +99,11 @@ export default function ThreadView({ threadId }: Props) {
       // Re-fetch sessions in case a new one was created
       fetchSessions(threadId)
 
+      // Refresh modified files for the git staging feature
+      if (project?.path) {
+        useGitStore.getState().fetchModifiedFiles(threadId, project.path)
+      }
+
       // Safety net: ensure status is reset if still running (handles edge cases where status event was missed)
       const currentStatus = useThreadStore.getState().statusMap[threadId]
       if (currentStatus === 'running') {
@@ -113,8 +119,13 @@ export default function ThreadView({ threadId }: Props) {
         // Clear queue first to prevent double-send
         useThreadStore.getState().clearQueue(threadId)
 
-        // Append optimistic user message
-        useMessageStore.getState().appendUserMessage(threadId, queuedMessage.content)
+        // Append optimistic user message to the correct store based on active session
+        const activeSession = useSessionStore.getState().activeSessionByThread[threadId]
+        if (activeSession) {
+          useMessageStore.getState().appendUserMessageToSession(activeSession, threadId, queuedMessage.content)
+        } else {
+          useMessageStore.getState().appendUserMessage(threadId, queuedMessage.content)
+        }
 
         // Get project for working dir
         const projectsState = useProjectStore.getState()
