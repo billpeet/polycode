@@ -9,14 +9,15 @@ interface Props {
 /** Returns a human-readable noun for a given tool name (singular / plural). */
 function toolNoun(toolName: string, count: number): string {
   const nouns: Record<string, [string, string]> = {
-    Read:     ['file',    'files'],
-    Write:    ['file',    'files'],
-    Edit:     ['file',    'files'],
-    Bash:     ['command', 'commands'],
-    Glob:     ['search',  'searches'],
-    Grep:     ['search',  'searches'],
-    WebFetch: ['request', 'requests'],
-    Task:     ['task',    'tasks'],
+    Read:          ['file',      'files'],
+    Write:         ['file',      'files'],
+    Edit:          ['file',      'files'],
+    Bash:          ['command',   'commands'],
+    Glob:          ['search',    'searches'],
+    Grep:          ['search',    'searches'],
+    WebFetch:      ['request',   'requests'],
+    Task:          ['task',      'tasks'],
+    'file-access': ['operation', 'operations'],
   }
   const [singular, plural] = nouns[toolName] ?? ['call', 'calls']
   return `${count} ${count === 1 ? singular : plural}`
