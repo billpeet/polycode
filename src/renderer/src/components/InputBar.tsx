@@ -81,7 +81,6 @@ function QuestionIcon({ className }: { className?: string }) {
 }
 
 export default function InputBar({ threadId }: Props) {
-  const [value, setValue] = useState('')
   const [planMode, setPlanMode] = useState(false)
   const [isFocused, setIsFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -95,6 +94,8 @@ export default function InputBar({ threadId }: Props) {
   const getQuestions = useThreadStore((s) => s.getQuestions)
   const answerQuestion = useThreadStore((s) => s.answerQuestion)
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
+  const value = useThreadStore((s) => s.draftByThread[threadId] ?? '')
+  const setDraft = useThreadStore((s) => s.setDraft)
   const appendUserMessage = useMessageStore((s) => s.appendUserMessage)
 
   const projects = useProjectStore((s) => s.projects)
@@ -131,7 +132,7 @@ export default function InputBar({ threadId }: Props) {
     const trimmed = value.trim()
     if (!trimmed || isProcessing || !project) return
 
-    setValue('')
+    setDraft(threadId, '')
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
@@ -152,7 +153,7 @@ export default function InputBar({ threadId }: Props) {
     if (e.key === 'Enter' && value.endsWith('\\')) {
       e.preventDefault()
       // Remove the trailing backslash and add newline
-      setValue(value.slice(0, -1) + '\n')
+      setDraft(threadId, value.slice(0, -1) + '\n')
       return
     }
 
@@ -169,7 +170,7 @@ export default function InputBar({ threadId }: Props) {
     const start = el.selectionStart
     const end = el.selectionEnd
     const newValue = value.slice(0, start) + '\n' + value.slice(end)
-    setValue(newValue)
+    setDraft(threadId, newValue)
 
     // Move cursor after the newline
     requestAnimationFrame(() => {
@@ -393,7 +394,7 @@ export default function InputBar({ threadId }: Props) {
           <textarea
             ref={textareaRef}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => setDraft(threadId, e.target.value)}
             onKeyDown={handleKeyDown}
             onInput={handleInput}
             onFocus={() => setIsFocused(true)}

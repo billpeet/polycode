@@ -11,6 +11,8 @@ interface ThreadStore {
   selectedThreadId: string | null
   statusMap: Record<string, ThreadStatus>
   showArchived: boolean
+  /** draft input text keyed by thread ID */
+  draftByThread: Record<string, string>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string) => Promise<void>
   create: (projectId: string, name: string) => Promise<void>
@@ -32,6 +34,7 @@ interface ThreadStore {
   rejectPlan: (threadId: string) => Promise<void>
   getQuestions: (threadId: string) => Promise<Question[]>
   answerQuestion: (threadId: string, answers: Record<string, string>) => Promise<void>
+  setDraft: (threadId: string, draft: string) => void
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -41,6 +44,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   selectedThreadId: null,
   statusMap: {},
   showArchived: false,
+  draftByThread: {},
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -228,4 +232,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
     await window.api.invoke('threads:answerQuestion', threadId, answers)
   },
+
+  setDraft: (threadId, draft) =>
+    set((s) => ({ draftByThread: { ...s.draftByThread, [threadId]: draft } })),
 }))
