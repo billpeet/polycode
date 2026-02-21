@@ -33,12 +33,11 @@ export class ClaudeDriver implements CLIDriver {
     ]
 
     // Plan mode uses --permission-mode plan (no bypass)
-    // Normal mode bypasses permissions and disables plan mode via system prompt
+    // Normal mode bypasses permissions but still allows Claude to enter plan mode
     if (planMode) {
       args.push('--permission-mode', 'plan')
     } else {
       args.push('--dangerously-skip-permissions')
-      args.push('--append-system-prompt', 'Never enter plan mode. Execute all tasks directly without a planning phase.')
     }
     if (this.options.model) {
       args.push('--model', this.options.model)
