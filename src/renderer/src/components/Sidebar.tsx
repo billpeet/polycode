@@ -22,7 +22,9 @@ function relativeTime(iso: string): string {
 export default function Sidebar() {
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
+  const expandedProjectIds = useProjectStore((s) => s.expandedProjectIds)
   const selectProject = useProjectStore((s) => s.select)
+  const toggleExpanded = useProjectStore((s) => s.toggleExpanded)
   const removeProject = useProjectStore((s) => s.remove)
 
   const byProject = useThreadStore((s) => s.byProject)
@@ -96,14 +98,19 @@ export default function Sidebar() {
     }
   }, [])
 
-  function handleSelectProject(id: string): void {
-    selectProject(id)
+  function handleToggleProject(id: string): void {
+    toggleExpanded(id)
+    // Also select this project when expanding (so new thread button works)
+    if (!expandedProjectIds.has(id)) {
+      selectProject(id)
+    }
+    // Fetch threads if not already loaded
     if (!byProject[id]) fetchThreads(id)
   }
 
-  async function handleNewThread(): Promise<void> {
-    if (!selectedProjectId) return
-    await createThread(selectedProjectId, 'New thread')
+  async function handleNewThread(projectId: string): Promise<void> {
+    await createThread(projectId, 'New thread')
+    selectProject(projectId)
     window.dispatchEvent(new Event('focus-input'))
   }
 
@@ -117,21 +124,15 @@ export default function Sidebar() {
     setConfirmDelete(null)
   }
 
-  async function handleArchiveThread(thread: Thread): Promise<void> {
-    if (!selectedProjectId) return
-    await archiveThread(thread.id, selectedProjectId)
+  async function handleArchiveThread(thread: Thread, projectId: string): Promise<void> {
+    await archiveThread(thread.id, projectId)
   }
 
-  async function handleUnarchiveThread(thread: Thread): Promise<void> {
-    if (!selectedProjectId) return
-    await unarchiveThread(thread.id, selectedProjectId)
+  async function handleUnarchiveThread(thread: Thread, projectId: string): Promise<void> {
+    await unarchiveThread(thread.id, projectId)
   }
 
-  const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
-  const archivedThreads = selectedProjectId ? (archivedByProject[selectedProjectId] ?? []) : []
-  const archivedCount = selectedProjectId ? (archivedCountByProject[selectedProjectId] ?? 0) : 0
-
-  function renderThread(thread: Thread, isArchived: boolean) {
+  function renderThread(thread: Thread, isArchived: boolean, projectId: string) {
     const status = statusMap[thread.id] ?? 'idle'
     const statusColor =
       status === 'running' ? '#4ade80'
@@ -175,7 +176,7 @@ export default function Sidebar() {
         >
           {isArchived ? (
             <button
-              onClick={() => handleUnarchiveThread(thread)}
+              onClick={() => handleUnarchiveThread(thread, projectId)}
               className="rounded p-1 hover:bg-white/10 transition-colors"
               style={{ color: 'var(--color-text-muted)' }}
               title="Unarchive thread"
@@ -189,7 +190,7 @@ export default function Sidebar() {
             </button>
           ) : (
             <button
-              onClick={() => handleArchiveThread(thread)}
+              onClick={() => handleArchiveThread(thread, projectId)}
               className="rounded p-1 hover:bg-white/10 transition-colors"
               style={{ color: 'var(--color-text-muted)' }}
               title="Archive thread"
@@ -237,20 +238,23 @@ export default function Sidebar() {
             {/* Project row */}
             <div className="group relative">
               <button
-                onClick={() => handleSelectProject(project.id)}
+                onClick={() => handleToggleProject(project.id)}
                 className="flex w-full items-center px-4 py-2 text-left text-sm transition-colors min-w-0"
                 style={{
-                  background: selectedProjectId === project.id ? 'var(--color-surface-2)' : 'transparent',
+                  background: expandedProjectIds.has(project.id) ? 'var(--color-surface-2)' : 'transparent',
                   color: 'var(--color-text)'
                 }}
               >
+                <span className="mr-1.5 text-[10px] flex-shrink-0 opacity-50" style={{ width: '10px' }}>
+                  {expandedProjectIds.has(project.id) ? '▾' : '▸'}
+                </span>
                 <span className="mr-2 text-xs flex-shrink-0">📁</span>
                 <span className="truncate">{project.name}</span>
               </button>
               {/* Project actions — absolutely positioned, overlay on hover */}
               <div
                 className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{ background: selectedProjectId === project.id ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
+                style={{ background: expandedProjectIds.has(project.id) ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
               >
                 <button
                   onClick={() => setProjectDialog({ mode: 'edit', project })}
@@ -271,36 +275,55 @@ export default function Sidebar() {
               </div>
             </div>
 
-            {/* Threads under selected project */}
-            {selectedProjectId === project.id && (
-              <div>
-                {/* New thread button — at the top so new threads are visible immediately */}
-                <button
-                  onClick={handleNewThread}
-                  className="flex w-full items-center pl-8 pr-4 py-1.5 text-left text-xs opacity-50 hover:opacity-80 transition-opacity"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  + New thread
-                </button>
+            {/* Threads under this project */}
+            {(() => {
+              const isExpanded = expandedProjectIds.has(project.id)
+              const projectThreads = byProject[project.id] ?? []
+              const projectArchivedThreads = archivedByProject[project.id] ?? []
+              const projectArchivedCount = archivedCountByProject[project.id] ?? 0
+              const runningThreads = projectThreads.filter((t) => statusMap[t.id] === 'running')
 
-                {/* Active threads */}
-                {threads.map((thread) => renderThread(thread, false))}
+              // When collapsed, only show running threads
+              if (!isExpanded) {
+                if (runningThreads.length === 0) return null
+                return (
+                  <div>
+                    {runningThreads.map((thread) => renderThread(thread, false, project.id))}
+                  </div>
+                )
+              }
 
-                {/* Archive toggle — only shown when there are archived threads or section is open */}
-                {(archivedCount > 0 || showArchived) && (
+              // When expanded, show everything
+              return (
+                <div>
+                  {/* New thread button — at the top so new threads are visible immediately */}
                   <button
-                    onClick={() => toggleShowArchived(project.id)}
-                    className="flex w-full items-center pl-8 pr-4 py-1 text-left text-[10px] opacity-40 hover:opacity-70 transition-opacity"
+                    onClick={() => handleNewThread(project.id)}
+                    className="flex w-full items-center pl-8 pr-4 py-1.5 text-left text-xs opacity-50 hover:opacity-80 transition-opacity"
                     style={{ color: 'var(--color-text-muted)' }}
                   >
-                    {showArchived ? `▾ Hide archived` : `▸ Archived (${archivedCount})`}
+                    + New thread
                   </button>
-                )}
 
-                {/* Archived threads */}
-                {showArchived && archivedThreads.map((thread) => renderThread(thread, true))}
-              </div>
-            )}
+                  {/* Active threads */}
+                  {projectThreads.map((thread) => renderThread(thread, false, project.id))}
+
+                  {/* Archive toggle — only shown when there are archived threads or section is open */}
+                  {(projectArchivedCount > 0 || showArchived) && (
+                    <button
+                      onClick={() => toggleShowArchived(project.id)}
+                      className="flex w-full items-center pl-8 pr-4 py-1 text-left text-[10px] opacity-40 hover:opacity-70 transition-opacity"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {showArchived ? `▾ Hide archived` : `▸ Archived (${projectArchivedCount})`}
+                    </button>
+                  )}
+
+                  {/* Archived threads */}
+                  {showArchived && projectArchivedThreads.map((thread) => renderThread(thread, true, project.id))}
+                </div>
+              )
+            })()}
           </div>
         ))}
 
