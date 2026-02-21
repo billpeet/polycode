@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow } from 'electron'
 import {
   listProjects,
   createProject,
+  updateProject,
   deleteProject,
   listThreads,
   createThread,
@@ -20,6 +21,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('projects:create', (_event, name: string, path: string) => {
     return createProject(name, path)
+  })
+
+  ipcMain.handle('projects:update', (_event, id: string, name: string, path: string) => {
+    return updateProject(id, name, path)
   })
 
   ipcMain.handle('projects:delete', (_event, id: string) => {

@@ -1,15 +1,19 @@
 import { useState } from 'react'
 import { useProjectStore } from '../stores/projects'
+import { Project } from '../types/ipc'
 
 interface Props {
+  mode: 'create' | 'edit'
+  project?: Project
   onClose: () => void
 }
 
-export default function ProjectDialog({ onClose }: Props) {
-  const [name, setName] = useState('')
-  const [path, setPath] = useState('')
+export default function ProjectDialog({ mode, project, onClose }: Props) {
+  const [name, setName] = useState(project?.name ?? '')
+  const [path, setPath] = useState(project?.path ?? '')
   const [error, setError] = useState('')
   const createProject = useProjectStore((s) => s.create)
+  const updateProject = useProjectStore((s) => s.update)
 
   async function handleBrowse(): Promise<void> {
     const dir = await window.api.invoke('dialog:open-directory')
@@ -23,16 +27,14 @@ export default function ProjectDialog({ onClose }: Props) {
 
   async function handleSubmit(e: React.FormEvent): Promise<void> {
     e.preventDefault()
-    if (!name.trim()) {
-      setError('Name is required')
-      return
-    }
-    if (!path.trim()) {
-      setError('Path is required')
-      return
-    }
+    if (!name.trim()) { setError('Name is required'); return }
+    if (!path.trim()) { setError('Path is required'); return }
     try {
-      await createProject(name.trim(), path.trim())
+      if (mode === 'edit' && project) {
+        await updateProject(project.id, name.trim(), path.trim())
+      } else {
+        await createProject(name.trim(), path.trim())
+      }
       onClose()
     } catch (err) {
       setError(String(err))
@@ -51,77 +53,53 @@ export default function ProjectDialog({ onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-4 text-base font-semibold" style={{ color: 'var(--color-text)' }}>
-          New Project
+          {mode === 'edit' ? 'Edit Project' : 'New Project'}
         </h2>
 
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
-            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              Name
-            </label>
+            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Name</label>
             <input
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               className="w-full rounded px-3 py-2 text-sm outline-none"
-              style={{
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text)'
-              }}
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               placeholder="My Project"
               autoFocus
             />
           </div>
 
           <div>
-            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              Directory
-            </label>
+            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Directory</label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                className="flex-1 rounded px-3 py-2 text-sm outline-none"
-                style={{
-                  background: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text)'
-                }}
+                className="flex-1 rounded px-3 py-2 text-sm outline-none font-mono"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
                 placeholder="/path/to/project"
               />
               <button
                 type="button"
                 onClick={handleBrowse}
                 className="rounded px-3 py-2 text-xs"
-                style={{
-                  background: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text)'
-                }}
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               >
                 Browse
               </button>
             </div>
           </div>
 
-          {error && (
-            <p className="text-xs" style={{ color: '#f87171' }}>
-              {error}
-            </p>
-          )}
+          {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={onClose}
               className="rounded px-4 py-2 text-sm"
-              style={{
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text)'
-              }}
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
             >
               Cancel
             </button>
@@ -130,7 +108,7 @@ export default function ProjectDialog({ onClose }: Props) {
               className="rounded px-4 py-2 text-sm font-medium"
               style={{ background: 'var(--color-claude)', color: '#fff' }}
             >
-              Create
+              {mode === 'edit' ? 'Save' : 'Create'}
             </button>
           </div>
         </form>

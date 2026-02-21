@@ -91,7 +91,7 @@ export default function ThreadHeader({ threadId }: Props) {
             style={{ color: 'var(--color-text)' }}
             title="Click to rename"
           >
-            {thread?.name ?? threadId}
+            {thread?.name ?? 'New thread'}
           </button>
         )}
         <span className="text-xs flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>

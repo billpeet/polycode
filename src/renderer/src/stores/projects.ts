@@ -7,6 +7,7 @@ interface ProjectStore {
   loading: boolean
   fetch: () => Promise<void>
   create: (name: string, path: string) => Promise<void>
+  update: (id: string, name: string, path: string) => Promise<void>
   remove: (id: string) => Promise<void>
   select: (id: string | null) => void
 }
@@ -30,6 +31,13 @@ export const useProjectStore = create<ProjectStore>((set) => ({
   create: async (name, path) => {
     const project = await window.api.invoke('projects:create', name, path)
     set((s) => ({ projects: [project, ...s.projects] }))
+  },
+
+  update: async (id, name, path) => {
+    await window.api.invoke('projects:update', id, name, path)
+    set((s) => ({
+      projects: s.projects.map((p) => p.id === id ? { ...p, name, path } : p)
+    }))
   },
 
   remove: async (id) => {

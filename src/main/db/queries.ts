@@ -25,6 +25,12 @@ export function createProject(name: string, projectPath: string): Project {
   return project as Project
 }
 
+export function updateProject(id: string, name: string, path: string): void {
+  getDb()
+    .prepare('UPDATE projects SET name = ?, path = ?, updated_at = ? WHERE id = ?')
+    .run(name, path, new Date().toISOString(), id)
+}
+
 export function deleteProject(id: string): void {
   getDb().prepare('DELETE FROM projects WHERE id = ?').run(id)
 }

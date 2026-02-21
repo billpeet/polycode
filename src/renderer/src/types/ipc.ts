@@ -6,6 +6,7 @@ export type { Project, Thread, Message, OutputEvent, ThreadStatus }
 export interface WindowApi {
   invoke(channel: 'projects:list'): Promise<Project[]>
   invoke(channel: 'projects:create', name: string, path: string): Promise<Project>
+  invoke(channel: 'projects:update', id: string, name: string, path: string): Promise<void>
   invoke(channel: 'projects:delete', id: string): Promise<void>
   invoke(channel: 'threads:list', projectId: string): Promise<Thread[]>
   invoke(channel: 'threads:create', projectId: string, name: string): Promise<Thread>
