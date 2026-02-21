@@ -35,7 +35,7 @@ export interface Message {
   created_at: string
 }
 
-export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status'
+export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question'
 
 export interface OutputEvent {
   type: OutputEventType
@@ -43,7 +43,7 @@ export interface OutputEvent {
   metadata?: Record<string, unknown>
 }
 
-export type ThreadStatus = 'idle' | 'running' | 'error' | 'stopped'
+export type ThreadStatus = 'idle' | 'running' | 'error' | 'stopped' | 'plan_pending' | 'question_pending'
 
 export interface GitFileChange {
   status: 'M' | 'A' | 'D' | 'R' | 'U' | '?'
@@ -59,4 +59,28 @@ export interface GitStatus {
   additions: number
   deletions: number
   files: GitFileChange[]
+}
+
+/** Options passed when sending a message to a thread */
+export interface SendOptions {
+  planMode?: boolean
+}
+
+/** A question option from AskUserQuestion tool */
+export interface QuestionOption {
+  label: string
+  description: string
+}
+
+/** A single question from AskUserQuestion tool */
+export interface Question {
+  question: string
+  header: string
+  multiSelect: boolean
+  options: QuestionOption[]
+}
+
+/** The full AskUserQuestion payload */
+export interface UserQuestion {
+  questions: Question[]
 }

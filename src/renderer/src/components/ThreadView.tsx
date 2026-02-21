@@ -18,7 +18,7 @@ export default function ThreadView({ threadId }: Props) {
   const fetchMessages = useMessageStore((s) => s.fetch)
   const appendEvent = useMessageStore((s) => s.appendEvent)
   const setStatus = useThreadStore((s) => s.setStatus)
-  const rename = useThreadStore((s) => s.rename)
+  const setName = useThreadStore((s) => s.setName)
 
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
@@ -63,6 +63,12 @@ export default function ThreadView({ threadId }: Props) {
       // Re-fetch messages after completion to replace optimistic entries with persisted ones
       fetchMessages(threadId)
 
+      // Safety net: ensure status is reset if still running (handles edge cases where status event was missed)
+      const currentStatus = useThreadStore.getState().statusMap[threadId]
+      if (currentStatus === 'running') {
+        setStatus(threadId, 'idle')
+      }
+
       // Notify only when the user isn't currently viewing this thread
       const selectedId = useThreadStore.getState().selectedThreadId
       if (selectedId !== threadId) {
@@ -81,7 +87,7 @@ export default function ThreadView({ threadId }: Props) {
     })
 
     const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
-      rename(threadId, args[0] as string)
+      setName(threadId, args[0] as string)
     })
 
     cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle]
@@ -93,7 +99,7 @@ export default function ThreadView({ threadId }: Props) {
   }, [threadId])
 
   return (
-    <div className="flex flex-1 flex-col h-full overflow-hidden">
+    <div className="relative flex flex-1 flex-col h-full overflow-hidden">
       <ThreadHeader threadId={threadId} />
       <MessageStream threadId={threadId} />
       <InputBar threadId={threadId} />

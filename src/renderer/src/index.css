@@ -248,3 +248,27 @@ body,
   font-size: inherit;
   color: inherit;
 }
+
+/* ── Input bar styles ──────────────────────────────────────────────────────── */
+
+/* Send button hover/active states */
+.input-send-btn:not(:disabled):hover {
+  transform: scale(1.05);
+  box-shadow: 0 4px 12px rgba(232, 123, 95, 0.4) !important;
+}
+
+.input-send-btn:not(:disabled):active {
+  transform: scale(0.95);
+}
+
+/* Textarea placeholder styling */
+textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}
+
+/* kbd styling */
+kbd {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}

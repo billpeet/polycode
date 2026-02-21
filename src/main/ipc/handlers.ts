@@ -106,9 +106,35 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:send', (_event, threadId: string, content: string, workingDir: string) => {
+  ipcMain.handle('threads:send', (_event, threadId: string, content: string, workingDir: string, options?: { planMode?: boolean }) => {
     const session = sessionManager.getOrCreate(threadId, workingDir, window)
-    session.sendMessage(content)
+    session.sendMessage(content, options)
+  })
+
+  ipcMain.handle('threads:approvePlan', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.approvePlan()
+    }
+  })
+
+  ipcMain.handle('threads:rejectPlan', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.rejectPlan()
+    }
+  })
+
+  ipcMain.handle('threads:getQuestions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    return session?.getPendingQuestions() ?? []
+  })
+
+  ipcMain.handle('threads:answerQuestion', (_event, threadId: string, answers: Record<string, string>) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.answerQuestion(answers)
+    }
   })
 
   // ── Messages ──────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question } from '../types/ipc'
 
 interface ThreadStore {
   /** active (non-archived) threads keyed by project ID */
@@ -20,11 +20,18 @@ interface ThreadStore {
   toggleShowArchived: (projectId: string) => void
   select: (id: string | null) => void
   setStatus: (threadId: string, status: ThreadStatus) => void
+  /** Update local name state only (used by IPC title push events where DB is already updated) */
+  setName: (threadId: string, name: string) => void
+  /** Rename thread (persists to DB and updates local state) */
   rename: (threadId: string, name: string) => Promise<void>
   setModel: (threadId: string, model: string) => Promise<void>
   start: (threadId: string, workingDir: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
-  send: (threadId: string, content: string, workingDir: string) => Promise<void>
+  send: (threadId: string, content: string, workingDir: string, options?: SendOptions) => Promise<void>
+  approvePlan: (threadId: string) => Promise<void>
+  rejectPlan: (threadId: string) => Promise<void>
+  getQuestions: (threadId: string) => Promise<Question[]>
+  answerQuestion: (threadId: string, answers: Record<string, string>) => Promise<void>
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -158,6 +165,15 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   setStatus: (threadId, status) =>
     set((s) => ({ statusMap: { ...s.statusMap, [threadId]: status } })),
 
+  setName: (threadId, name) =>
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, name } : t))
+      }
+      return { byProject: updated }
+    }),
+
   rename: async (threadId, name) => {
     await window.api.invoke('threads:updateName', threadId, name)
     set((s) => {
@@ -188,7 +204,28 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     await window.api.invoke('threads:stop', threadId)
   },
 
-  send: async (threadId, content, workingDir) => {
-    await window.api.invoke('threads:send', threadId, content, workingDir)
+  send: async (threadId, content, workingDir, options) => {
+    // Optimistically set status to running immediately for responsive UI
+    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
+    await window.api.invoke('threads:send', threadId, content, workingDir, options)
+  },
+
+  approvePlan: async (threadId) => {
+    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
+    await window.api.invoke('threads:approvePlan', threadId)
+  },
+
+  rejectPlan: async (threadId) => {
+    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'idle' } }))
+    await window.api.invoke('threads:rejectPlan', threadId)
+  },
+
+  getQuestions: async (threadId) => {
+    return await window.api.invoke('threads:getQuestions', threadId)
+  },
+
+  answerQuestion: async (threadId, answers) => {
+    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
+    await window.api.invoke('threads:answerQuestion', threadId, answers)
   },
 }))

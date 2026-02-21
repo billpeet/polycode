@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { Project, Thread } from '../types/ipc'
@@ -38,9 +38,63 @@ export default function Sidebar() {
   const unarchiveThread = useThreadStore((s) => s.unarchive)
   const toggleShowArchived = useThreadStore((s) => s.toggleShowArchived)
   const selectThread = useThreadStore((s) => s.select)
+  const setName = useThreadStore((s) => s.setName)
 
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; archived?: boolean } | null>(null)
+
+  const setStatus = useThreadStore((s) => s.setStatus)
+
+  // Track IPC subscriptions for all known threads (title + status)
+  const subsRef = useRef<Map<string, Array<() => void>>>(new Map())
+
+  // Subscribe to title and status updates for all threads in byProject
+  useEffect(() => {
+    const allThreadIds = new Set<string>()
+    for (const threads of Object.values(byProject)) {
+      for (const t of threads) {
+        allThreadIds.add(t.id)
+      }
+    }
+
+    // Subscribe to new threads
+    for (const threadId of allThreadIds) {
+      if (!subsRef.current.has(threadId)) {
+        const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
+          setName(threadId, args[0] as string)
+        })
+        const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
+          setStatus(threadId, args[0] as 'idle' | 'running' | 'error' | 'stopped')
+        })
+        // Safety net: reset status to idle on complete if still running
+        const unsubComplete = window.api.on(`thread:complete:${threadId}`, () => {
+          const currentStatus = useThreadStore.getState().statusMap[threadId]
+          if (currentStatus === 'running') {
+            setStatus(threadId, 'idle')
+          }
+        })
+        subsRef.current.set(threadId, [unsubTitle, unsubStatus, unsubComplete])
+      }
+    }
+
+    // Unsubscribe from removed threads
+    for (const [threadId, unsubs] of subsRef.current) {
+      if (!allThreadIds.has(threadId)) {
+        unsubs.forEach((fn) => fn())
+        subsRef.current.delete(threadId)
+      }
+    }
+  }, [byProject, setName, setStatus])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      for (const unsubs of subsRef.current.values()) {
+        unsubs.forEach((fn) => fn())
+      }
+      subsRef.current.clear()
+    }
+  }, [])
 
   function handleSelectProject(id: string): void {
     selectProject(id)

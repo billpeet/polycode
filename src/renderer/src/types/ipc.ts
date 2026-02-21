@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question }
 export { ANTHROPIC_MODELS }
 
 /** Shape of window.api exposed by preload */
@@ -14,7 +14,11 @@ export interface WindowApi {
   invoke(channel: 'threads:delete', id: string): Promise<void>
   invoke(channel: 'threads:start', threadId: string, workingDir: string): Promise<void>
   invoke(channel: 'threads:stop', threadId: string): Promise<void>
-  invoke(channel: 'threads:send', threadId: string, content: string, workingDir: string): Promise<void>
+  invoke(channel: 'threads:send', threadId: string, content: string, workingDir: string, options?: SendOptions): Promise<void>
+  invoke(channel: 'threads:approvePlan', threadId: string): Promise<void>
+  invoke(channel: 'threads:rejectPlan', threadId: string): Promise<void>
+  invoke(channel: 'threads:getQuestions', threadId: string): Promise<Question[]>
+  invoke(channel: 'threads:answerQuestion', threadId: string, answers: Record<string, string>): Promise<void>
   invoke(channel: 'threads:updateName', id: string, name: string): Promise<void>
   invoke(channel: 'threads:archivedCount', projectId: string): Promise<number>
   invoke(channel: 'threads:listArchived', projectId: string): Promise<Thread[]>

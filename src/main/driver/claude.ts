@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process'
-import { CLIDriver, DriverOptions } from './types'
+import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
 
 export class ClaudeDriver implements CLIDriver {
@@ -7,6 +7,8 @@ export class ClaudeDriver implements CLIDriver {
   private options: DriverOptions
   private sessionId: string | null = null
   private buffer = ''
+  // Track tool IDs for special tools that we handle differently (e.g., AskUserQuestion, ExitPlanMode)
+  private specialToolIds = new Set<string>()
 
   constructor(options: DriverOptions) {
     this.options = options
@@ -18,16 +20,26 @@ export class ClaudeDriver implements CLIDriver {
   sendMessage(
     content: string,
     onEvent: (event: OutputEvent) => void,
-    onDone: (error?: Error) => void
+    onDone: (error?: Error) => void,
+    options?: MessageOptions
   ): void {
+    const planMode = options?.planMode ?? false
+
     // Build args: first message vs resume
     const args = [
       '--output-format', 'stream-json',
       '--verbose',
       '--print',
-      '--dangerously-skip-permissions',
-      '--append-system-prompt', 'Never enter plan mode. Execute all tasks directly without a planning phase.'
     ]
+
+    // Plan mode uses --permission-mode plan (no bypass)
+    // Normal mode bypasses permissions and disables plan mode via system prompt
+    if (planMode) {
+      args.push('--permission-mode', 'plan')
+    } else {
+      args.push('--dangerously-skip-permissions')
+      args.push('--append-system-prompt', 'Never enter plan mode. Execute all tasks directly without a planning phase.')
+    }
     if (this.options.model) {
       args.push('--model', this.options.model)
     }
@@ -37,6 +49,10 @@ export class ClaudeDriver implements CLIDriver {
     args.push(content)
 
     this.buffer = ''
+    this.specialToolIds.clear()
+
+    // Debug: log the command being run
+    console.log('[ClaudeDriver] Spawning:', 'claude', args.join(' '))
 
     this.process = spawn('claude', args, {
       cwd: this.options.workingDir,
@@ -44,13 +60,15 @@ export class ClaudeDriver implements CLIDriver {
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
+    let stderrBuffer = ''
+
     this.process.stdout?.on('data', (chunk: Buffer) => {
       this.buffer += chunk.toString('utf8')
       this.processBuffer(onEvent)
     })
 
-    this.process.stderr?.on('data', (_chunk: Buffer) => {
-      // Verbose mode produces lots of diagnostic noise — silently drop
+    this.process.stderr?.on('data', (chunk: Buffer) => {
+      stderrBuffer += chunk.toString('utf8')
     })
 
     this.process.on('close', (code) => {
@@ -58,7 +76,11 @@ export class ClaudeDriver implements CLIDriver {
       this.processBuffer(onEvent)
       this.process = null
       if (code !== 0 && code !== null) {
-        onDone(new Error(`Claude process exited with code ${code}`))
+        console.error('[ClaudeDriver] Process exited with code', code)
+        if (stderrBuffer.trim()) {
+          console.error('[ClaudeDriver] stderr:', stderrBuffer)
+        }
+        onDone(new Error(`Claude process exited with code ${code}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
       } else {
         onDone()
       }
@@ -129,12 +151,37 @@ export class ClaudeDriver implements CLIDriver {
             const text = (block.text ?? '') as string
             if (text) events.push({ type: 'text', content: text })
           } else if (blockType === 'tool_use') {
-            events.push({
-              type: 'tool_call',
-              content: (block.name as string) ?? 'unknown',
-              // Normalize type to 'tool_call' so DB round-trips preserve MessageBubble detection
-              metadata: { ...block, type: 'tool_call' } as Record<string, unknown>
-            })
+            const toolName = (block.name as string) ?? 'unknown'
+
+            const toolId = (block.id as string) ?? ''
+
+            // Detect ExitPlanMode tool call — emit special plan_ready event
+            if (toolName === 'ExitPlanMode') {
+              if (toolId) this.specialToolIds.add(toolId)
+              const input = block.input as Record<string, unknown> | undefined
+              events.push({
+                type: 'plan_ready',
+                content: (input?.plan as string) ?? '',
+                metadata: { ...block, type: 'plan_ready' } as Record<string, unknown>
+              })
+            } else if (toolName === 'AskUserQuestion') {
+              // Detect AskUserQuestion tool call — emit question event
+              // Track the tool ID so we can suppress its tool_result
+              if (toolId) this.specialToolIds.add(toolId)
+              const input = block.input as Record<string, unknown> | undefined
+              events.push({
+                type: 'question',
+                content: JSON.stringify(input?.questions ?? []),
+                metadata: { ...block, type: 'question', questions: input?.questions } as Record<string, unknown>
+              })
+            } else {
+              events.push({
+                type: 'tool_call',
+                content: toolName,
+                // Normalize type to 'tool_call' so DB round-trips preserve MessageBubble detection
+                metadata: { ...block, type: 'tool_call' } as Record<string, unknown>
+              })
+            }
           }
         }
         break
@@ -146,6 +193,13 @@ export class ClaudeDriver implements CLIDriver {
         for (const block of contentBlocks) {
           const blockType = block.type as string | undefined
           if (blockType === 'tool_result') {
+            // Skip tool results for special tools (AskUserQuestion, ExitPlanMode)
+            // These are handled via UI interactions, not shown as tool results
+            const toolUseId = (block.tool_use_id as string) ?? ''
+            if (toolUseId && this.specialToolIds.has(toolUseId)) {
+              continue
+            }
+
             // block.content is typically [{type:"text", text:"..."}] — extract plain text
             const raw = block.content
             let content: string

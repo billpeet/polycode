@@ -1,11 +1,16 @@
 import { OutputEvent } from '../../shared/types'
 
+export interface MessageOptions {
+  planMode?: boolean
+}
+
 export interface CLIDriver {
   /** Send a user message; spawns a new process per call */
   sendMessage(
     content: string,
     onEvent: (event: OutputEvent) => void,
-    onDone: (error?: Error) => void
+    onDone: (error?: Error) => void,
+    options?: MessageOptions
   ): void
   /** Stop the CLI process */
   stop(): void
