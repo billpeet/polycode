@@ -7,6 +7,8 @@ import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
 import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider } from '../types/ipc'
 
+const EMPTY_DISTROS: string[] = []
+
 const EMPTY_TODOS: Todo[] = []
 
 function formatTokenCount(n: number): string {
@@ -25,6 +27,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const rename = useThreadStore((s) => s.rename)
   const setModel = useThreadStore((s) => s.setModel)
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
+  const setWsl = useThreadStore((s) => s.setWsl)
 
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const projects = useProjectStore((s) => s.projects)
@@ -57,6 +60,8 @@ export default function ThreadHeader({ threadId }: Props) {
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
+  const [availableDistros, setAvailableDistros] = useState<string[]>(EMPTY_DISTROS)
+
   useEffect(() => {
     if (editing && inputRef.current) {
       inputRef.current.select()
@@ -70,6 +75,14 @@ export default function ThreadHeader({ threadId }: Props) {
     const interval = setInterval(() => fetchGit(project.path), 10_000)
     return () => clearInterval(interval)
   }, [project?.path, fetchGit])
+
+  // Fetch available WSL distros when this thread has WSL enabled
+  useEffect(() => {
+    if (!thread?.use_wsl) return
+    window.api.invoke('wsl:list-distros').then((distros) => {
+      setAvailableDistros(distros.length > 0 ? distros : EMPTY_DISTROS)
+    })
+  }, [thread?.use_wsl])
 
   const statusColor =
     status === 'running'
@@ -182,6 +195,86 @@ export default function ThreadHeader({ threadId }: Props) {
             </option>
           ))}
         </select>
+
+        {/* WSL toggle (editable before first message) or badge (after first message) */}
+        {/* Only shown for local projects — SSH and project-level WSL projects handle transport differently */}
+        {project && !project.ssh && !project.wsl && thread && (() => {
+          if (thread.has_messages) {
+            // Thread has been started — show a read-only badge if WSL was enabled
+            if (!thread.use_wsl) return null
+            return (
+              <span
+                className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
+                style={{
+                  background: 'rgba(99, 179, 237, 0.1)',
+                  color: '#63b3ed',
+                  border: '1px solid rgba(99, 179, 237, 0.3)',
+                  fontFamily: 'monospace',
+                }}
+                title={`Running on WSL${thread.wsl_distro ? `: ${thread.wsl_distro}` : ''}`}
+              >
+                WSL{thread.wsl_distro ? `: ${thread.wsl_distro}` : ''}
+              </span>
+            )
+          }
+
+          // New thread — show editable toggle
+          const isWslOn = thread.use_wsl
+          return (
+            <>
+              <button
+                onClick={async () => {
+                  const next = !isWslOn
+                  let distro = thread.wsl_distro
+                  if (next && !distro) {
+                    // Auto-select first available distro
+                    const distros = availableDistros.length > 0
+                      ? availableDistros
+                      : await window.api.invoke('wsl:list-distros').then((d) => {
+                          setAvailableDistros(d)
+                          return d
+                        })
+                    distro = distros[0] ?? null
+                  }
+                  await setWsl(threadId, next, next ? distro : null)
+                }}
+                disabled={status === 'running'}
+                className="text-xs px-1.5 py-0.5 rounded border flex-shrink-0 transition-colors"
+                style={{
+                  color: isWslOn ? '#63b3ed' : 'var(--color-text-muted)',
+                  borderColor: isWslOn ? 'rgba(99, 179, 237, 0.3)' : 'var(--color-border)',
+                  background: isWslOn ? 'rgba(99, 179, 237, 0.1)' : 'transparent',
+                  opacity: status === 'running' ? 0.4 : 1,
+                  cursor: status === 'running' ? 'not-allowed' : 'pointer',
+                }}
+                title={isWslOn ? 'Disable WSL execution' : 'Run this thread on WSL (path will be converted to /mnt/...)'}
+              >
+                WSL
+              </button>
+              {isWslOn && availableDistros.length > 0 && (
+                <select
+                  value={thread.wsl_distro ?? ''}
+                  onChange={(e) => setWsl(threadId, true, e.target.value)}
+                  disabled={status === 'running'}
+                  className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
+                  style={{
+                    color: '#63b3ed',
+                    borderColor: 'rgba(99, 179, 237, 0.3)',
+                    background: 'var(--color-surface)',
+                    opacity: status === 'running' ? 0.4 : 1,
+                  }}
+                  title="Select WSL distro"
+                >
+                  {availableDistros.map((d) => (
+                    <option key={d} value={d} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </>
+          )
+        })()}
 
         {/* Token usage + context window */}
         {usage && (() => {

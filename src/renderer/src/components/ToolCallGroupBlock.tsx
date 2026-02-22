@@ -30,24 +30,29 @@ export default function ToolCallGroupBlock({ group }: Props) {
 
   const total = group.entries.length
   const done = group.entries.filter((e) => e.result !== null).length
-  const hasError = group.entries.some((e) => e.resultMetadata?.is_error === true)
+  const hasCancelled = group.entries.some((e) => e.resultMetadata?.cancelled === true)
+  const hasError = group.entries.some((e) => !e.resultMetadata?.cancelled && e.resultMetadata?.is_error === true)
   const isPending = done < total
 
   const accentColor = isPending
     ? 'var(--color-tool-call-accent)'
-    : hasError
-      ? 'rgba(248, 113, 113, 0.6)'
-      : 'var(--color-tool-result-accent)'
+    : hasCancelled && !hasError
+      ? 'rgba(107, 114, 128, 0.4)'
+      : hasError
+        ? 'rgba(248, 113, 113, 0.6)'
+        : 'var(--color-tool-result-accent)'
 
   const tintColor = isPending
     ? 'var(--color-tool-call-tint)'
-    : hasError
-      ? 'rgba(248, 113, 113, 0.05)'
-      : 'var(--color-tool-result-tint)'
+    : hasCancelled && !hasError
+      ? 'rgba(107, 114, 128, 0.05)'
+      : hasError
+        ? 'rgba(248, 113, 113, 0.05)'
+        : 'var(--color-tool-result-tint)'
 
-  const iconColor = isPending ? 'var(--color-claude)' : hasError ? '#f87171' : '#4ade80'
-  const icon = isPending ? '⚡' : hasError ? '✗' : '✓'
-  const badge = isPending ? 'RUNNING' : hasError ? 'FAILED' : 'DONE'
+  const iconColor = isPending ? 'var(--color-claude)' : hasCancelled && !hasError ? '#6b7280' : hasError ? '#f87171' : '#4ade80'
+  const icon = isPending ? null : hasCancelled && !hasError ? '—' : hasError ? '✗' : '✓'
+  const badge = isPending ? 'RUNNING' : hasCancelled && !hasError ? 'CANCELLED' : hasError ? 'FAILED' : 'DONE'
 
   return (
     <div style={{ borderLeft: `2px solid ${accentColor}`, background: tintColor, borderRadius: '0 4px 4px 0' }}>
@@ -57,7 +62,10 @@ export default function ToolCallGroupBlock({ group }: Props) {
         className="flex w-full items-center gap-2 px-3 text-left"
         style={{ height: 32, color: 'var(--color-text-muted)', cursor: 'pointer', background: 'transparent', border: 'none' }}
       >
-        <span style={{ fontSize: '0.8rem', flexShrink: 0, color: iconColor }}>{icon}</span>
+        {isPending
+          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-claude)' }} />
+          : <span style={{ fontSize: '0.8rem', flexShrink: 0, color: iconColor }}>{icon}</span>
+        }
 
         <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', minWidth: 0, flex: 1, overflow: 'hidden' }}>
           <span className="font-mono" style={{ color: iconColor, fontSize: '0.75rem', flexShrink: 0 }}>
@@ -75,7 +83,7 @@ export default function ToolCallGroupBlock({ group }: Props) {
           padding: '1px 6px',
           borderRadius: 999,
           flexShrink: 0,
-          background: isPending ? 'rgba(232, 123, 95, 0.15)' : hasError ? 'rgba(248, 113, 113, 0.15)' : 'rgba(74, 222, 128, 0.12)',
+          background: isPending ? 'rgba(232, 123, 95, 0.15)' : hasCancelled && !hasError ? 'rgba(107, 114, 128, 0.15)' : hasError ? 'rgba(248, 113, 113, 0.15)' : 'rgba(74, 222, 128, 0.12)',
           color: iconColor,
         }}>
           {badge}

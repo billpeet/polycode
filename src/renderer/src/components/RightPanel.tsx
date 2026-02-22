@@ -366,7 +366,6 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const isPulling = projectPath ? (pullingByPath[projectPath] ?? false) : false
 
   const [committing, setCommitting] = useState(false)
-  const [stageThreadFiles, setStageThreadFiles] = useState(true)
 
   useEffect(() => {
     if (projectPath && !collapsed) fetchGit(projectPath)
@@ -380,28 +379,25 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
     if (projectPath) setCommitMsg(projectPath, msg)
   }, [projectPath, setCommitMsg])
 
-  // Compute unstaged files that were modified by this thread
+  // Compute staged/unstaged split
+  const stagedFiles = gitStatus?.files.filter((f) => f.staged) ?? []
   const unstagedFiles = gitStatus?.files.filter((f) => !f.staged) ?? []
-  const unstagedPaths = new Set(unstagedFiles.map((f) => f.path))
-  const threadFilesUnstaged = modifiedFiles.filter((f) => {
-    // Compare paths: modified files are absolute, git status paths are relative
-    const relPath = projectPath ? f.replace(projectPath + '/', '').replace(projectPath + '\\', '') : f
-    return unstagedPaths.has(relPath) || unstagedPaths.has(f)
-  })
-  const showStageCheckbox = threadFilesUnstaged.length > 0 && (gitStatus?.files.filter((f) => f.staged).length ?? 0) === 0
+
+  // Compute unstaged files that were modified by this thread
+  const threadRelPaths = new Set(
+    modifiedFiles.map((f) =>
+      projectPath ? f.replace(projectPath + '/', '').replace(projectPath + '\\', '') : f
+    )
+  )
+  const threadUnstagedFiles = unstagedFiles.filter((f) => threadRelPaths.has(f.path))
+  const otherUnstagedFiles = unstagedFiles.filter((f) => !threadRelPaths.has(f.path))
+  // Show split view only when no staged files exist and there are thread-specific unstaged files
+  const showThreadSplit = threadUnstagedFiles.length > 0 && stagedFiles.length === 0
 
   async function handleCommit(): Promise<void> {
     if (!projectPath || !commitMsg.trim()) return
     setCommitting(true)
     try {
-      // If checkbox is checked and there are thread files to stage, stage them first
-      if (stageThreadFiles && threadFilesUnstaged.length > 0) {
-        // Convert absolute paths to relative paths for git
-        const relativePaths = threadFilesUnstaged.map((f) => {
-          return f.replace(projectPath + '/', '').replace(projectPath + '\\', '')
-        })
-        await stageFilesAction(projectPath, relativePaths)
-      }
       await commitGit(projectPath, commitMsg.trim())
       addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
     } catch (err) {
@@ -461,7 +457,24 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
     }
   }, [projectPath, unstageAllFiles, addToast])
 
-  const stagedFiles = gitStatus?.files.filter((f) => f.staged) ?? []
+  const handleStageThreadFiles = useCallback(async () => {
+    if (!projectPath || threadUnstagedFiles.length === 0) return
+    try {
+      await stageFilesAction(projectPath, threadUnstagedFiles.map((f) => f.path))
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 })
+    }
+  }, [projectPath, threadUnstagedFiles, stageFilesAction, addToast])
+
+  const handleStageOtherFiles = useCallback(async () => {
+    if (!projectPath || otherUnstagedFiles.length === 0) return
+    try {
+      await stageFilesAction(projectPath, otherUnstagedFiles.map((f) => f.path))
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 })
+    }
+  }, [projectPath, otherUnstagedFiles, stageFilesAction, addToast])
+
   const totalChanges = gitStatus?.files.length ?? 0
 
   const refreshButton = (
@@ -531,36 +544,13 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                     )}
                   </button>
                 </div>
-                {showStageCheckbox && (
-                  <label
-                    className="flex items-center gap-2 mt-2 mb-1 cursor-pointer text-xs"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={stageThreadFiles}
-                      onChange={(e) => setStageThreadFiles(e.target.checked)}
-                      className="rounded"
-                      style={{ accentColor: 'var(--color-claude)' }}
-                    />
-                    <span>Stage {threadFilesUnstaged.length} file{threadFilesUnstaged.length !== 1 ? 's' : ''} from this thread</span>
-                  </label>
-                )}
                 <button
                   onClick={handleCommit}
-                  disabled={
-                    !commitMsg.trim() ||
-                    committing ||
-                    (stagedFiles.length === 0 && !(showStageCheckbox && stageThreadFiles && threadFilesUnstaged.length > 0))
-                  }
+                  disabled={!commitMsg.trim() || committing || stagedFiles.length === 0}
                   className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
                   style={{ background: 'var(--color-claude)', color: '#fff' }}
                 >
-                  {committing
-                    ? 'Committing…'
-                    : showStageCheckbox && stageThreadFiles && threadFilesUnstaged.length > 0
-                      ? `Stage & Commit (${threadFilesUnstaged.length})`
-                      : 'Commit'}
+                  {committing ? 'Committing…' : 'Commit'}
                 </button>
 
                 {/* Push / Pull row */}
@@ -650,16 +640,41 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                       onFileClick={handleFileClick}
                     />
                   )}
-                  {unstagedFiles.length > 0 && (
-                    <FileGroup
-                      label="Changes"
-                      files={unstagedFiles}
-                      onFileAction={handleStage}
-                      onGroupAction={handleStageAll}
-                      actionIcon="plus"
-                      actionTitle="Stage"
-                      onFileClick={handleFileClick}
-                    />
+                  {showThreadSplit ? (
+                    <>
+                      <FileGroup
+                        label="From this thread"
+                        files={threadUnstagedFiles}
+                        onFileAction={handleStage}
+                        onGroupAction={handleStageThreadFiles}
+                        actionIcon="plus"
+                        actionTitle="Stage"
+                        onFileClick={handleFileClick}
+                      />
+                      {otherUnstagedFiles.length > 0 && (
+                        <FileGroup
+                          label="Other changes"
+                          files={otherUnstagedFiles}
+                          onFileAction={handleStage}
+                          onGroupAction={handleStageOtherFiles}
+                          actionIcon="plus"
+                          actionTitle="Stage"
+                          onFileClick={handleFileClick}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    unstagedFiles.length > 0 && (
+                      <FileGroup
+                        label="Changes"
+                        files={unstagedFiles}
+                        onFileAction={handleStage}
+                        onGroupAction={handleStageAll}
+                        actionIcon="plus"
+                        actionTitle="Stage"
+                        onFileClick={handleFileClick}
+                      />
+                    )
                   )}
                 </>
               )}

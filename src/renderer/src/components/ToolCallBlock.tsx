@@ -27,6 +27,11 @@ function getInputSummary(toolName: string, input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
   const inp = input as Record<string, unknown>
 
+  // Task (subagent): show the description
+  if (toolName === 'Task' && typeof inp.description === 'string') {
+    return inp.description
+  }
+
   // Read: show file path + optional range annotation
   if (toolName === 'Read' && typeof inp.file_path === 'string') {
     const fp = inp.file_path as string
@@ -46,7 +51,7 @@ function getInputSummary(toolName: string, input: unknown): string | null {
     return fp.length > 120 ? '…' + fp.slice(-120) : fp
   }
 
-  const preferred = ['command', 'file_path', 'path', 'pattern', 'query', 'url']
+  const preferred = ['command', 'file_path', 'filePath', 'path', 'pattern', 'query', 'url']
   for (const key of preferred) {
     if (typeof inp[key] === 'string' && inp[key]) {
       const val = inp[key] as string
@@ -126,6 +131,28 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
     wordBreak: 'break-all',
   }
 
+  // Task (subagent): show prompt as readable text
+  if (toolName === 'Task' && inp && typeof inp.prompt === 'string') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+        {typeof inp.subagent_type === 'string' && (
+          <div>
+            <div style={labelStyle}>Subagent</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              {inp.subagent_type}
+            </div>
+          </div>
+        )}
+        <div>
+          <div style={labelStyle}>Prompt</div>
+          <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 400, overflowY: 'auto', background: 'transparent', lineHeight: 1.6 }}>
+            {inp.prompt}
+          </pre>
+        </div>
+      </div>
+    )
+  }
+
   // Edit: show inline diff view (old_string → new_string)
   if (toolName === 'Edit' && inp && typeof inp.file_path === 'string') {
     return (
@@ -181,26 +208,37 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
   const [expanded, setExpanded] = useState(false)
 
   const toolName = (metadata?.name as string) ?? message.content
+  const input = metadata?.input as Record<string, unknown> | undefined
+  // For Task tool calls with a subagent_type, display the subagent type as the name
+  const displayName =
+    toolName === 'Task' && typeof input?.subagent_type === 'string'
+      ? input.subagent_type
+      : toolName
   const inputSummary = getInputSummary(toolName, metadata?.input)
-  const isError = resultMetadata?.is_error === true
+  const isCancelled = resultMetadata?.cancelled === true
+  const isError = !isCancelled && resultMetadata?.is_error === true
   const isPending = result === null
 
-  // Colour scheme: pending = orange, error = red, done = green
+  // Colour scheme: pending = orange, cancelled = gray, error = red, done = green
   const accentColor = isPending
     ? 'var(--color-tool-call-accent)'
-    : isError
-      ? 'rgba(248, 113, 113, 0.6)'
-      : 'var(--color-tool-result-accent)'
+    : isCancelled
+      ? 'rgba(107, 114, 128, 0.4)'
+      : isError
+        ? 'rgba(248, 113, 113, 0.6)'
+        : 'var(--color-tool-result-accent)'
 
   const tintColor = isPending
     ? 'var(--color-tool-call-tint)'
-    : isError
-      ? 'rgba(248, 113, 113, 0.05)'
-      : 'var(--color-tool-result-tint)'
+    : isCancelled
+      ? 'rgba(107, 114, 128, 0.05)'
+      : isError
+        ? 'rgba(248, 113, 113, 0.05)'
+        : 'var(--color-tool-result-tint)'
 
   // Status icon
-  const icon = isPending ? '⚡' : isError ? '✗' : '✓'
-  const iconColor = isPending ? 'var(--color-claude)' : isError ? '#f87171' : '#4ade80'
+  const icon = isPending ? null : isCancelled ? '—' : isError ? '✗' : '✓'
+  const iconColor = isPending ? 'var(--color-claude)' : isCancelled ? '#6b7280' : isError ? '#f87171' : '#4ade80'
 
   const resultBody = result
     ? typeof resultMetadata?.content === 'string'
@@ -216,9 +254,10 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
         style={{ height: 32, color: 'var(--color-text-muted)', cursor: 'pointer', background: 'transparent', border: 'none' }}
       >
         {/* Status icon */}
-        <span style={{ fontSize: '0.8rem', flexShrink: 0, color: iconColor }}>
-          {icon}
-        </span>
+        {isPending
+          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-claude)' }} />
+          : <span style={{ fontSize: '0.8rem', flexShrink: 0, color: iconColor }}>{icon}</span>
+        }
 
         {/* Tool name + input summary */}
         <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', minWidth: 0, flex: 1, overflow: 'hidden' }}>
@@ -226,7 +265,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
             className="font-mono"
             style={{ color: iconColor, fontSize: '0.75rem', flexShrink: 0 }}
           >
-            {toolName}
+            {displayName}
           </span>
           {inputSummary && (
             <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)', opacity: 0.75 }}>
@@ -243,10 +282,10 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
           padding: '1px 6px',
           borderRadius: 999,
           flexShrink: 0,
-          background: isPending ? 'rgba(232, 123, 95, 0.15)' : isError ? 'rgba(248, 113, 113, 0.15)' : 'rgba(74, 222, 128, 0.12)',
+          background: isPending ? 'rgba(232, 123, 95, 0.15)' : isCancelled ? 'rgba(107, 114, 128, 0.15)' : isError ? 'rgba(248, 113, 113, 0.15)' : 'rgba(74, 222, 128, 0.12)',
           color: iconColor,
         }}>
-          {isPending ? 'RUNNING' : isError ? 'FAILED' : 'DONE'}
+          {isPending ? 'RUNNING' : isCancelled ? 'CANCELLED' : isError ? 'FAILED' : 'DONE'}
         </span>
 
         {/* Chevron */}
@@ -266,7 +305,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
           </div>
 
           {/* Result (once available) */}
-          {resultBody !== null && (
+          {resultBody !== null && !isCancelled && (
             <div>
               <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
                 {isError ? 'Error' : 'Output'}

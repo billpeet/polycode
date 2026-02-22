@@ -4,10 +4,12 @@ import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
 import FilePreview from './components/FilePreview'
 import ToastStack from './components/Toast'
+import TitleBar from './components/TitleBar'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useUiStore } from './stores/ui'
 import { useFilesStore } from './stores/files'
+import { useToastStore } from './stores/toast'
 
 const STORAGE_PROJECT_KEY = 'polycode:selectedProjectId'
 const STORAGE_THREAD_KEY = 'polycode:selectedThreadId'
@@ -107,6 +109,17 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [selectedProjectId])
 
+  // Update available notification
+  useEffect(() => {
+    return window.api.on('app:update-downloaded', () => {
+      useToastStore.getState().add({
+        type: 'info',
+        message: 'Update ready — restart Polycode to install.',
+        duration: 0,
+      })
+    })
+  }, [])
+
   // 4. Persist selections whenever they change (after initial restore)
   useEffect(() => {
     if (selectedProjectId) {
@@ -122,25 +135,28 @@ export default function App() {
 
   return (
     <>
-      <div className="flex h-full w-full overflow-hidden" style={{ background: 'var(--color-bg)' }}>
-        <Sidebar />
-        <main className="flex flex-1 overflow-hidden">
-          {selectedThreadId ? (
-            <>
-              <div className="flex flex-1 flex-col overflow-hidden">
-                <ThreadView threadId={selectedThreadId} />
+      <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
+        <TitleBar />
+        <div className="flex flex-1 overflow-hidden">
+          <Sidebar />
+          <main className="flex flex-1 overflow-hidden">
+            {selectedThreadId ? (
+              <>
+                <div className="flex flex-1 flex-col overflow-hidden">
+                  <ThreadView threadId={selectedThreadId} />
+                </div>
+                {(selectedFilePath || diffView || loadingDiff) && <FilePreview />}
+                {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
+              </>
+            ) : (
+              <div className="flex flex-1 items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
+                {selectedProjectId
+                  ? 'Select or create a thread to get started'
+                  : 'Select or create a project to get started'}
               </div>
-              {(selectedFilePath || diffView || loadingDiff) && <FilePreview />}
-              {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
-            </>
-          ) : (
-            <div className="flex flex-1 items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-              {selectedProjectId
-                ? 'Select or create a thread to get started'
-                : 'Select or create a project to get started'}
-            </div>
-          )}
-        </main>
+            )}
+          </main>
+        </div>
       </div>
       <ToastStack />
     </>

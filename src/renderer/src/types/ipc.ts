@@ -29,6 +29,7 @@ export interface WindowApi {
   invoke(channel: 'threads:unarchive', id: string): Promise<void>
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
   invoke(channel: 'threads:updateProviderAndModel', id: string, provider: string, model: string): Promise<void>
+  invoke(channel: 'threads:set-wsl', threadId: string, useWsl: boolean, wslDistro: string | null): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
   invoke(channel: 'messages:listBySession', sessionId: string): Promise<Message[]>
   invoke(channel: 'sessions:list', threadId: string): Promise<Session[]>
@@ -61,6 +62,11 @@ export interface WindowApi {
   invoke(channel: 'attachments:cleanup', threadId: string): Promise<void>
   invoke(channel: 'attachments:getFileInfo', filePath: string): Promise<{ size: number; mimeType: string } | null>
   invoke(channel: 'dialog:open-files'): Promise<string[]>
+  invoke(channel: 'window:minimize'): Promise<void>
+  invoke(channel: 'window:maximize'): Promise<void>
+  invoke(channel: 'window:close'): Promise<void>
+  invoke(channel: 'window:is-maximized'): Promise<boolean>
+  invoke(channel: 'app:install-update'): Promise<void>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

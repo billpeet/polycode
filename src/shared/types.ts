@@ -47,19 +47,43 @@ export const OPENAI_MODELS = [
 
 export type OpenAIModelId = typeof OPENAI_MODELS[number]['id']
 
-export type Provider = 'claude-code' | 'codex'
+export const OPENCODE_MODELS = [
+  // OpenCode Zen (free)
+  { id: 'opencode/big-pickle', label: 'Big Pickle (Free)' },
+  { id: 'opencode/glm-5-free', label: 'GLM-5 (Free)' },
+  { id: 'opencode/minimax-m2.5-free', label: 'MiniMax M2.5 (Free)' },
+  { id: 'opencode/trinity-large-preview-free', label: 'Trinity Large Preview (Free)' },
+  { id: 'opencode/kimi-k2.5-free', label: 'Kimi K2.5 (Free)' },
+  // Anthropic
+  { id: 'anthropic/claude-opus-4-5', label: 'Claude Opus 4.5' },
+  { id: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
+  { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5' },
+  // OpenAI
+  { id: 'openai/gpt-4o', label: 'GPT-4o' },
+  // Google
+  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+] as const
+
+export type OpenCodeModelId = typeof OPENCODE_MODELS[number]['id']
+
+export type Provider = 'claude-code' | 'codex' | 'opencode'
 
 export const PROVIDERS = [
   { id: 'claude-code' as Provider, label: 'Claude Code' },
   { id: 'codex' as Provider, label: 'Codex' },
+  { id: 'opencode' as Provider, label: 'OpenCode' },
 ] as const
 
 export function getModelsForProvider(provider: Provider) {
-  return provider === 'codex' ? OPENAI_MODELS : ANTHROPIC_MODELS
+  if (provider === 'codex') return OPENAI_MODELS
+  if (provider === 'opencode') return OPENCODE_MODELS
+  return ANTHROPIC_MODELS
 }
 
 export function getDefaultModelForProvider(provider: Provider): string {
-  return provider === 'codex' ? OPENAI_MODELS[0].id : ANTHROPIC_MODELS[0].id
+  if (provider === 'codex') return OPENAI_MODELS[0].id
+  if (provider === 'opencode') return OPENCODE_MODELS[0].id
+  return ANTHROPIC_MODELS[0].id
 }
 
 export interface Thread {
@@ -73,6 +97,12 @@ export interface Thread {
   input_tokens: number
   output_tokens: number
   context_window: number
+  /** Whether this thread should run its CLI process on WSL (local path converted to /mnt/...) */
+  use_wsl: boolean
+  /** The WSL distro to use when use_wsl is true */
+  wsl_distro: string | null
+  /** True if at least one message has been sent in this thread */
+  has_messages: boolean
   created_at: string
   updated_at: string
 }
@@ -114,6 +144,16 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'gpt-5.2-codex': 200_000,
   'gpt-5.1-codex': 200_000,
   'codex-mini-latest': 200_000,
+  'anthropic/claude-opus-4-5': 200_000,
+  'anthropic/claude-sonnet-4-5': 200_000,
+  'anthropic/claude-haiku-4-5': 200_000,
+  'openai/gpt-4o': 128_000,
+  'google/gemini-2.5-pro': 1_000_000,
+  'opencode/big-pickle': 128_000,
+  'opencode/glm-5-free': 128_000,
+  'opencode/minimax-m2.5-free': 40_960,
+  'opencode/trinity-large-preview-free': 128_000,
+  'opencode/kimi-k2.5-free': 131_072,
 }
 
 export const DEFAULT_CONTEXT_LIMIT = 200_000

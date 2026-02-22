@@ -144,6 +144,13 @@ function runMigrations(database: Database.Database): void {
     database.exec('ALTER TABLE threads ADD COLUMN provider_model_updated_at TEXT')
   }
 
+  // ── Per-thread WSL override ───────────────────────────────────────────────
+  const threadColsWsl = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsWsl.some((c) => c.name === 'use_wsl')) {
+    database.exec('ALTER TABLE threads ADD COLUMN use_wsl INTEGER NOT NULL DEFAULT 0')
+    database.exec('ALTER TABLE threads ADD COLUMN wsl_distro TEXT')
+  }
+
   // ── Remap stale Codex model IDs to current ones ───────────────────────────
   // Old placeholder models (o4-mini, o3, gpt-4o, gpt-4.1) were never valid
   // Codex CLI models. Migrate any threads still referencing them.

@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
 import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { autoUpdater } from 'electron-updater'
 import {
   listProjects,
   createProject,
@@ -14,6 +15,8 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadStatus,
+  updateThreadWsl,
+  getThreadWslOverride,
   threadHasMessages,
   archiveThread,
   unarchiveThread,
@@ -49,8 +52,36 @@ function getSshConfigForThread(threadId: string): SshConfig | null {
 }
 
 function getWslConfigForThread(threadId: string): WslConfig | null {
+  // Thread-level WSL override takes precedence over project-level config
+  const override = getThreadWslOverride(threadId)
+  if (override && override.use_wsl) {
+    return override.wsl_distro ? { distro: override.wsl_distro } : null
+  }
   const project = getProjectForThread(threadId)
   return project?.wsl ?? null
+}
+
+/**
+ * Convert a Windows absolute path to its WSL /mnt/... equivalent.
+ * e.g. C:\Users\foo\bar  →  /mnt/c/Users/foo/bar
+ */
+function windowsPathToWsl(winPath: string): string {
+  return winPath
+    .replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
+    .replace(/\\/g, '/')
+}
+
+/**
+ * Return the effective working directory for a thread.
+ * If the thread has a per-thread WSL override enabled, convert the Windows path
+ * to the WSL /mnt/... mount format so the process cds into the right directory.
+ */
+function getEffectiveWorkingDir(threadId: string, workingDir: string): string {
+  const override = getThreadWslOverride(threadId)
+  if (override?.use_wsl) {
+    return windowsPathToWsl(workingDir)
+  }
+  return workingDir
 }
 
 function getSshConfigForPath(path: string): SshConfig | null {
@@ -246,10 +277,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return updateThreadProviderAndModel(id, provider, model)
   })
 
+  ipcMain.handle('threads:set-wsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {
+    sessionManager.remove(threadId)
+    return updateThreadWsl(threadId, useWsl, wslDistro)
+  })
+
   ipcMain.handle('threads:start', (_event, threadId: string, workingDir: string) => {
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, workingDir, window, sshConfig, wslConfig)
+    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
+    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     if (!session.isRunning()) {
       session.start()
     }
@@ -269,7 +306,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('threads:send', (_event, threadId: string, content: string, workingDir: string, options?: { planMode?: boolean }) => {
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, workingDir, window, sshConfig, wslConfig)
+    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
+    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.sendMessage(content, options)
   })
 
@@ -302,7 +340,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string, workingDir: string) => {
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, workingDir, window, sshConfig, wslConfig)
+    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
+    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.executePlanInNewContext()
   })
 
@@ -323,7 +362,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('sessions:switch', (_event, threadId: string, sessionId: string, workingDir: string) => {
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, workingDir, window, sshConfig, wslConfig)
+    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
+    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.switchSession(sessionId)
   })
 
@@ -499,6 +539,19 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       ],
     })
     return result.canceled ? [] : result.filePaths
+  })
+
+  // ── Window Controls ────────────────────────────────────────────────────────
+
+  ipcMain.handle('window:minimize',     () => window.minimize())
+  ipcMain.handle('window:maximize',     () => window.isMaximized() ? window.unmaximize() : window.maximize())
+  ipcMain.handle('window:close',        () => window.close())
+  ipcMain.handle('window:is-maximized', () => window.isMaximized())
+
+  // ── Auto-updater ───────────────────────────────────────────────────────────
+
+  ipcMain.handle('app:install-update', () => {
+    autoUpdater.quitAndInstall()
   })
 }
 

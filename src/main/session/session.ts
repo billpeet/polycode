@@ -1,6 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { ClaudeDriver } from '../driver/claude'
 import { CodexDriver } from '../driver/codex'
+import { OpenCodeDriver } from '../driver/opencode'
 import { CLIDriver } from '../driver/types'
 import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
 import {
@@ -15,7 +16,8 @@ import {
   setActiveSession,
   updateSessionClaudeId,
   getSessionClaudeId,
-  updateThreadUsage
+  updateThreadUsage,
+  cancelPendingToolCalls
 } from '../db/queries'
 import { generateTitle } from '../claude-sdk'
 
@@ -60,6 +62,8 @@ export class Session {
     }
     const driver: CLIDriver = provider === 'codex'
       ? new CodexDriver(options)
+      : provider === 'opencode'
+      ? new OpenCodeDriver(options)
       : new ClaudeDriver(options)
     this.drivers.set(sessionId, driver)
     return driver
@@ -349,6 +353,20 @@ export class Session {
       // Response complete — idle and ready for next message
       finalStatus = 'idle'
     }
+    // Cancel any tool calls that never received a result, and push synthetic
+    // tool_result events to the renderer before the complete signal.
+    if (this.activeSessionId) {
+      const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
+      for (const msg of cancelled) {
+        this.window.webContents.send(`thread:output:${this.threadId}`, {
+          type: 'tool_result',
+          content: '',
+          metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
+          sessionId: this.activeSessionId,
+        } satisfies OutputEvent)
+      }
+    }
+
     this.setStatus(finalStatus)
     // Include final status in complete event so the renderer doesn't depend
     // on the separate thread:status event having been processed first

@@ -39,6 +39,7 @@ interface ThreadStore {
   rename: (threadId: string, name: string) => Promise<void>
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
+  setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string, workingDir: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
   send: (threadId: string, content: string, workingDir: string, options?: SendOptions) => Promise<void>
@@ -253,6 +254,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
   },
 
+  setWsl: async (threadId, useWsl, wslDistro) => {
+    await window.api.invoke('threads:set-wsl', threadId, useWsl, wslDistro)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) =>
+          t.id === threadId ? { ...t, use_wsl: useWsl, wsl_distro: wslDistro } : t
+        )
+      }
+      return { byProject: updated }
+    })
+  },
+
   start: async (threadId, workingDir) => {
     await window.api.invoke('threads:start', threadId, workingDir)
   },
@@ -262,8 +276,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   send: async (threadId, content, workingDir, options) => {
-    // Optimistically set status to running immediately for responsive UI
-    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
+    // Optimistically set status + mark thread as having messages so WSL toggle locks immediately
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) =>
+          t.id === threadId ? { ...t, has_messages: true } : t
+        )
+      }
+      return { statusMap: { ...s.statusMap, [threadId]: 'running' }, byProject: updated }
+    })
     await window.api.invoke('threads:send', threadId, content, workingDir, options)
   },
 

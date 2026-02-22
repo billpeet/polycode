@@ -91,12 +91,17 @@ function rowToThread(r: ThreadRow): Thread {
     input_tokens: r.input_tokens ?? 0,
     output_tokens: r.output_tokens ?? 0,
     context_window: r.context_window ?? 0,
+    use_wsl: (r.use_wsl ?? 0) === 1,
+    wsl_distro: r.wsl_distro ?? null,
+    has_messages: (r.has_messages ?? 0) === 1,
   }
 }
 
 export function listThreads(projectId: string): Thread[] {
   const rows = getDb()
-    .prepare('SELECT * FROM threads WHERE project_id = ? AND archived = 0 ORDER BY updated_at DESC')
+    .prepare(
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 ORDER BY t.updated_at DESC'
+    )
     .all(projectId) as ThreadRow[]
   return rows.map(rowToThread)
 }
@@ -110,7 +115,9 @@ export function archivedThreadCount(projectId: string): number {
 
 export function listArchivedThreads(projectId: string): Thread[] {
   const rows = getDb()
-    .prepare('SELECT * FROM threads WHERE project_id = ? AND archived = 1 ORDER BY updated_at DESC')
+    .prepare(
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 1 ORDER BY t.updated_at DESC'
+    )
     .all(projectId) as ThreadRow[]
   return rows.map(rowToThread)
 }
@@ -147,6 +154,9 @@ export function createThread(projectId: string, name: string, provider = 'claude
     input_tokens: 0,
     output_tokens: 0,
     context_window: 0,
+    use_wsl: 0,
+    wsl_distro: null,
+    has_messages: 0,
     created_at: now,
     updated_at: now
   }
@@ -185,10 +195,31 @@ export function deleteThread(id: string): void {
   getDb().prepare('DELETE FROM threads WHERE id = ?').run(id)
 }
 
+export function updateThreadWsl(id: string, useWsl: boolean, wslDistro: string | null): void {
+  getDb()
+    .prepare('UPDATE threads SET use_wsl = ?, wsl_distro = ?, updated_at = ? WHERE id = ?')
+    .run(useWsl ? 1 : 0, wslDistro, new Date().toISOString(), id)
+}
+
+export function getThreadWslOverride(threadId: string): { use_wsl: number; wsl_distro: string | null } | null {
+  const row = getDb()
+    .prepare('SELECT use_wsl, wsl_distro FROM threads WHERE id = ?')
+    .get(threadId) as { use_wsl: number | null; wsl_distro: string | null } | undefined
+  return row ?? null
+}
+
 export function updateThreadStatus(id: string, status: string): void {
   getDb()
     .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
     .run(status, new Date().toISOString(), id)
+}
+
+/** Returns true if any thread is currently running. */
+export function hasRunningThreads(): boolean {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) as count FROM threads WHERE status = 'running'")
+    .get() as { count: number }
+  return row.count > 0
 }
 
 /** Reset any threads left in 'running' state from a previous crash/restart. */
@@ -371,6 +402,51 @@ export function listMessagesBySession(sessionId: string): Message[] {
   return rows as Message[]
 }
 
+/**
+ * Find tool_call messages in a session that have no matching tool_result, then
+ * insert a synthetic tool_result with `cancelled: true` for each. Returns the
+ * inserted messages so callers can push them to the renderer.
+ */
+export function cancelPendingToolCalls(threadId: string, sessionId: string): Message[] {
+  const messages = listMessagesBySession(sessionId)
+
+  // Collect tool_use_ids that already have a result
+  const resultedIds = new Set<string>()
+  for (const msg of messages) {
+    if (!msg.metadata) continue
+    let meta: Record<string, unknown>
+    try { meta = JSON.parse(msg.metadata as string) } catch { continue }
+    if (meta.type === 'tool_result' && typeof meta.tool_use_id === 'string') {
+      resultedIds.add(meta.tool_use_id)
+    }
+  }
+
+  // Insert a synthetic cancelled result for each orphaned tool_call
+  const inserted: Message[] = []
+  for (const msg of messages) {
+    if (!msg.metadata) continue
+    let meta: Record<string, unknown>
+    try { meta = JSON.parse(msg.metadata as string) } catch { continue }
+    if (
+      (meta.type === 'tool_call' || meta.type === 'tool_use') &&
+      typeof meta.id === 'string' &&
+      !resultedIds.has(meta.id)
+    ) {
+      inserted.push(
+        insertMessage(
+          threadId,
+          'assistant',
+          '',
+          { type: 'tool_result', tool_use_id: meta.id, cancelled: true },
+          sessionId
+        )
+      )
+    }
+  }
+
+  return inserted
+}
+
 export interface ImportedMessage {
   role: string
   content: string
@@ -384,7 +460,7 @@ interface ToolCallMetadata {
   type: 'tool_call'
   id: string          // Claude API tool_use block uses 'id'
   name: string
-  input?: { file_path?: string }
+  input?: { file_path?: string; filePath?: string }
 }
 
 interface ToolResultMetadata {
@@ -417,8 +493,8 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
 
     if (!meta || typeof meta !== 'object' || !('type' in meta)) continue
 
-    if (meta.type === 'tool_call' && (meta.name === 'Edit' || meta.name === 'Write')) {
-      const filePath = meta.input?.file_path
+    if (meta.type === 'tool_call' && (meta.name === 'Edit' || meta.name === 'Write' || meta.name === 'edit' || meta.name === 'write')) {
+      const filePath = meta.input?.file_path ?? meta.input?.filePath
       if (filePath && meta.id) {
         toolCallFiles.set(meta.id, filePath)
       }
@@ -469,6 +545,9 @@ export function importThread(
     input_tokens: 0,
     output_tokens: 0,
     context_window: 0,
+    use_wsl: 0,
+    wsl_distro: null,
+    has_messages: 1,
     created_at: now,
     updated_at: now
   }

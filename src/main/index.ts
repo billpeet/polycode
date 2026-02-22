@@ -1,12 +1,16 @@
-import { app, BrowserWindow, shell, protocol, net } from 'electron'
+import { app, BrowserWindow, shell, protocol, net, Tray, Menu, dialog } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
+import { autoUpdater } from 'electron-updater'
 import { initDb, closeDb } from './db/index'
-import { resetRunningThreads } from './db/queries'
+import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
+
+let tray: Tray | null = null
+let isQuitting = false
 
 // Register custom protocol for serving attachment files
 protocol.registerSchemesAsPrivileged([
@@ -29,7 +33,7 @@ function createWindow(): BrowserWindow {
     backgroundColor: '#0f0f0f',
     show: false,
     autoHideMenuBar: true,
-    titleBarStyle: 'default',
+    frame: false,
     icon: join(__dirname, '../../resources/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -43,6 +47,13 @@ function createWindow(): BrowserWindow {
     win.show()
     if (isDev) {
       win.webContents.openDevTools()
+    }
+  })
+
+  win.on('close', (event: Electron.Event) => {
+    if (!isQuitting) {
+      event.preventDefault()
+      win.hide()
     }
   })
 
@@ -78,6 +89,52 @@ app.whenReady().then(() => {
   const win = createWindow()
   registerIpcHandlers(win)
 
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify()
+    autoUpdater.on('update-downloaded', () => {
+      win.webContents.send('app:update-downloaded')
+    })
+  }
+
+  tray = new Tray(join(__dirname, '../../resources/icon.ico'))
+  tray.setToolTip('Polycode')
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Show Polycode',
+      click: () => {
+        win.show()
+        win.focus()
+      }
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit',
+      click: async () => {
+        if (hasRunningThreads()) {
+          const { response } = await dialog.showMessageBox({
+            type: 'warning',
+            title: 'Threads still running',
+            message: 'One or more threads are still running. Quitting now will interrupt them.',
+            buttons: ['Quit Anyway', 'Cancel'],
+            defaultId: 1,
+            cancelId: 1,
+          })
+          if (response !== 0) return
+        }
+        isQuitting = true
+        app.quit()
+      }
+    }
+  ])
+
+  tray.setContextMenu(contextMenu)
+
+  tray.on('double-click', () => {
+    win.show()
+    win.focus()
+  })
+
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -94,6 +151,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
   cleanupAllAttachments()
   closeDb()
 })

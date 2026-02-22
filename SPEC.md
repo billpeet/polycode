@@ -113,14 +113,14 @@ DB file: `{userData}/polycode.db` (WAL mode, foreign keys on)
 
 ## Roadmap
 
-### Phase 1 — Scaffold ✅ (complete)
-- Electron + React + TypeScript + Tailwind
-- SQLite DB layer with migrations
-- Claude Code CLI driver skeleton
-- Session manager
-- IPC handler registration
-- Zustand stores
-- Component skeleton (Sidebar, ThreadView, MessageStream, InputBar, …)
+### Phase 1 — Scaffold
+- [x] Electron + React + TypeScript + Tailwind
+- [x] SQLite DB layer with migrations
+- [x] Claude Code CLI driver skeleton
+- [x] Session manager
+- [x] IPC handler registration
+- [x] Zustand stores
+- [x] Component skeleton (Sidebar, ThreadView, MessageStream, InputBar, …)
 
 ### Phase 2 — Feature parity with original MVP
 - [x] Full CRUD UI for projects and threads
@@ -140,13 +140,13 @@ DB file: `{userData}/polycode.db` (WAL mode, foreign keys on)
 - [x] Session persistence across app restarts (claude_session_id stored in DB, passed via --resume)
 
 ### Phase 4 — Multi-provider
-- [ ] OpenCode CLI driver
-- [ ] Codex CLI driver
-- [ ] Provider selector per thread
+- [x] Codex CLI driver
+- [x] OpenCode CLI driver (session resumption, tool call parsing, free Zen models)
+- [x] Provider selector per thread
 
 ### Phase 5 — Remote execution
-- [ ] SSH tunnel management
-- [ ] Remote CLI spawning over SSH
+- [x] SSH tunnel management
+- [x] Remote CLI spawning over SSH
 
 ### Phase 6 — Advanced
 - [ ] Git worktree isolation per thread

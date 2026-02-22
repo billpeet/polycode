@@ -22,6 +22,10 @@ export interface ThreadRow {
   input_tokens: number
   output_tokens: number
   context_window: number
+  use_wsl: number
+  wsl_distro: string | null
+  /** Set by queries that include an EXISTS subquery; undefined when row built locally */
+  has_messages?: number
   created_at: string
   updated_at: string
 }
