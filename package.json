@@ -1,6 +1,6 @@
 {
   "name": "polycode-electron",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Desktop app for orchestrating multiple Claude Code sessions",
   "main": "out/main/index.js",
   "author": "billpeet",
