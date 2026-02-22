@@ -50,6 +50,22 @@ function createWindow(): BrowserWindow {
     }
   })
 
+  win.webContents.on('did-fail-load', (_event, errorCode, errorDescription) => {
+    win.show()
+    dialog.showErrorBox(
+      'Failed to load',
+      `The app failed to load (${errorCode}: ${errorDescription}).\n\nThis is likely a packaging issue. Please report it.`
+    )
+  })
+
+  win.webContents.on('render-process-gone', (_event, details) => {
+    win.show()
+    dialog.showErrorBox(
+      'Renderer crashed',
+      `The renderer process crashed (reason: ${details.reason}).\n\nPlease restart the app.`
+    )
+  })
+
   win.on('close', (event: Electron.Event) => {
     if (!isQuitting) {
       event.preventDefault()
@@ -90,10 +106,13 @@ app.whenReady().then(() => {
   registerIpcHandlers(win)
 
   if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify()
+    autoUpdater.on('error', (err) => {
+      console.error('Auto-updater error:', err.message)
+    })
     autoUpdater.on('update-downloaded', () => {
       win.webContents.send('app:update-downloaded')
     })
+    autoUpdater.checkForUpdatesAndNotify()
   }
 
   tray = new Tray(join(__dirname, '../../resources/icon.ico'))
