@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Project } from '../types/ipc'
+import { Project, SshConfig, WslConfig } from '../types/ipc'
 
 interface ProjectStore {
   projects: Project[]
@@ -7,10 +7,11 @@ interface ProjectStore {
   expandedProjectIds: Set<string>
   loading: boolean
   fetch: () => Promise<void>
-  create: (name: string, path: string) => Promise<void>
-  update: (id: string, name: string, path: string) => Promise<void>
+  create: (name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => Promise<void>
+  update: (id: string, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => Promise<void>
   remove: (id: string) => Promise<void>
   select: (id: string | null) => void
+  expand: (id: string) => void
   toggleExpanded: (id: string) => void
   isExpanded: (id: string) => boolean
 }
@@ -32,15 +33,15 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  create: async (name, path) => {
-    const project = await window.api.invoke('projects:create', name, path)
+  create: async (name, path, ssh, wsl) => {
+    const project = await window.api.invoke('projects:create', name, path, ssh, wsl)
     set((s) => ({ projects: [project, ...s.projects] }))
   },
 
-  update: async (id, name, path) => {
-    await window.api.invoke('projects:update', id, name, path)
+  update: async (id, name, path, ssh, wsl) => {
+    await window.api.invoke('projects:update', id, name, path, ssh, wsl)
     set((s) => ({
-      projects: s.projects.map((p) => p.id === id ? { ...p, name, path } : p)
+      projects: s.projects.map((p) => p.id === id ? { ...p, name, path, ssh: ssh ?? null, wsl: wsl ?? null } : p)
     }))
   },
 
@@ -58,6 +59,12 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   select: (id) => set({ selectedProjectId: id }),
+
+  expand: (id) => set((s) => {
+    const newExpanded = new Set(s.expandedProjectIds)
+    newExpanded.add(id)
+    return { expandedProjectIds: newExpanded }
+  }),
 
   toggleExpanded: (id) => set((s) => {
     const newExpanded = new Set(s.expandedProjectIds)

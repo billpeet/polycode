@@ -21,6 +21,7 @@ interface GitStore {
   stageFiles: (repoPath: string, filePaths: string[]) => Promise<void>
   setCommitMessage: (repoPath: string, message: string) => void
   generateCommitMessage: (repoPath: string) => Promise<void>
+  generateCommitMessageWithContext: (repoPath: string, filePaths: string[], context: string) => Promise<void>
   push: (repoPath: string) => Promise<void>
   pull: (repoPath: string) => Promise<void>
   fetchModifiedFiles: (threadId: string, workingDir: string) => Promise<void>
@@ -90,6 +91,20 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: true } }))
     try {
       const message = await window.api.invoke('git:generateCommitMessage', repoPath)
+      set((s) => ({
+        commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: message },
+        generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false },
+      }))
+    } catch {
+      set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false } }))
+    }
+  },
+
+  generateCommitMessageWithContext: async (repoPath, filePaths, context) => {
+    if (get().generatingMessageByPath[repoPath]) return
+    set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: true } }))
+    try {
+      const message = await window.api.invoke('git:generateCommitMessageWithContext', repoPath, filePaths, context)
       set((s) => ({
         commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: message },
         generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false },

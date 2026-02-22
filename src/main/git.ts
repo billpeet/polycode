@@ -1,6 +1,9 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { simpleQuery } from './claude-sdk'
+import { SshConfig, WslConfig } from '../shared/types'
+import { sshExec } from './ssh'
+import { wslExec } from './wsl'
 
 const execFileAsync = promisify(execFile)
 
@@ -20,17 +23,24 @@ export interface GitStatus {
   files: GitFileChange[]
 }
 
-async function git(cwd: string, args: string[]): Promise<string> {
+async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
+  if (ssh) {
+    return sshExec(ssh, cwd, gitCmd)
+  }
+  if (wsl) {
+    return wslExec(wsl, cwd, gitCmd)
+  }
   const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 })
   return stdout.trim()
 }
 
-export async function getGitStatus(repoPath: string): Promise<GitStatus | null> {
+export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitStatus | null> {
   try {
     // Branch name
     let branch = 'HEAD'
     try {
-      branch = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'])
+      branch = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)
     } catch {
       // detached HEAD or not a git repo
     }
@@ -39,7 +49,7 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus | null> 
     let ahead = 0
     let behind = 0
     try {
-      const ab = await git(repoPath, ['rev-list', '--left-right', '--count', '@{u}...HEAD'])
+      const ab = await git(repoPath, ['rev-list', '--left-right', '--count', '@{u}...HEAD'], ssh, wsl)
       const parts = ab.split('\t')
       behind = parseInt(parts[0] ?? '0', 10) || 0
       ahead = parseInt(parts[1] ?? '0', 10) || 0
@@ -48,7 +58,7 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus | null> 
     }
 
     // File statuses (porcelain v1)
-    const porcelain = await git(repoPath, ['status', '--porcelain', '-z'])
+    const porcelain = await git(repoPath, ['status', '--porcelain', '-z'], ssh, wsl)
 
     const files: GitFileChange[] = []
     if (porcelain) {
@@ -92,7 +102,7 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus | null> 
     let additions = 0
     let deletions = 0
     try {
-      const diffStat = await git(repoPath, ['diff', '--numstat', 'HEAD'])
+      const diffStat = await git(repoPath, ['diff', '--numstat', 'HEAD'], ssh, wsl)
       for (const line of diffStat.split('\n').filter(Boolean)) {
         const parts = line.split('\t')
         additions += parseInt(parts[0] ?? '0', 10) || 0
@@ -108,47 +118,47 @@ export async function getGitStatus(repoPath: string): Promise<GitStatus | null> 
   }
 }
 
-export async function commitChanges(repoPath: string, message: string): Promise<void> {
-  await git(repoPath, ['commit', '-m', message])
+export async function commitChanges(repoPath: string, message: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['commit', '-m', message], ssh, wsl)
 }
 
-export async function stageFile(repoPath: string, filePath: string): Promise<void> {
-  await git(repoPath, ['add', '--', filePath])
+export async function stageFile(repoPath: string, filePath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['add', '--', filePath], ssh, wsl)
 }
 
-export async function stageFiles(repoPath: string, filePaths: string[]): Promise<void> {
+export async function stageFiles(repoPath: string, filePaths: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   if (filePaths.length === 0) return
-  await git(repoPath, ['add', '--', ...filePaths])
+  await git(repoPath, ['add', '--', ...filePaths], ssh, wsl)
 }
 
-export async function unstageFile(repoPath: string, filePath: string): Promise<void> {
+export async function unstageFile(repoPath: string, filePath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   // Use restore --staged which works for both tracked and untracked files
-  await git(repoPath, ['restore', '--staged', '--', filePath])
+  await git(repoPath, ['restore', '--staged', '--', filePath], ssh, wsl)
 }
 
-export async function stageAll(repoPath: string): Promise<void> {
-  await git(repoPath, ['add', '-A'])
+export async function stageAll(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['add', '-A'], ssh, wsl)
 }
 
-export async function unstageAll(repoPath: string): Promise<void> {
-  await git(repoPath, ['restore', '--staged', '.'])
+export async function unstageAll(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['restore', '--staged', '.'], ssh, wsl)
 }
 
-export async function gitPush(repoPath: string): Promise<{ pushed: true }> {
-  await git(repoPath, ['push'])
+export async function gitPush(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pushed: true }> {
+  await git(repoPath, ['push'], ssh, wsl)
   return { pushed: true }
 }
 
-export async function gitPull(repoPath: string): Promise<{ pulled: true }> {
-  await git(repoPath, ['pull'])
+export async function gitPull(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pulled: true }> {
+  await git(repoPath, ['pull'], ssh, wsl)
   return { pulled: true }
 }
 
-export async function generateCommitMessage(repoPath: string): Promise<string> {
+export async function generateCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   // Get the diff of staged changes
   let diff = ''
   try {
-    diff = await git(repoPath, ['diff', '--cached'])
+    diff = await git(repoPath, ['diff', '--cached'], ssh, wsl)
   } catch {
     // No staged changes
   }
@@ -156,7 +166,7 @@ export async function generateCommitMessage(repoPath: string): Promise<string> {
   if (!diff.trim()) {
     // If no staged changes, get diff of all changes
     try {
-      diff = await git(repoPath, ['diff'])
+      diff = await git(repoPath, ['diff'], ssh, wsl)
     } catch {
       // No changes at all
     }
@@ -176,6 +186,92 @@ export async function generateCommitMessage(repoPath: string): Promise<string> {
   const prompt = `Generate a concise git commit message for the following diff. Follow conventional commit format (e.g., "feat:", "fix:", "refactor:", "docs:", "style:", "test:", "chore:"). Output ONLY the commit message, nothing else. No quotes, no explanation.
 
 ${truncatedDiff}`
+
+  return simpleQuery(prompt)
+}
+
+export async function getFileDiff(repoPath: string, filePath: string, staged: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  try {
+    if (staged) {
+      return await git(repoPath, ['diff', '--cached', '--', filePath], ssh, wsl)
+    }
+    // For untracked files, read the file and return as all-added pseudo-diff
+    try {
+      await git(repoPath, ['ls-files', '--error-unmatch', '--', filePath], ssh, wsl)
+    } catch {
+      // File is untracked — build a pseudo-diff
+      const content = await git(repoPath, ['show', `:${filePath}`], ssh, wsl).catch(async () => {
+        // Not in index either, read from working tree
+        if (ssh) {
+          return sshExec(ssh, repoPath, `cat '${filePath.replace(/'/g, "'\\''")}'`)
+        }
+        if (wsl) {
+          return wslExec(wsl, repoPath, `cat '${filePath.replace(/'/g, "'\\''")}'`)
+        }
+        const fs = await import('fs/promises')
+        const path = await import('path')
+        return (await fs.readFile(path.join(repoPath, filePath), 'utf-8'))
+      })
+      const lines = content.split('\n')
+      const header = `diff --git a/${filePath} b/${filePath}\nnew file\n--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n`
+      return header + lines.map(l => `+${l}`).join('\n')
+    }
+    return await git(repoPath, ['diff', '--', filePath], ssh, wsl)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Generate a commit message using pre-built context (conversation messages + thread-modified files).
+ * Gets the diff for specific files rather than relying on the agent to discover changes itself.
+ */
+export async function generateCommitMessageWithContext(
+  repoPath: string,
+  filePaths: string[],
+  messagesContext: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<string> {
+  // Get diff scoped to thread-modified files first, fall back to full diff
+  let diff = ''
+  try {
+    if (filePaths.length > 0) {
+      diff = await git(repoPath, ['diff', '--', ...filePaths], ssh, wsl)
+      if (!diff.trim()) {
+        diff = await git(repoPath, ['diff', '--cached', '--', ...filePaths], ssh, wsl)
+      }
+    }
+    if (!diff.trim()) {
+      diff = await git(repoPath, ['diff', '--cached'], ssh, wsl)
+    }
+    if (!diff.trim()) {
+      diff = await git(repoPath, ['diff'], ssh, wsl)
+    }
+  } catch {
+    // No git repo or no changes
+  }
+
+  if (!diff.trim() && !messagesContext.trim()) {
+    return ''
+  }
+
+  const maxDiffLength = 4000
+  const truncatedDiff = diff.length > maxDiffLength
+    ? diff.slice(0, maxDiffLength) + '\n... (truncated)'
+    : diff
+
+  const contextParts: string[] = []
+  if (messagesContext.trim()) {
+    contextParts.push(messagesContext)
+  }
+  if (truncatedDiff.trim()) {
+    contextParts.push(`## Git Changes\n\`\`\`diff\n${truncatedDiff}\n\`\`\``)
+  }
+
+  const prompt = `Generate a concise git commit message based on the context below. Follow conventional commit format (e.g., "feat:", "fix:", "refactor:", "docs:", "style:", "test:", "chore:"). Output ONLY the commit message, nothing else. No quotes, no explanation.
+
+${contextParts.join('\n\n')}`
 
   return simpleQuery(prompt)
 }

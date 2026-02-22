@@ -1,36 +1,44 @@
 import { BrowserWindow } from 'electron'
 import { ClaudeDriver } from '../driver/claude'
-import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo } from '../../shared/types'
+import { CodexDriver } from '../driver/codex'
+import { CLIDriver } from '../driver/types'
+import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
 import {
   updateThreadStatus,
   updateThreadName,
   insertMessage,
   getThreadModel,
+  getThreadProvider,
   getOrCreateActiveSession,
   createSession,
   listSessions,
   setActiveSession,
   updateSessionClaudeId,
-  getSessionClaudeId
+  getSessionClaudeId,
+  updateThreadUsage
 } from '../db/queries'
 import { generateTitle } from '../claude-sdk'
 
 export class Session {
   readonly threadId: string
-  private drivers = new Map<string, ClaudeDriver>()
+  private drivers = new Map<string, CLIDriver>()
   private activeSessionId: string | null = null
   private window: BrowserWindow
   private workingDir: string
+  private sshConfig: SshConfig | null
+  private wslConfig: WslConfig | null
   private messageCountBySession = new Map<string, number>()
   private planPending = false
   private pendingPlanContent: string | null = null
   private questionPending = false
   private pendingQuestions: Question[] = []
 
-  constructor(threadId: string, workingDir: string, window: BrowserWindow) {
+  constructor(threadId: string, workingDir: string, window: BrowserWindow, sshConfig?: SshConfig | null, wslConfig?: WslConfig | null) {
     this.threadId = threadId
     this.workingDir = workingDir
     this.window = window
+    this.sshConfig = sshConfig ?? null
+    this.wslConfig = wslConfig ?? null
 
     // Load or create initial session
     const session = getOrCreateActiveSession(threadId)
@@ -38,17 +46,32 @@ export class Session {
     this.initDriver(session.id, session.claude_session_id)
   }
 
-  private initDriver(sessionId: string, claudeSessionId: string | null): ClaudeDriver {
+  private initDriver(sessionId: string, externalSessionId: string | null): CLIDriver {
     const model = getThreadModel(this.threadId)
-    const driver = new ClaudeDriver({
+    const provider = getThreadProvider(this.threadId)
+    const options = {
       workingDir: this.workingDir,
       threadId: this.threadId,
       model,
-      initialSessionId: claudeSessionId,
-      onSessionId: (sid) => updateSessionClaudeId(sessionId, sid)
-    })
+      initialSessionId: externalSessionId,
+      onSessionId: (sid: string) => updateSessionClaudeId(sessionId, sid),
+      ssh: this.sshConfig,
+      wsl: this.wslConfig,
+    }
+    const driver: CLIDriver = provider === 'codex'
+      ? new CodexDriver(options)
+      : new ClaudeDriver(options)
     this.drivers.set(sessionId, driver)
     return driver
+  }
+
+  /** Returns true if the ssh/wsl transport config differs from what this session was created with. */
+  transportChanged(sshConfig?: SshConfig | null, wslConfig?: WslConfig | null): boolean {
+    const newSshHost = sshConfig?.host ?? null
+    const curSshHost = this.sshConfig?.host ?? null
+    const newWslDistro = wslConfig?.distro ?? null
+    const curWslDistro = this.wslConfig?.distro ?? null
+    return newSshHost !== curSshHost || newWslDistro !== curWslDistro
   }
 
   start(): void {
@@ -133,6 +156,13 @@ export class Session {
     this.messageCountBySession.set(this.activeSessionId, count)
 
     if (count === 1) {
+      // Set a provisional title immediately from the message content so the
+      // sidebar updates before the AI-generated title arrives.
+      const provisional = content.split('\n')[0].trim().slice(0, 80)
+      if (provisional) {
+        updateThreadName(this.threadId, provisional)
+        this.window.webContents.send(`thread:title:${this.threadId}`, provisional)
+      }
       this.triggerAutoTitle(content)
     }
 
@@ -289,30 +319,40 @@ export class Session {
           insertMessage(this.threadId, 'system', event.content, { type: 'error' }, this.activeSessionId)
         }
         break
+      case 'usage': {
+        // Persist accumulated totals and latest context window snapshot
+        const inputTokens = (event.metadata?.input_tokens as number) ?? 0
+        const outputTokens = (event.metadata?.output_tokens as number) ?? 0
+        updateThreadUsage(this.threadId, inputTokens, outputTokens, inputTokens)
+        break
+      }
     }
   }
 
   private handleDone(error?: Error): void {
     // Always ensure status transitions to a terminal state
+    let finalStatus: ThreadStatus
     if (error) {
       this.window.webContents.send(`thread:output:${this.threadId}`, {
         type: 'error',
         content: error.message,
         sessionId: this.activeSessionId
       } satisfies OutputEvent)
-      this.setStatus('error')
+      finalStatus = 'error'
     } else if (this.planPending) {
       // Plan mode completed — waiting for user approval
-      this.setStatus('plan_pending')
+      finalStatus = 'plan_pending'
     } else if (this.questionPending) {
       // Question asked — waiting for user answer
-      this.setStatus('question_pending')
+      finalStatus = 'question_pending'
     } else {
       // Response complete — idle and ready for next message
-      this.setStatus('idle')
+      finalStatus = 'idle'
     }
-    // Send complete event AFTER status update to ensure correct ordering
-    this.window.webContents.send(`thread:complete:${this.threadId}`)
+    this.setStatus(finalStatus)
+    // Include final status in complete event so the renderer doesn't depend
+    // on the separate thread:status event having been processed first
+    this.window.webContents.send(`thread:complete:${this.threadId}`, finalStatus)
   }
 
   private setStatus(status: ThreadStatus): void {

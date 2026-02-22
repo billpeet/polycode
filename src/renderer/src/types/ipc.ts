@@ -1,14 +1,17 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, isRemoteProject, isWslProject, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session }
-export { ANTHROPIC_MODELS, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, TokenUsage }
+export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, isRemoteProject, isWslProject, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
 export interface WindowApi {
   invoke(channel: 'projects:list'): Promise<Project[]>
-  invoke(channel: 'projects:create', name: string, path: string): Promise<Project>
-  invoke(channel: 'projects:update', id: string, name: string, path: string): Promise<void>
+  invoke(channel: 'projects:create', name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<Project>
+  invoke(channel: 'projects:update', id: string, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'projects:delete', id: string): Promise<void>
+  invoke(channel: 'ssh:test', ssh: SshConfig, remotePath: string): Promise<{ ok: boolean; error?: string }>
+  invoke(channel: 'wsl:test', wsl: WslConfig, wslPath: string): Promise<{ ok: boolean; error?: string }>
+  invoke(channel: 'wsl:list-distros'): Promise<string[]>
   invoke(channel: 'threads:list', projectId: string): Promise<Thread[]>
   invoke(channel: 'threads:create', projectId: string, name: string): Promise<Thread>
   invoke(channel: 'threads:delete', id: string): Promise<void>
@@ -25,6 +28,7 @@ export interface WindowApi {
   invoke(channel: 'threads:archive', id: string): Promise<'archived' | 'deleted'>
   invoke(channel: 'threads:unarchive', id: string): Promise<void>
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
+  invoke(channel: 'threads:updateProviderAndModel', id: string, provider: string, model: string): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
   invoke(channel: 'messages:listBySession', sessionId: string): Promise<Message[]>
   invoke(channel: 'sessions:list', threadId: string): Promise<Session[]>
@@ -41,8 +45,10 @@ export interface WindowApi {
   invoke(channel: 'git:unstageAll', repoPath: string): Promise<void>
   invoke(channel: 'git:stageFiles', repoPath: string, filePaths: string[]): Promise<void>
   invoke(channel: 'git:generateCommitMessage', repoPath: string): Promise<string>
+  invoke(channel: 'git:generateCommitMessageWithContext', repoPath: string, filePaths: string[], context: string): Promise<string>
   invoke(channel: 'git:push', repoPath: string): Promise<void>
   invoke(channel: 'git:pull', repoPath: string): Promise<void>
+  invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>

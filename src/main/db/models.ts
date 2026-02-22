@@ -2,6 +2,11 @@ export interface ProjectRow {
   id: string
   name: string
   path: string
+  ssh_host: string | null
+  ssh_user: string | null
+  ssh_port: number | null
+  ssh_key_path: string | null
+  wsl_distro: string | null
   created_at: string
   updated_at: string
 }
@@ -14,6 +19,9 @@ export interface ThreadRow {
   model: string
   status: string
   archived: number
+  input_tokens: number
+  output_tokens: number
+  context_window: number
   created_at: string
   updated_at: string
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question, TokenUsage } from '../types/ipc'
 
 export interface QueuedMessage {
   content: string
@@ -22,6 +22,8 @@ interface ThreadStore {
   planModeByThread: Record<string, boolean>
   /** queued message keyed by thread ID (sent when current session completes) */
   queuedMessageByThread: Record<string, QueuedMessage | null>
+  /** accumulated token usage keyed by thread ID */
+  usageByThread: Record<string, TokenUsage>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string) => Promise<void>
   create: (projectId: string, name: string) => Promise<void>
@@ -36,6 +38,7 @@ interface ThreadStore {
   /** Rename thread (persists to DB and updates local state) */
   rename: (threadId: string, name: string) => Promise<void>
   setModel: (threadId: string, model: string) => Promise<void>
+  setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
   start: (threadId: string, workingDir: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
   send: (threadId: string, content: string, workingDir: string, options?: SendOptions) => Promise<void>
@@ -48,6 +51,7 @@ interface ThreadStore {
   queueMessage: (threadId: string, content: string, planMode: boolean) => void
   clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
+  addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window: number) => void
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -60,6 +64,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   draftByThread: {},
   planModeByThread: {},
   queuedMessageByThread: {},
+  usageByThread: {},
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -72,6 +77,14 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       statusMap: {
         ...s.statusMap,
         ...Object.fromEntries(threads.map((t: Thread) => [t.id, t.status]))
+      },
+      usageByThread: {
+        ...s.usageByThread,
+        ...Object.fromEntries(
+          threads
+            .filter((t: Thread) => t.input_tokens > 0 || t.output_tokens > 0)
+            .map((t: Thread) => [t.id, { input_tokens: t.input_tokens, output_tokens: t.output_tokens, context_window: t.context_window }])
+        )
       }
     }))
   },
@@ -229,6 +242,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
   },
 
+  setProviderAndModel: async (threadId, provider, model) => {
+    await window.api.invoke('threads:updateProviderAndModel', threadId, provider, model)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, provider, model } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
   start: async (threadId, workingDir) => {
     await window.api.invoke('threads:start', threadId, workingDir)
   },
@@ -291,4 +315,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       selectedThreadId: thread.id
     }))
   },
+
+  addUsage: (threadId, input_tokens, output_tokens, context_window) =>
+    set((s) => {
+      const prev = s.usageByThread[threadId]
+      return {
+        usageByThread: {
+          ...s.usageByThread,
+          [threadId]: {
+            input_tokens: (prev?.input_tokens ?? 0) + input_tokens,
+            output_tokens: (prev?.output_tokens ?? 0) + output_tokens,
+            context_window,
+          }
+        }
+      }
+    }),
 }))

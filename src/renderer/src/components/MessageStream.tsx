@@ -38,6 +38,9 @@ export interface MessageGroup {
 const TOOL_GROUP_KEY: Record<string, string> = {
   Read: 'file-access',
   Glob: 'file-access',
+  Grep: 'file-access',
+  WebSearch: 'web-access',
+  WebFetch: 'web-access',
 }
 
 function getToolGroupKey(toolName: string): string {

@@ -4,6 +4,7 @@ import { useGitStore } from '../stores/git'
 import { useProjectStore } from '../stores/projects'
 import { useToastStore } from '../stores/toast'
 import { useUiStore, RightPanelTab } from '../stores/ui'
+import { useFilesStore } from '../stores/files'
 import { GitFileChange } from '../types/ipc'
 import FileTree from './FileTree'
 
@@ -232,9 +233,10 @@ interface FileGroupProps {
   onGroupAction: () => void
   actionIcon: 'plus' | 'minus'
   actionTitle: string
+  onFileClick?: (file: GitFileChange) => void
 }
 
-function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, actionTitle }: FileGroupProps) {
+function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, actionTitle, onFileClick }: FileGroupProps) {
   const [collapsed, setCollapsed] = useState(false)
   return (
     <div>
@@ -288,7 +290,11 @@ function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, acti
                 title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
               >
                 <FileStatusBadge status={file.status} staged={file.staged} />
-                <span className="text-xs truncate min-w-0 flex-1" style={{ color: 'var(--color-text)' }}>
+                <span
+                  className="text-xs truncate min-w-0 flex-1"
+                  style={{ color: 'var(--color-text)', cursor: onFileClick ? 'pointer' : 'default' }}
+                  onClick={() => onFileClick?.(file)}
+                >
                   {name}
                 </span>
                 {dir && (
@@ -329,10 +335,17 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const project = projects.find((p) => p.id === selectedProjectId)
+  const projectPath = project?.path
 
-  const gitStatus = useGitStore((s) => project?.path ? (s.statusByPath[project.path] ?? null) : null)
-  const commitMsg = useGitStore((s) => project?.path ? (s.commitMessageByPath[project.path] ?? '') : '')
-  const isGeneratingMessage = useGitStore((s) => project?.path ? (s.generatingMessageByPath[project.path] ?? false) : false)
+  const statusByPath = useGitStore((s) => s.statusByPath)
+  const commitMessageByPath = useGitStore((s) => s.commitMessageByPath)
+  const generatingMessageByPath = useGitStore((s) => s.generatingMessageByPath)
+  const pushingByPath = useGitStore((s) => s.pushingByPath)
+  const pullingByPath = useGitStore((s) => s.pullingByPath)
+
+  const gitStatus = projectPath ? (statusByPath[projectPath] ?? null) : null
+  const commitMsg = projectPath ? (commitMessageByPath[projectPath] ?? '') : ''
+  const isGeneratingMessage = projectPath ? (generatingMessageByPath[projectPath] ?? false) : false
   const modifiedFiles = useGitStore((s) => s.modifiedFilesByThread[threadId] ?? EMPTY_FILES)
   const fetchGit = useGitStore((s) => s.fetch)
   const commitGit = useGitStore((s) => s.commit)
@@ -345,50 +358,51 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const stageFilesAction = useGitStore((s) => s.stageFiles)
   const fetchModifiedFiles = useGitStore((s) => s.fetchModifiedFiles)
   const addToast = useToastStore((s) => s.add)
+  const selectDiff = useFilesStore((s) => s.selectDiff)
 
   const pushGit = useGitStore((s) => s.push)
   const pullGit = useGitStore((s) => s.pull)
-  const isPushing = useGitStore((s) => project?.path ? (s.pushingByPath[project.path] ?? false) : false)
-  const isPulling = useGitStore((s) => project?.path ? (s.pullingByPath[project.path] ?? false) : false)
+  const isPushing = projectPath ? (pushingByPath[projectPath] ?? false) : false
+  const isPulling = projectPath ? (pullingByPath[projectPath] ?? false) : false
 
   const [committing, setCommitting] = useState(false)
   const [stageThreadFiles, setStageThreadFiles] = useState(true)
 
   useEffect(() => {
-    if (project?.path) fetchGit(project.path)
-  }, [project?.path, fetchGit])
+    if (projectPath && !collapsed) fetchGit(projectPath)
+  }, [projectPath, collapsed, fetchGit])
 
   useEffect(() => {
-    if (threadId && project?.path) fetchModifiedFiles(threadId, project.path)
-  }, [threadId, project?.path, fetchModifiedFiles])
+    if (threadId && projectPath) fetchModifiedFiles(threadId, projectPath)
+  }, [threadId, projectPath, fetchModifiedFiles])
 
   const handleSetCommitMsg = useCallback((msg: string) => {
-    if (project?.path) setCommitMsg(project.path, msg)
-  }, [project?.path, setCommitMsg])
+    if (projectPath) setCommitMsg(projectPath, msg)
+  }, [projectPath, setCommitMsg])
 
   // Compute unstaged files that were modified by this thread
   const unstagedFiles = gitStatus?.files.filter((f) => !f.staged) ?? []
   const unstagedPaths = new Set(unstagedFiles.map((f) => f.path))
   const threadFilesUnstaged = modifiedFiles.filter((f) => {
     // Compare paths: modified files are absolute, git status paths are relative
-    const relPath = project?.path ? f.replace(project.path + '/', '').replace(project.path + '\\', '') : f
+    const relPath = projectPath ? f.replace(projectPath + '/', '').replace(projectPath + '\\', '') : f
     return unstagedPaths.has(relPath) || unstagedPaths.has(f)
   })
   const showStageCheckbox = threadFilesUnstaged.length > 0 && (gitStatus?.files.filter((f) => f.staged).length ?? 0) === 0
 
   async function handleCommit(): Promise<void> {
-    if (!project?.path || !commitMsg.trim()) return
+    if (!projectPath || !commitMsg.trim()) return
     setCommitting(true)
     try {
       // If checkbox is checked and there are thread files to stage, stage them first
       if (stageThreadFiles && threadFilesUnstaged.length > 0) {
         // Convert absolute paths to relative paths for git
         const relativePaths = threadFilesUnstaged.map((f) => {
-          return f.replace(project.path + '/', '').replace(project.path + '\\', '')
+          return f.replace(projectPath + '/', '').replace(projectPath + '\\', '')
         })
-        await stageFilesAction(project.path, relativePaths)
+        await stageFilesAction(projectPath, relativePaths)
       }
-      await commitGit(project.path, commitMsg.trim())
+      await commitGit(projectPath, commitMsg.trim())
       addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Commit failed', duration: 0 })
@@ -398,56 +412,61 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   }
 
   async function handleGenerateMessage(): Promise<void> {
-    if (!project?.path) return
+    if (!projectPath) return
     try {
-      await generateMsg(project.path)
+      await generateMsg(projectPath)
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to generate message', duration: 0 })
     }
   }
 
   const handleStage = useCallback(async (filePath: string) => {
-    if (!project?.path) return
+    if (!projectPath) return
     try {
-      await stageFile(project.path, filePath)
+      await stageFile(projectPath, filePath)
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage file', duration: 3000 })
     }
-  }, [project?.path, stageFile, addToast])
+  }, [projectPath, stageFile, addToast])
 
   const handleUnstage = useCallback(async (filePath: string) => {
-    if (!project?.path) return
+    if (!projectPath) return
     try {
-      await unstageFile(project.path, filePath)
+      await unstageFile(projectPath, filePath)
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to unstage file', duration: 3000 })
     }
-  }, [project?.path, unstageFile, addToast])
+  }, [projectPath, unstageFile, addToast])
 
   const handleStageAll = useCallback(async () => {
-    if (!project?.path) return
+    if (!projectPath) return
     try {
-      await stageAllFiles(project.path)
+      await stageAllFiles(projectPath)
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 })
     }
-  }, [project?.path, stageAllFiles, addToast])
+  }, [projectPath, stageAllFiles, addToast])
+
+  const handleFileClick = useCallback((file: GitFileChange) => {
+    if (!projectPath) return
+    selectDiff(projectPath, file.path, file.staged)
+  }, [projectPath, selectDiff])
 
   const handleUnstageAll = useCallback(async () => {
-    if (!project?.path) return
+    if (!projectPath) return
     try {
-      await unstageAllFiles(project.path)
+      await unstageAllFiles(projectPath)
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to unstage files', duration: 3000 })
     }
-  }, [project?.path, unstageAllFiles, addToast])
+  }, [projectPath, unstageAllFiles, addToast])
 
   const stagedFiles = gitStatus?.files.filter((f) => f.staged) ?? []
   const totalChanges = gitStatus?.files.length ?? 0
 
   const refreshButton = (
     <button
-      onClick={() => project?.path && fetchGit(project.path)}
+      onClick={() => projectPath && fetchGit(projectPath)}
       className="rounded p-1 hover:bg-white/10 transition-colors"
       style={{ color: 'var(--color-text-muted)' }}
       title="Refresh"
@@ -475,7 +494,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
           <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
             {!gitStatus ? (
               <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
-                {!project?.path ? 'No project selected.' : 'Not a Git repository.'}
+                {!projectPath ? 'No project selected.' : 'Not a Git repository.'}
               </p>
             ) : (
               <>
@@ -548,9 +567,9 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                 <div className="flex gap-1.5 mt-1.5">
                   <button
                     onClick={async () => {
-                      if (!project?.path) return
+                      if (!projectPath) return
                       try {
-                        await pullGit(project.path)
+                        await pullGit(projectPath)
                         addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
                       } catch (err) {
                         addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull failed', duration: 0 })
@@ -578,9 +597,9 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                   </button>
                   <button
                     onClick={async () => {
-                      if (!project?.path) return
+                      if (!projectPath) return
                       try {
-                        await pushGit(project.path)
+                        await pushGit(projectPath)
                         addToast({ type: 'success', message: 'Pushed successfully', duration: 3000 })
                       } catch (err) {
                         addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 })
@@ -628,6 +647,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                       onGroupAction={handleUnstageAll}
                       actionIcon="minus"
                       actionTitle="Unstage"
+                      onFileClick={handleFileClick}
                     />
                   )}
                   {unstagedFiles.length > 0 && (
@@ -638,6 +658,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                       onGroupAction={handleStageAll}
                       actionIcon="plus"
                       actionTitle="Stage"
+                      onFileClick={handleFileClick}
                     />
                   )}
                 </>

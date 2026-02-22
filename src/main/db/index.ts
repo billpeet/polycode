@@ -102,6 +102,28 @@ function runMigrations(database: Database.Database): void {
     }
   }
 
+  // ── SSH columns on projects ───────────────────────────────────────────────
+  const projCols = database.pragma('table_info(projects)') as Array<{ name: string }>
+  if (!projCols.some((c) => c.name === 'ssh_host')) {
+    database.exec('ALTER TABLE projects ADD COLUMN ssh_host TEXT')
+    database.exec('ALTER TABLE projects ADD COLUMN ssh_user TEXT')
+    database.exec('ALTER TABLE projects ADD COLUMN ssh_port INTEGER')
+    database.exec('ALTER TABLE projects ADD COLUMN ssh_key_path TEXT')
+  }
+
+  // ── WSL column on projects ────────────────────────────────────────────────
+  if (!projCols.some((c) => c.name === 'wsl_distro')) {
+    database.exec('ALTER TABLE projects ADD COLUMN wsl_distro TEXT')
+  }
+
+  // ── Token usage columns on threads ──────────────────────────────────────────
+  const threadColsUpdated = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsUpdated.some((c) => c.name === 'input_tokens')) {
+    database.exec('ALTER TABLE threads ADD COLUMN input_tokens INTEGER NOT NULL DEFAULT 0')
+    database.exec('ALTER TABLE threads ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0')
+    database.exec('ALTER TABLE threads ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0')
+  }
+
   // Add session_id column to messages if not present
   const msgCols = database.pragma('table_info(messages)') as Array<{ name: string }>
   const hasSessionIdInMessages = msgCols.some((c) => c.name === 'session_id')
@@ -114,6 +136,26 @@ function runMigrations(database: Database.Database): void {
         SELECT s.id FROM sessions s WHERE s.thread_id = messages.thread_id LIMIT 1
       )
     `)
+  }
+
+  // ── provider_model_updated_at: tracks when provider/model was last explicitly changed ──
+  const threadColsFinal = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsFinal.some((c) => c.name === 'provider_model_updated_at')) {
+    database.exec('ALTER TABLE threads ADD COLUMN provider_model_updated_at TEXT')
+  }
+
+  // ── Remap stale Codex model IDs to current ones ───────────────────────────
+  // Old placeholder models (o4-mini, o3, gpt-4o, gpt-4.1) were never valid
+  // Codex CLI models. Migrate any threads still referencing them.
+  const staleCodexModels: Record<string, string> = {
+    'o4-mini': 'gpt-5.3-codex',
+    'o3': 'gpt-5.3-codex',
+    'gpt-4o': 'gpt-5.3-codex',
+    'gpt-4.1': 'gpt-5.3-codex',
+  }
+  const updateModel = database.prepare("UPDATE threads SET model = ? WHERE provider = 'codex' AND model = ?")
+  for (const [oldId, newId] of Object.entries(staleCodexModels)) {
+    updateModel.run(newId, oldId)
   }
 }
 

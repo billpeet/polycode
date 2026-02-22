@@ -17,6 +17,7 @@ export default function App() {
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const selectProject = useProjectStore((s) => s.select)
+  const expandProject = useProjectStore((s) => s.expand)
 
   const fetchThreads = useThreadStore((s) => s.fetch)
   const byProject = useThreadStore((s) => s.byProject)
@@ -28,6 +29,8 @@ export default function App() {
   )
 
   const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
+  const diffView = useFilesStore((s) => s.diffView)
+  const loadingDiff = useFilesStore((s) => s.loadingDiff)
 
   // Track whether we've attempted restore yet
   const restored = useRef(false)
@@ -49,6 +52,7 @@ export default function App() {
 
     restored.current = true
     selectProject(project.id)
+    expandProject(project.id)
     fetchThreads(project.id).then(() => {
       // selectThread is called inside the byProject effect below
     })
@@ -57,7 +61,7 @@ export default function App() {
     if (savedThreadId) {
       pendingThreadId.current = savedThreadId
     }
-  }, [projects, selectProject, fetchThreads])
+  }, [projects, selectProject, expandProject, fetchThreads])
 
   // Ref to carry the desired thread ID across the async fetch
   const pendingThreadId = useRef<string | null>(null)
@@ -126,7 +130,7 @@ export default function App() {
               <div className="flex flex-1 flex-col overflow-hidden">
                 <ThreadView threadId={selectedThreadId} />
               </div>
-              {selectedFilePath && <FilePreview />}
+              {(selectedFilePath || diffView || loadingDiff) && <FilePreview />}
               {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
             </>
           ) : (

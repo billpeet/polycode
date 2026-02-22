@@ -6,11 +6,38 @@ import { useToastStore } from '../stores/toast'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useSessionStore } from '../stores/sessions'
 import { useGitStore } from '../stores/git'
-import { OutputEvent } from '../types/ipc'
+import { OutputEvent, Message } from '../types/ipc'
 import ThreadHeader from './ThreadHeader'
 import SessionTabs from './SessionTabs'
 import MessageStream from './MessageStream'
 import InputBar from './InputBar'
+
+function buildMessageContext(messages: Message[]): string {
+  const userMsgs = messages.filter((m) => m.role === 'user')
+  const lastAssistantMsg = [...messages].reverse().find((m) => {
+    if (m.role !== 'assistant') return false
+    if (!m.metadata) return true
+    try {
+      const meta = JSON.parse(m.metadata) as { type?: string }
+      return meta.type !== 'tool_call' && meta.type !== 'tool_result'
+    } catch {
+      return true
+    }
+  })
+
+  const parts: string[] = []
+  if (userMsgs.length > 0) {
+    parts.push('## User Request')
+    for (const msg of userMsgs) {
+      parts.push(msg.content.slice(0, 600))
+    }
+  }
+  if (lastAssistantMsg) {
+    parts.push('## Agent Summary')
+    parts.push(lastAssistantMsg.content.slice(0, 1000))
+  }
+  return parts.join('\n\n')
+}
 
 interface Props {
   threadId: string
@@ -70,6 +97,15 @@ export default function ThreadView({ threadId }: Props) {
         }
       }
 
+      // Accumulate token usage
+      if (event.type === 'usage' && event.metadata) {
+        const input = (event.metadata.input_tokens as number) ?? 0
+        const output = (event.metadata.output_tokens as number) ?? 0
+        if (input || output) {
+          useThreadStore.getState().addUsage(threadId, input, output, input)
+        }
+      }
+
       if (event.type === 'error') {
         useToastStore.getState().add({ type: 'error', message: event.content, duration: 0 })
       }
@@ -87,7 +123,15 @@ export default function ThreadView({ threadId }: Props) {
       }
     })
 
-    const unsubComplete = window.api.on(`thread:complete:${threadId}`, () => {
+    const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
+      // Use the status sent directly with the complete event to avoid race conditions
+      // with the separate thread:status IPC event
+      const completionStatus = (args[0] as string | undefined) ?? 'idle'
+
+      // Ensure the store reflects the final status (handles cases where the
+      // thread:status event hasn't been processed yet)
+      setStatus(threadId, completionStatus)
+
       // Re-fetch messages after completion to replace optimistic entries with persisted ones
       const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
       if (currentActiveSession) {
@@ -104,18 +148,29 @@ export default function ThreadView({ threadId }: Props) {
         useGitStore.getState().fetchModifiedFiles(threadId, project.path)
       }
 
-      // Safety net: ensure status is reset if still running (handles edge cases where status event was missed)
-      const currentStatus = useThreadStore.getState().statusMap[threadId]
-      if (currentStatus === 'running') {
-        setStatus(threadId, 'idle')
+      // Auto-generate commit message when run completes successfully and field is empty
+      if (completionStatus === 'idle') {
+        const projectsState = useProjectStore.getState()
+        const currentProject = projectsState.projects.find((p) => p.id === projectsState.selectedProjectId)
+        if (currentProject?.path) {
+          const currentMsg = useGitStore.getState().commitMessageByPath[currentProject.path] ?? ''
+          if (!currentMsg.trim()) {
+            const activeSession = useSessionStore.getState().activeSessionByThread[threadId]
+            const msgs = activeSession
+              ? (useMessageStore.getState().messagesBySession[activeSession] ?? [])
+              : (useMessageStore.getState().messagesByThread[threadId] ?? [])
+            const modifiedFiles = useGitStore.getState().modifiedFilesByThread[threadId] ?? []
+            const context = buildMessageContext(msgs)
+            useGitStore.getState().generateCommitMessageWithContext(currentProject.path, modifiedFiles, context)
+          }
+        }
       }
 
       // Check for queued message and auto-send if session completed successfully
       const queuedMessage = useThreadStore.getState().queuedMessageByThread[threadId]
-      const finalStatus = useThreadStore.getState().statusMap[threadId]
 
       // Only auto-send when status is idle (not error/stopped/plan_pending/question_pending)
-      if (queuedMessage && finalStatus === 'idle') {
+      if (queuedMessage && completionStatus === 'idle') {
         // Clear queue first to prevent double-send
         useThreadStore.getState().clearQueue(threadId)
 

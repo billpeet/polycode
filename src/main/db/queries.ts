@@ -1,47 +1,104 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, ThreadRow, MessageRow, SessionRow } from './models'
-import { Project, Thread, Message, Session } from '../../shared/types'
+import { Project, Thread, Message, Session, SshConfig, WslConfig, Provider, getModelsForProvider, getDefaultModelForProvider } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
+function rowToProject(row: ProjectRow): Project {
+  const ssh: SshConfig | null = row.ssh_host
+    ? {
+        host: row.ssh_host,
+        user: row.ssh_user ?? '',
+        port: row.ssh_port ?? undefined,
+        keyPath: row.ssh_key_path ?? undefined,
+      }
+    : null
+  const wsl: WslConfig | null = row.wsl_distro
+    ? { distro: row.wsl_distro }
+    : null
+  return {
+    id: row.id,
+    name: row.name,
+    path: row.path,
+    ssh,
+    wsl,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
 export function listProjects(): Project[] {
   const rows = getDb().prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as ProjectRow[]
-  return rows as Project[]
+  return rows.map(rowToProject)
 }
 
-export function createProject(name: string, projectPath: string): Project {
+export function createProject(name: string, projectPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Project {
   const now = new Date().toISOString()
-  const project: ProjectRow = {
-    id: uuidv4(),
+  const id = uuidv4()
+  getDb()
+    .prepare(
+      'INSERT INTO projects (id, name, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(id, name, projectPath, ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null, wsl?.distro ?? null, now, now)
+  return {
+    id,
     name,
     path: projectPath,
+    ssh: ssh ?? null,
+    wsl: wsl ?? null,
     created_at: now,
-    updated_at: now
+    updated_at: now,
   }
-  getDb()
-    .prepare('INSERT INTO projects (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
-    .run(project.id, project.name, project.path, project.created_at, project.updated_at)
-  return project as Project
 }
 
-export function updateProject(id: string, name: string, path: string): void {
+export function updateProject(id: string, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null): void {
   getDb()
-    .prepare('UPDATE projects SET name = ?, path = ?, updated_at = ? WHERE id = ?')
-    .run(name, path, new Date().toISOString(), id)
+    .prepare('UPDATE projects SET name = ?, path = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?, ssh_key_path = ?, wsl_distro = ?, updated_at = ? WHERE id = ?')
+    .run(name, path, ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null, wsl?.distro ?? null, new Date().toISOString(), id)
 }
 
 export function deleteProject(id: string): void {
   getDb().prepare('DELETE FROM projects WHERE id = ?').run(id)
 }
 
+export function getProjectForThread(threadId: string): Project | null {
+  const row = getDb()
+    .prepare('SELECT p.* FROM projects p JOIN threads t ON t.project_id = p.id WHERE t.id = ?')
+    .get(threadId) as ProjectRow | undefined
+  return row ? rowToProject(row) : null
+}
+
+export function getProjectByPath(path: string): Project | null {
+  const row = getDb()
+    .prepare('SELECT * FROM projects WHERE path = ?')
+    .get(path) as ProjectRow | undefined
+  return row ? rowToProject(row) : null
+}
+
 // ── Threads ───────────────────────────────────────────────────────────────────
+
+function rowToThread(r: ThreadRow): Thread {
+  // Validate provider/model pairing — fix mismatches caused by stale data
+  const provider = (r.provider ?? 'claude-code') as Provider
+  const validModels = getModelsForProvider(provider).map((m) => m.id as string)
+  const model = validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
+  return {
+    ...r,
+    provider,
+    model,
+    archived: r.archived === 1,
+    input_tokens: r.input_tokens ?? 0,
+    output_tokens: r.output_tokens ?? 0,
+    context_window: r.context_window ?? 0,
+  }
+}
 
 export function listThreads(projectId: string): Thread[] {
   const rows = getDb()
     .prepare('SELECT * FROM threads WHERE project_id = ? AND archived = 0 ORDER BY updated_at DESC')
     .all(projectId) as ThreadRow[]
-  return rows.map((r) => ({ ...r, archived: r.archived === 1 })) as Thread[]
+  return rows.map(rowToThread)
 }
 
 export function archivedThreadCount(projectId: string): number {
@@ -55,7 +112,7 @@ export function listArchivedThreads(projectId: string): Thread[] {
   const rows = getDb()
     .prepare('SELECT * FROM threads WHERE project_id = ? AND archived = 1 ORDER BY updated_at DESC')
     .all(projectId) as ThreadRow[]
-  return rows.map((r) => ({ ...r, archived: r.archived === 1 })) as Thread[]
+  return rows.map(rowToThread)
 }
 
 export function threadHasMessages(id: string): boolean {
@@ -87,6 +144,9 @@ export function createThread(projectId: string, name: string, provider = 'claude
     model,
     status: 'idle',
     archived: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    context_window: 0,
     created_at: now,
     updated_at: now
   }
@@ -104,13 +164,21 @@ export function createThread(projectId: string, name: string, provider = 'claude
       thread.created_at,
       thread.updated_at
     )
-  return { ...thread, archived: false } as Thread
+  return rowToThread(thread)
 }
 
 export function updateThreadModel(id: string, model: string): void {
+  const now = new Date().toISOString()
   getDb()
-    .prepare('UPDATE threads SET model = ?, updated_at = ? WHERE id = ?')
-    .run(model, new Date().toISOString(), id)
+    .prepare('UPDATE threads SET model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
+    .run(model, now, now, id)
+}
+
+export function updateThreadProviderAndModel(id: string, provider: string, model: string): void {
+  const now = new Date().toISOString()
+  getDb()
+    .prepare('UPDATE threads SET provider = ?, model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
+    .run(provider, model, now, now, id)
 }
 
 export function deleteThread(id: string): void {
@@ -143,6 +211,13 @@ export function getThreadModel(threadId: string): string {
   return row?.model ?? 'claude-opus-4-5'
 }
 
+export function getThreadProvider(threadId: string): string {
+  const row = getDb()
+    .prepare('SELECT provider FROM threads WHERE id = ?')
+    .get(threadId) as { provider: string | null } | undefined
+  return row?.provider ?? 'claude-code'
+}
+
 export function getThreadSessionId(threadId: string): string | null {
   const row = getDb()
     .prepare('SELECT claude_session_id FROM threads WHERE id = ?')
@@ -157,18 +232,37 @@ export function getImportedSessionIds(projectId: string): string[] {
   return rows.map(r => r.claude_session_id)
 }
 
-/** Get the model from the most recently updated thread in a project, or default. */
-export function getLastUsedModel(projectId: string): string {
+/** Get the provider and model from the thread where provider/model was most recently explicitly changed. */
+export function getLastUsedProviderAndModel(projectId: string): { provider: string; model: string } {
+  // Prefer threads where provider_model_updated_at was explicitly set; fall back to most recently updated
   const row = getDb()
-    .prepare('SELECT model FROM threads WHERE project_id = ? ORDER BY updated_at DESC LIMIT 1')
-    .get(projectId) as { model: string } | undefined
-  return row?.model ?? 'claude-opus-4-5'
+    .prepare(
+      'SELECT provider, model FROM threads WHERE project_id = ? ORDER BY provider_model_updated_at DESC NULLS LAST, updated_at DESC LIMIT 1'
+    )
+    .get(projectId) as { provider: string; model: string } | undefined
+
+  if (!row) return { provider: 'claude-code', model: 'claude-opus-4-6' }
+
+  // Validate the pair before returning it
+  const provider = (row.provider ?? 'claude-code') as Provider
+  const validModels = getModelsForProvider(provider).map((m) => m.id as string)
+  const model = validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
+  return { provider, model }
 }
 
 export function updateThreadSessionId(threadId: string, sessionId: string): void {
   getDb()
     .prepare('UPDATE threads SET claude_session_id = ? WHERE id = ?')
     .run(sessionId, threadId)
+}
+
+/** Accumulate input/output token totals and set context_window to latest snapshot. */
+export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, contextWindow: number): void {
+  getDb()
+    .prepare(
+      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, context_window = ?, updated_at = ? WHERE id = ?'
+    )
+    .run(inputTokens, outputTokens, contextWindow, new Date().toISOString(), id)
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -288,8 +382,8 @@ export interface ImportedMessage {
 
 interface ToolCallMetadata {
   type: 'tool_call'
+  id: string          // Claude API tool_use block uses 'id'
   name: string
-  tool_use_id: string
   input?: { file_path?: string }
 }
 
@@ -325,8 +419,8 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
 
     if (meta.type === 'tool_call' && (meta.name === 'Edit' || meta.name === 'Write')) {
       const filePath = meta.input?.file_path
-      if (filePath && meta.tool_use_id) {
-        toolCallFiles.set(meta.tool_use_id, filePath)
+      if (filePath && meta.id) {
+        toolCallFiles.set(meta.id, filePath)
       }
     } else if (meta.type === 'tool_result' && meta.tool_use_id) {
       // Consider it successful if is_error is not true
@@ -372,6 +466,9 @@ export function importThread(
     model,
     status: 'idle',
     archived: 0,
+    input_tokens: 0,
+    output_tokens: 0,
+    context_window: 0,
     created_at: now,
     updated_at: now
   }
@@ -416,5 +513,5 @@ export function importThread(
 
   insertMany(messages)
 
-  return { ...thread, archived: false } as Thread
+  return rowToThread(thread)
 }

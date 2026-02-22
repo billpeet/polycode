@@ -10,7 +10,8 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron .",
-    "start:prod": "bun run build && NODE_ENV=production electron . --user-data-dir=$APPDATA/polycode-electron-prod"
+    "start:prod": "bun run build && NODE_ENV=production electron . --user-data-dir=$APPDATA/polycode-electron-prod",
+    "test": "bun test src/main/driver/__tests__"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.50",

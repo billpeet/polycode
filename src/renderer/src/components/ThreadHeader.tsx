@@ -5,9 +5,15 @@ import { useTodoStore, Todo } from '../stores/todos'
 import { useUiStore } from '../stores/ui'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
-import { ANTHROPIC_MODELS } from '../types/ipc'
+import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider } from '../types/ipc'
 
 const EMPTY_TODOS: Todo[] = []
+
+function formatTokenCount(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
 
 interface Props {
   threadId: string
@@ -18,6 +24,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const statusMap = useThreadStore((s) => s.statusMap)
   const rename = useThreadStore((s) => s.rename)
   const setModel = useThreadStore((s) => s.setModel)
+  const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
 
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const projects = useProjectStore((s) => s.projects)
@@ -33,6 +40,8 @@ export default function ThreadHeader({ threadId }: Props) {
   const hasInProgress = todos.some((t) => t.status === 'in_progress')
   const isPanelOpen = useUiStore((s) => s.todoPanelOpenByThread[threadId] ?? false)
   const togglePanel = useUiStore((s) => s.toggleTodoPanel)
+
+  const usage = useThreadStore((s) => s.usageByThread[threadId])
 
   const fetchGit = useGitStore((s) => s.fetch)
   const gitStatus = useGitStore((s) =>
@@ -132,7 +141,30 @@ export default function ThreadHeader({ threadId }: Props) {
           </button>
         )}
         <select
-          value={thread?.model ?? 'claude-opus-4-5'}
+          value={thread?.provider ?? 'claude-code'}
+          onChange={(e) => {
+            const provider = e.target.value as Provider
+            const defaultModel = getDefaultModelForProvider(provider)
+            setProviderAndModel(threadId, provider, defaultModel)
+          }}
+          disabled={status === 'running'}
+          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
+          style={{
+            color: 'var(--color-text-muted)',
+            borderColor: 'var(--color-border)',
+            background: 'var(--color-surface)',
+            opacity: status === 'running' ? 0.4 : 1,
+          }}
+          title="Select provider"
+        >
+          {PROVIDERS.map((p) => (
+            <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+              {p.label}
+            </option>
+          ))}
+        </select>
+        <select
+          value={thread?.model ?? getDefaultModelForProvider((thread?.provider ?? 'claude-code') as Provider)}
           onChange={(e) => setModel(threadId, e.target.value)}
           disabled={status === 'running'}
           className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
@@ -144,12 +176,61 @@ export default function ThreadHeader({ threadId }: Props) {
           }}
           title="Select model"
         >
-          {ANTHROPIC_MODELS.map((m) => (
+          {getModelsForProvider((thread?.provider ?? 'claude-code') as Provider).map((m) => (
             <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
               {m.label}
             </option>
           ))}
         </select>
+
+        {/* Token usage + context window */}
+        {usage && (() => {
+          const model = thread?.model ?? 'claude-opus-4-5'
+          const contextLimit = MODEL_CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
+          const contextPct = Math.min(usage.context_window / contextLimit, 1)
+          const barColor = contextPct < 0.5 ? '#4ade80' : contextPct < 0.8 ? '#facc15' : '#f87171'
+          return (
+            <span
+              className="flex items-center gap-2 text-xs flex-shrink-0"
+              style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace' }}
+            >
+              <span
+                title={`Input: ${usage.input_tokens.toLocaleString()} tokens | Output: ${usage.output_tokens.toLocaleString()} tokens`}
+              >
+                ↓{formatTokenCount(usage.input_tokens)} ↑{formatTokenCount(usage.output_tokens)}
+              </span>
+              {usage.context_window > 0 && (
+                <span
+                  className="flex items-center gap-1"
+                  title={`Context: ${usage.context_window.toLocaleString()} / ${contextLimit.toLocaleString()} tokens (${Math.round(contextPct * 100)}%)`}
+                >
+                  <span
+                    style={{
+                      width: 60,
+                      height: 4,
+                      borderRadius: 2,
+                      background: 'var(--color-border)',
+                      overflow: 'hidden',
+                      display: 'inline-block',
+                    }}
+                  >
+                    <span
+                      style={{
+                        display: 'block',
+                        width: `${Math.max(contextPct * 100, 1)}%`,
+                        height: '100%',
+                        borderRadius: 2,
+                        background: barColor,
+                        transition: 'width 0.3s, background 0.3s',
+                      }}
+                    />
+                  </span>
+                  <span style={{ fontSize: '0.6rem' }}>{Math.round(contextPct * 100)}%</span>
+                </span>
+              )}
+            </span>
+          )
+        })()}
 
         {/* Git branch + diff stats */}
         {gitStatus && (

@@ -16,8 +16,10 @@ function toolNoun(toolName: string, count: number): string {
     Glob:          ['search',    'searches'],
     Grep:          ['search',    'searches'],
     WebFetch:      ['request',   'requests'],
+    WebSearch:     ['search',    'searches'],
     Task:          ['task',      'tasks'],
     'file-access': ['operation', 'operations'],
+    'web-access':  ['request',   'requests'],
   }
   const [singular, plural] = nouns[toolName] ?? ['call', 'calls']
   return `${count} ${count === 1 ? singular : plural}`

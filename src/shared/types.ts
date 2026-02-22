@@ -1,7 +1,28 @@
+export interface SshConfig {
+  host: string
+  user: string
+  port?: number
+  keyPath?: string
+}
+
+export interface WslConfig {
+  distro: string
+}
+
+export function isRemoteProject(project: Project): boolean {
+  return !!project.ssh?.host
+}
+
+export function isWslProject(project: Project): boolean {
+  return !!project.wsl?.distro
+}
+
 export interface Project {
   id: string
   name: string
   path: string
+  ssh?: SshConfig | null
+  wsl?: WslConfig | null
   created_at: string
   updated_at: string
 }
@@ -16,6 +37,31 @@ export const ANTHROPIC_MODELS = [
 
 export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
 
+export const OPENAI_MODELS = [
+  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
+  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
+  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
+  { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
+  { id: 'codex-mini-latest', label: 'Codex Mini' },
+] as const
+
+export type OpenAIModelId = typeof OPENAI_MODELS[number]['id']
+
+export type Provider = 'claude-code' | 'codex'
+
+export const PROVIDERS = [
+  { id: 'claude-code' as Provider, label: 'Claude Code' },
+  { id: 'codex' as Provider, label: 'Codex' },
+] as const
+
+export function getModelsForProvider(provider: Provider) {
+  return provider === 'codex' ? OPENAI_MODELS : ANTHROPIC_MODELS
+}
+
+export function getDefaultModelForProvider(provider: Provider): string {
+  return provider === 'codex' ? OPENAI_MODELS[0].id : ANTHROPIC_MODELS[0].id
+}
+
 export interface Thread {
   id: string
   project_id: string
@@ -24,6 +70,9 @@ export interface Thread {
   model: string
   status: 'idle' | 'running' | 'error' | 'stopped'
   archived: boolean
+  input_tokens: number
+  output_tokens: number
+  context_window: number
   created_at: string
   updated_at: string
 }
@@ -48,7 +97,28 @@ export interface Session {
   updated_at: string
 }
 
-export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question'
+export interface TokenUsage {
+  input_tokens: number
+  output_tokens: number
+  context_window: number
+}
+
+export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-opus-4-6': 200_000,
+  'claude-sonnet-4-6': 200_000,
+  'claude-opus-4-5': 200_000,
+  'claude-sonnet-4-5': 200_000,
+  'claude-haiku-4-5': 200_000,
+  'gpt-5.3-codex': 200_000,
+  'gpt-5.3-codex-spark': 200_000,
+  'gpt-5.2-codex': 200_000,
+  'gpt-5.1-codex': 200_000,
+  'codex-mini-latest': 200_000,
+}
+
+export const DEFAULT_CONTEXT_LIMIT = 200_000
+
+export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'usage'
 
 export interface OutputEvent {
   type: OutputEventType

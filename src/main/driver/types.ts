@@ -1,4 +1,4 @@
-import { OutputEvent } from '../../shared/types'
+import { OutputEvent, SshConfig, WslConfig } from '../../shared/types'
 
 export interface MessageOptions {
   planMode?: boolean
@@ -24,4 +24,6 @@ export interface DriverOptions {
   model?: string
   initialSessionId?: string | null
   onSessionId?: (sessionId: string) => void
+  ssh?: SshConfig | null
+  wsl?: WslConfig | null
 }

@@ -1,0 +1,160 @@
+import { spawn } from 'child_process'
+import { WslConfig, FileEntry, SearchableFile } from '../shared/types'
+
+/** Escape a string for use inside single quotes in a POSIX shell. */
+function shellEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
+/** Resolve a path, expanding ~ to $HOME. */
+function remotePathExpr(p: string): string {
+  if (p.startsWith('~')) {
+    return '"$HOME"' + shellEscape(p.slice(1))
+  }
+  return shellEscape(p)
+}
+
+/**
+ * Execute a command inside a WSL distribution.
+ * Returns stdout on success, throws on non-zero exit.
+ */
+export function wslExec(wsl: WslConfig, cwd: string, cmd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const cdTarget = remotePathExpr(cwd)
+    const innerCmd = `cd ${cdTarget} && ${cmd}`
+
+    const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd], {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stdout = ''
+    let stderr = ''
+
+    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim())
+      } else {
+        reject(new Error(stderr.trim() || `WSL command exited with code ${code}`))
+      }
+    })
+
+    proc.on('error', (err) => {
+      reject(err)
+    })
+  })
+}
+
+// ── Ignored directories (mirrors src/main/files.ts) ─────────────────────────
+
+const IGNORED_DIRS = new Set([
+  'node_modules', '.git', '.next', '.vite', '__pycache__', '.cache',
+  'dist', 'build', 'out', '.vscode', '.idea', 'coverage', '.nyc_output',
+])
+
+/**
+ * List directory entries inside a WSL distribution.
+ * Returns the same shape as the local `listDirectory`.
+ */
+export async function wslListDirectory(wsl: WslConfig, dirPath: string): Promise<FileEntry[]> {
+  const target = remotePathExpr(dirPath)
+  const cmd = `find ${target} -maxdepth 1 -mindepth 1 \\( -name '.*' ! -name '.env' \\) -prune -o -printf '%y\\t%f\\n' 2>/dev/null`
+
+  let output: string
+  try {
+    output = await wslExec(wsl, dirPath, cmd)
+  } catch {
+    return []
+  }
+
+  if (!output) return []
+
+  const entries: FileEntry[] = []
+  for (const line of output.split('\n')) {
+    if (!line) continue
+    const tab = line.indexOf('\t')
+    if (tab === -1) continue
+    const type = line.slice(0, tab)
+    const name = line.slice(tab + 1).replace(/\r$/, '')
+    if (!name) continue
+
+    const isDirectory = type === 'd'
+    if (isDirectory && IGNORED_DIRS.has(name)) continue
+
+    const entryPath = dirPath.endsWith('/') ? dirPath + name : dirPath + '/' + name
+
+    entries.push({ name, path: entryPath, isDirectory })
+  }
+
+  return entries.sort((a, b) => {
+    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+  })
+}
+
+/**
+ * Read file content from inside a WSL distribution.
+ * Returns null if the file can't be read.
+ */
+export async function wslReadFileContent(
+  wsl: WslConfig,
+  filePath: string
+): Promise<{ content: string; truncated: boolean } | null> {
+  const MAX_FILE_SIZE = 1048576 // 1MB
+  const target = remotePathExpr(filePath)
+
+  try {
+    const sizeStr = await wslExec(wsl, '/', `wc -c < ${target}`)
+    const size = parseInt(sizeStr.trim(), 10) || 0
+
+    if (size > MAX_FILE_SIZE) {
+      const content = await wslExec(wsl, '/', `head -c ${MAX_FILE_SIZE} ${target}`)
+      return { content, truncated: true }
+    }
+
+    const content = await wslExec(wsl, '/', `cat ${target}`)
+    return { content, truncated: false }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * List all files recursively inside a WSL distribution for fuzzy search.
+ */
+export async function wslListAllFiles(wsl: WslConfig, rootPath: string): Promise<SearchableFile[]> {
+  const MAX_SEARCH_FILES = 5000
+  const target = remotePathExpr(rootPath)
+
+  const excludes = Array.from(IGNORED_DIRS)
+    .map(d => `-name ${shellEscape(d)} -prune`)
+    .join(' -o ')
+
+  const cmd = `find ${target} \\( ${excludes} \\) -prune -o \\( -type f ! -name '.*' -print \\) 2>/dev/null | head -n ${MAX_SEARCH_FILES}`
+
+  let output: string
+  try {
+    output = await wslExec(wsl, '/', cmd)
+  } catch {
+    return []
+  }
+
+  if (!output) return []
+
+  const normalizedRoot = rootPath.endsWith('/') ? rootPath : rootPath + '/'
+
+  const results: SearchableFile[] = []
+  for (const line of output.split('\n')) {
+    if (!line) continue
+    const relativePath = line.startsWith(normalizedRoot)
+      ? line.slice(normalizedRoot.length)
+      : line
+    const name = relativePath.split('/').pop() ?? relativePath
+    results.push({ path: line, relativePath, name })
+  }
+
+  return results
+}

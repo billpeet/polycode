@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
-import { Project, Thread } from '../types/ipc'
+import { Project, Thread, isRemoteProject, isWslProject } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
 import ImportHistoryDialog from './ImportHistoryDialog'
 
@@ -256,8 +256,24 @@ export default function Sidebar() {
                 <span className="mr-1.5 text-[10px] flex-shrink-0 opacity-50" style={{ width: '10px' }}>
                   {expandedProjectIds.has(project.id) ? '▾' : '▸'}
                 </span>
-                <span className="mr-2 text-xs flex-shrink-0">📁</span>
+                <span className="mr-2 text-xs flex-shrink-0">{isRemoteProject(project) || isWslProject(project) ? '🖥' : '📁'}</span>
                 <span className="truncate">{project.name}</span>
+                {isRemoteProject(project) && (
+                  <span
+                    className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+                    style={{ background: 'rgba(99, 179, 237, 0.15)', color: '#63b3ed' }}
+                  >
+                    SSH
+                  </span>
+                )}
+                {isWslProject(project) && (
+                  <span
+                    className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+                    style={{ background: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24' }}
+                  >
+                    WSL
+                  </span>
+                )}
               </button>
               {/* Project actions — absolutely positioned, overlay on hover */}
               <div

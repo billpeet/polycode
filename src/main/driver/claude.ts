@@ -2,6 +2,12 @@ import { spawn, ChildProcess } from 'child_process'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
 
+/** Escape a string for use inside single quotes in a POSIX shell. */
+function shellEscape(s: string): string {
+  // Replace each ' with '\'' (end quote, escaped quote, start quote)
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
 export class ClaudeDriver implements CLIDriver {
   private process: ChildProcess | null = null
   private options: DriverOptions
@@ -50,24 +56,89 @@ export class ClaudeDriver implements CLIDriver {
     this.buffer = ''
     this.specialToolIds.clear()
 
-    // Debug: log the command being run
-    console.log('[ClaudeDriver] Spawning:', 'claude', args.join(' '))
+    const ssh = this.options.ssh
+    if (ssh) {
+      // ── SSH remote spawn ──────────────────────────────────────────────────
+      // ~ doesn't expand inside single quotes, so replace with $HOME unquoted
+      const workDir = this.options.workingDir
+      const cdTarget = workDir.startsWith('~')
+        ? '"$HOME"' + shellEscape(workDir.slice(1))
+        : shellEscape(workDir)
+      // Wrap in login shell so .profile/.bashrc are sourced (makes `claude` available in PATH)
+      const innerCmd = `cd ${cdTarget} && claude ${args.map(shellEscape).join(' ')}`
+      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+      const sshArgs = [
+        '-T',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'StrictHostKeyChecking=accept-new',
+      ]
+      // ControlMaster multiplexing is not supported on Windows OpenSSH
+      if (process.platform !== 'win32') {
+        sshArgs.push(
+          '-o', 'ControlMaster=auto',
+          '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
+          '-o', 'ControlPersist=300',
+        )
+      }
+      if (ssh.port) {
+        sshArgs.push('-p', String(ssh.port))
+      }
+      if (ssh.keyPath) {
+        sshArgs.push('-i', ssh.keyPath)
+      }
+      sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
 
-    this.process = spawn('claude', args, {
-      cwd: this.options.workingDir,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe']
-    })
+      console.log('[ClaudeDriver] Spawning SSH:', 'ssh', sshArgs.join(' '))
+
+      this.process = spawn('ssh', sshArgs, {
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      // Close stdin immediately — signals EOF to SSH so it doesn't hang
+      // waiting for interactive input (passwords, key passphrases, etc.)
+      this.process.stdin?.end()
+    } else if (this.options.wsl) {
+      // ── WSL spawn ──────────────────────────────────────────────────────────
+      const wsl = this.options.wsl
+      const workDir = this.options.workingDir
+      const cdTarget = workDir.startsWith('~')
+        ? '"$HOME"' + shellEscape(workDir.slice(1))
+        : shellEscape(workDir)
+      const innerCmd = `cd ${cdTarget} && claude ${args.map(shellEscape).join(' ')}`
+
+      const wslArgs = ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd]
+
+      console.log('[ClaudeDriver] Spawning WSL:', 'wsl', wslArgs.join(' '))
+
+      this.process = spawn('wsl', wslArgs, {
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      this.process.stdin?.end()
+    } else {
+      // ── Local spawn ───────────────────────────────────────────────────────
+      console.log('[ClaudeDriver] Spawning:', 'claude', args.join(' '))
+
+      this.process = spawn('claude', args, {
+        cwd: this.options.workingDir,
+        shell: process.platform === 'win32',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    }
 
     let stderrBuffer = ''
 
     this.process.stdout?.on('data', (chunk: Buffer) => {
-      this.buffer += chunk.toString('utf8')
+      const text = chunk.toString('utf8')
+      console.log('[ClaudeDriver] stdout chunk:', text.slice(0, 200))
+      this.buffer += text
       this.processBuffer(onEvent)
     })
 
     this.process.stderr?.on('data', (chunk: Buffer) => {
-      stderrBuffer += chunk.toString('utf8')
+      const text = chunk.toString('utf8')
+      console.error('[ClaudeDriver] stderr:', text)
+      stderrBuffer += text
     })
 
     this.process.on('close', (code) => {
@@ -238,8 +309,20 @@ export class ClaudeDriver implements CLIDriver {
             type: 'error',
             content: (data.error as string) ?? 'Unknown error'
           })
+        } else if (subtype === 'success') {
+          // Extract token usage from the result event
+          const usage = data.usage as { input_tokens?: number; output_tokens?: number } | undefined
+          if (usage && (usage.input_tokens || usage.output_tokens)) {
+            events.push({
+              type: 'usage',
+              content: '',
+              metadata: {
+                input_tokens: usage.input_tokens ?? 0,
+                output_tokens: usage.output_tokens ?? 0,
+              }
+            })
+          }
         }
-        // subtype === 'success': do NOT re-emit result text (already in assistant blocks)
         break
       }
 

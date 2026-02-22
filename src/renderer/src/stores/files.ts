@@ -6,6 +6,12 @@ interface FileContent {
   truncated: boolean
 }
 
+interface DiffView {
+  filePath: string
+  diff: string
+  staged: boolean
+}
+
 interface FilesStore {
   // File tree state per project path
   entriesByPath: Record<string, FileEntry[]>
@@ -17,12 +23,19 @@ interface FilesStore {
   fileContent: FileContent | null
   loadingContent: boolean
 
+  // Diff view
+  diffView: DiffView | null
+  loadingDiff: boolean
+
   // Actions
   fetchDirectory: (dirPath: string) => Promise<void>
   toggleExpanded: (dirPath: string) => void
   selectFile: (filePath: string | null) => void
   fetchFileContent: (filePath: string) => Promise<void>
   clearSelection: () => void
+  selectDiff: (repoPath: string, filePath: string, staged: boolean) => Promise<void>
+  clearDiff: () => void
+  switchDiffToFile: (repoPath: string) => void
 }
 
 export const useFilesStore = create<FilesStore>((set, get) => ({
@@ -32,6 +45,8 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   selectedFilePath: null,
   fileContent: null,
   loadingContent: false,
+  diffView: null,
+  loadingDiff: false,
 
   fetchDirectory: async (dirPath: string) => {
     const { loadingPaths } = get()
@@ -95,6 +110,28 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   },
 
   clearSelection: () => {
-    set({ selectedFilePath: null, fileContent: null })
+    set({ selectedFilePath: null, fileContent: null, diffView: null })
+  },
+
+  selectDiff: async (repoPath: string, filePath: string, staged: boolean) => {
+    set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
+    try {
+      const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
+      set({ diffView: { filePath, diff, staged }, loadingDiff: false })
+    } catch {
+      set({ loadingDiff: false })
+    }
+  },
+
+  clearDiff: () => {
+    set({ diffView: null })
+  },
+
+  switchDiffToFile: (repoPath: string) => {
+    const { diffView, selectFile } = get()
+    if (!diffView) return
+    const fullPath = repoPath + '/' + diffView.filePath
+    set({ diffView: null })
+    selectFile(fullPath)
   },
 }))
