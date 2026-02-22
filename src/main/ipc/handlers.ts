@@ -6,6 +6,12 @@ import {
   createProject,
   updateProject,
   deleteProject,
+  listLocations,
+  createLocation,
+  updateLocation,
+  deleteLocation,
+  getLocationForThread,
+  getLocationByPath,
   listThreads,
   listArchivedThreads,
   archivedThreadCount,
@@ -15,8 +21,6 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadStatus,
-  updateThreadWsl,
-  getThreadWslOverride,
   threadHasMessages,
   archiveThread,
   unarchiveThread,
@@ -29,15 +33,15 @@ import {
   getActiveSession,
   setActiveSession,
   getThreadModifiedFiles,
-  getProjectForThread,
-  getProjectByPath
+  getThreadWsl,
+  updateThreadWsl,
 } from '../db/queries'
-import { SshConfig, WslConfig } from '../../shared/types'
+import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
 import { sessionManager } from '../session/manager'
 import { getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPull, getFileDiff } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
-import { wslExec, wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
+import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import {
   saveAttachment,
@@ -46,19 +50,29 @@ import {
   getFileInfo,
 } from '../attachments'
 
+/** Get SSH config from the thread's linked repo location. */
 function getSshConfigForThread(threadId: string): SshConfig | null {
-  const project = getProjectForThread(threadId)
-  return project?.ssh ?? null
+  const location = getLocationForThread(threadId)
+  return location?.ssh ?? null
 }
 
+/** Get WSL config from the thread's linked repo location, or thread-level WSL override for local locations. */
 function getWslConfigForThread(threadId: string): WslConfig | null {
-  // Thread-level WSL override takes precedence over project-level config
-  const override = getThreadWslOverride(threadId)
-  if (override && override.use_wsl) {
-    return override.wsl_distro ? { distro: override.wsl_distro } : null
+  const location = getLocationForThread(threadId)
+  // If the location is local and the thread has use_wsl enabled, use thread-level WSL config
+  if (location && location.connection_type === 'local') {
+    const threadWsl = getThreadWsl(threadId)
+    if (threadWsl.use_wsl && threadWsl.wsl_distro) {
+      return { distro: threadWsl.wsl_distro }
+    }
   }
-  const project = getProjectForThread(threadId)
-  return project?.wsl ?? null
+  return location?.wsl ?? null
+}
+
+/** Get the working directory from the thread's linked repo location. */
+function getWorkingDirForThread(threadId: string): string | null {
+  const location = getLocationForThread(threadId)
+  return location?.path ?? null
 }
 
 /**
@@ -73,25 +87,28 @@ function windowsPathToWsl(winPath: string): string {
 
 /**
  * Return the effective working directory for a thread.
- * If the thread has a per-thread WSL override enabled, convert the Windows path
- * to the WSL /mnt/... mount format so the process cds into the right directory.
+ * For WSL locations with a Windows-style path, convert to /mnt/... format.
  */
-function getEffectiveWorkingDir(threadId: string, workingDir: string): string {
-  const override = getThreadWslOverride(threadId)
-  if (override?.use_wsl) {
-    return windowsPathToWsl(workingDir)
+function getEffectiveWorkingDir(threadId: string): string {
+  const location = getLocationForThread(threadId)
+  if (!location) return ''
+  if (location.connection_type === 'wsl' && /^[A-Za-z]:[/\\]/.test(location.path)) {
+    return windowsPathToWsl(location.path)
   }
-  return workingDir
+  // Thread-level WSL override for local locations: convert Windows path to /mnt/...
+  if (location.connection_type === 'local' && /^[A-Za-z]:[/\\]/.test(location.path)) {
+    const threadWsl = getThreadWsl(threadId)
+    if (threadWsl.use_wsl) {
+      return windowsPathToWsl(location.path)
+    }
+  }
+  return location.path
 }
 
-function getSshConfigForPath(path: string): SshConfig | null {
-  const project = getProjectByPath(path)
-  return project?.ssh ?? null
-}
-
-function getWslConfigForPath(path: string): WslConfig | null {
-  const project = getProjectByPath(path)
-  return project?.wsl ?? null
+/** Look up SSH/WSL config for a given path by searching repo_locations. */
+function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: WslConfig | null } {
+  const location = getLocationByPath(path)
+  return { ssh: location?.ssh ?? null, wsl: location?.wsl ?? null }
 }
 
 export function registerIpcHandlers(window: BrowserWindow): void {
@@ -101,18 +118,38 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listProjects()
   })
 
-  ipcMain.handle('projects:create', (_event, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    return createProject(name, path, ssh, wsl)
+  ipcMain.handle('projects:create', (_event, name: string, gitUrl?: string | null) => {
+    return createProject(name, gitUrl)
   })
 
-  ipcMain.handle('projects:update', (_event, id: string, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    return updateProject(id, name, path, ssh, wsl)
+  ipcMain.handle('projects:update', (_event, id: string, name: string, gitUrl?: string | null) => {
+    return updateProject(id, name, gitUrl)
   })
 
   ipcMain.handle('projects:delete', (_event, id: string) => {
     sessionManager.stopAll()
     return deleteProject(id)
   })
+
+  // ── Repo Locations ────────────────────────────────────────────────────────
+
+  ipcMain.handle('locations:list', (_event, projectId: string) => {
+    return listLocations(projectId)
+  })
+
+  ipcMain.handle('locations:create', (_event, projectId: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+    return createLocation(projectId, label, connectionType, locationPath, ssh, wsl)
+  })
+
+  ipcMain.handle('locations:update', (_event, id: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+    return updateLocation(id, label, connectionType, locationPath, ssh, wsl)
+  })
+
+  ipcMain.handle('locations:delete', (_event, id: string) => {
+    return deleteLocation(id)
+  })
+
+  // ── SSH / WSL test ──────────────────────────────────────────────────────────
 
   ipcMain.handle('ssh:test', (_event, ssh: SshConfig, remotePath: string): Promise<{ ok: boolean; error?: string }> => {
     return new Promise((resolve) => {
@@ -156,8 +193,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       })
     })
   })
-
-  // ── WSL ─────────────────────────────────────────────────────────────────
 
   ipcMain.handle('wsl:test', (_event, wsl: WslConfig, wslPath: string): Promise<{ ok: boolean; error?: string }> => {
     return new Promise((resolve) => {
@@ -229,9 +264,9 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listThreads(projectId)
   })
 
-  ipcMain.handle('threads:create', (_event, projectId: string, name: string) => {
+  ipcMain.handle('threads:create', (_event, projectId: string, name: string, locationId: string) => {
     const { provider, model } = getLastUsedProviderAndModel(projectId)
-    return createThread(projectId, name, provider, model)
+    return createThread(projectId, name, locationId, provider, model)
   })
 
   ipcMain.handle('threads:delete', (_event, id: string) => {
@@ -277,15 +312,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return updateThreadProviderAndModel(id, provider, model)
   })
 
-  ipcMain.handle('threads:set-wsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {
-    sessionManager.remove(threadId)
-    return updateThreadWsl(threadId, useWsl, wslDistro)
+  ipcMain.handle('threads:setWsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {
+    if (threadHasMessages(threadId)) return // locked after first message
+    sessionManager.remove(threadId) // drop existing session so it gets recreated
+    updateThreadWsl(threadId, useWsl, wslDistro)
   })
 
-  ipcMain.handle('threads:start', (_event, threadId: string, workingDir: string) => {
+  ipcMain.handle('threads:start', (_event, threadId: string) => {
+    const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     if (!session.isRunning()) {
       session.start()
@@ -303,10 +339,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:send', (_event, threadId: string, content: string, workingDir: string, options?: { planMode?: boolean }) => {
+  ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean }) => {
+    const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.sendMessage(content, options)
   })
@@ -337,15 +373,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string, workingDir: string) => {
+  ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string) => {
+    const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.executePlanInNewContext()
   })
 
-  ipcMain.handle('threads:getModifiedFiles', (_event, threadId: string, workingDir: string) => {
+  ipcMain.handle('threads:getModifiedFiles', (_event, threadId: string) => {
+    const workingDir = getWorkingDirForThread(threadId) ?? ''
     return getThreadModifiedFiles(threadId, workingDir)
   })
 
@@ -359,10 +396,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getActiveSession(threadId)
   })
 
-  ipcMain.handle('sessions:switch', (_event, threadId: string, sessionId: string, workingDir: string) => {
+  ipcMain.handle('sessions:switch', (_event, threadId: string, sessionId: string) => {
+    const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
-    const effectiveDir = getEffectiveWorkingDir(threadId, workingDir)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.switchSession(sessionId)
   })
@@ -389,99 +426,84 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Git ───────────────────────────────────────────────────────────────────
 
   ipcMain.handle('git:status', (_event, repoPath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return getGitStatus(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:commit', (_event, repoPath: string, message: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return commitChanges(repoPath, message, ssh, wsl)
   })
 
   ipcMain.handle('git:stage', (_event, repoPath: string, filePath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return stageFile(repoPath, filePath, ssh, wsl)
   })
 
   ipcMain.handle('git:unstage', (_event, repoPath: string, filePath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return unstageFile(repoPath, filePath, ssh, wsl)
   })
 
   ipcMain.handle('git:stageAll', (_event, repoPath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return stageAll(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:unstageAll', (_event, repoPath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return unstageAll(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:stageFiles', (_event, repoPath: string, filePaths: string[]) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return stageFiles(repoPath, filePaths, ssh, wsl)
   })
 
   ipcMain.handle('git:generateCommitMessage', (_event, repoPath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return generateCommitMessage(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:generateCommitMessageWithContext', (_event, repoPath: string, filePaths: string[], context: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
   })
 
   ipcMain.handle('git:push', (_event, repoPath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return gitPush(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:pull', (_event, repoPath: string) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return gitPull(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:diff', (_event, repoPath: string, filePath: string, staged: boolean) => {
-    const ssh = getSshConfigForPath(repoPath)
-    const wsl = getWslConfigForPath(repoPath)
+    const { ssh, wsl } = getConfigForPath(repoPath)
     return getFileDiff(repoPath, filePath, staged, ssh, wsl)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────
 
   ipcMain.handle('files:list', (_event, dirPath: string) => {
-    const ssh = getSshConfigForFilePath(dirPath)
+    const { ssh, wsl } = getConfigForPath(dirPath)
     if (ssh) return sshListDirectory(ssh, dirPath)
-    const wsl = getWslConfigForFilePath(dirPath)
     if (wsl) return wslListDirectory(wsl, dirPath)
     return listDirectory(dirPath)
   })
 
   ipcMain.handle('files:read', (_event, filePath: string) => {
-    const ssh = getSshConfigForFilePath(filePath)
+    const { ssh, wsl } = getConfigForPath(filePath)
     if (ssh) return sshReadFileContent(ssh, filePath)
-    const wsl = getWslConfigForFilePath(filePath)
     if (wsl) return wslReadFileContent(wsl, filePath)
     return readFileContent(filePath)
   })
 
   ipcMain.handle('files:searchList', (_event, rootPath: string) => {
-    const ssh = getSshConfigForPath(rootPath)
+    const { ssh, wsl } = getConfigForPath(rootPath)
     if (ssh) return sshListAllFiles(ssh, rootPath)
-    const wsl = getWslConfigForPath(rootPath)
     if (wsl) return wslListAllFiles(wsl, rootPath)
     return listAllFiles(rootPath)
   })
@@ -500,7 +522,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getImportedSessionIds(projectId)
   })
 
-  ipcMain.handle('claude-history:import', (_event, projectId: string, sessionFilePath: string, sessionId: string, name: string) => {
+  ipcMain.handle('claude-history:import', (_event, projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => {
     const messages = parseSessionMessages(sessionFilePath)
     const importedMessages = messages.map(m => ({
       role: m.role,
@@ -508,7 +530,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       metadata: m.metadata,
       created_at: m.timestamp
     }))
-    return importThread(projectId, name, sessionId, importedMessages)
+    return importThread(projectId, locationId, name, sessionId, importedMessages)
   })
 
   // ── Attachments ─────────────────────────────────────────────────────────────
@@ -553,45 +575,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('app:install-update', () => {
     autoUpdater.quitAndInstall()
   })
-}
-
-/**
- * Look up SSH config for a file path by finding a project whose path is a prefix.
- * This handles file reads where the path may be a subdirectory of the project root.
- */
-function getSshConfigForFilePath(filePath: string): SshConfig | null {
-  // First try exact match (works when filePath === project path)
-  const exact = getSshConfigForPath(filePath)
-  if (exact) return exact
-
-  // Search all projects for one whose path is a prefix of the file path
-  const projects = listProjects()
-  for (const project of projects) {
-    if (!project.ssh?.host) continue
-    const projectPath = project.path.endsWith('/') ? project.path : project.path + '/'
-    if (filePath.startsWith(projectPath) || filePath.startsWith(project.path)) {
-      return project.ssh
-    }
-  }
-  return null
-}
-
-/**
- * Look up WSL config for a file path by finding a project whose path is a prefix.
- */
-function getWslConfigForFilePath(filePath: string): WslConfig | null {
-  const exact = getWslConfigForPath(filePath)
-  if (exact) return exact
-
-  const projects = listProjects()
-  for (const project of projects) {
-    if (!project.wsl?.distro) continue
-    const projectPath = project.path.endsWith('/') ? project.path : project.path + '/'
-    if (filePath.startsWith(projectPath) || filePath.startsWith(project.path)) {
-      return project.wsl
-    }
-  }
-  return null
 }
 
 /**

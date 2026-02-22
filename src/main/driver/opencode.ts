@@ -9,19 +9,18 @@ function shellEscape(s: string): string {
 
 /**
  * Build the argv array for an `opencode run` invocation.
+ * The prompt is passed via stdin to avoid shell escaping issues with newlines.
  *
- *   new:    run --format json [--model provider/model] <prompt>
- *   resume: run --format json --session <sessionID> [--model provider/model] <prompt>
+ *   new:    run --format json [--model provider/model]
+ *   resume: run --format json --session <sessionID> [--model provider/model]
  */
 export function buildOpenCodeArgs(
   sessionId: string | null,
-  model: string | undefined,
-  content: string
+  model: string | undefined
 ): string[] {
   const args: string[] = ['run', '--format', 'json']
   if (sessionId) args.push('--session', sessionId)
   if (model) args.push('--model', model)
-  args.push(content)
   return args
 }
 
@@ -45,7 +44,7 @@ export class OpenCodeDriver implements CLIDriver {
     onDone: (error?: Error) => void,
     _options?: MessageOptions  // plan mode is Claude-specific; ignored for OpenCode
   ): void {
-    const args = buildOpenCodeArgs(this.sessionId, this.options.model, content)
+    const args = buildOpenCodeArgs(this.sessionId, this.options.model)
 
     this.buffer = ''
 
@@ -82,7 +81,7 @@ export class OpenCodeDriver implements CLIDriver {
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       })
-      this.process.stdin?.end()
+      this.process.stdin?.end(content)
     } else if (wsl) {
       // ── WSL spawn ──────────────────────────────────────────────────────────
       const workDir = this.options.workingDir
@@ -98,7 +97,7 @@ export class OpenCodeDriver implements CLIDriver {
         shell: false,
         stdio: ['pipe', 'pipe', 'pipe'],
       })
-      this.process.stdin?.end()
+      this.process.stdin?.end(content)
     } else {
       // ── Local spawn ────────────────────────────────────────────────────────
       console.log('[OpenCodeDriver] Spawning: opencode', args.join(' '))
@@ -106,8 +105,9 @@ export class OpenCodeDriver implements CLIDriver {
       this.process = spawn('opencode', args, {
         cwd: this.options.workingDir,
         shell: process.platform === 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['pipe', 'pipe', 'pipe'],
       })
+      this.process.stdin?.end(content)
     }
 
     let stderrBuffer = ''

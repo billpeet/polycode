@@ -1,7 +1,12 @@
 import { ReactNode, useState, useEffect } from 'react'
 import { useFilesStore } from '../stores/files'
 import { useProjectStore } from '../stores/projects'
+import { useLocationStore } from '../stores/locations'
+import { useThreadStore } from '../stores/threads'
 import { useUiStore } from '../stores/ui'
+import { RepoLocation } from '../types/ipc'
+
+const EMPTY_LOCATIONS: RepoLocation[] = []
 
 interface FileMentionProps {
   path: string
@@ -36,10 +41,16 @@ function isImageExtension(ext: string): boolean {
 export function FileMention({ path, variant = 'message-assistant' }: FileMentionProps) {
   const fileName = path.split(/[\\/]/).pop() ?? path
   const selectFile = useFilesStore((s) => s.selectFile)
-  const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
+  const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
+  const byProject = useThreadStore((s) => s.byProject)
+  const projectLocations = useLocationStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
   const setRightPanelTab = useUiStore((s) => s.setRightPanelTab)
+
+  // Find location path for the selected thread
+  const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
+  const thread = threads.find((t) => t.id === selectedThreadId)
+  const location = thread?.location_id ? projectLocations.find((l) => l.id === thread.location_id) : null
 
   const styles: Record<string, React.CSSProperties> = {
     'message-user': {
@@ -55,9 +66,9 @@ export function FileMention({ path, variant = 'message-assistant' }: FileMention
   }
 
   const handleClick = () => {
-    if (!project) return
+    if (!location) return
     // Convert relative path to absolute path
-    const absolutePath = `${project.path}/${path}`.replace(/\\/g, '/')
+    const absolutePath = `${location.path}/${path}`.replace(/\\/g, '/')
     selectFile(absolutePath)
     setRightPanelTab('files')
   }

@@ -4,7 +4,8 @@ import { useThreadStore } from '../stores/threads'
 
 interface Props {
   projectId: string
-  projectPath: string
+  locationId: string
+  locationPath: string
   onClose: () => void
   onImported: () => void
 }
@@ -28,7 +29,7 @@ function normalizePath(p: string): string {
   return p.toLowerCase().replace(/\\/g, '/')
 }
 
-export default function ImportHistoryDialog({ projectId, projectPath, onClose, onImported }: Props) {
+export default function ImportHistoryDialog({ projectId, locationId, locationPath, onClose, onImported }: Props) {
   const [sessions, setSessions] = useState<ClaudeSession[]>([])
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
@@ -47,11 +48,11 @@ export default function ImportHistoryDialog({ projectId, projectPath, onClose, o
         ])
 
         // Find matching project by path
-        const normalizedProjectPath = normalizePath(projectPath)
-        const match = projects.find(p => normalizePath(p.decodedPath) === normalizedProjectPath)
+        const normalizedPath = normalizePath(locationPath)
+        const match = projects.find(p => normalizePath(p.decodedPath) === normalizedPath)
 
         if (!match) {
-          setError(`No Claude Code history found for this project.\nPath: ${projectPath}`)
+          setError(`No Claude Code history found for this location.\nPath: ${locationPath}`)
           setLoading(false)
           return
         }
@@ -69,14 +70,14 @@ export default function ImportHistoryDialog({ projectId, projectPath, onClose, o
       }
     }
     loadSessions()
-  }, [projectId, projectPath])
+  }, [projectId, locationPath])
 
   async function handleImport(session: ClaudeSession) {
     setImporting(true)
     setError('')
     try {
       const name = session.slug || session.firstMessage.slice(0, 50) || 'Imported thread'
-      await importFromHistory(projectId, session.filePath, session.sessionId, name)
+      await importFromHistory(projectId, locationId, session.filePath, session.sessionId, name)
       onImported()
       onClose()
     } catch (err) {
@@ -102,7 +103,7 @@ export default function ImportHistoryDialog({ projectId, projectPath, onClose, o
             Import from Claude Code
           </h2>
           <p className="text-xs font-mono truncate" style={{ color: 'var(--color-text-muted)' }}>
-            {projectPath}
+            {locationPath}
           </p>
         </div>
 

@@ -8,6 +8,7 @@ function shellEscape(s: string): string {
   return "'" + s.replace(/'/g, "'\\''") + "'"
 }
 
+
 export class ClaudeDriver implements CLIDriver {
   private process: ChildProcess | null = null
   private options: DriverOptions
@@ -117,13 +118,34 @@ export class ClaudeDriver implements CLIDriver {
       this.process.stdin?.end()
     } else {
       // ── Local spawn ───────────────────────────────────────────────────────
-      console.log('[ClaudeDriver] Spawning:', 'claude', args.join(' '))
+      const isWindows = process.platform === 'win32'
 
-      this.process = spawn('claude', args, {
-        cwd: this.options.workingDir,
-        shell: process.platform === 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      if (isWindows) {
+        // On Windows, shell: true routes through cmd.exe which mangles
+        // double quotes and other special characters in the prompt.
+        // Instead, omit the prompt from argv and pipe it via stdin so
+        // claude reads the prompt from stdin (--print reads stdin when
+        // no positional prompt is given).
+        const stdinArgs = args.slice(0, -1)
+
+        console.log('[ClaudeDriver] Spawning (stdin):', 'claude', stdinArgs.join(' '))
+
+        this.process = spawn('claude', stdinArgs, {
+          cwd: this.options.workingDir,
+          shell: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
+        // Write the prompt to stdin and close — avoids all cmd.exe escaping issues
+        this.process.stdin?.write(content)
+        this.process.stdin?.end()
+      } else {
+        console.log('[ClaudeDriver] Spawning:', 'claude', args.join(' '))
+
+        this.process = spawn('claude', args, {
+          cwd: this.options.workingDir,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      }
     }
 
     let stderrBuffer = ''
@@ -322,6 +344,27 @@ export class ClaudeDriver implements CLIDriver {
               }
             })
           }
+        }
+        break
+      }
+
+      case 'rate_limit_event': {
+        const info = data.rate_limit_info as Record<string, unknown> | undefined
+        if (info) {
+          events.push({
+            type: 'rate_limit',
+            content: '',
+            metadata: {
+              status: info.status ?? 'unknown',
+              resetsAt: info.resetsAt,
+              rateLimitType: info.rateLimitType,
+              utilization: info.utilization,
+              surpassedThreshold: info.surpassedThreshold,
+              isUsingOverage: info.isUsingOverage,
+              overageStatus: info.overageStatus,
+              overageDisabledReason: info.overageDisabledReason,
+            }
+          })
         }
         break
       }

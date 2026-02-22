@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Project, SshConfig, WslConfig } from '../types/ipc'
+import { Project } from '../types/ipc'
 
 interface ProjectStore {
   projects: Project[]
@@ -7,8 +7,8 @@ interface ProjectStore {
   expandedProjectIds: Set<string>
   loading: boolean
   fetch: () => Promise<void>
-  create: (name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => Promise<void>
-  update: (id: string, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => Promise<void>
+  create: (name: string, gitUrl?: string | null) => Promise<Project>
+  update: (id: string, name: string, gitUrl?: string | null) => Promise<void>
   remove: (id: string) => Promise<void>
   select: (id: string | null) => void
   expand: (id: string) => void
@@ -33,15 +33,16 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  create: async (name, path, ssh, wsl) => {
-    const project = await window.api.invoke('projects:create', name, path, ssh, wsl)
+  create: async (name, gitUrl) => {
+    const project = await window.api.invoke('projects:create', name, gitUrl)
     set((s) => ({ projects: [project, ...s.projects] }))
+    return project
   },
 
-  update: async (id, name, path, ssh, wsl) => {
-    await window.api.invoke('projects:update', id, name, path, ssh, wsl)
+  update: async (id, name, gitUrl) => {
+    await window.api.invoke('projects:update', id, name, gitUrl)
     set((s) => ({
-      projects: s.projects.map((p) => p.id === id ? { ...p, name, path, ssh: ssh ?? null, wsl: wsl ?? null } : p)
+      projects: s.projects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null } : p)
     }))
   },
 

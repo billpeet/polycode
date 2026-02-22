@@ -26,7 +26,7 @@ interface ThreadStore {
   usageByThread: Record<string, TokenUsage>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string) => Promise<void>
-  create: (projectId: string, name: string) => Promise<void>
+  create: (projectId: string, name: string, locationId: string) => Promise<void>
   remove: (id: string, projectId: string) => Promise<void>
   archive: (id: string, projectId: string) => Promise<void>
   unarchive: (id: string, projectId: string) => Promise<void>
@@ -40,9 +40,9 @@ interface ThreadStore {
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
-  start: (threadId: string, workingDir: string) => Promise<void>
+  start: (threadId: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
-  send: (threadId: string, content: string, workingDir: string, options?: SendOptions) => Promise<void>
+  send: (threadId: string, content: string, options?: SendOptions) => Promise<void>
   approvePlan: (threadId: string) => Promise<void>
   rejectPlan: (threadId: string) => Promise<void>
   getQuestions: (threadId: string) => Promise<Question[]>
@@ -51,7 +51,7 @@ interface ThreadStore {
   setPlanMode: (threadId: string, planMode: boolean) => void
   queueMessage: (threadId: string, content: string, planMode: boolean) => void
   clearQueue: (threadId: string) => void
-  importFromHistory: (projectId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
+  importFromHistory: (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
   addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window: number) => void
 }
 
@@ -98,8 +98,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }))
   },
 
-  create: async (projectId, name) => {
-    const thread = await window.api.invoke('threads:create', projectId, name)
+  create: async (projectId, name, locationId) => {
+    const thread = await window.api.invoke('threads:create', projectId, name, locationId)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -255,7 +255,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setWsl: async (threadId, useWsl, wslDistro) => {
-    await window.api.invoke('threads:set-wsl', threadId, useWsl, wslDistro)
+    await window.api.invoke('threads:setWsl', threadId, useWsl, wslDistro)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -267,16 +267,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
   },
 
-  start: async (threadId, workingDir) => {
-    await window.api.invoke('threads:start', threadId, workingDir)
+  start: async (threadId) => {
+    await window.api.invoke('threads:start', threadId)
   },
 
   stop: async (threadId) => {
     await window.api.invoke('threads:stop', threadId)
   },
 
-  send: async (threadId, content, workingDir, options) => {
-    // Optimistically set status + mark thread as having messages so WSL toggle locks immediately
+  send: async (threadId, content, options) => {
+    // Optimistically set status + mark thread as having messages
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -286,7 +286,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
       return { statusMap: { ...s.statusMap, [threadId]: 'running' }, byProject: updated }
     })
-    await window.api.invoke('threads:send', threadId, content, workingDir, options)
+    await window.api.invoke('threads:send', threadId, content, options)
   },
 
   approvePlan: async (threadId) => {
@@ -326,8 +326,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       return { queuedMessageByThread: updated }
     }),
 
-  importFromHistory: async (projectId, sessionFilePath, sessionId, name) => {
-    const thread = await window.api.invoke('claude-history:import', projectId, sessionFilePath, sessionId, name)
+  importFromHistory: async (projectId, locationId, sessionFilePath, sessionId, name) => {
+    const thread = await window.api.invoke('claude-history:import', projectId, locationId, sessionFilePath, sessionId, name)
     set((s) => ({
       byProject: {
         ...s.byProject,

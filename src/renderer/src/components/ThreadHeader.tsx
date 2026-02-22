@@ -1,15 +1,15 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
 import { useThreadStore } from '../stores/threads'
 import { useProjectStore } from '../stores/projects'
+import { useLocationStore } from '../stores/locations'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useUiStore } from '../stores/ui'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
-import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider } from '../types/ipc'
-
-const EMPTY_DISTROS: string[] = []
+import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider, RepoLocation } from '../types/ipc'
 
 const EMPTY_TODOS: Todo[] = []
+const EMPTY_LOCATIONS: RepoLocation[] = []
 
 function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -30,12 +30,15 @@ export default function ThreadHeader({ threadId }: Props) {
   const setWsl = useThreadStore((s) => s.setWsl)
 
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const projects = useProjectStore((s) => s.projects)
 
-  const project = projects.find((p) => p.id === selectedProjectId)
   const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
   const thread = threads.find((t) => t.id === threadId)
   const status = statusMap[threadId] ?? 'idle'
+
+  // Look up location for this thread
+  const projectLocations = useLocationStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
+  const location = thread?.location_id ? projectLocations.find((l) => l.id === thread.location_id) : null
+  const locationPath = location?.path ?? null
 
   const todos = useTodoStore((s) => s.todosByThread[threadId] ?? EMPTY_TODOS)
   const todoTotal = todos.length
@@ -48,19 +51,26 @@ export default function ThreadHeader({ threadId }: Props) {
 
   const fetchGit = useGitStore((s) => s.fetch)
   const gitStatus = useGitStore((s) =>
-    project?.path ? (s.statusByPath[project.path] ?? null) : null
+    locationPath ? (s.statusByPath[locationPath] ?? null) : null
   )
   const pushGit = useGitStore((s) => s.push)
   const pullGit = useGitStore((s) => s.pull)
-  const isPushing = useGitStore((s) => project?.path ? (s.pushingByPath[project.path] ?? false) : false)
-  const isPulling = useGitStore((s) => project?.path ? (s.pullingByPath[project.path] ?? false) : false)
+  const isPushing = useGitStore((s) => locationPath ? (s.pushingByPath[locationPath] ?? false) : false)
+  const isPulling = useGitStore((s) => locationPath ? (s.pullingByPath[locationPath] ?? false) : false)
   const addToast = useToastStore((s) => s.add)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const inputRef = useRef<HTMLInputElement>(null)
 
-  const [availableDistros, setAvailableDistros] = useState<string[]>(EMPTY_DISTROS)
+  // WSL distro list — fetched when location is local
+  const [availableDistros, setAvailableDistros] = useState<string[]>([])
+  const isLocalLocation = location?.connection_type === 'local'
+
+  useEffect(() => {
+    if (!isLocalLocation) return
+    window.api.invoke('wsl:list-distros').then(setAvailableDistros)
+  }, [isLocalLocation])
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -68,21 +78,14 @@ export default function ThreadHeader({ threadId }: Props) {
     }
   }, [editing])
 
-  // Poll git status when a project is selected
+  // Poll git status for the thread's location
   useEffect(() => {
-    if (!project?.path) return
-    fetchGit(project.path)
-    const interval = setInterval(() => fetchGit(project.path), 10_000)
+    if (!locationPath) return
+    fetchGit(locationPath)
+    const lp = locationPath
+    const interval = setInterval(() => fetchGit(lp), 10_000)
     return () => clearInterval(interval)
-  }, [project?.path, fetchGit])
-
-  // Fetch available WSL distros when this thread has WSL enabled
-  useEffect(() => {
-    if (!thread?.use_wsl) return
-    window.api.invoke('wsl:list-distros').then((distros) => {
-      setAvailableDistros(distros.length > 0 ? distros : EMPTY_DISTROS)
-    })
-  }, [thread?.use_wsl])
+  }, [locationPath, fetchGit])
 
   const statusColor =
     status === 'running'
@@ -153,6 +156,77 @@ export default function ThreadHeader({ threadId }: Props) {
             {thread?.name ?? 'New thread'}
           </button>
         )}
+
+        {/* Location badge */}
+        {location && (
+          <span
+            className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
+            style={{
+              background: location.connection_type === 'ssh' ? 'rgba(99, 179, 237, 0.1)'
+                : location.connection_type === 'wsl' ? 'rgba(251, 191, 36, 0.1)'
+                : 'rgba(74, 222, 128, 0.1)',
+              color: location.connection_type === 'ssh' ? '#63b3ed'
+                : location.connection_type === 'wsl' ? '#fbbf24'
+                : '#4ade80',
+              border: `1px solid ${location.connection_type === 'ssh' ? 'rgba(99, 179, 237, 0.3)'
+                : location.connection_type === 'wsl' ? 'rgba(251, 191, 36, 0.3)'
+                : 'rgba(74, 222, 128, 0.3)'}`,
+              fontFamily: 'monospace',
+            }}
+            title={`Location: ${location.label} (${location.path})`}
+          >
+            {location.label}
+          </span>
+        )}
+
+        {/* WSL toggle for local locations */}
+        {isLocalLocation && thread && availableDistros.length > 0 && (
+          <span className="flex items-center gap-1 flex-shrink-0">
+            <label
+              className="flex items-center gap-1 text-xs cursor-pointer select-none"
+              style={{
+                color: thread.use_wsl ? '#fbbf24' : 'var(--color-text-muted)',
+                opacity: thread.has_messages ? 0.4 : 1,
+              }}
+              title={thread.has_messages ? 'WSL setting is locked after first message' : 'Run CLI via WSL'}
+            >
+              <input
+                type="checkbox"
+                checked={thread.use_wsl}
+                disabled={thread.has_messages}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  const distro = checked ? (thread.wsl_distro ?? availableDistros[0] ?? null) : null
+                  setWsl(threadId, checked, distro)
+                }}
+                className="accent-yellow-400"
+                style={{ width: 12, height: 12 }}
+              />
+              WSL
+            </label>
+            {thread.use_wsl && (
+              <select
+                value={thread.wsl_distro ?? ''}
+                onChange={(e) => setWsl(threadId, true, e.target.value || null)}
+                disabled={thread.has_messages}
+                className="text-xs bg-transparent border rounded px-1 py-0.5 outline-none cursor-pointer"
+                style={{
+                  color: '#fbbf24',
+                  borderColor: 'rgba(251, 191, 36, 0.3)',
+                  background: 'var(--color-surface)',
+                  opacity: thread.has_messages ? 0.4 : 1,
+                }}
+              >
+                {availableDistros.map((d) => (
+                  <option key={d} value={d} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+                    {d}
+                  </option>
+                ))}
+              </select>
+            )}
+          </span>
+        )}
+
         <select
           value={thread?.provider ?? 'claude-code'}
           onChange={(e) => {
@@ -195,86 +269,6 @@ export default function ThreadHeader({ threadId }: Props) {
             </option>
           ))}
         </select>
-
-        {/* WSL toggle (editable before first message) or badge (after first message) */}
-        {/* Only shown for local projects — SSH and project-level WSL projects handle transport differently */}
-        {project && !project.ssh && !project.wsl && thread && (() => {
-          if (thread.has_messages) {
-            // Thread has been started — show a read-only badge if WSL was enabled
-            if (!thread.use_wsl) return null
-            return (
-              <span
-                className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
-                style={{
-                  background: 'rgba(99, 179, 237, 0.1)',
-                  color: '#63b3ed',
-                  border: '1px solid rgba(99, 179, 237, 0.3)',
-                  fontFamily: 'monospace',
-                }}
-                title={`Running on WSL${thread.wsl_distro ? `: ${thread.wsl_distro}` : ''}`}
-              >
-                WSL{thread.wsl_distro ? `: ${thread.wsl_distro}` : ''}
-              </span>
-            )
-          }
-
-          // New thread — show editable toggle
-          const isWslOn = thread.use_wsl
-          return (
-            <>
-              <button
-                onClick={async () => {
-                  const next = !isWslOn
-                  let distro = thread.wsl_distro
-                  if (next && !distro) {
-                    // Auto-select first available distro
-                    const distros = availableDistros.length > 0
-                      ? availableDistros
-                      : await window.api.invoke('wsl:list-distros').then((d) => {
-                          setAvailableDistros(d)
-                          return d
-                        })
-                    distro = distros[0] ?? null
-                  }
-                  await setWsl(threadId, next, next ? distro : null)
-                }}
-                disabled={status === 'running'}
-                className="text-xs px-1.5 py-0.5 rounded border flex-shrink-0 transition-colors"
-                style={{
-                  color: isWslOn ? '#63b3ed' : 'var(--color-text-muted)',
-                  borderColor: isWslOn ? 'rgba(99, 179, 237, 0.3)' : 'var(--color-border)',
-                  background: isWslOn ? 'rgba(99, 179, 237, 0.1)' : 'transparent',
-                  opacity: status === 'running' ? 0.4 : 1,
-                  cursor: status === 'running' ? 'not-allowed' : 'pointer',
-                }}
-                title={isWslOn ? 'Disable WSL execution' : 'Run this thread on WSL (path will be converted to /mnt/...)'}
-              >
-                WSL
-              </button>
-              {isWslOn && availableDistros.length > 0 && (
-                <select
-                  value={thread.wsl_distro ?? ''}
-                  onChange={(e) => setWsl(threadId, true, e.target.value)}
-                  disabled={status === 'running'}
-                  className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
-                  style={{
-                    color: '#63b3ed',
-                    borderColor: 'rgba(99, 179, 237, 0.3)',
-                    background: 'var(--color-surface)',
-                    opacity: status === 'running' ? 0.4 : 1,
-                  }}
-                  title="Select WSL distro"
-                >
-                  {availableDistros.map((d) => (
-                    <option key={d} value={d} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </>
-          )
-        })()}
 
         {/* Token usage + context window */}
         {usage && (() => {
@@ -348,9 +342,9 @@ export default function ThreadHeader({ threadId }: Props) {
                 <button
                   onClick={async (e) => {
                     e.stopPropagation()
-                    if (!project?.path) return
+                    if (!locationPath) return
                     try {
-                      await pushGit(project.path)
+                      await pushGit(locationPath)
                       addToast({ type: 'success', message: 'Pushed successfully', duration: 3000 })
                     } catch (err) {
                       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 })
@@ -374,9 +368,9 @@ export default function ThreadHeader({ threadId }: Props) {
                 <button
                   onClick={async (e) => {
                     e.stopPropagation()
-                    if (!project?.path) return
+                    if (!locationPath) return
                     try {
-                      await pullGit(project.path)
+                      await pullGit(locationPath)
                       addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
                     } catch (err) {
                       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull failed', duration: 0 })

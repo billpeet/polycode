@@ -1,9 +1,11 @@
 import { useEffect } from 'react'
 import { useFilesStore } from '../stores/files'
-import { useProjectStore } from '../stores/projects'
+import { useThreadStore } from '../stores/threads'
+import { useLocationStore } from '../stores/locations'
 import { FileEntry } from '../types/ipc'
 
 const EMPTY_ENTRIES: FileEntry[] = []
+const EMPTY_LOCATIONS: import('../types/ipc').RepoLocation[] = []
 
 function getFileIcon(name: string, isDirectory: boolean): string {
   if (isDirectory) return '\u{1F4C1}' // folder
@@ -116,16 +118,36 @@ function FileTreeItem({ entry, depth = 0 }: { entry: FileEntry; depth?: number }
   )
 }
 
-export default function FileTree() {
-  const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
+export default function FileTree({ threadId }: { threadId: string }) {
+  const byProject = useThreadStore((s) => s.byProject)
+  const archivedByProject = useThreadStore((s) => s.archivedByProject)
+  const allLocations = useLocationStore((s) => s.byProject)
+  const fetchLocations = useLocationStore((s) => s.fetch)
+
+  // Search all loaded thread arrays
+  const thread = Object.values(byProject).flat().find((t) => t.id === threadId)
+    ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
+
+  const threadProjectId = thread?.project_id ?? null
+  const locationsLoaded = threadProjectId ? allLocations[threadProjectId] !== undefined : false
+  const threadLocations = threadProjectId ? (allLocations[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS
+  // Use thread's location_id, or fallback to first location for the project
+  const location = thread?.location_id
+    ? threadLocations.find((l) => l.id === thread.location_id)
+    : threadLocations[0] ?? null
+  const projectPath = location?.path ?? null
+
+  // Fetch locations if not loaded
+  useEffect(() => {
+    if (threadProjectId && !locationsLoaded) {
+      fetchLocations(threadProjectId)
+    }
+  }, [threadProjectId, locationsLoaded, fetchLocations])
 
   const entriesByPath = useFilesStore((s) => s.entriesByPath)
   const fetchDirectory = useFilesStore((s) => s.fetchDirectory)
   const loadingPaths = useFilesStore((s) => s.loadingPaths)
 
-  const projectPath = project?.path
   const rootEntries = projectPath ? (entriesByPath[projectPath] ?? EMPTY_ENTRIES) : EMPTY_ENTRIES
   const isLoading = projectPath ? loadingPaths.has(projectPath) : false
 
@@ -139,7 +161,7 @@ export default function FileTree() {
   if (!projectPath) {
     return (
       <div className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
-        No project selected.
+        {!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : 'No location for project.'}
       </div>
     )
   }

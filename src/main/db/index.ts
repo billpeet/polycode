@@ -164,6 +164,79 @@ function runMigrations(database: Database.Database): void {
   for (const [oldId, newId] of Object.entries(staleCodexModels)) {
     updateModel.run(newId, oldId)
   }
+
+  // ── Repo locations table ───────────────────────────────────────────────────
+  const tablesAfter = database.pragma('table_list') as Array<{ name: string }>
+  const hasRepoLocations = tablesAfter.some((t) => t.name === 'repo_locations')
+
+  if (!hasRepoLocations) {
+    database.exec(`
+      CREATE TABLE repo_locations (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        label TEXT NOT NULL,
+        connection_type TEXT NOT NULL DEFAULT 'local',
+        path TEXT NOT NULL,
+        ssh_host TEXT,
+        ssh_user TEXT,
+        ssh_port INTEGER,
+        ssh_key_path TEXT,
+        wsl_distro TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+  }
+
+  // ── git_url column on projects ──────────────────────────────────────────────
+  const projColsFinal = database.pragma('table_info(projects)') as Array<{ name: string }>
+  if (!projColsFinal.some((c) => c.name === 'git_url')) {
+    database.exec('ALTER TABLE projects ADD COLUMN git_url TEXT')
+  }
+
+  // ── location_id column on threads ───────────────────────────────────────────
+  // Must be added BEFORE the backfill below attempts to UPDATE threads.
+  const threadColsLoc = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsLoc.some((c) => c.name === 'location_id')) {
+    database.exec('ALTER TABLE threads ADD COLUMN location_id TEXT REFERENCES repo_locations(id) ON DELETE SET NULL')
+  }
+
+  // ── Backfill: migrate existing project paths into repo_locations ────────────
+  // Only runs once, when repo_locations is newly created.
+  if (!hasRepoLocations) {
+    const existingProjects = database
+      .prepare('SELECT id, name, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro FROM projects')
+      .all() as Array<{
+        id: string; name: string; path: string
+        ssh_host: string | null; ssh_user: string | null; ssh_port: number | null; ssh_key_path: string | null
+        wsl_distro: string | null
+      }>
+
+    const nowLoc = new Date().toISOString()
+    const insertLocation = database.prepare(
+      'INSERT INTO repo_locations (id, project_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    const linkThreads = database.prepare('UPDATE threads SET location_id = ? WHERE project_id = ?')
+
+    for (const proj of existingProjects) {
+      const locationId = crypto.randomUUID()
+      let connType = 'local'
+      let label = 'Local'
+      if (proj.ssh_host) {
+        connType = 'ssh'
+        label = `SSH (${proj.ssh_host})`
+      } else if (proj.wsl_distro) {
+        connType = 'wsl'
+        label = `WSL (${proj.wsl_distro})`
+      }
+      insertLocation.run(
+        locationId, proj.id, label, connType, proj.path,
+        proj.ssh_host, proj.ssh_user, proj.ssh_port, proj.ssh_key_path, proj.wsl_distro,
+        nowLoc, nowLoc
+      )
+      linkThreads.run(locationId, proj.id)
+    }
+  }
 }
 
 export function closeDb(): void {

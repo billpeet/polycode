@@ -1,13 +1,25 @@
 import { useEffect, useRef } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
-import { useProjectStore } from '../stores/projects'
+import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useSessionStore } from '../stores/sessions'
 import { useGitStore } from '../stores/git'
-import { OutputEvent, Message } from '../types/ipc'
+import { OutputEvent, Message, ThreadStatus } from '../types/ipc'
 import ThreadHeader from './ThreadHeader'
+
+/** Look up the location path for a thread from store state (for use in callbacks) */
+function getLocationPathForThread(threadId: string): string | null {
+  const thread = Object.values(useThreadStore.getState().byProject)
+    .flat()
+    .find((t) => t.id === threadId)
+  if (!thread?.location_id) return null
+  const loc = Object.values(useLocationStore.getState().byProject)
+    .flat()
+    .find((l) => l.id === thread.location_id)
+  return loc?.path ?? null
+}
 import SessionTabs from './SessionTabs'
 import MessageStream from './MessageStream'
 import InputBar from './InputBar'
@@ -55,10 +67,6 @@ export default function ThreadView({ threadId }: Props) {
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const activeSessionId = useSessionStore((s) => s.activeSessionByThread[threadId])
 
-  const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
-
   const cleanupRef = useRef<Array<() => void>>([])
 
   // Fetch sessions when thread changes
@@ -66,14 +74,20 @@ export default function ThreadView({ threadId }: Props) {
     fetchSessions(threadId)
   }, [threadId, fetchSessions])
 
-  // Fetch messages when active session changes
+  // Fetch messages when active session changes, and sync todos from persisted messages
   useEffect(() => {
-    if (activeSessionId) {
-      fetchMessagesBySession(activeSessionId)
-    } else {
-      // Fallback to thread-based fetch for threads without sessions
-      fetchMessages(threadId)
+    const doFetch = async () => {
+      if (activeSessionId) {
+        await fetchMessagesBySession(activeSessionId)
+        const msgs = useMessageStore.getState().messagesBySession[activeSessionId] ?? []
+        useTodoStore.getState().syncFromMessages(threadId, msgs)
+      } else {
+        await fetchMessages(threadId)
+        const msgs = useMessageStore.getState().messagesByThread[threadId] ?? []
+        useTodoStore.getState().syncFromMessages(threadId, msgs)
+      }
     }
+    doFetch()
   }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession])
 
   useEffect(() => {
@@ -109,6 +123,27 @@ export default function ThreadView({ threadId }: Props) {
       if (event.type === 'error') {
         useToastStore.getState().add({ type: 'error', message: event.content, duration: 0 })
       }
+
+      if (event.type === 'rate_limit' && event.metadata) {
+        const info = event.metadata as { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number }
+        const resetMsg = info.resetsAt
+          ? ` Resets at ${new Date(info.resetsAt * 1000).toLocaleTimeString()}.`
+          : ''
+        if (info.status === 'blocked') {
+          useToastStore.getState().add({
+            type: 'error',
+            message: `Rate limit reached (${info.rateLimitType ?? 'unknown'}).${resetMsg}`,
+            duration: 10000,
+          })
+        } else if (info.status === 'allowed_warning') {
+          const pct = info.utilization != null ? ` ${Math.round(info.utilization * 100)}%` : ''
+          useToastStore.getState().add({
+            type: 'warning',
+            message: `Rate limit${pct} used (${info.rateLimitType ?? 'unknown'}).${resetMsg}`,
+            duration: 8000,
+          })
+        }
+      }
     })
 
     const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
@@ -126,11 +161,14 @@ export default function ThreadView({ threadId }: Props) {
     const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
       // Use the status sent directly with the complete event to avoid race conditions
       // with the separate thread:status IPC event
-      const completionStatus = (args[0] as string | undefined) ?? 'idle'
+      const completionStatus = (args[0] as ThreadStatus | undefined) ?? 'idle'
 
       // Ensure the store reflects the final status (handles cases where the
       // thread:status event hasn't been processed yet)
       setStatus(threadId, completionStatus)
+
+      // Clear todos on completion — Claude Code often leaves stale todo lists hanging
+      useTodoStore.getState().clearTodos(threadId)
 
       // Re-fetch messages after completion to replace optimistic entries with persisted ones
       const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
@@ -144,16 +182,13 @@ export default function ThreadView({ threadId }: Props) {
       fetchSessions(threadId)
 
       // Refresh modified files for the git staging feature
-      if (project?.path) {
-        useGitStore.getState().fetchModifiedFiles(threadId, project.path)
-      }
+      useGitStore.getState().fetchModifiedFiles(threadId)
 
       // Auto-generate commit message when run completes successfully and field is empty
       if (completionStatus === 'idle') {
-        const projectsState = useProjectStore.getState()
-        const currentProject = projectsState.projects.find((p) => p.id === projectsState.selectedProjectId)
-        if (currentProject?.path) {
-          const currentMsg = useGitStore.getState().commitMessageByPath[currentProject.path] ?? ''
+        const locationPath = getLocationPathForThread(threadId)
+        if (locationPath) {
+          const currentMsg = useGitStore.getState().commitMessageByPath[locationPath] ?? ''
           if (!currentMsg.trim()) {
             const activeSession = useSessionStore.getState().activeSessionByThread[threadId]
             const msgs = activeSession
@@ -161,7 +196,7 @@ export default function ThreadView({ threadId }: Props) {
               : (useMessageStore.getState().messagesByThread[threadId] ?? [])
             const modifiedFiles = useGitStore.getState().modifiedFilesByThread[threadId] ?? []
             const context = buildMessageContext(msgs)
-            useGitStore.getState().generateCommitMessageWithContext(currentProject.path, modifiedFiles, context)
+            useGitStore.getState().generateCommitMessageWithContext(locationPath, modifiedFiles, context)
           }
         }
       }
@@ -182,20 +217,11 @@ export default function ThreadView({ threadId }: Props) {
           useMessageStore.getState().appendUserMessage(threadId, queuedMessage.content)
         }
 
-        // Get project for working dir
-        const projectsState = useProjectStore.getState()
-        const currentProject = projectsState.projects.find(
-          (p) => p.id === projectsState.selectedProjectId
+        useThreadStore.getState().send(
+          threadId,
+          queuedMessage.content,
+          { planMode: queuedMessage.planMode }
         )
-
-        if (currentProject) {
-          useThreadStore.getState().send(
-            threadId,
-            queuedMessage.content,
-            currentProject.path,
-            { planMode: queuedMessage.planMode }
-          )
-        }
         // Skip completion toast since we're continuing with queued message
         return
       }

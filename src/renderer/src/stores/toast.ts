@@ -2,7 +2,7 @@ import { create } from 'zustand'
 
 export interface Toast {
   id: string
-  type: 'success' | 'error' | 'info'
+  type: 'success' | 'error' | 'info' | 'warning'
   message: string
   duration?: number // ms, default 4000; 0 = persist until dismissed
 }

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useGitStore } from '../stores/git'
-import { useProjectStore } from '../stores/projects'
+import { useThreadStore } from '../stores/threads'
+import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
 import { useUiStore, RightPanelTab } from '../stores/ui'
 import { useFilesStore } from '../stores/files'
@@ -330,12 +331,34 @@ function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, acti
 }
 
 const EMPTY_FILES: string[] = []
+const EMPTY_LOCATIONS: import('../types/ipc').RepoLocation[] = []
 
 function GitSection({ threadId, collapsed, onToggle }: { threadId: string; collapsed: boolean; onToggle: () => void }) {
-  const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
-  const projectPath = project?.path
+  const byProject = useThreadStore((s) => s.byProject)
+  const archivedByProject = useThreadStore((s) => s.archivedByProject)
+  const allLocations = useLocationStore((s) => s.byProject)
+  const fetchLocations = useLocationStore((s) => s.fetch)
+
+  // Search all loaded thread arrays — thread may belong to a non-selected project or be archived
+  const thread = Object.values(byProject).flat().find((t) => t.id === threadId)
+    ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
+
+  // Look up locations from the thread's actual project, not the selected project
+  const threadProjectId = thread?.project_id ?? null
+  const locationsLoaded = threadProjectId ? allLocations[threadProjectId] !== undefined : false
+  const threadLocations = threadProjectId ? (allLocations[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS
+  // Use thread's location_id, or fallback to first location for the project
+  const location = thread?.location_id
+    ? threadLocations.find((l) => l.id === thread.location_id)
+    : threadLocations[0] ?? null
+  const projectPath = location?.path ?? null
+
+  // Fetch locations if not loaded for the thread's project
+  useEffect(() => {
+    if (threadProjectId && !locationsLoaded) {
+      fetchLocations(threadProjectId)
+    }
+  }, [threadProjectId, locationsLoaded, fetchLocations])
 
   const statusByPath = useGitStore((s) => s.statusByPath)
   const commitMessageByPath = useGitStore((s) => s.commitMessageByPath)
@@ -372,8 +395,8 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   }, [projectPath, collapsed, fetchGit])
 
   useEffect(() => {
-    if (threadId && projectPath) fetchModifiedFiles(threadId, projectPath)
-  }, [threadId, projectPath, fetchModifiedFiles])
+    if (threadId) fetchModifiedFiles(threadId)
+  }, [threadId, fetchModifiedFiles])
 
   const handleSetCommitMsg = useCallback((msg: string) => {
     if (projectPath) setCommitMsg(projectPath, msg)
@@ -507,7 +530,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
           <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
             {!gitStatus ? (
               <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
-                {!projectPath ? 'No project selected.' : 'Not a Git repository.'}
+                {!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for project.' : 'Not a Git repository.'}
               </p>
             ) : (
               <>
@@ -759,7 +782,7 @@ export default function RightPanel({ threadId }: Props) {
             />
           </>
         ) : (
-          <FileTree />
+          <FileTree threadId={threadId} />
         )}
       </div>
     </aside>

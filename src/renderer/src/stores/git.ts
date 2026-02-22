@@ -24,7 +24,7 @@ interface GitStore {
   generateCommitMessageWithContext: (repoPath: string, filePaths: string[], context: string) => Promise<void>
   push: (repoPath: string) => Promise<void>
   pull: (repoPath: string) => Promise<void>
-  fetchModifiedFiles: (threadId: string, workingDir: string) => Promise<void>
+  fetchModifiedFiles: (threadId: string) => Promise<void>
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
@@ -136,9 +136,9 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
-  fetchModifiedFiles: async (threadId, workingDir) => {
+  fetchModifiedFiles: async (threadId) => {
     try {
-      const files = await window.api.invoke('threads:getModifiedFiles', threadId, workingDir)
+      const files = await window.api.invoke('threads:getModifiedFiles', threadId)
       set((s) => ({
         modifiedFilesByThread: { ...s.modifiedFilesByThread, [threadId]: files },
       }))

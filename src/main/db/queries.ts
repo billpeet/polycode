@@ -1,28 +1,15 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
-import { ProjectRow, ThreadRow, MessageRow, SessionRow } from './models'
-import { Project, Thread, Message, Session, SshConfig, WslConfig, Provider, getModelsForProvider, getDefaultModelForProvider } from '../../shared/types'
+import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow } from './models'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
 function rowToProject(row: ProjectRow): Project {
-  const ssh: SshConfig | null = row.ssh_host
-    ? {
-        host: row.ssh_host,
-        user: row.ssh_user ?? '',
-        port: row.ssh_port ?? undefined,
-        keyPath: row.ssh_key_path ?? undefined,
-      }
-    : null
-  const wsl: WslConfig | null = row.wsl_distro
-    ? { distro: row.wsl_distro }
-    : null
   return {
     id: row.id,
     name: row.name,
-    path: row.path,
-    ssh,
-    wsl,
+    git_url: row.git_url ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   }
@@ -33,29 +20,27 @@ export function listProjects(): Project[] {
   return rows.map(rowToProject)
 }
 
-export function createProject(name: string, projectPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Project {
+export function createProject(name: string, gitUrl?: string | null): Project {
   const now = new Date().toISOString()
   const id = uuidv4()
   getDb()
     .prepare(
-      'INSERT INTO projects (id, name, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO projects (id, name, path, git_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
     )
-    .run(id, name, projectPath, ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null, wsl?.distro ?? null, now, now)
+    .run(id, name, '', gitUrl ?? null, now, now)
   return {
     id,
     name,
-    path: projectPath,
-    ssh: ssh ?? null,
-    wsl: wsl ?? null,
+    git_url: gitUrl ?? null,
     created_at: now,
     updated_at: now,
   }
 }
 
-export function updateProject(id: string, name: string, path: string, ssh?: SshConfig | null, wsl?: WslConfig | null): void {
+export function updateProject(id: string, name: string, gitUrl?: string | null): void {
   getDb()
-    .prepare('UPDATE projects SET name = ?, path = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?, ssh_key_path = ?, wsl_distro = ?, updated_at = ? WHERE id = ?')
-    .run(name, path, ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null, wsl?.distro ?? null, new Date().toISOString(), id)
+    .prepare('UPDATE projects SET name = ?, git_url = ?, updated_at = ? WHERE id = ?')
+    .run(name, gitUrl ?? null, new Date().toISOString(), id)
 }
 
 export function deleteProject(id: string): void {
@@ -69,11 +54,130 @@ export function getProjectForThread(threadId: string): Project | null {
   return row ? rowToProject(row) : null
 }
 
-export function getProjectByPath(path: string): Project | null {
+// ── Repo Locations ────────────────────────────────────────────────────────────
+
+function rowToLocation(row: RepoLocationRow): RepoLocation {
+  const ssh: SshConfig | null = row.ssh_host
+    ? {
+        host: row.ssh_host,
+        user: row.ssh_user ?? '',
+        port: row.ssh_port ?? undefined,
+        keyPath: row.ssh_key_path ?? undefined,
+      }
+    : null
+  const wsl: WslConfig | null = row.wsl_distro
+    ? { distro: row.wsl_distro }
+    : null
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    label: row.label,
+    connection_type: row.connection_type as ConnectionType,
+    path: row.path,
+    ssh,
+    wsl,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+export function listLocations(projectId: string): RepoLocation[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM repo_locations WHERE project_id = ? ORDER BY created_at ASC')
+    .all(projectId) as RepoLocationRow[]
+  return rows.map(rowToLocation)
+}
+
+export function createLocation(
+  projectId: string,
+  label: string,
+  connectionType: ConnectionType,
+  locationPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): RepoLocation {
+  const now = new Date().toISOString()
+  const id = uuidv4()
+  getDb()
+    .prepare(
+      'INSERT INTO repo_locations (id, project_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(
+      id, projectId, label, connectionType, locationPath,
+      ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null,
+      wsl?.distro ?? null,
+      now, now
+    )
+  return {
+    id,
+    project_id: projectId,
+    label,
+    connection_type: connectionType,
+    path: locationPath,
+    ssh: ssh ?? null,
+    wsl: wsl ?? null,
+    created_at: now,
+    updated_at: now,
+  }
+}
+
+export function updateLocation(
+  id: string,
+  label: string,
+  connectionType: ConnectionType,
+  locationPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): void {
+  getDb()
+    .prepare(
+      'UPDATE repo_locations SET label = ?, connection_type = ?, path = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?, ssh_key_path = ?, wsl_distro = ?, updated_at = ? WHERE id = ?'
+    )
+    .run(
+      label, connectionType, locationPath,
+      ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null,
+      wsl?.distro ?? null,
+      new Date().toISOString(), id
+    )
+}
+
+export function deleteLocation(id: string): void {
+  getDb().prepare('DELETE FROM repo_locations WHERE id = ?').run(id)
+}
+
+export function getLocationById(id: string): RepoLocation | null {
   const row = getDb()
-    .prepare('SELECT * FROM projects WHERE path = ?')
-    .get(path) as ProjectRow | undefined
-  return row ? rowToProject(row) : null
+    .prepare('SELECT * FROM repo_locations WHERE id = ?')
+    .get(id) as RepoLocationRow | undefined
+  return row ? rowToLocation(row) : null
+}
+
+export function getLocationForThread(threadId: string): RepoLocation | null {
+  const row = getDb()
+    .prepare('SELECT l.* FROM repo_locations l JOIN threads t ON t.location_id = l.id WHERE t.id = ?')
+    .get(threadId) as RepoLocationRow | undefined
+  return row ? rowToLocation(row) : null
+}
+
+/** Find a location whose path matches (prefix match for file lookups). */
+export function getLocationByPath(path: string): RepoLocation | null {
+  // Exact match first
+  const exact = getDb()
+    .prepare('SELECT * FROM repo_locations WHERE path = ?')
+    .get(path) as RepoLocationRow | undefined
+  if (exact) return rowToLocation(exact)
+
+  // Prefix match — find a location whose path is a prefix of the given path
+  const allLocations = getDb()
+    .prepare('SELECT * FROM repo_locations')
+    .all() as RepoLocationRow[]
+  for (const loc of allLocations) {
+    const locPath = loc.path.endsWith('/') ? loc.path : loc.path + '/'
+    if (path.startsWith(locPath) || path.startsWith(loc.path)) {
+      return rowToLocation(loc)
+    }
+  }
+  return null
 }
 
 // ── Threads ───────────────────────────────────────────────────────────────────
@@ -84,16 +188,22 @@ function rowToThread(r: ThreadRow): Thread {
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
   const model = validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
   return {
-    ...r,
+    id: r.id,
+    project_id: r.project_id,
+    location_id: r.location_id ?? null,
+    name: r.name,
     provider,
     model,
+    status: r.status as Thread['status'],
     archived: r.archived === 1,
     input_tokens: r.input_tokens ?? 0,
     output_tokens: r.output_tokens ?? 0,
     context_window: r.context_window ?? 0,
-    use_wsl: (r.use_wsl ?? 0) === 1,
-    wsl_distro: r.wsl_distro ?? null,
     has_messages: (r.has_messages ?? 0) === 1,
+    use_wsl: r.use_wsl === 1,
+    wsl_distro: r.wsl_distro ?? null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
   }
 }
 
@@ -141,11 +251,12 @@ export function unarchiveThread(id: string): void {
     .run(new Date().toISOString(), id)
 }
 
-export function createThread(projectId: string, name: string, provider = 'claude-code', model = 'claude-opus-4-5'): Thread {
+export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-5'): Thread {
   const now = new Date().toISOString()
   const thread: ThreadRow = {
     id: uuidv4(),
     project_id: projectId,
+    location_id: locationId,
     name,
     provider,
     model,
@@ -154,19 +265,20 @@ export function createThread(projectId: string, name: string, provider = 'claude
     input_tokens: 0,
     output_tokens: 0,
     context_window: 0,
+    has_messages: 0,
     use_wsl: 0,
     wsl_distro: null,
-    has_messages: 0,
     created_at: now,
     updated_at: now
   }
   getDb()
     .prepare(
-      'INSERT INTO threads (id, project_id, name, provider, model, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       thread.id,
       thread.project_id,
+      thread.location_id,
       thread.name,
       thread.provider,
       thread.model,
@@ -195,19 +307,6 @@ export function deleteThread(id: string): void {
   getDb().prepare('DELETE FROM threads WHERE id = ?').run(id)
 }
 
-export function updateThreadWsl(id: string, useWsl: boolean, wslDistro: string | null): void {
-  getDb()
-    .prepare('UPDATE threads SET use_wsl = ?, wsl_distro = ?, updated_at = ? WHERE id = ?')
-    .run(useWsl ? 1 : 0, wslDistro, new Date().toISOString(), id)
-}
-
-export function getThreadWslOverride(threadId: string): { use_wsl: number; wsl_distro: string | null } | null {
-  const row = getDb()
-    .prepare('SELECT use_wsl, wsl_distro FROM threads WHERE id = ?')
-    .get(threadId) as { use_wsl: number | null; wsl_distro: string | null } | undefined
-  return row ?? null
-}
-
 export function updateThreadStatus(id: string, status: string): void {
   getDb()
     .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
@@ -227,6 +326,19 @@ export function resetRunningThreads(): void {
   getDb()
     .prepare("UPDATE threads SET status = 'idle', updated_at = ? WHERE status = 'running'")
     .run(new Date().toISOString())
+}
+
+export function getThreadWsl(id: string): { use_wsl: boolean; wsl_distro: string | null } {
+  const row = getDb()
+    .prepare('SELECT use_wsl, wsl_distro FROM threads WHERE id = ?')
+    .get(id) as { use_wsl: number; wsl_distro: string | null } | undefined
+  return { use_wsl: (row?.use_wsl ?? 0) === 1, wsl_distro: row?.wsl_distro ?? null }
+}
+
+export function updateThreadWsl(id: string, useWsl: boolean, wslDistro: string | null): void {
+  getDb()
+    .prepare('UPDATE threads SET use_wsl = ?, wsl_distro = ?, updated_at = ? WHERE id = ?')
+    .run(useWsl ? 1 : 0, wslDistro, new Date().toISOString(), id)
 }
 
 export function updateThreadName(id: string, name: string): void {
@@ -523,6 +635,7 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
 
 export function importThread(
   projectId: string,
+  locationId: string | null,
   name: string,
   claudeSessionId: string,
   messages: ImportedMessage[]
@@ -531,32 +644,34 @@ export function importThread(
   const now = new Date().toISOString()
   const threadId = uuidv4()
   const sessionId = uuidv4()
-  const model = getLastUsedModel(projectId)
+  const { provider, model } = getLastUsedProviderAndModel(projectId)
 
   // Create thread with claude_session_id pre-set for resumption
   const thread: ThreadRow = {
     id: threadId,
     project_id: projectId,
+    location_id: locationId,
     name,
-    provider: 'claude-code',
+    provider,
     model,
     status: 'idle',
     archived: 0,
     input_tokens: 0,
     output_tokens: 0,
     context_window: 0,
+    has_messages: 1,
     use_wsl: 0,
     wsl_distro: null,
-    has_messages: 1,
     created_at: now,
     updated_at: now
   }
 
   db.prepare(
-    'INSERT INTO threads (id, project_id, name, provider, model, status, claude_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, claude_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     thread.id,
     thread.project_id,
+    thread.location_id,
     thread.name,
     thread.provider,
     thread.model,

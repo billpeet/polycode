@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react'
 import { useThreadStore } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
 import { useProjectStore } from '../stores/projects'
+import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
 import { useSessionStore } from '../stores/sessions'
 import {
@@ -11,6 +12,8 @@ import {
   SUPPORTED_ATTACHMENT_TYPES,
   MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
+  Thread,
+  RepoLocation,
 } from '../types/ipc'
 import FileMentionPopup from './FileMentionPopup'
 import AttachmentPreview from './AttachmentPreview'
@@ -133,6 +136,9 @@ function QueueIcon({ className }: { className?: string }) {
   )
 }
 
+const EMPTY_THREADS: Thread[] = []
+const EMPTY_LOCATIONS: RepoLocation[] = []
+
 interface MentionState {
   active: boolean
   startIndex: number
@@ -172,6 +178,10 @@ export default function InputBar({ threadId }: Props) {
   const projects = useProjectStore((s) => s.projects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const project = projects.find((p) => p.id === selectedProjectId)
+  const projectThreads = useThreadStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_THREADS) : EMPTY_THREADS)
+  const currentThread = projectThreads.find((t) => t.id === threadId)
+  const projectLocations = useLocationStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
+  const location = currentThread?.location_id ? projectLocations.find((l) => l.id === currentThread.location_id) : null
   const addToast = useToastStore((s) => s.add)
 
   const isProcessing = status === 'running'
@@ -252,7 +262,7 @@ export default function InputBar({ threadId }: Props) {
     } else {
       appendUserMessage(threadId, finalContent)
     }
-    await send(threadId, finalContent, project.path, { planMode })
+    await send(threadId, finalContent, { planMode })
     if (planMode) setPlanMode(threadId, false)
   }
 
@@ -605,9 +615,7 @@ export default function InputBar({ threadId }: Props) {
             </button>
             <button
               onClick={() => {
-                if (project) {
-                  window.api.invoke('threads:executePlanInNewContext', threadId, project.path)
-                }
+                window.api.invoke('threads:executePlanInNewContext', threadId)
               }}
               className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:scale-105"
               style={{
@@ -874,9 +882,9 @@ export default function InputBar({ threadId }: Props) {
       </div>
 
       {/* File mention popup */}
-      {mention.active && project && (
+      {mention.active && location?.path && (
         <FileMentionPopup
-          projectPath={project.path}
+          projectPath={location.path}
           query={mention.query}
           onSelect={handleFileSelect}
           onClose={closeMention}

@@ -7,6 +7,7 @@ import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
+import { useLocationStore } from './stores/locations'
 import { useUiStore } from './stores/ui'
 import { useFilesStore } from './stores/files'
 import { useToastStore } from './stores/toast'
@@ -23,6 +24,7 @@ export default function App() {
 
   const fetchThreads = useThreadStore((s) => s.fetch)
   const byProject = useThreadStore((s) => s.byProject)
+  const fetchLocations = useLocationStore((s) => s.fetch)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const selectThread = useThreadStore((s) => s.select)
 
@@ -55,6 +57,7 @@ export default function App() {
     restored.current = true
     selectProject(project.id)
     expandProject(project.id)
+    fetchLocations(project.id)
     fetchThreads(project.id).then(() => {
       // selectThread is called inside the byProject effect below
     })
@@ -63,7 +66,7 @@ export default function App() {
     if (savedThreadId) {
       pendingThreadId.current = savedThreadId
     }
-  }, [projects, selectProject, expandProject, fetchThreads])
+  }, [projects, selectProject, expandProject, fetchThreads, fetchLocations])
 
   // Ref to carry the desired thread ID across the async fetch
   const pendingThreadId = useRef<string | null>(null)

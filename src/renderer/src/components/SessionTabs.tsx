@@ -1,5 +1,4 @@
 import { useSessionStore, EMPTY_SESSIONS } from '../stores/sessions'
-import { useProjectStore } from '../stores/projects'
 
 interface Props {
   threadId: string
@@ -9,10 +8,6 @@ export default function SessionTabs({ threadId }: Props) {
   const sessions = useSessionStore((s) => s.sessionsByThread[threadId] ?? EMPTY_SESSIONS)
   const activeSessionId = useSessionStore((s) => s.activeSessionByThread[threadId])
   const switchSession = useSessionStore((s) => s.switchSession)
-
-  const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
 
   // Don't show tabs if only one session
   if (sessions.length <= 1) {
@@ -33,8 +28,8 @@ export default function SessionTabs({ threadId }: Props) {
           <button
             key={session.id}
             onClick={() => {
-              if (project && !isActive) {
-                switchSession(threadId, session.id, project.path)
+              if (!isActive) {
+                switchSession(threadId, session.id)
               }
             }}
             className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap"

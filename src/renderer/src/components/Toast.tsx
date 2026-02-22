@@ -8,11 +8,13 @@ function ToastItem({ toast }: { toast: Toast }) {
       ? '#dc2626'
       : toast.type === 'success'
         ? '#16a34a'
-        : 'var(--color-surface-2)'
+        : toast.type === 'warning'
+          ? '#d97706'
+          : 'var(--color-surface-2)'
 
   const color = toast.type === 'info' ? 'var(--color-text)' : '#fff'
 
-  const icon = toast.type === 'error' ? '✕' : toast.type === 'success' ? '✓' : 'ℹ'
+  const icon = toast.type === 'error' ? '✕' : toast.type === 'success' ? '✓' : toast.type === 'warning' ? '⚠' : 'ℹ'
 
   return (
     <div

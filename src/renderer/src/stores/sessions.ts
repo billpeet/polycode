@@ -9,7 +9,7 @@ interface SessionStore {
 
   fetch: (threadId: string) => Promise<void>
   setActiveSession: (threadId: string, sessionId: string) => void
-  switchSession: (threadId: string, sessionId: string, workingDir: string) => Promise<void>
+  switchSession: (threadId: string, sessionId: string) => Promise<void>
   clear: (threadId: string) => void
 }
 
@@ -34,8 +34,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
     }))
   },
 
-  switchSession: async (threadId, sessionId, workingDir) => {
-    await window.api.invoke('sessions:switch', threadId, sessionId, workingDir)
+  switchSession: async (threadId, sessionId) => {
+    await window.api.invoke('sessions:switch', threadId, sessionId)
     set((s) => ({
       activeSessionByThread: { ...s.activeSessionByThread, [threadId]: sessionId }
     }))

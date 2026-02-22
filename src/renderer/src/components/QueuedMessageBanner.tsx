@@ -1,6 +1,5 @@
 import { useThreadStore, QueuedMessage } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
-import { useProjectStore } from '../stores/projects'
 import { useSessionStore } from '../stores/sessions'
 
 interface Props {
@@ -37,17 +36,11 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
   const send = useThreadStore((s) => s.send)
   const appendUserMessage = useMessageStore((s) => s.appendUserMessage)
 
-  const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
-
   const handleCancel = () => {
     clearQueue(threadId)
   }
 
   const handleInterrupt = async () => {
-    if (!project) return
-
     // Stop current session
     await stop(threadId)
 
@@ -64,7 +57,7 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
         appendUserMessage(threadId, msg.content)
       }
 
-      await send(threadId, msg.content, project.path, { planMode: msg.planMode })
+      await send(threadId, msg.content, { planMode: msg.planMode })
     }, 100)
   }
 

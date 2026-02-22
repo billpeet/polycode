@@ -2,6 +2,22 @@ export interface ProjectRow {
   id: string
   name: string
   path: string
+  git_url: string | null
+  ssh_host: string | null
+  ssh_user: string | null
+  ssh_port: number | null
+  ssh_key_path: string | null
+  wsl_distro: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RepoLocationRow {
+  id: string
+  project_id: string
+  label: string
+  connection_type: string
+  path: string
   ssh_host: string | null
   ssh_user: string | null
   ssh_port: number | null
@@ -14,6 +30,7 @@ export interface ProjectRow {
 export interface ThreadRow {
   id: string
   project_id: string
+  location_id: string | null
   name: string
   provider: string
   model: string
@@ -22,10 +39,10 @@ export interface ThreadRow {
   input_tokens: number
   output_tokens: number
   context_window: number
-  use_wsl: number
-  wsl_distro: string | null
   /** Set by queries that include an EXISTS subquery; undefined when row built locally */
   has_messages?: number
+  use_wsl: number
+  wsl_distro: string | null
   created_at: string
   updated_at: string
 }

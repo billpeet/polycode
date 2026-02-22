@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
-import { Project, Thread, isRemoteProject, isWslProject } from '../types/ipc'
+import { useLocationStore } from '../stores/locations'
+import { Project, Thread, RepoLocation } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
+import LocationDialog from './LocationDialog'
 import ImportHistoryDialog from './ImportHistoryDialog'
+
+const EMPTY_LOCATIONS: RepoLocation[] = []
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -43,9 +47,15 @@ export default function Sidebar() {
   const selectThread = useThreadStore((s) => s.select)
   const setName = useThreadStore((s) => s.setName)
 
+  const locationsByProject = useLocationStore((s) => s.byProject)
+  const fetchLocations = useLocationStore((s) => s.fetch)
+
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
-  const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; archived?: boolean } | null>(null)
-  const [importDialogProject, setImportDialogProject] = useState<{ id: string; path: string } | null>(null)
+  const [locationDialog, setLocationDialog] = useState<{ mode: 'create'; projectId: string } | { mode: 'edit'; projectId: string; location: RepoLocation } | null>(null)
+  const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; projectId: string } | null>(null)
+  const [importDialogInfo, setImportDialogInfo] = useState<{ projectId: string; locationId: string; locationPath: string } | null>(null)
+  /** Track collapsed locations (all expanded by default) */
+  const [collapsedLocationIds, setCollapsedLocationIds] = useState<Set<string>>(new Set())
 
   const setStatus = useThreadStore((s) => s.setStatus)
 
@@ -106,12 +116,13 @@ export default function Sidebar() {
     if (!expandedProjectIds.has(id)) {
       selectProject(id)
     }
-    // Fetch threads if not already loaded
+    // Fetch threads and locations if not already loaded
     if (!byProject[id]) fetchThreads(id)
+    if (!locationsByProject[id]) fetchLocations(id)
   }
 
-  async function handleNewThread(projectId: string): Promise<void> {
-    await createThread(projectId, 'New thread')
+  async function handleNewThread(projectId: string, locationId: string): Promise<void> {
+    await createThread(projectId, 'New thread', locationId)
     selectProject(projectId)
     window.dispatchEvent(new Event('focus-input'))
   }
@@ -134,7 +145,32 @@ export default function Sidebar() {
     await unarchiveThread(thread.id, projectId)
   }
 
-  function renderThread(thread: Thread, isArchived: boolean, projectId: string) {
+  function toggleLocationCollapsed(locationId: string): void {
+    setCollapsedLocationIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(locationId)) next.delete(locationId)
+      else next.add(locationId)
+      return next
+    })
+  }
+
+  function connectionBadge(connType: string) {
+    if (connType === 'local') return null
+    const isSSH = connType === 'ssh'
+    return (
+      <span
+        className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+        style={{
+          background: isSSH ? 'rgba(99, 179, 237, 0.15)' : 'rgba(251, 191, 36, 0.15)',
+          color: isSSH ? '#63b3ed' : '#fbbf24',
+        }}
+      >
+        {connType}
+      </span>
+    )
+  }
+
+  function renderThread(thread: Thread, isArchived: boolean, projectId: string, indent = 'pl-10') {
     const status = statusMap[thread.id] ?? 'idle'
     const statusColor =
       status === 'running' ? '#4ade80'
@@ -150,7 +186,7 @@ export default function Sidebar() {
       >
         <button
           onClick={() => selectThread(thread.id)}
-          className="flex w-full items-center pl-8 pr-2 py-1.5 text-left text-xs transition-colors min-w-0"
+          className={`flex w-full items-center ${indent} pr-2 py-1.5 text-left text-xs transition-colors min-w-0`}
           style={{
             background: selectedThreadId === thread.id ? 'var(--color-border)' : 'transparent',
             color: 'var(--color-text-muted)'
@@ -241,113 +277,151 @@ export default function Sidebar() {
 
       {/* Projects list */}
       <div className="flex-1 overflow-y-auto">
-        {projects.map((project) => (
-          <div key={project.id}>
-            {/* Project row */}
-            <div className="group relative">
-              <button
-                onClick={() => handleToggleProject(project.id)}
-                className="flex w-full items-center px-4 py-2 text-left text-sm transition-colors min-w-0"
-                style={{
-                  background: expandedProjectIds.has(project.id) ? 'var(--color-surface-2)' : 'transparent',
-                  color: 'var(--color-text)'
-                }}
-              >
-                <span className="mr-1.5 text-[10px] flex-shrink-0 opacity-50" style={{ width: '10px' }}>
-                  {expandedProjectIds.has(project.id) ? '▾' : '▸'}
-                </span>
-                <span className="mr-2 text-xs flex-shrink-0">{isRemoteProject(project) || isWslProject(project) ? '🖥' : '📁'}</span>
-                <span className="truncate">{project.name}</span>
-                {isRemoteProject(project) && (
-                  <span
-                    className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
-                    style={{ background: 'rgba(99, 179, 237, 0.15)', color: '#63b3ed' }}
-                  >
-                    SSH
-                  </span>
-                )}
-                {isWslProject(project) && (
-                  <span
-                    className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
-                    style={{ background: 'rgba(251, 191, 36, 0.15)', color: '#fbbf24' }}
-                  >
-                    WSL
-                  </span>
-                )}
-              </button>
-              {/* Project actions — absolutely positioned, overlay on hover */}
-              <div
-                className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                style={{ background: expandedProjectIds.has(project.id) ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
-              >
+        {projects.map((project) => {
+          const isExpanded = expandedProjectIds.has(project.id)
+          const projectThreads = byProject[project.id] ?? []
+          const projectArchivedThreads = archivedByProject[project.id] ?? []
+          const projectArchivedCount = archivedCountByProject[project.id] ?? 0
+          const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
+          const runningThreads = projectThreads.filter((t) => statusMap[t.id] === 'running')
+
+          return (
+            <div key={project.id}>
+              {/* Project row */}
+              <div className="group relative">
                 <button
-                  onClick={() => setProjectDialog({ mode: 'edit', project })}
-                  className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
-                  style={{ color: 'var(--color-text-muted)' }}
-                  title="Edit project"
+                  onClick={() => handleToggleProject(project.id)}
+                  className="flex w-full items-center px-4 py-2 text-left text-sm transition-colors min-w-0"
+                  style={{
+                    background: isExpanded ? 'var(--color-surface-2)' : 'transparent',
+                    color: 'var(--color-text)'
+                  }}
                 >
-                  ✎
+                  <span className="mr-1.5 text-[10px] flex-shrink-0 opacity-50" style={{ width: '10px' }}>
+                    {isExpanded ? '▾' : '▸'}
+                  </span>
+                  <span className="truncate">{project.name}</span>
                 </button>
-                <button
-                  onClick={() => setConfirmDelete({ type: 'project', id: project.id, name: project.name })}
-                  className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
-                  style={{ color: 'var(--color-text-muted)' }}
-                  title="Delete project"
+                {/* Project actions — absolutely positioned, overlay on hover */}
+                <div
+                  className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ background: isExpanded ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
                 >
-                  ✕
-                </button>
+                  <button
+                    onClick={() => setLocationDialog({ mode: 'create', projectId: project.id })}
+                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Add location"
+                  >
+                    +
+                  </button>
+                  <button
+                    onClick={() => setProjectDialog({ mode: 'edit', project })}
+                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Edit project"
+                  >
+                    ✎
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id })}
+                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Delete project"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* Threads under this project */}
-            {(() => {
-              const isExpanded = expandedProjectIds.has(project.id)
-              const projectThreads = byProject[project.id] ?? []
-              const projectArchivedThreads = archivedByProject[project.id] ?? []
-              const projectArchivedCount = archivedCountByProject[project.id] ?? 0
-              const runningThreads = projectThreads.filter((t) => statusMap[t.id] === 'running')
-
-              // When collapsed, only show running threads
-              if (!isExpanded) {
-                if (runningThreads.length === 0) return null
-                return (
-                  <div>
-                    {runningThreads.map((thread) => renderThread(thread, false, project.id))}
-                  </div>
-                )
-              }
-
-              // When expanded, show everything
-              return (
+              {/* Collapsed: only show running threads */}
+              {!isExpanded && runningThreads.length > 0 && (
                 <div>
-                  {/* Thread actions — at the top */}
-                  <div className="flex items-center pl-8 pr-4 py-1.5 gap-2">
+                  {runningThreads.map((thread) => renderThread(thread, false, project.id, 'pl-8'))}
+                </div>
+              )}
+
+              {/* Expanded: show locations with nested threads */}
+              {isExpanded && (
+                <div>
+                  {locations.map((loc) => {
+                    const isLocationExpanded = !collapsedLocationIds.has(loc.id)
+                    const locationThreads = projectThreads.filter((t) => t.location_id === loc.id)
+
+                    return (
+                      <div key={loc.id}>
+                        {/* Location subheader */}
+                        <div className="group relative">
+                          <button
+                            onClick={() => toggleLocationCollapsed(loc.id)}
+                            className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs transition-colors min-w-0"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          >
+                            <span className="mr-1 text-[9px] flex-shrink-0 opacity-50" style={{ width: '8px' }}>
+                              {isLocationExpanded ? '▾' : '▸'}
+                            </span>
+                            <span className="truncate opacity-70">{loc.label}</span>
+                            {connectionBadge(loc.connection_type)}
+                          </button>
+                          {/* Location actions */}
+                          <div
+                            className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                            style={{ background: 'var(--color-surface)' }}
+                          >
+                            <button
+                              onClick={() => handleNewThread(project.id, loc.id)}
+                              className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
+                              style={{ color: 'var(--color-text-muted)' }}
+                              title="New thread in this location"
+                            >
+                              +
+                            </button>
+                            <button
+                              onClick={() => setImportDialogInfo({ projectId: project.id, locationId: loc.id, locationPath: loc.path })}
+                              className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
+                              style={{ color: 'var(--color-text-muted)' }}
+                              title="Import from Claude Code CLI history"
+                            >
+                              ↓
+                            </button>
+                            <button
+                              onClick={() => setLocationDialog({ mode: 'edit', projectId: project.id, location: loc })}
+                              className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
+                              style={{ color: 'var(--color-text-muted)' }}
+                              title="Edit location"
+                            >
+                              ✎
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Threads under this location */}
+                        {isLocationExpanded && locationThreads.map((thread) => renderThread(thread, false, project.id))}
+                      </div>
+                    )
+                  })}
+
+                  {/* Threads without a location (orphaned) */}
+                  {projectThreads
+                    .filter((t) => !t.location_id || !locations.some((l) => l.id === t.location_id))
+                    .map((thread) => renderThread(thread, false, project.id, 'pl-8'))}
+
+                  {/* Add location prompt when project has no locations */}
+                  {locations.length === 0 && projectThreads.length === 0 && (
                     <button
-                      onClick={() => handleNewThread(project.id)}
-                      className="text-xs opacity-50 hover:opacity-80 transition-opacity"
+                      onClick={() => setLocationDialog({ mode: 'create', projectId: project.id })}
+                      className="flex w-full items-center pl-6 pr-4 py-2 text-left text-xs opacity-50 hover:opacity-80 transition-opacity"
                       style={{ color: 'var(--color-text-muted)' }}
                     >
-                      + New
+                      + Add a location to get started
                     </button>
-                    <span className="text-xs opacity-30" style={{ color: 'var(--color-text-muted)' }}>|</span>
-                    <button
-                      onClick={() => setImportDialogProject({ id: project.id, path: project.path })}
-                      className="text-xs opacity-50 hover:opacity-80 transition-opacity"
-                      style={{ color: 'var(--color-text-muted)' }}
-                      title="Import from Claude Code CLI history"
-                    >
-                      Import
-                    </button>
-                  </div>
+                  )}
 
-                  {/* Active threads */}
-                  {projectThreads.map((thread) => renderThread(thread, false, project.id))}
-
-                  {/* Archive toggle — only shown when there are archived threads or section is open */}
+                  {/* Archive toggle */}
                   {(projectArchivedCount > 0 || showArchived) && (
                     <button
                       onClick={() => toggleShowArchived(project.id)}
-                      className="flex w-full items-center pl-8 pr-4 py-1 text-left text-[10px] opacity-40 hover:opacity-70 transition-opacity"
+                      className="flex w-full items-center pl-6 pr-4 py-1 text-left text-[10px] opacity-40 hover:opacity-70 transition-opacity"
                       style={{ color: 'var(--color-text-muted)' }}
                     >
                       {showArchived ? `▾ Hide archived` : `▸ Archived (${projectArchivedCount})`}
@@ -355,12 +429,12 @@ export default function Sidebar() {
                   )}
 
                   {/* Archived threads */}
-                  {showArchived && projectArchivedThreads.map((thread) => renderThread(thread, true, project.id))}
+                  {showArchived && projectArchivedThreads.map((thread) => renderThread(thread, true, project.id, 'pl-8'))}
                 </div>
-              )
-            })()}
-          </div>
-        ))}
+              )}
+            </div>
+          )
+        })}
 
         {projects.length === 0 && (
           <p className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -377,6 +451,20 @@ export default function Sidebar() {
           mode={projectDialog.mode}
           project={projectDialog.mode === 'edit' ? projectDialog.project : undefined}
           onClose={() => setProjectDialog(null)}
+        />
+      )}
+
+      {/* Location create/edit dialog */}
+      {locationDialog && (
+        <LocationDialog
+          mode={locationDialog.mode}
+          projectId={locationDialog.projectId}
+          location={locationDialog.mode === 'edit' ? locationDialog.location : undefined}
+          onClose={() => {
+            setLocationDialog(null)
+            // Refresh locations after create/edit
+            if (locationDialog.projectId) fetchLocations(locationDialog.projectId)
+          }}
         />
       )}
 
@@ -412,7 +500,7 @@ export default function Sidebar() {
                 onClick={() =>
                   confirmDelete.type === 'project'
                     ? handleDeleteProject(confirmDelete.id)
-                    : handleDeleteThread(confirmDelete.id, selectedProjectId!)
+                    : handleDeleteThread(confirmDelete.id, confirmDelete.projectId)
                 }
                 className="rounded px-3 py-1.5 text-xs font-medium"
                 style={{ background: '#dc2626', color: '#fff' }}
@@ -425,12 +513,13 @@ export default function Sidebar() {
       )}
 
       {/* Import history dialog */}
-      {importDialogProject && (
+      {importDialogInfo && (
         <ImportHistoryDialog
-          projectId={importDialogProject.id}
-          projectPath={importDialogProject.path}
-          onClose={() => setImportDialogProject(null)}
-          onImported={() => fetchThreads(importDialogProject.id)}
+          projectId={importDialogInfo.projectId}
+          locationId={importDialogInfo.locationId}
+          locationPath={importDialogInfo.locationPath}
+          onClose={() => setImportDialogInfo(null)}
+          onImported={() => fetchThreads(importDialogInfo.projectId)}
         />
       )}
     </aside>

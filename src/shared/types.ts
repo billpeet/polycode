@@ -9,20 +9,24 @@ export interface WslConfig {
   distro: string
 }
 
-export function isRemoteProject(project: Project): boolean {
-  return !!project.ssh?.host
-}
+export type ConnectionType = 'local' | 'ssh' | 'wsl'
 
-export function isWslProject(project: Project): boolean {
-  return !!project.wsl?.distro
+export interface RepoLocation {
+  id: string
+  project_id: string
+  label: string
+  connection_type: ConnectionType
+  path: string
+  ssh?: SshConfig | null
+  wsl?: WslConfig | null
+  created_at: string
+  updated_at: string
 }
 
 export interface Project {
   id: string
   name: string
-  path: string
-  ssh?: SshConfig | null
-  wsl?: WslConfig | null
+  git_url: string | null
   created_at: string
   updated_at: string
 }
@@ -89,6 +93,7 @@ export function getDefaultModelForProvider(provider: Provider): string {
 export interface Thread {
   id: string
   project_id: string
+  location_id: string | null
   name: string
   provider: string
   model: string
@@ -97,12 +102,10 @@ export interface Thread {
   input_tokens: number
   output_tokens: number
   context_window: number
-  /** Whether this thread should run its CLI process on WSL (local path converted to /mnt/...) */
-  use_wsl: boolean
-  /** The WSL distro to use when use_wsl is true */
-  wsl_distro: string | null
   /** True if at least one message has been sent in this thread */
   has_messages: boolean
+  use_wsl: boolean
+  wsl_distro: string | null
   created_at: string
   updated_at: string
 }
@@ -158,7 +161,18 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 
 export const DEFAULT_CONTEXT_LIMIT = 200_000
 
-export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'usage'
+export interface RateLimitInfo {
+  status: 'allowed' | 'allowed_warning' | 'blocked' | 'unknown'
+  resetsAt?: number
+  rateLimitType?: string
+  utilization?: number
+  surpassedThreshold?: number
+  isUsingOverage?: boolean
+  overageStatus?: string
+  overageDisabledReason?: string
+}
+
+export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'usage' | 'rate_limit'
 
 export interface OutputEvent {
   type: OutputEventType

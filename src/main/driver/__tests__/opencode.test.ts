@@ -34,37 +34,32 @@ const CALL_ID    = 'call_abc123'
 // ── buildOpenCodeArgs ─────────────────────────────────────────────────────────
 
 describe('buildOpenCodeArgs', () => {
-  it('new conversation: format flag before prompt', () => {
-    expect(buildOpenCodeArgs(null, undefined, 'hello world')).toEqual([
-      'run', '--format', 'json', 'hello world',
+  it('new conversation: format flag only', () => {
+    expect(buildOpenCodeArgs(null, undefined)).toEqual([
+      'run', '--format', 'json',
     ])
   })
 
-  it('new conversation: model flag before prompt', () => {
-    expect(buildOpenCodeArgs(null, 'opencode/big-pickle', 'hello')).toEqual([
-      'run', '--format', 'json', '--model', 'opencode/big-pickle', 'hello',
+  it('new conversation: model flag present', () => {
+    expect(buildOpenCodeArgs(null, 'opencode/big-pickle')).toEqual([
+      'run', '--format', 'json', '--model', 'opencode/big-pickle',
     ])
   })
 
-  it('resume: --session before --model before prompt', () => {
-    expect(buildOpenCodeArgs('ses_abc', 'opencode/big-pickle', 'continue')).toEqual([
-      'run', '--format', 'json', '--session', 'ses_abc', '--model', 'opencode/big-pickle', 'continue',
+  it('resume: --session before --model', () => {
+    expect(buildOpenCodeArgs('ses_abc', 'opencode/big-pickle')).toEqual([
+      'run', '--format', 'json', '--session', 'ses_abc', '--model', 'opencode/big-pickle',
     ])
   })
 
   it('resume without model', () => {
-    expect(buildOpenCodeArgs('ses_abc', undefined, 'continue')).toEqual([
-      'run', '--format', 'json', '--session', 'ses_abc', 'continue',
+    expect(buildOpenCodeArgs('ses_abc', undefined)).toEqual([
+      'run', '--format', 'json', '--session', 'ses_abc',
     ])
   })
 
-  it('prompt is always the last element', () => {
-    const args = buildOpenCodeArgs('ses_abc', 'opencode/big-pickle', 'my prompt with spaces')
-    expect(args[args.length - 1]).toBe('my prompt with spaces')
-  })
-
   it('--format json always present', () => {
-    const args = buildOpenCodeArgs(null, undefined, 'hi')
+    const args = buildOpenCodeArgs(null, undefined)
     expect(args).toContain('--format')
     expect(args[args.indexOf('--format') + 1]).toBe('json')
   })
