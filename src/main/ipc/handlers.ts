@@ -35,9 +35,14 @@ import {
   getThreadModifiedFiles,
   getThreadWsl,
   updateThreadWsl,
+  listCommands,
+  createCommand,
+  updateCommand,
+  deleteCommand,
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
 import { sessionManager } from '../session/manager'
+import { commandManager } from '../commands/manager'
 import { getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPull, getFileDiff } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
@@ -112,6 +117,8 @@ function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: WslConfig
 }
 
 export function registerIpcHandlers(window: BrowserWindow): void {
+  commandManager.init(window)
+
   // ── Projects ──────────────────────────────────────────────────────────────
 
   ipcMain.handle('projects:list', () => {
@@ -128,6 +135,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('projects:delete', (_event, id: string) => {
     sessionManager.stopAll()
+    commandManager.stopAll()
     return deleteProject(id)
   })
 
@@ -561,6 +569,45 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       ],
     })
     return result.canceled ? [] : result.filePaths
+  })
+
+  // ── Commands ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle('commands:list', (_event, projectId: string) => {
+    return listCommands(projectId)
+  })
+
+  ipcMain.handle('commands:create', (_event, projectId: string, name: string, command: string, cwd?: string | null) => {
+    return createCommand(projectId, name, command, cwd)
+  })
+
+  ipcMain.handle('commands:update', (_event, id: string, name: string, command: string, cwd?: string | null) => {
+    return updateCommand(id, name, command, cwd)
+  })
+
+  ipcMain.handle('commands:delete', (_event, id: string) => {
+    commandManager.stop(id)
+    return deleteCommand(id)
+  })
+
+  ipcMain.handle('commands:start', (_event, commandId: string) => {
+    commandManager.start(commandId)
+  })
+
+  ipcMain.handle('commands:stop', (_event, commandId: string) => {
+    commandManager.stop(commandId)
+  })
+
+  ipcMain.handle('commands:restart', (_event, commandId: string) => {
+    commandManager.restart(commandId)
+  })
+
+  ipcMain.handle('commands:getStatus', (_event, commandId: string) => {
+    return commandManager.getStatus(commandId)
+  })
+
+  ipcMain.handle('commands:getLogs', (_event, commandId: string) => {
+    return commandManager.getLogs(commandId)
   })
 
   // ── Window Controls ────────────────────────────────────────────────────────

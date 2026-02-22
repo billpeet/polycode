@@ -201,6 +201,24 @@ function runMigrations(database: Database.Database): void {
     database.exec('ALTER TABLE threads ADD COLUMN location_id TEXT REFERENCES repo_locations(id) ON DELETE SET NULL')
   }
 
+  // ── Project commands table ────────────────────────────────────────────────────
+  const tablesForCommands = database.pragma('table_list') as Array<{ name: string }>
+  const hasProjectCommands = tablesForCommands.some((t) => t.name === 'project_commands')
+  if (!hasProjectCommands) {
+    database.exec(`
+      CREATE TABLE project_commands (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        command TEXT NOT NULL,
+        cwd TEXT,
+        sort_order INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+  }
+
   // ── Backfill: migrate existing project paths into repo_locations ────────────
   // Only runs once, when repo_locations is newly created.
   if (!hasRepoLocations) {

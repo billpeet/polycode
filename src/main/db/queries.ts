@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
-import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider } from '../../shared/types'
+import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow } from './models'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -631,6 +631,60 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
   }
 
   return Array.from(files)
+}
+
+// ── Project Commands ──────────────────────────────────────────────────────────
+
+function rowToCommand(row: ProjectCommandRow): ProjectCommand {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    name: row.name,
+    command: row.command,
+    cwd: row.cwd ?? null,
+    sort_order: row.sort_order,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+export function listCommands(projectId: string): ProjectCommand[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM project_commands WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC')
+    .all(projectId) as ProjectCommandRow[]
+  return rows.map(rowToCommand)
+}
+
+export function createCommand(projectId: string, name: string, command: string, cwd?: string | null): ProjectCommand {
+  const now = new Date().toISOString()
+  const id = uuidv4()
+  const countRow = getDb()
+    .prepare('SELECT COUNT(*) as count FROM project_commands WHERE project_id = ?')
+    .get(projectId) as { count: number }
+  const sortOrder = countRow.count
+  getDb()
+    .prepare(
+      'INSERT INTO project_commands (id, project_id, name, command, cwd, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(id, projectId, name, command, cwd ?? null, sortOrder, now, now)
+  return { id, project_id: projectId, name, command, cwd: cwd ?? null, sort_order: sortOrder, created_at: now, updated_at: now }
+}
+
+export function updateCommand(id: string, name: string, command: string, cwd?: string | null): void {
+  getDb()
+    .prepare('UPDATE project_commands SET name = ?, command = ?, cwd = ?, updated_at = ? WHERE id = ?')
+    .run(name, command, cwd ?? null, new Date().toISOString(), id)
+}
+
+export function deleteCommand(id: string): void {
+  getDb().prepare('DELETE FROM project_commands WHERE id = ?').run(id)
+}
+
+export function getCommandById(id: string): ProjectCommand | null {
+  const row = getDb()
+    .prepare('SELECT * FROM project_commands WHERE id = ?')
+    .get(id) as ProjectCommandRow | undefined
+  return row ? rowToCommand(row) : null
 }
 
 export function importThread(

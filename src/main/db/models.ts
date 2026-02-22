@@ -66,3 +66,14 @@ export interface SessionRow {
   created_at: string
   updated_at: string
 }
+
+export interface ProjectCommandRow {
+  id: string
+  project_id: string
+  name: string
+  command: string
+  cwd: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}

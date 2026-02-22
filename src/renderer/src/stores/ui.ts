@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 
-export type RightPanelTab = 'tasks' | 'files'
+export type RightPanelTab = 'tasks' | 'files' | 'commands'
 
 interface UiStore {
   todoPanelOpenByThread: Record<string, boolean>

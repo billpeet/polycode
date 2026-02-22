@@ -3,6 +3,7 @@ import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
 import FilePreview from './components/FilePreview'
+import CommandLogs from './components/CommandLogs'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
 import { useProjectStore } from './stores/projects'
@@ -11,6 +12,7 @@ import { useLocationStore } from './stores/locations'
 import { useUiStore } from './stores/ui'
 import { useFilesStore } from './stores/files'
 import { useToastStore } from './stores/toast'
+import { useCommandStore } from './stores/commands'
 
 const STORAGE_PROJECT_KEY = 'polycode:selectedProjectId'
 const STORAGE_THREAD_KEY = 'polycode:selectedThreadId'
@@ -35,6 +37,8 @@ export default function App() {
   const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
   const diffView = useFilesStore((s) => s.diffView)
   const loadingDiff = useFilesStore((s) => s.loadingDiff)
+
+  const selectedCommandId = useCommandStore((s) => s.selectedCommandId)
 
   // Track whether we've attempted restore yet
   const restored = useRef(false)
@@ -148,7 +152,12 @@ export default function App() {
                 <div className="flex flex-1 flex-col overflow-hidden">
                   <ThreadView threadId={selectedThreadId} />
                 </div>
-                {(selectedFilePath || diffView || loadingDiff) && <FilePreview />}
+                {(selectedFilePath || diffView || loadingDiff)
+                  ? <FilePreview />
+                  : selectedCommandId
+                    ? <CommandLogs />
+                    : null
+                }
                 {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
               </>
             ) : (

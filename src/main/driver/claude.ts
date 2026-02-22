@@ -1,4 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
+import { writeFileSync, unlinkSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
 
@@ -127,14 +130,32 @@ export class ClaudeDriver implements CLIDriver {
         // claude reads the prompt from stdin (--print reads stdin when
         // no positional prompt is given).
         const stdinArgs = args.slice(0, -1)
+        const workDir = this.options.workingDir
+        const isUNC = workDir.startsWith('\\\\')
 
-        console.log('[ClaudeDriver] Spawning (stdin):', 'claude', stdinArgs.join(' '))
-
-        this.process = spawn('claude', stdinArgs, {
-          cwd: this.options.workingDir,
-          shell: true,
-          stdio: ['pipe', 'pipe', 'pipe'],
-        })
+        if (isUNC) {
+          // cmd.exe rejects UNC paths as cwd. pushd maps UNC to a drive letter,
+          // but passing the UNC path through Node.js spawn args causes Node to
+          // escape the inner quotes, which garbles the path. A temp batch file
+          // avoids all quoting issues: the file path passed to cmd /c is
+          // simple, and inside the file the pushd quoting is straightforward.
+          const batchPath = join(tmpdir(), `polycode-${Date.now()}.bat`)
+          const batchContent = `@echo off\r\npushd "${workDir}"\r\nclaude ${stdinArgs.join(' ')}\r\npopd\r\n`
+          writeFileSync(batchPath, batchContent)
+          console.log('[ClaudeDriver] Spawning (UNC/batch/stdin):', batchPath)
+          this.process = spawn('cmd', ['/c', batchPath], {
+            shell: false,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
+          this.process.on('close', () => { try { unlinkSync(batchPath) } catch { /* ignore */ } })
+        } else {
+          console.log('[ClaudeDriver] Spawning (stdin):', 'claude', stdinArgs.join(' '))
+          this.process = spawn('claude', stdinArgs, {
+            cwd: workDir,
+            shell: true,
+            stdio: ['pipe', 'pipe', 'pipe'],
+          })
+        }
         // Write the prompt to stdin and close — avoids all cmd.exe escaping issues
         this.process.stdin?.write(content)
         this.process.stdin?.end()

@@ -6,7 +6,8 @@ import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
 import { useUiStore, RightPanelTab } from '../stores/ui'
 import { useFilesStore } from '../stores/files'
-import { GitFileChange } from '../types/ipc'
+import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
+import { GitFileChange, CommandStatus } from '../types/ipc'
 import FileTree from './FileTree'
 
 function SparkleIcon() {
@@ -709,6 +710,129 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   )
 }
 
+// ─── Commands section ─────────────────────────────────────────────────────────
+
+function StatusDot({ status }: { status: CommandStatus }) {
+  const color =
+    status === 'running' ? '#4ade80'
+    : status === 'error' ? '#f87171'
+    : 'var(--color-text-muted)'
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        width: 7,
+        height: 7,
+        borderRadius: '50%',
+        background: color,
+        flexShrink: 0,
+      }}
+    />
+  )
+}
+
+function CommandsSection({ threadId }: { threadId: string }) {
+  const byProject = useThreadStore((s) => s.byProject)
+  const archivedByProject = useThreadStore((s) => s.archivedByProject)
+  const thread = Object.values(byProject).flat().find((t) => t.id === threadId)
+    ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
+  const projectId = thread?.project_id ?? null
+
+  const commands = useCommandStore((s) => projectId ? (s.byProject[projectId] ?? EMPTY_COMMANDS) : EMPTY_COMMANDS)
+  const statusMap = useCommandStore((s) => s.statusMap)
+  const fetch = useCommandStore((s) => s.fetch)
+  const start = useCommandStore((s) => s.start)
+  const stop = useCommandStore((s) => s.stop)
+  const restart = useCommandStore((s) => s.restart)
+  const setStatus = useCommandStore((s) => s.setStatus)
+  const selectCommand = useCommandStore((s) => s.selectCommand)
+  const fetchLogs = useCommandStore((s) => s.fetchLogs)
+
+  useEffect(() => {
+    if (projectId) fetch(projectId)
+  }, [projectId, fetch])
+
+  // Subscribe to status events for each command
+  useEffect(() => {
+    if (commands.length === 0) return
+    const unsubs = commands.map((cmd) =>
+      window.api.on(`command:status:${cmd.id}`, (status) => {
+        setStatus(cmd.id, status as CommandStatus)
+      })
+    )
+    return () => { for (const unsub of unsubs) unsub() }
+  }, [commands, setStatus])
+
+  if (!projectId) return null
+
+  return (
+    <div className="px-3 py-3">
+      {commands.length === 0 ? (
+        <p className="text-xs text-center py-6" style={{ color: 'var(--color-text-muted)' }}>
+          No commands. Edit the project to add some.
+        </p>
+      ) : (
+        <ul className="space-y-1">
+          {commands.map((cmd) => {
+            const status: CommandStatus = statusMap[cmd.id] ?? 'idle'
+            const isRunning = status === 'running'
+            return (
+              <li
+                key={cmd.id}
+                className="rounded px-2 py-2"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+              >
+                <div className="flex items-center gap-2 mb-1.5">
+                  <StatusDot status={status} />
+                  <button
+                    className="flex-1 text-left text-xs font-medium truncate hover:underline"
+                    style={{ color: 'var(--color-text)' }}
+                    onClick={() => { selectCommand(cmd.id); fetchLogs(cmd.id) }}
+                    title={cmd.command}
+                  >
+                    {cmd.name}
+                  </button>
+                </div>
+                <p className="text-[10px] font-mono truncate mb-2" style={{ color: 'var(--color-text-muted)' }}>
+                  {cmd.command}
+                </p>
+                <div className="flex gap-1">
+                  {!isRunning ? (
+                    <button
+                      onClick={() => start(cmd.id)}
+                      className="flex-1 rounded py-1 text-xs font-medium transition-colors"
+                      style={{ background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.3)' }}
+                    >
+                      Start
+                    </button>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => restart(cmd.id)}
+                        className="flex-1 rounded py-1 text-xs font-medium transition-colors"
+                        style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)', border: '1px solid rgba(232, 123, 95, 0.3)' }}
+                      >
+                        Restart
+                      </button>
+                      <button
+                        onClick={() => stop(cmd.id)}
+                        className="flex-1 rounded py-1 text-xs font-medium transition-colors"
+                        style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}
+                      >
+                        Stop
+                      </button>
+                    </>
+                  )}
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 // ─── Tab button ────────────────────────────────────────────────────────────────
 
 function TabButton({
@@ -760,6 +884,7 @@ export default function RightPanel({ threadId }: Props) {
       >
         <TabButton label="Tasks" active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} />
         <TabButton label="Files" active={activeTab === 'files'} onClick={() => setActiveTab('files')} />
+        <TabButton label="Commands" active={activeTab === 'commands'} onClick={() => setActiveTab('commands')} />
       </div>
 
       {/* Tab content */}
@@ -781,8 +906,10 @@ export default function RightPanel({ threadId }: Props) {
               onToggle={() => setGitCollapsed((c) => !c)}
             />
           </>
-        ) : (
+        ) : activeTab === 'files' ? (
           <FileTree threadId={threadId} />
+        ) : (
+          <CommandsSection threadId={threadId} />
         )}
       </div>
     </aside>

@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
+import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
 import { Project, RepoLocation, ConnectionType, SshConfig, WslConfig } from '../types/ipc'
 
 const EMPTY: RepoLocation[] = []
@@ -390,11 +391,28 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const [locationForm, setLocationForm] = useState<LocationFormState>({ mode: 'none' })
   const [deleteConfirm, setDeleteConfirm] = useState<RepoLocation | null>(null)
 
+  // Commands
+  const commands = useCommandStore((s) => project ? (s.byProject[project.id] ?? EMPTY_COMMANDS) : EMPTY_COMMANDS)
+  const fetchCommands = useCommandStore((s) => s.fetch)
+  const createCommand = useCommandStore((s) => s.create)
+  const updateCommand = useCommandStore((s) => s.update)
+  const removeCommand = useCommandStore((s) => s.remove)
+  const [newCmdName, setNewCmdName] = useState('')
+  const [newCmdCommand, setNewCmdCommand] = useState('')
+  const [newCmdCwd, setNewCmdCwd] = useState('')
+  const [cmdError, setCmdError] = useState('')
+  const [editingCmdId, setEditingCmdId] = useState<string | null>(null)
+  const [editCmdName, setEditCmdName] = useState('')
+  const [editCmdCommand, setEditCmdCommand] = useState('')
+  const [editCmdCwd, setEditCmdCwd] = useState('')
+  const [editCmdError, setEditCmdError] = useState('')
+
   const isEdit = mode === 'edit'
 
   useEffect(() => {
     if (isEdit && project) {
       fetchLocations(project.id)
+      fetchCommands(project.id)
     }
   }, [isEdit, project?.id])
 
@@ -627,6 +645,207 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                 </div>
               </div>
             )}
+
+            {/* Commands section */}
+            <div className="my-5 border-t" style={{ borderColor: 'var(--color-border)' }} />
+
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Commands</span>
+            </div>
+
+            {commands.length === 0 && (
+              <p className="text-xs py-1 mb-2" style={{ color: 'var(--color-text-muted)' }}>
+                No commands yet.
+              </p>
+            )}
+
+            <div className="space-y-1 mb-3">
+              {commands.map((cmd) => {
+                const isEditingThis = editingCmdId === cmd.id
+                return (
+                  <div key={cmd.id}>
+                    <div
+                      className="flex items-center gap-2 rounded px-3 py-2"
+                      style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-claude)' : 'var(--color-border)'}` }}
+                    >
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium block truncate" style={{ color: 'var(--color-text)' }}>
+                          {cmd.name}
+                        </span>
+                        <span className="text-[10px] font-mono truncate block" style={{ color: 'var(--color-text-muted)' }}>
+                          {cmd.command}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isEditingThis) {
+                            setEditingCmdId(null)
+                          } else {
+                            setEditingCmdId(cmd.id)
+                            setEditCmdName(cmd.name)
+                            setEditCmdCommand(cmd.command)
+                            setEditCmdCwd(cmd.cwd ?? '')
+                            setEditCmdError('')
+                          }
+                        }}
+                        className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0"
+                        style={{ color: isEditingThis ? 'var(--color-claude)' : 'var(--color-text-muted)' }}
+                        title="Edit command"
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => project && removeCommand(cmd.id, project.id)}
+                        className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0"
+                        style={{ color: 'var(--color-text-muted)' }}
+                        title="Remove command"
+                      >
+                        ✕
+                      </button>
+                    </div>
+
+                    {isEditingThis && (
+                      <div
+                        className="mt-1 rounded-md p-3 space-y-2"
+                        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-claude)' }}
+                      >
+                        <div>
+                          <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Name</label>
+                          <input
+                            type="text"
+                            value={editCmdName}
+                            onChange={(e) => setEditCmdName(e.target.value)}
+                            className="w-full rounded px-3 py-1.5 text-sm outline-none"
+                            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                            autoFocus
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Command</label>
+                          <input
+                            type="text"
+                            value={editCmdCommand}
+                            onChange={(e) => setEditCmdCommand(e.target.value)}
+                            className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                            Working dir <span style={{ opacity: 0.5 }}>(optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            value={editCmdCwd}
+                            onChange={(e) => setEditCmdCwd(e.target.value)}
+                            className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                            placeholder="/path/to/subdir"
+                          />
+                        </div>
+                        {editCmdError && <p className="text-xs" style={{ color: '#f87171' }}>{editCmdError}</p>}
+                        <div className="flex justify-end gap-2 pt-0.5">
+                          <button
+                            type="button"
+                            onClick={() => setEditingCmdId(null)}
+                            className="rounded px-3 py-1.5 text-xs"
+                            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            disabled={!editCmdName.trim() || !editCmdCommand.trim()}
+                            onClick={async () => {
+                              if (!project || !editCmdName.trim() || !editCmdCommand.trim()) return
+                              setEditCmdError('')
+                              try {
+                                await updateCommand(cmd.id, project.id, editCmdName.trim(), editCmdCommand.trim(), editCmdCwd.trim() || null)
+                                setEditingCmdId(null)
+                              } catch (err) {
+                                setEditCmdError(String(err))
+                              }
+                            }}
+                            className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                            style={{ background: 'var(--color-claude)', color: '#fff' }}
+                          >
+                            Save
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            {/* Add command form */}
+            <div
+              className="rounded-md p-3 space-y-2"
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+            >
+              <p className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>Add Command</p>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Name</label>
+                <input
+                  type="text"
+                  value={newCmdName}
+                  onChange={(e) => setNewCmdName(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="Dev server"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Command</label>
+                <input
+                  type="text"
+                  value={newCmdCommand}
+                  onChange={(e) => setNewCmdCommand(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="npm run dev"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  Working dir <span style={{ opacity: 0.5 }}>(optional — defaults to project location)</span>
+                </label>
+                <input
+                  type="text"
+                  value={newCmdCwd}
+                  onChange={(e) => setNewCmdCwd(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="/path/to/subdir"
+                />
+              </div>
+              {cmdError && <p className="text-xs" style={{ color: '#f87171' }}>{cmdError}</p>}
+              <div className="flex justify-end">
+                <button
+                  type="button"
+                  disabled={!newCmdName.trim() || !newCmdCommand.trim()}
+                  onClick={async () => {
+                    if (!project || !newCmdName.trim() || !newCmdCommand.trim()) return
+                    setCmdError('')
+                    try {
+                      await createCommand(project.id, newCmdName.trim(), newCmdCommand.trim(), newCmdCwd.trim() || null)
+                      setNewCmdName('')
+                      setNewCmdCommand('')
+                      setNewCmdCwd('')
+                    } catch (err) {
+                      setCmdError(String(err))
+                    }
+                  }}
+                  className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40"
+                  style={{ background: 'var(--color-claude)', color: '#fff' }}
+                >
+                  Add Command
+                </button>
+              </div>
+            </div>
 
             <div className="mt-5 pt-4 flex justify-end border-t" style={{ borderColor: 'var(--color-border)' }}>
               <button

@@ -282,3 +282,25 @@ export const SUPPORTED_ATTACHMENT_TYPES: Record<string, { ext: string; type: 'im
 
 export const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024 // 5MB
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10
+
+// ── Project Commands ──────────────────────────────────────────────────────────
+
+export type CommandStatus = 'idle' | 'running' | 'stopped' | 'error'
+
+export interface ProjectCommand {
+  id: string
+  project_id: string
+  name: string
+  command: string
+  cwd: string | null
+  sort_order: number
+  created_at: string
+  updated_at: string
+}
+
+export interface CommandLogLine {
+  commandId: string
+  text: string
+  stream: 'stdout' | 'stderr'
+  timestamp: string
+}
