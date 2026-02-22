@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "description": "Desktop app for orchestrating multiple Claude Code sessions",
   "main": "out/main/index.js",
-  "author": "",
+  "author": "billpeet",
   "scripts": {
     "postinstall": "node scripts/postinstall.js",
     "dev": "electron-vite dev",
@@ -11,12 +11,15 @@
     "preview": "electron-vite preview",
     "start": "electron .",
     "start:prod": "bun run build && NODE_ENV=production electron . --user-data-dir=$APPDATA/polycode-electron-prod",
-    "test": "bun test src/main/driver/__tests__"
+    "test": "bun test src/main/driver/__tests__",
+    "dist": "bun run build && electron-builder --win",
+    "dist:publish": "bun run build && electron-builder --win --publish always"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.50",
     "better-sqlite3": "^11.10.0",
     "dompurify": "^3.3.1",
+    "electron-updater": "^6.3.9",
     "fuse.js": "^7.1.0",
     "highlight.js": "^11.11.1",
     "marked": "^15.0.12",
@@ -33,6 +36,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "electron": "33.4.11",
+    "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
     "png-to-ico": "^3.0.1",
     "react": "^19.0.0",
@@ -41,5 +45,36 @@
     "tailwindcss": "^4.0.6",
     "typescript": "^5.9.3",
     "vite": "^6.4.1"
+  },
+  "build": {
+    "appId": "com.polycode.app",
+    "productName": "Polycode",
+    "copyright": "Copyright © 2026 billpeet",
+    "npmRebuild": false,
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**",
+      "**/*.node"
+    ],
+    "files": [
+      "out/**",
+      "resources/**"
+    ],
+    "directories": { "output": "release" },
+    "win": {
+      "target": [{ "target": "nsis", "arch": ["x64"] }],
+      "icon": "resources/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "billpeet",
+      "repo": "polycode"
+    }
   }
 }
