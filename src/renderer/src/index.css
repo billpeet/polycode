@@ -96,6 +96,7 @@ body,
   color: var(--color-text);
   line-height: 1.65;
   font-size: 0.875rem;
+  overflow-wrap: anywhere;
 }
 
 .prose-content h1,
