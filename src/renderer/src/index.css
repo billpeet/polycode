@@ -169,6 +169,16 @@ body,
   color: #f09070;
 }
 
+.user-bubble .prose-content a {
+  color: #fff;
+  opacity: 0.85;
+}
+
+.user-bubble .prose-content a:hover {
+  opacity: 1;
+  color: #fff;
+}
+
 .prose-content hr {
   border: none;
   border-top: 1px solid var(--color-border);
