@@ -120,10 +120,15 @@ downloadFile(url, tmp, (err) => {
     process.exit(1)
   }
   fs.unlinkSync(tmp)
-  // Also copy to lib/binding/ path that bindings.js resolves at runtime
   const src = path.join(prebuildsDir, 'build', 'Release', 'better_sqlite3.node')
+  // Copy to lib/binding/ path that bindings.js resolves at runtime
   const dst = path.join(bindingDir, 'better_sqlite3.node')
   fs.copyFileSync(src, dst)
+  // Overwrite build/Release/ so the Electron prebuilt wins over any
+  // node-gyp artefact compiled against the host Node.js version
+  const buildReleaseDir = path.join(ROOT, 'node_modules', 'better-sqlite3', 'build', 'Release')
+  fs.mkdirSync(buildReleaseDir, { recursive: true })
+  fs.copyFileSync(src, path.join(buildReleaseDir, 'better_sqlite3.node'))
   console.log('[postinstall] better-sqlite3 prebuilt installed.')
 })
 
