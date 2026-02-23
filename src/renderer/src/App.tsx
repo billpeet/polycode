@@ -39,8 +39,21 @@ export default function App() {
   const diffView = useFilesStore((s) => s.diffView)
   const loadingDiff = useFilesStore((s) => s.loadingDiff)
 
-  const selectedInstance = useCommandStore((s) => s.selectedInstance)
-  const hasPinnedCommands = useCommandStore((s) => s.pinnedInstances.length > 0)
+  const currentLocationId = useThreadStore((s) => {
+    if (!s.selectedThreadId) return null
+    for (const threads of Object.values(s.byProject)) {
+      const t = threads.find((t) => t.id === s.selectedThreadId)
+      if (t) return t.location_id ?? null
+    }
+    return null
+  })
+
+  const selectedInstance = useCommandStore((s) =>
+    currentLocationId ? (s.selectedInstanceByLocation[currentLocationId] ?? null) : null
+  )
+  const hasPinnedCommands = useCommandStore((s) =>
+    currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
+  )
 
   // Track whether we've attempted restore yet
   const restored = useRef(false)

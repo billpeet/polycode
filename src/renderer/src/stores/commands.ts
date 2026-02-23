@@ -23,10 +23,10 @@ interface CommandStore {
   statusMap: Record<string, CommandStatus>
   /** Logs keyed by instKey(commandId, locationId) */
   logsByCommand: Record<string, CommandLogLine[]>
-  /** Currently viewed instance key, or null */
-  selectedInstance: string | null
-  /** Pinned instance keys */
-  pinnedInstances: string[]
+  /** Currently viewed instance key per locationId, or null */
+  selectedInstanceByLocation: Record<string, string | null>
+  /** Pinned instance keys per locationId */
+  pinnedInstancesByLocation: Record<string, string[]>
 
   fetch: (projectId: string) => Promise<void>
   /** Fetch statuses for all commands of a project at the given location. */
@@ -40,17 +40,17 @@ interface CommandStore {
   setStatus: (key: string, status: CommandStatus) => void
   appendLog: (key: string, line: CommandLogLine) => void
   fetchLogs: (commandId: string, locationId: string) => Promise<void>
-  selectInstance: (key: string | null) => void
-  pinInstance: (key: string) => void
-  unpinInstance: (key: string) => void
+  selectInstance: (key: string | null, locationId: string) => void
+  pinInstance: (key: string, locationId: string) => void
+  unpinInstance: (key: string, locationId: string) => void
 }
 
 export const useCommandStore = create<CommandStore>((set, get) => ({
   byProject: {},
   statusMap: {},
   logsByCommand: {},
-  selectedInstance: null,
-  pinnedInstances: [],
+  selectedInstanceByLocation: {},
+  pinnedInstancesByLocation: {},
 
   fetch: async (projectId) => {
     const commands = await window.api.invoke('commands:list', projectId)
@@ -109,8 +109,15 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
       for (const key of Object.keys(logsByCommand)) {
         if (key.startsWith(prefix)) delete logsByCommand[key]
       }
-      const selectedInstance = s.selectedInstance?.startsWith(prefix) ? null : s.selectedInstance
-      const pinnedInstances = s.pinnedInstances.filter((k) => !k.startsWith(prefix))
+      // Clean up per-location selected/pinned
+      const selectedInstanceByLocation = { ...s.selectedInstanceByLocation }
+      for (const [loc, sel] of Object.entries(selectedInstanceByLocation)) {
+        if (sel?.startsWith(prefix)) selectedInstanceByLocation[loc] = null
+      }
+      const pinnedInstancesByLocation = { ...s.pinnedInstancesByLocation }
+      for (const [loc, pins] of Object.entries(pinnedInstancesByLocation)) {
+        pinnedInstancesByLocation[loc] = pins.filter((k) => !k.startsWith(prefix))
+      }
       return {
         byProject: {
           ...s.byProject,
@@ -118,8 +125,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
         },
         statusMap,
         logsByCommand,
-        selectedInstance,
-        pinnedInstances,
+        selectedInstanceByLocation,
+        pinnedInstancesByLocation,
       }
     })
   },
@@ -159,18 +166,24 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     set((s) => ({ logsByCommand: { ...s.logsByCommand, [key]: logs } }))
   },
 
-  selectInstance: (key) => {
-    set({ selectedInstance: key })
+  selectInstance: (key, locationId) => {
+    set((s) => ({
+      selectedInstanceByLocation: { ...s.selectedInstanceByLocation, [locationId]: key },
+    }))
   },
 
-  pinInstance: (key) => {
+  pinInstance: (key, locationId) => {
     set((s) => {
-      if (s.pinnedInstances.includes(key)) return s
-      return { pinnedInstances: [...s.pinnedInstances, key] }
+      const existing = s.pinnedInstancesByLocation[locationId] ?? []
+      if (existing.includes(key)) return s
+      return { pinnedInstancesByLocation: { ...s.pinnedInstancesByLocation, [locationId]: [...existing, key] } }
     })
   },
 
-  unpinInstance: (key) => {
-    set((s) => ({ pinnedInstances: s.pinnedInstances.filter((k) => k !== key) }))
+  unpinInstance: (key, locationId) => {
+    set((s) => {
+      const existing = s.pinnedInstancesByLocation[locationId] ?? []
+      return { pinnedInstancesByLocation: { ...s.pinnedInstancesByLocation, [locationId]: existing.filter((k) => k !== key) } }
+    })
   },
 }))
