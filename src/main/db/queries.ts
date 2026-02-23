@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
-import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand } from '../../shared/types'
+import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow } from './models'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -172,8 +172,11 @@ export function getLocationByPath(path: string): RepoLocation | null {
     .prepare('SELECT * FROM repo_locations')
     .all() as RepoLocationRow[]
   for (const loc of allLocations) {
-    const locPath = loc.path.endsWith('/') ? loc.path : loc.path + '/'
-    if (path.startsWith(locPath) || path.startsWith(loc.path)) {
+    // Require a path separator after the location path to avoid matching e.g.
+    // "C:\repos\Foo" as a prefix of "C:\repos\FooBar".
+    const locPathFwd = loc.path.endsWith('/') ? loc.path : loc.path + '/'
+    const locPathBack = loc.path.endsWith('\\') ? loc.path : loc.path + '\\'
+    if (path.startsWith(locPathFwd) || path.startsWith(locPathBack)) {
       return rowToLocation(loc)
     }
   }
@@ -685,6 +688,45 @@ export function getCommandById(id: string): ProjectCommand | null {
     .prepare('SELECT * FROM project_commands WHERE id = ?')
     .get(id) as ProjectCommandRow | undefined
   return row ? rowToCommand(row) : null
+}
+
+// ── YouTrack Servers ──────────────────────────────────────────────────────────
+
+function rowToYouTrackServer(row: YouTrackServerRow): YouTrackServer {
+  return {
+    id: row.id,
+    name: row.name,
+    url: row.url,
+    token: row.token,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+export function listYouTrackServers(): YouTrackServer[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM youtrack_servers ORDER BY created_at ASC')
+    .all() as YouTrackServerRow[]
+  return rows.map(rowToYouTrackServer)
+}
+
+export function createYouTrackServer(name: string, url: string, token: string): YouTrackServer {
+  const now = new Date().toISOString()
+  const id = uuidv4()
+  getDb()
+    .prepare('INSERT INTO youtrack_servers (id, name, url, token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(id, name, url, token, now, now)
+  return { id, name, url, token, created_at: now, updated_at: now }
+}
+
+export function updateYouTrackServer(id: string, name: string, url: string, token: string): void {
+  getDb()
+    .prepare('UPDATE youtrack_servers SET name = ?, url = ?, token = ?, updated_at = ? WHERE id = ?')
+    .run(name, url, token, new Date().toISOString(), id)
+}
+
+export function deleteYouTrackServer(id: string): void {
+  getDb().prepare('DELETE FROM youtrack_servers WHERE id = ?').run(id)
 }
 
 export function importThread(

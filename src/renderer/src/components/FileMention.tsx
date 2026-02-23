@@ -87,6 +87,39 @@ export function FileMention({ path, variant = 'message-assistant' }: FileMention
 }
 
 /**
+ * Styled inline directory mention badge
+ */
+export function FolderMention({ path, variant = 'message-assistant' }: FileMentionProps) {
+  // Strip trailing slash for display
+  const displayPath = path.endsWith('/') ? path.slice(0, -1) : path
+  const folderName = displayPath.split(/[\\/]/).pop() ?? displayPath
+
+  const styles: Record<string, React.CSSProperties> = {
+    'message-user': {
+      background: 'rgba(255, 255, 255, 0.2)',
+      color: '#fff',
+      border: '1px solid rgba(255, 255, 255, 0.3)',
+    },
+    'message-assistant': {
+      background: 'rgba(232, 184, 109, 0.15)',
+      color: '#e8b86d',
+      border: '1px solid rgba(232, 184, 109, 0.3)',
+    },
+  }
+
+  return (
+    <span
+      className="inline-flex cursor-default items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs"
+      style={styles[variant]}
+      title={displayPath}
+    >
+      <FolderIcon />
+      {folderName}
+    </span>
+  )
+}
+
+/**
  * Attachment mention - shows image previews or icons for other files
  */
 export function AttachmentMention({ path, variant = 'message-assistant' }: FileMentionProps) {
@@ -215,6 +248,14 @@ function FileIcon() {
   )
 }
 
+function FolderIcon() {
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  )
+}
+
 function ImageIcon({ variant }: { variant: string }) {
   return (
     <svg
@@ -254,63 +295,131 @@ function PdfIcon({ variant }: { variant: string }) {
 }
 
 /**
- * Regex to match file mentions: @path/to/file.ext
- * Handles both Unix and Windows paths, including absolute paths with drive letters
- * Matches @ followed by a path (no spaces, ends at whitespace or end of string)
+ * Regex to match YouTrack issue mentions: @PROJ-123
+ * Project codes are uppercase letters/digits, followed by a dash and issue number.
+ * Must be followed by whitespace, end-of-string, or common punctuation.
  */
-const FILE_MENTION_REGEX = /@([A-Za-z]:)?([^\s@]+\.\w+)/g
+const YOUTRACK_MENTION_REGEX = /@([A-Z][A-Z0-9]+-[0-9]+)(?=[\s,!?.;]|$)/g
 
 /**
- * Parse text and replace file mentions with styled components
- * Attachments (paths containing polycode-attachments) get special treatment
+ * Styled inline YouTrack issue mention badge
+ */
+export function YouTrackMention({
+  issueId,
+  variant = 'message-assistant',
+}: {
+  issueId: string
+  variant?: 'message-user' | 'message-assistant'
+}) {
+  const styles: Record<string, React.CSSProperties> = {
+    'message-user': {
+      background: 'rgba(255, 255, 255, 0.15)',
+      color: '#fff',
+      border: '1px solid rgba(255, 255, 255, 0.25)',
+    },
+    'message-assistant': {
+      background: 'rgba(99, 179, 237, 0.12)',
+      color: '#63b3ed',
+      border: '1px solid rgba(99, 179, 237, 0.3)',
+    },
+  }
+
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-xs"
+      style={styles[variant]}
+      title={`YouTrack issue ${issueId}`}
+    >
+      <YouTrackBadgeIcon />
+      {issueId}
+    </span>
+  )
+}
+
+function YouTrackBadgeIcon() {
+  return (
+    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <circle cx="12" cy="12" r="10" />
+      <path d="M8 12l3 3 5-5" />
+    </svg>
+  )
+}
+
+/**
+ * Regex to match file and directory mentions: @path/to/file.ext or @path/to/dir/
+ * Handles both Unix and Windows paths, including absolute paths with drive letters.
+ * File mentions end with an extension (.ext); directory mentions end with a slash (/).
+ * File pattern is first so paths like @src/file.ts match as files, not truncated dirs.
+ */
+const FILE_MENTION_REGEX = /@([A-Za-z]:)?([^\s@]+\.\w+|[^\s@]+\/)/g
+
+/**
+ * Parse text and replace file and YouTrack issue mentions with styled components.
+ * Attachments (paths containing polycode-attachments) get special treatment.
  */
 export function parseFileMentions(
   text: string,
   variant: 'message-user' | 'message-assistant' = 'message-assistant'
 ): ReactNode[] {
-  const parts: ReactNode[] = []
-  let lastIndex = 0
-  let match: RegExpExecArray | null
+  // Collect all mention positions (YouTrack and file) sorted by index
+  const mentions: Array<{ index: number; length: number; node: ReactNode }> = []
 
-  // Reset regex state
-  FILE_MENTION_REGEX.lastIndex = 0
-
-  while ((match = FILE_MENTION_REGEX.exec(text)) !== null) {
-    // Add text before the match
-    if (match.index > lastIndex) {
-      const textBefore = text.slice(lastIndex, match.index)
-      // Skip empty strings or just newlines between consecutive attachments
-      if (textBefore.trim()) {
-        parts.push(textBefore)
-      } else if (textBefore.includes('\n') && parts.length > 0) {
-        // Keep meaningful newlines
-        parts.push(textBefore)
-      }
-    }
-
-    // Reconstruct full path (drive letter + rest of path)
-    const driveLetter = match[1] ?? ''
-    const restOfPath = match[2]
-    const filePath = driveLetter + restOfPath
-
-    // Check if this is an attachment path
-    if (isAttachmentPath(filePath)) {
-      parts.push(
-        <AttachmentMention key={`${match.index}-attachment`} path={filePath} variant={variant} />
-      )
-    } else {
-      parts.push(
-        <FileMention key={`${match.index}-${filePath}`} path={filePath} variant={variant} />
-      )
-    }
-
-    lastIndex = match.index + match[0].length
+  // Find YouTrack issue mentions
+  YOUTRACK_MENTION_REGEX.lastIndex = 0
+  let ytMatch: RegExpExecArray | null
+  while ((ytMatch = YOUTRACK_MENTION_REGEX.exec(text)) !== null) {
+    const issueId = ytMatch[1]
+    mentions.push({
+      index: ytMatch.index,
+      length: ytMatch[0].length,
+      node: <YouTrackMention key={`yt-${ytMatch.index}`} issueId={issueId} variant={variant} />,
+    })
   }
 
-  // Add remaining text
+  // Find file/folder/attachment mentions
+  FILE_MENTION_REGEX.lastIndex = 0
+  let fileMatch: RegExpExecArray | null
+  while ((fileMatch = FILE_MENTION_REGEX.exec(text)) !== null) {
+    const driveLetter = fileMatch[1] ?? ''
+    const restOfPath = fileMatch[2]
+    const filePath = driveLetter + restOfPath
+
+    let node: ReactNode
+    if (isAttachmentPath(filePath)) {
+      node = <AttachmentMention key={`att-${fileMatch.index}`} path={filePath} variant={variant} />
+    } else if (filePath.endsWith('/')) {
+      node = <FolderMention key={`dir-${fileMatch.index}`} path={filePath} variant={variant} />
+    } else {
+      node = <FileMention key={`file-${fileMatch.index}`} path={filePath} variant={variant} />
+    }
+
+    mentions.push({ index: fileMatch.index, length: fileMatch[0].length, node })
+  }
+
+  // Sort by position in text
+  mentions.sort((a, b) => a.index - b.index)
+
+  // Build result, skipping overlapping matches
+  const parts: ReactNode[] = []
+  let lastIndex = 0
+
+  for (const mention of mentions) {
+    if (mention.index < lastIndex) continue // skip overlap
+
+    const textBefore = text.slice(lastIndex, mention.index)
+    if (textBefore.trim()) {
+      parts.push(textBefore)
+    } else if (textBefore.includes('\n') && parts.length > 0) {
+      parts.push(textBefore)
+    }
+
+    parts.push(mention.node)
+    lastIndex = mention.index + mention.length
+  }
+
+  // Remaining text after last mention
   if (lastIndex < text.length) {
     const remaining = text.slice(lastIndex)
-    // If the remaining text is just whitespace after attachments, skip it
     if (remaining.trim() || parts.length === 0) {
       parts.push(remaining)
     }

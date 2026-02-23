@@ -1,7 +1,7 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { simpleQuery } from './claude-sdk'
-import { SshConfig, WslConfig } from '../shared/types'
+import { SshConfig, WslConfig, GitBranches } from '../shared/types'
 import { sshExec } from './ssh'
 import { wslExec } from './wsl'
 
@@ -32,10 +32,19 @@ async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: Ws
     return wslExec(wsl, cwd, gitCmd)
   }
   const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 })
-  return stdout.trim()
+  return stdout.trimEnd()
+}
+
+export async function getGitBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
+  try {
+    return await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)
+  } catch {
+    return null
+  }
 }
 
 export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitStatus | null> {
+  const via = ssh ? 'ssh' : wsl ? `wsl:${wsl.distro}` : 'local'
   try {
     // Branch name
     let branch = 'HEAD'
@@ -57,30 +66,36 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
       // no upstream set
     }
 
-    // File statuses (porcelain v1)
-    const porcelain = await git(repoPath, ['status', '--porcelain', '-z'], ssh, wsl)
+    // File statuses — use plain --porcelain (newline-separated) rather than -z
+    // (NUL-terminated) to avoid a Windows/worktree bug where git produces zero
+    // bytes of output to a pipe when the -z flag is used.
+    // Format per line: "XY PATH" or "XY ORIG_PATH -> NEW_PATH" for renames.
+    let porcelain = ''
+    try {
+      porcelain = await git(repoPath, ['status', '--porcelain'], ssh, wsl)
+    } catch (err) {
+      console.error(`[git:status] porcelain failed (${via}) for ${repoPath}:`, err)
+    }
 
     const files: GitFileChange[] = []
     if (porcelain) {
-      // -z uses NUL separators; entries are: "XY PATH\0" or "XY PATH\0ORIGPATH\0"
-      const entries = porcelain.split('\0').filter(Boolean)
-      let i = 0
-      while (i < entries.length) {
-        const entry = entries[i]
-        if (!entry || entry.length < 4) { i++; continue }
-        // Format: "XY PATH" where XY is 2 chars, then space, then path
-        // Use regex to reliably extract parts
-        const match = entry.match(/^(.)(.) (.+)$/)
-        if (!match) { i++; continue }
-        const [, stagedCode, unstagedCode, filePath] = match
+      const lines = porcelain.split(/\r?\n/).filter(Boolean)
+      for (const line of lines) {
+        if (line.length < 4) continue
+        const stagedCode = line[0]!
+        const unstagedCode = line[1]!
+        const rest = line.slice(3).trimEnd() // skip "XY ", strip Windows CR
 
         const isRename = stagedCode === 'R' || unstagedCode === 'R'
 
         if (isRename) {
-          const oldPath = entries[i + 1] ?? ''
-          files.push({ status: 'R', path: filePath, oldPath, staged: stagedCode === 'R' })
-          i += 2
+          // Format: "R  ORIG_PATH -> NEW_PATH"
+          const arrowIdx = rest.indexOf(' -> ')
+          const newPath = arrowIdx !== -1 ? rest.slice(arrowIdx + 4) : rest
+          const oldPath = arrowIdx !== -1 ? rest.slice(0, arrowIdx) : ''
+          files.push({ status: 'R', path: newPath, oldPath, staged: stagedCode === 'R' })
         } else {
+          const filePath = rest
           // Staged change
           if (stagedCode !== ' ' && stagedCode !== '?') {
             files.push({ status: stagedCode as GitFileChange['status'], path: filePath, staged: true })
@@ -93,7 +108,6 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
           if (stagedCode === '?' && unstagedCode === '?') {
             files.push({ status: '?', path: filePath, staged: false })
           }
-          i++
         }
       }
     }
@@ -113,7 +127,8 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
     }
 
     return { branch, ahead, behind, additions, deletions, files }
-  } catch {
+  } catch (err) {
+    console.error(`[git:status] failed (${via}) for ${repoPath}:`, err)
     return null
   }
 }
@@ -274,4 +289,82 @@ export async function generateCommitMessageWithContext(
 ${contextParts.join('\n\n')}`
 
   return simpleQuery(prompt)
+}
+
+export async function listBranches(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitBranches> {
+  let current = 'HEAD'
+  try {
+    current = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)
+  } catch {
+    // detached HEAD or not a git repo
+  }
+
+  let localOut = ''
+  try {
+    localOut = await git(repoPath, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'], ssh, wsl)
+  } catch {
+    // no branches
+  }
+
+  let remoteOut = ''
+  try {
+    remoteOut = await git(repoPath, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/'], ssh, wsl)
+  } catch {
+    // no remote refs
+  }
+
+  const local = localOut.split('\n').filter(Boolean)
+  const remote = remoteOut.split('\n').filter(Boolean).filter((b) => !b.endsWith('/HEAD') && !b.includes('HEAD ->'))
+
+  return { current, local, remote }
+}
+
+export async function checkoutBranch(repoPath: string, branch: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  if (branch.startsWith('origin/')) {
+    const localName = branch.slice('origin/'.length)
+    try {
+      // Try switching to an existing local branch first
+      await git(repoPath, ['checkout', localName], ssh, wsl)
+    } catch {
+      // Create a new local tracking branch from the remote
+      await git(repoPath, ['checkout', '-b', localName, '--track', branch], ssh, wsl)
+    }
+  } else {
+    await git(repoPath, ['checkout', branch], ssh, wsl)
+  }
+}
+
+export async function createBranch(repoPath: string, name: string, base: string, pullFirst: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  if (pullFirst) {
+    // Fetch the base ref from origin so we use the latest remote version
+    const baseName = base.startsWith('origin/') ? base.slice('origin/'.length) : base
+    const remoteName = base.startsWith('origin/') ? base : `origin/${base}`
+    try {
+      await git(repoPath, ['fetch', 'origin', baseName], ssh, wsl)
+    } catch {
+      // Ignore fetch errors — create from whatever is available
+    }
+    await git(repoPath, ['checkout', '-b', name, remoteName], ssh, wsl)
+  } else {
+    await git(repoPath, ['checkout', '-b', name, base], ssh, wsl)
+  }
+}
+
+export async function mergeBranch(repoPath: string, source: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ conflicts: string[] }> {
+  try {
+    await git(repoPath, ['merge', source], ssh, wsl)
+    return { conflicts: [] }
+  } catch (err: unknown) {
+    // execFileAsync (local) attaches stdout to the error; SSH/WSL errors carry it in the message
+    const output: string = (err as { stdout?: string; message?: string }).stdout ?? (err instanceof Error ? err.message : '') ?? ''
+    if (output.includes('CONFLICT') || output.includes('Automatic merge failed')) {
+      const conflicts: string[] = []
+      for (const line of output.split('\n')) {
+        const m = line.match(/CONFLICT.*?Merge conflict in (.+)/)
+        if (m) conflicts.push(m[1].trim())
+      }
+      return { conflicts: conflicts.length > 0 ? conflicts : ['(see git status)'] }
+    }
+    throw err
+  }
 }

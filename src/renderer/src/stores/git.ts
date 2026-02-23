@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { GitStatus } from '../types/ipc'
+import { GitStatus, GitBranches } from '../types/ipc'
 
 interface GitStore {
   // Keyed by project path
@@ -9,6 +9,8 @@ interface GitStore {
   generatingMessageByPath: Record<string, boolean>
   pushingByPath: Record<string, boolean>
   pullingByPath: Record<string, boolean>
+  branchesByPath: Record<string, GitBranches | null>
+  branchLoadingByPath: Record<string, boolean>
   // Keyed by threadId
   modifiedFilesByThread: Record<string, string[]>
 
@@ -25,6 +27,10 @@ interface GitStore {
   push: (repoPath: string) => Promise<void>
   pull: (repoPath: string) => Promise<void>
   fetchModifiedFiles: (threadId: string) => Promise<void>
+  fetchBranches: (repoPath: string) => Promise<void>
+  checkout: (repoPath: string, branch: string) => Promise<void>
+  createBranch: (repoPath: string, name: string, base: string, pullFirst: boolean) => Promise<void>
+  merge: (repoPath: string, source: string) => Promise<void>
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
@@ -34,6 +40,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
   generatingMessageByPath: {},
   pushingByPath: {},
   pullingByPath: {},
+  branchesByPath: {},
+  branchLoadingByPath: {},
   modifiedFilesByThread: {},
 
   fetch: async (repoPath) => {
@@ -144,6 +152,42 @@ export const useGitStore = create<GitStore>((set, get) => ({
       }))
     } catch {
       // Silently ignore errors
+    }
+  },
+
+  fetchBranches: async (repoPath) => {
+    if (get().branchLoadingByPath[repoPath]) return
+    set((s) => ({ branchLoadingByPath: { ...s.branchLoadingByPath, [repoPath]: true } }))
+    try {
+      const branches = await window.api.invoke('git:branches', repoPath)
+      set((s) => ({
+        branchesByPath: { ...s.branchesByPath, [repoPath]: branches },
+        branchLoadingByPath: { ...s.branchLoadingByPath, [repoPath]: false },
+      }))
+    } catch {
+      set((s) => ({ branchLoadingByPath: { ...s.branchLoadingByPath, [repoPath]: false } }))
+    }
+  },
+
+  checkout: async (repoPath, branch) => {
+    await window.api.invoke('git:checkout', repoPath, branch)
+    await get().fetch(repoPath)
+    await get().fetchBranches(repoPath)
+  },
+
+  createBranch: async (repoPath, name, base, pullFirst) => {
+    await window.api.invoke('git:createBranch', repoPath, name, base, pullFirst)
+    await get().fetch(repoPath)
+    await get().fetchBranches(repoPath)
+  },
+
+  merge: async (repoPath, source) => {
+    const result = await window.api.invoke('git:merge', repoPath, source)
+    await get().fetch(repoPath) // always refresh — conflict markers show up as modified files
+    if (result.conflicts.length > 0) {
+      const err = new Error(`Merge conflicts in ${result.conflicts.length} file${result.conflicts.length !== 1 ? 's' : ''}`)
+      ;(err as Error & { conflicts: string[] }).conflicts = result.conflicts
+      throw err
     }
   },
 }))

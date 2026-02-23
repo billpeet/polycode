@@ -16,7 +16,9 @@ import {
   RepoLocation,
 } from '../types/ipc'
 import FileMentionPopup from './FileMentionPopup'
+import YouTrackMentionPopup from './YouTrackMentionPopup'
 import AttachmentPreview from './AttachmentPreview'
+import { useYouTrackStore } from '../stores/youtrack'
 import QueuedMessageBanner from './QueuedMessageBanner'
 
 interface Props {
@@ -144,6 +146,16 @@ interface MentionState {
   startIndex: number
   query: string
   position: { top: number; left: number }
+  type: 'file' | 'youtrack'
+}
+
+/** Matches YouTrack issue ID patterns like JS-, JS-123, MYPROJ-42 (all uppercase project code) */
+const YOUTRACK_QUERY_REGEX = /^[A-Z][A-Z0-9]*(-[0-9]*)?$/
+
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${String(s).padStart(2, '0')}`
 }
 
 export default function InputBar({ threadId }: Props) {
@@ -156,9 +168,12 @@ export default function InputBar({ threadId }: Props) {
     startIndex: -1,
     query: '',
     position: { top: 0, left: 0 },
+    type: 'file',
   })
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const runStartedAt = useThreadStore((s) => s.runStartedAtByThread[threadId] ?? 0)
 
   const send = useThreadStore((s) => s.send)
   const stop = useThreadStore((s) => s.stop)
@@ -184,6 +199,8 @@ export default function InputBar({ threadId }: Props) {
   const location = currentThread?.location_id ? projectLocations.find((l) => l.id === currentThread.location_id) : null
   const addToast = useToastStore((s) => s.add)
 
+  const youtrackServers = useYouTrackStore((s) => s.servers)
+
   const isProcessing = status === 'running'
   const isPlanPending = status === 'plan_pending'
   const isQuestionPending = status === 'question_pending'
@@ -192,6 +209,19 @@ export default function InputBar({ threadId }: Props) {
   const canSend = !isProcessing && !isPlanPending && !isQuestionPending && hasContent
   // Can queue when processing (and no existing queue) and has content
   const canQueue = isProcessing && !queuedMessage && hasContent
+
+  // Elapsed timer while processing
+  useEffect(() => {
+    if (!isProcessing || !runStartedAt) {
+      setElapsedSeconds(0)
+      return
+    }
+    setElapsedSeconds(Math.floor((Date.now() - runStartedAt) / 1000))
+    const id = setInterval(() => {
+      setElapsedSeconds(Math.floor((Date.now() - runStartedAt) / 1000))
+    }, 1000)
+    return () => clearInterval(id)
+  }, [isProcessing, runStartedAt])
 
   // Fetch questions when status changes to question_pending
   useEffect(() => {
@@ -319,7 +349,7 @@ export default function InputBar({ threadId }: Props) {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }
 
-  // Detect '@' trigger for file mentions
+  // Detect '@' trigger for file or YouTrack issue mentions
   const checkForMention = useCallback((text: string, cursorPos: number) => {
     // Find the '@' before the cursor
     const textBeforeCursor = text.slice(0, cursorPos)
@@ -351,17 +381,21 @@ export default function InputBar({ threadId }: Props) {
     if (!el) return
 
     const rect = el.getBoundingClientRect()
-    // Position above the input area
     const position = {
-      top: rect.top - 8, // Will be adjusted by popup to appear above
+      top: rect.top - 8,
       left: rect.left,
     }
+
+    // Determine mention type: YouTrack IDs are all-uppercase project codes (e.g. JS-, JS-123)
+    const type: 'youtrack' | 'file' =
+      query.length >= 1 && YOUTRACK_QUERY_REGEX.test(query) ? 'youtrack' : 'file'
 
     setMention({
       active: true,
       startIndex: lastAtIndex,
       query,
       position,
+      type,
     })
   }, [])
 
@@ -375,25 +409,44 @@ export default function InputBar({ threadId }: Props) {
     const el = textareaRef.current
     if (!el) return
 
-    // Replace @query with @relativePath
+    // Replace @query with @relativePath (append '/' for directories)
+    const insertedPath = file.isDirectory ? `${file.relativePath}/` : file.relativePath
     const before = value.slice(0, mention.startIndex)
     const after = value.slice(el.selectionStart)
-    const newValue = `${before}@${file.relativePath} ${after}`
+    const newValue = `${before}@${insertedPath} ${after}`
 
     setDraft(threadId, newValue)
-    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
+    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
 
     // Focus back on textarea and move cursor after inserted path
     requestAnimationFrame(() => {
       el.focus()
-      const newCursorPos = mention.startIndex + file.relativePath.length + 2 // +2 for '@' and space
+      const newCursorPos = mention.startIndex + insertedPath.length + 2 // +2 for '@' and space
       el.selectionStart = el.selectionEnd = newCursorPos
     })
   }, [value, mention.startIndex, threadId, setDraft])
 
   const closeMention = useCallback(() => {
-    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
+    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
   }, [])
+
+  const handleYouTrackSelect = useCallback((issueId: string) => {
+    const el = textareaRef.current
+    if (!el) return
+
+    const before = value.slice(0, mention.startIndex)
+    const after = value.slice(el.selectionStart)
+    const newValue = `${before}@${issueId} ${after}`
+
+    setDraft(threadId, newValue)
+    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
+
+    requestAnimationFrame(() => {
+      el.focus()
+      const newCursorPos = mention.startIndex + issueId.length + 2 // +2 for '@' and space
+      el.selectionStart = el.selectionEnd = newCursorPos
+    })
+  }, [value, mention.startIndex, threadId, setDraft])
 
   // ── Attachment handlers ─────────────────────────────────────────────────────
 
@@ -777,6 +830,17 @@ export default function InputBar({ threadId }: Props) {
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
             Shift+Enter for newline
           </span>
+          {isProcessing && (
+            <>
+              <span className="mb-2 ml-auto text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+              <span
+                className="mb-2 ml-1 font-mono text-xs tabular-nums"
+                style={{ color: 'var(--color-claude)' }}
+              >
+                {formatElapsed(elapsedSeconds)}
+              </span>
+            </>
+          )}
         </div>
 
         {/* Attachment previews */}
@@ -809,7 +873,7 @@ export default function InputBar({ threadId }: Props) {
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             rows={1}
-            placeholder={isProcessing ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...') : 'Ask Claude anything... (@ to mention files)'}
+            placeholder={isProcessing ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...') : 'Ask Claude anything... (@ for files or @JS-123 for YouTrack)'}
             disabled={isPlanPending || isQuestionPending}
             className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
             style={{
@@ -882,11 +946,22 @@ export default function InputBar({ threadId }: Props) {
       </div>
 
       {/* File mention popup */}
-      {mention.active && location?.path && (
+      {mention.active && mention.type === 'file' && location?.path && (
         <FileMentionPopup
           projectPath={location.path}
           query={mention.query}
           onSelect={handleFileSelect}
+          onClose={closeMention}
+          position={mention.position}
+        />
+      )}
+
+      {/* YouTrack issue mention popup */}
+      {mention.active && mention.type === 'youtrack' && youtrackServers.length > 0 && (
+        <YouTrackMentionPopup
+          servers={youtrackServers}
+          query={mention.query}
+          onSelect={handleYouTrackSelect}
           onClose={closeMention}
           position={mention.position}
         />

@@ -5,6 +5,7 @@ export default function TitleBar() {
 
   useEffect(() => {
     window.api.invoke('window:is-maximized').then(setIsMaximized)
+    return window.api.on('window:maximized-changed', (maximized) => setIsMaximized(maximized as boolean))
   }, [])
 
   function minimize() {
@@ -12,7 +13,6 @@ export default function TitleBar() {
   }
 
   function maximize() {
-    setIsMaximized((prev) => !prev)
     window.api.invoke('window:maximize')
   }
 

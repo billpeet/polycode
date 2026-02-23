@@ -199,6 +199,12 @@ export interface GitStatus {
   files: GitFileChange[]
 }
 
+export interface GitBranches {
+  current: string
+  local: string[]
+  remote: string[]
+}
+
 /** Options passed when sending a message to a thread */
 export interface SendOptions {
   planMode?: boolean
@@ -237,6 +243,7 @@ export interface SearchableFile {
   path: string
   relativePath: string
   name: string
+  isDirectory?: boolean
 }
 
 // ── Claude Code History types ──────────────────────────────────────────────────
@@ -282,6 +289,23 @@ export const SUPPORTED_ATTACHMENT_TYPES: Record<string, { ext: string; type: 'im
 
 export const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024 // 5MB
 export const MAX_ATTACHMENTS_PER_MESSAGE = 10
+
+// ── YouTrack ──────────────────────────────────────────────────────────────────
+
+export interface YouTrackServer {
+  id: string
+  name: string
+  url: string
+  token: string
+  created_at: string
+  updated_at: string
+}
+
+export interface YouTrackIssue {
+  id: string
+  idReadable: string
+  summary: string
+}
 
 // ── Project Commands ──────────────────────────────────────────────────────────
 

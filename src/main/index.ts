@@ -79,6 +79,17 @@ function createWindow(): BrowserWindow {
     return { action: 'deny' }
   })
 
+  // Intercept in-page navigation (plain <a href> clicks) and open externally
+  win.webContents.on('will-navigate', (event, url) => {
+    const appUrl = isDev
+      ? (process.env['ELECTRON_RENDERER_URL'] ?? 'http://localhost:5173')
+      : pathToFileURL(join(__dirname, '../renderer/index.html')).toString()
+    if (!url.startsWith(appUrl)) {
+      event.preventDefault()
+      shell.openExternal(url)
+    }
+  })
+
   if (isDev) {
     // electron-vite dev server
     win.loadURL(process.env['ELECTRON_RENDERER_URL'] ?? 'http://localhost:5173')

@@ -39,11 +39,15 @@ import {
   createCommand,
   updateCommand,
   deleteCommand,
+  listYouTrackServers,
+  createYouTrackServer,
+  updateYouTrackServer,
+  deleteYouTrackServer,
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPull, getFileDiff } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPull, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
@@ -433,6 +437,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Git ───────────────────────────────────────────────────────────────────
 
+  ipcMain.handle('git:branch', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getGitBranch(repoPath, ssh, wsl)
+  })
+
   ipcMain.handle('git:status', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getGitStatus(repoPath, ssh, wsl)
@@ -491,6 +500,26 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:diff', (_event, repoPath: string, filePath: string, staged: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getFileDiff(repoPath, filePath, staged, ssh, wsl)
+  })
+
+  ipcMain.handle('git:branches', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listBranches(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:checkout', (_event, repoPath: string, branch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return checkoutBranch(repoPath, branch, ssh, wsl)
+  })
+
+  ipcMain.handle('git:createBranch', (_event, repoPath: string, name: string, base: string, pullFirst: boolean) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return createBranch(repoPath, name, base, pullFirst, ssh, wsl)
+  })
+
+  ipcMain.handle('git:merge', (_event, repoPath: string, source: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return mergeBranch(repoPath, source, ssh, wsl)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────
@@ -586,28 +615,77 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('commands:delete', (_event, id: string) => {
-    commandManager.stop(id)
+    commandManager.stopAllInstances(id)
     return deleteCommand(id)
   })
 
-  ipcMain.handle('commands:start', (_event, commandId: string) => {
-    commandManager.start(commandId)
+  ipcMain.handle('commands:start', (_event, commandId: string, locationId: string) => {
+    commandManager.start(commandId, locationId)
   })
 
-  ipcMain.handle('commands:stop', (_event, commandId: string) => {
-    commandManager.stop(commandId)
+  ipcMain.handle('commands:stop', (_event, commandId: string, locationId: string) => {
+    commandManager.stop(commandId, locationId)
   })
 
-  ipcMain.handle('commands:restart', (_event, commandId: string) => {
-    commandManager.restart(commandId)
+  ipcMain.handle('commands:restart', (_event, commandId: string, locationId: string) => {
+    commandManager.restart(commandId, locationId)
   })
 
-  ipcMain.handle('commands:getStatus', (_event, commandId: string) => {
-    return commandManager.getStatus(commandId)
+  ipcMain.handle('commands:getStatus', (_event, commandId: string, locationId: string) => {
+    return commandManager.getStatus(commandId, locationId)
   })
 
-  ipcMain.handle('commands:getLogs', (_event, commandId: string) => {
-    return commandManager.getLogs(commandId)
+  ipcMain.handle('commands:getLogs', (_event, commandId: string, locationId: string) => {
+    return commandManager.getLogs(commandId, locationId)
+  })
+
+  ipcMain.handle('commands:getPid', (_event, commandId: string, locationId: string) => {
+    return commandManager.getPid(commandId, locationId)
+  })
+
+  // ── YouTrack ───────────────────────────────────────────────────────────────
+
+  ipcMain.handle('youtrack:servers:list', () => listYouTrackServers())
+
+  ipcMain.handle('youtrack:servers:create', (_event, name: string, url: string, token: string) => {
+    return createYouTrackServer(name, url, token)
+  })
+
+  ipcMain.handle('youtrack:servers:update', (_event, id: string, name: string, url: string, token: string) => {
+    return updateYouTrackServer(id, name, url, token)
+  })
+
+  ipcMain.handle('youtrack:servers:delete', (_event, id: string) => {
+    return deleteYouTrackServer(id)
+  })
+
+  ipcMain.handle('youtrack:test', async (_event, url: string, token: string) => {
+    try {
+      const apiUrl = `${url.replace(/\/$/, '')}/api/users/me?fields=login,name`
+      const resp = await fetch(apiUrl, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` }
+      return { ok: true }
+    } catch (err: unknown) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle('youtrack:search', async (_event, url: string, token: string, query: string) => {
+    try {
+      const params = new URLSearchParams({ query, fields: 'id,idReadable,summary', $top: '20' })
+      const apiUrl = `${url.replace(/\/$/, '')}/api/issues?${params}`
+      const resp = await fetch(apiUrl, {
+        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
+        signal: AbortSignal.timeout(8000),
+      })
+      if (!resp.ok) return []
+      return resp.json()
+    } catch {
+      return []
+    }
   })
 
   // ── Window Controls ────────────────────────────────────────────────────────
@@ -616,6 +694,9 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('window:maximize',     () => window.isMaximized() ? window.unmaximize() : window.maximize())
   ipcMain.handle('window:close',        () => window.close())
   ipcMain.handle('window:is-maximized', () => window.isMaximized())
+
+  window.on('maximize',   () => window.webContents.send('window:maximized-changed', true))
+  window.on('unmaximize', () => window.webContents.send('window:maximized-changed', false))
 
   // ── Auto-updater ───────────────────────────────────────────────────────────
 

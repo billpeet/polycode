@@ -2,10 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
+import { useYouTrackStore } from '../stores/youtrack'
 import { Project, Thread, RepoLocation } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
 import LocationDialog from './LocationDialog'
 import ImportHistoryDialog from './ImportHistoryDialog'
+import YouTrackSettingsDialog from './YouTrackSettingsDialog'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 
@@ -50,12 +52,19 @@ export default function Sidebar() {
   const locationsByProject = useLocationStore((s) => s.byProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
 
+  const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [youtrackDialogOpen, setYoutrackDialogOpen] = useState(false)
+
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [locationDialog, setLocationDialog] = useState<{ mode: 'create'; projectId: string } | { mode: 'edit'; projectId: string; location: RepoLocation } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; projectId: string } | null>(null)
   const [importDialogInfo, setImportDialogInfo] = useState<{ projectId: string; locationId: string; locationPath: string } | null>(null)
   /** Track collapsed locations (all expanded by default) */
   const [collapsedLocationIds, setCollapsedLocationIds] = useState<Set<string>>(new Set())
+  /** Git branch name per location id */
+  const [branchByLocation, setBranchByLocation] = useState<Record<string, string>>({})
 
   const setStatus = useThreadStore((s) => s.setStatus)
 
@@ -109,6 +118,30 @@ export default function Sidebar() {
       subsRef.current.clear()
     }
   }, [])
+
+  // Fetch YouTrack servers on mount
+  useEffect(() => {
+    fetchYouTrackServers()
+  }, [fetchYouTrackServers])
+
+  // Fetch git branch for each location in expanded projects
+  useEffect(() => {
+    function refreshBranches() {
+      for (const projectId of expandedProjectIds) {
+        const locations = locationsByProject[projectId] ?? []
+        for (const loc of locations) {
+          window.api.invoke('git:branch', loc.path).then((branch) => {
+            if (branch) {
+              setBranchByLocation((prev) => ({ ...prev, [loc.id]: branch }))
+            }
+          }).catch(() => {/* not a git repo */})
+        }
+      }
+    }
+    refreshBranches()
+    const interval = setInterval(refreshBranches, 10000)
+    return () => clearInterval(interval)
+  }, [expandedProjectIds, locationsByProject])
 
   function handleToggleProject(id: string): void {
     toggleExpanded(id)
@@ -265,19 +298,87 @@ export default function Sidebar() {
         <span className="font-semibold text-sm" style={{ color: 'var(--color-claude)' }}>
           PolyCode
         </span>
-        <button
-          onClick={() => setProjectDialog({ mode: 'create' })}
-          className="text-xs px-2 py-1 rounded opacity-70 hover:opacity-100 transition-opacity"
-          style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)' }}
-          title="New project"
-        >
-          + Project
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setYoutrackDialogOpen(true)}
+            className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+            title="YouTrack servers"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none">
+              <circle cx="12" cy="12" r="10" fill="#167dff" opacity="0.85" />
+              <path d="M8 9l4 4 4-4" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M12 7v10" stroke="#fff" strokeWidth="2" strokeLinecap="round" />
+            </svg>
+          </button>
+          <button
+            onClick={() => setProjectDialog({ mode: 'create' })}
+            className="text-xs px-2 py-1 rounded opacity-70 hover:opacity-100 transition-opacity"
+            style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)' }}
+            title="New project"
+          >
+            + Project
+          </button>
+        </div>
+      </div>
+
+      {/* Search bar */}
+      <div className="px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search threads…"
+          className="w-full rounded px-2 py-1 text-xs outline-none"
+          style={{
+            background: 'var(--color-surface-2)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text)',
+          }}
+        />
       </div>
 
       {/* Projects list */}
       <div className="flex-1 overflow-y-auto">
-        {projects.map((project) => {
+        {searchQuery.trim() ? (() => {
+          const q = searchQuery.trim().toLowerCase()
+          const results: Array<{ thread: Thread; projectName: string; projectId: string }> = []
+          for (const project of projects) {
+            const threads = byProject[project.id] ?? []
+            for (const thread of threads) {
+              if (thread.name.toLowerCase().includes(q)) {
+                results.push({ thread, projectName: project.name, projectId: project.id })
+              }
+            }
+          }
+          if (results.length === 0) {
+            return (
+              <p className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
+                No threads match &quot;{searchQuery.trim()}&quot;
+              </p>
+            )
+          }
+          return results.map(({ thread, projectName, projectId }) => (
+            <div key={thread.id} className="group relative">
+              <button
+                onClick={() => selectThread(thread.id)}
+                className="flex w-full items-center pl-4 pr-2 py-1.5 text-left text-xs transition-colors min-w-0"
+                style={{
+                  background: selectedThreadId === thread.id ? 'var(--color-border)' : 'transparent',
+                  color: 'var(--color-text-muted)',
+                }}
+              >
+                <span
+                  className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
+                  style={{ background: statusMap[thread.id] === 'running' ? '#4ade80' : statusMap[thread.id] === 'error' ? '#f87171' : 'var(--color-text-muted)' }}
+                />
+                <span className="flex flex-col min-w-0">
+                  <span className="truncate">{thread.name}</span>
+                  <span className="text-[10px] leading-tight opacity-50">{projectName}</span>
+                </span>
+              </button>
+            </div>
+          ))
+        })() : projects.map((project) => {
           const isExpanded = expandedProjectIds.has(project.id)
           const projectThreads = byProject[project.id] ?? []
           const projectArchivedThreads = archivedByProject[project.id] ?? []
@@ -361,6 +462,11 @@ export default function Sidebar() {
                               {isLocationExpanded ? '▾' : '▸'}
                             </span>
                             <span className="truncate opacity-70">{loc.label}</span>
+                            {branchByLocation[loc.id] && (
+                              <span className="ml-1 flex-shrink-0 opacity-50 text-[9px]">
+                                ({branchByLocation[loc.id]})
+                              </span>
+                            )}
                             {connectionBadge(loc.connection_type)}
                           </button>
                           {/* Location actions */}
@@ -368,14 +474,6 @@ export default function Sidebar() {
                             className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                             style={{ background: 'var(--color-surface)' }}
                           >
-                            <button
-                              onClick={() => handleNewThread(project.id, loc.id)}
-                              className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
-                              style={{ color: 'var(--color-text-muted)' }}
-                              title="New thread in this location"
-                            >
-                              +
-                            </button>
                             <button
                               onClick={() => setImportDialogInfo({ projectId: project.id, locationId: loc.id, locationPath: loc.path })}
                               className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
@@ -394,6 +492,17 @@ export default function Sidebar() {
                             </button>
                           </div>
                         </div>
+
+                        {/* New thread link */}
+                        {isLocationExpanded && (
+                          <button
+                            onClick={() => handleNewThread(project.id, loc.id)}
+                            className="flex w-full items-center pl-10 pr-2 py-0.5 text-left text-[10px] opacity-40 hover:opacity-80 transition-opacity"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          >
+                            + New thread
+                          </button>
+                        )}
 
                         {/* Threads under this location */}
                         {isLocationExpanded && locationThreads.map((thread) => renderThread(thread, false, project.id))}
@@ -436,7 +545,7 @@ export default function Sidebar() {
           )
         })}
 
-        {projects.length === 0 && (
+        {!searchQuery.trim() && projects.length === 0 && (
           <p className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
             No projects yet.
             <br />
@@ -521,6 +630,11 @@ export default function Sidebar() {
           onClose={() => setImportDialogInfo(null)}
           onImported={() => fetchThreads(importDialogInfo.projectId)}
         />
+      )}
+
+      {/* YouTrack settings dialog */}
+      {youtrackDialogOpen && (
+        <YouTrackSettingsDialog onClose={() => setYoutrackDialogOpen(false)} />
       )}
     </aside>
   )

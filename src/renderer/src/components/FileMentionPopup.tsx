@@ -33,6 +33,14 @@ function FileIcon({ name }: { name: string }) {
   )
 }
 
+function FolderIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#e8b86d" strokeWidth="2">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  )
+}
+
 export default function FileMentionPopup({ projectPath, query, onSelect, onClose, position }: Props) {
   const [files, setFiles] = useState<SearchableFile[]>([])
   const [loading, setLoading] = useState(true)
@@ -153,7 +161,7 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
         </div>
       ) : results.length === 0 ? (
         <div className="px-3 py-2 text-sm" style={{ color: 'var(--color-text-muted)' }}>
-          No files found
+          No files or folders found
         </div>
       ) : (
         results.map((result, index) => {
@@ -172,7 +180,7 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
               }}
               onMouseEnter={() => setSelectedIndex(index)}
             >
-              <FileIcon name={file.name} />
+              {file.isDirectory ? <FolderIcon /> : <FileIcon name={file.name} />}
               <span className="truncate" title={file.relativePath}>
                 {file.relativePath}
               </span>

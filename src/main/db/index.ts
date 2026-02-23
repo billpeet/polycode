@@ -219,6 +219,22 @@ function runMigrations(database: Database.Database): void {
     `)
   }
 
+  // ── YouTrack servers table ─────────────────────────────────────────────────
+  const tablesForYouTrack = database.pragma('table_list') as Array<{ name: string }>
+  const hasYouTrackServers = tablesForYouTrack.some((t) => t.name === 'youtrack_servers')
+  if (!hasYouTrackServers) {
+    database.exec(`
+      CREATE TABLE youtrack_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        url TEXT NOT NULL,
+        token TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+  }
+
   // ── Backfill: migrate existing project paths into repo_locations ────────────
   // Only runs once, when repo_locations is newly created.
   if (!hasRepoLocations) {

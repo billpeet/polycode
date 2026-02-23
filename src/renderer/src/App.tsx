@@ -13,6 +13,7 @@ import { useUiStore } from './stores/ui'
 import { useFilesStore } from './stores/files'
 import { useToastStore } from './stores/toast'
 import { useCommandStore } from './stores/commands'
+import { useYouTrackStore } from './stores/youtrack'
 
 const STORAGE_PROJECT_KEY = 'polycode:selectedProjectId'
 const STORAGE_THREAD_KEY = 'polycode:selectedThreadId'
@@ -38,15 +39,19 @@ export default function App() {
   const diffView = useFilesStore((s) => s.diffView)
   const loadingDiff = useFilesStore((s) => s.loadingDiff)
 
-  const selectedCommandId = useCommandStore((s) => s.selectedCommandId)
+  const selectedInstance = useCommandStore((s) => s.selectedInstance)
+  const hasPinnedCommands = useCommandStore((s) => s.pinnedInstances.length > 0)
 
   // Track whether we've attempted restore yet
   const restored = useRef(false)
 
-  // 1. Load projects on mount
+  const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
+
+  // 1. Load projects and YouTrack servers on mount
   useEffect(() => {
     fetchProjects()
-  }, [fetchProjects])
+    fetchYouTrackServers()
+  }, [fetchProjects, fetchYouTrackServers])
 
   // 2. Once projects arrive, restore last selection
   useEffect(() => {
@@ -154,7 +159,7 @@ export default function App() {
                 </div>
                 {(selectedFilePath || diffView || loadingDiff)
                   ? <FilePreview />
-                  : selectedCommandId
+                  : (selectedInstance || hasPinnedCommands)
                     ? <CommandLogs />
                     : null
                 }

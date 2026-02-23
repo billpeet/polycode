@@ -76,6 +76,13 @@ export function listAllFiles(rootPath: string): SearchableFile[] {
         if (entry.isDirectory()) {
           // Skip ignored directories
           if (IGNORED_DIRS.has(entry.name)) continue
+          const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')
+          results.push({
+            path: fullPath,
+            relativePath,
+            name: entry.name,
+            isDirectory: true,
+          })
           walk(fullPath)
         } else {
           const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')

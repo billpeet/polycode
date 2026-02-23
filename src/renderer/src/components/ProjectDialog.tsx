@@ -669,7 +669,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                       style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-claude)' : 'var(--color-border)'}` }}
                     >
                       <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium block truncate" style={{ color: 'var(--color-text)' }}>
+                        <span className="text-xs font-medium truncate block" style={{ color: 'var(--color-text)' }}>
                           {cmd.name}
                         </span>
                         <span className="text-[10px] font-mono truncate block" style={{ color: 'var(--color-text-muted)' }}>
@@ -811,7 +811,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
               </div>
               <div>
                 <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                  Working dir <span style={{ opacity: 0.5 }}>(optional — defaults to project location)</span>
+                  Working dir <span style={{ opacity: 0.5 }}>(optional — defaults to location path)</span>
                 </label>
                 <input
                   type="text"

@@ -10,7 +10,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "start": "electron .",
-    "start:prod": "bun run build && NODE_ENV=production electron . --user-data-dir=$APPDATA/polycode-electron-prod",
+    "start:prod": "bun run build && NODE_ENV=production electron .",
     "test": "bun test src/main/driver/__tests__",
     "dist": "bun run build && electron-builder --win",
     "dist:publish": "bun run build && electron-builder --win --publish always"

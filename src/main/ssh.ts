@@ -159,8 +159,9 @@ export async function sshListAllFiles(ssh: SshConfig, rootPath: string): Promise
     .map(d => `-name ${shellEscape(d)} -prune`)
     .join(' -o ')
 
-  // Find files, excluding ignored dirs and hidden files, limit output
-  const cmd = `find ${target} \\( ${excludes} \\) -prune -o \\( -type f ! -name '.*' -print \\) 2>/dev/null | head -n ${MAX_SEARCH_FILES}`
+  // Find files and directories, excluding ignored dirs and hidden files, limit output
+  // -printf '%y\t%p\n' outputs type char ('f' or 'd') then tab then full path
+  const cmd = `find ${target} -mindepth 1 \\( ${excludes} \\) -prune -o \\( \\( -type f -o -type d \\) ! -name '.*' -printf '%y\\t%p\\n' \\) 2>/dev/null | head -n ${MAX_SEARCH_FILES}`
 
   let output: string
   try {
@@ -177,11 +178,15 @@ export async function sshListAllFiles(ssh: SshConfig, rootPath: string): Promise
   const results: SearchableFile[] = []
   for (const line of output.split('\n')) {
     if (!line) continue
-    const relativePath = line.startsWith(normalizedRoot)
-      ? line.slice(normalizedRoot.length)
-      : line
+    const tabIdx = line.indexOf('\t')
+    if (tabIdx === -1) continue
+    const type = line[0]
+    const fullPath = line.slice(tabIdx + 1)
+    const relativePath = fullPath.startsWith(normalizedRoot)
+      ? fullPath.slice(normalizedRoot.length)
+      : fullPath
     const name = relativePath.split('/').pop() ?? relativePath
-    results.push({ path: line, relativePath, name })
+    results.push({ path: fullPath, relativePath, name, isDirectory: type === 'd' })
   }
 
   return results

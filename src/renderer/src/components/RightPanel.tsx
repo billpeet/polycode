@@ -6,7 +6,7 @@ import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
 import { useUiStore, RightPanelTab } from '../stores/ui'
 import { useFilesStore } from '../stores/files'
-import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
+import { useCommandStore, EMPTY_COMMANDS, instKey } from '../stores/commands'
 import { GitFileChange, CommandStatus } from '../types/ipc'
 import FileTree from './FileTree'
 
@@ -193,6 +193,410 @@ function TasksSection({ threadId, collapsed, onToggle }: { threadId: string; col
                 </li>
               ))}
             </ul>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─── Branch controls ──────────────────────────────────────────────────────────
+
+type BranchMode = 'switch' | 'new' | 'merge'
+
+function BranchControls({
+  projectPath,
+  currentBranch,
+  hasPendingChanges,
+}: {
+  projectPath: string
+  currentBranch: string
+  hasPendingChanges: boolean
+}) {
+  const [open, setOpen] = useState(false)
+  const [mode, setMode] = useState<BranchMode>('switch')
+  const [branchSearch, setBranchSearch] = useState('')
+
+  // Switch state
+  const [selectedBranch, setSelectedBranch] = useState<string | null>(null)
+  const [mergeFromMaster, setMergeFromMaster] = useState(false)
+  const [switching, setSwitching] = useState(false)
+
+  // New branch state
+  const [newName, setNewName] = useState('')
+  const [baseBranch, setBaseBranch] = useState('')
+  const [pullFirst, setPullFirst] = useState(false)
+  const [creating, setCreating] = useState(false)
+
+  // Merge state
+  const [mergeSource, setMergeSource] = useState('')
+  const [merging, setMerging] = useState(false)
+  const [mergeConflicts, setMergeConflicts] = useState<string[]>([])
+
+  const branches = useGitStore((s) => s.branchesByPath[projectPath] ?? null)
+  const branchLoading = useGitStore((s) => s.branchLoadingByPath[projectPath] ?? false)
+  const fetchBranches = useGitStore((s) => s.fetchBranches)
+  const checkoutAction = useGitStore((s) => s.checkout)
+  const createBranchAction = useGitStore((s) => s.createBranch)
+  const mergeAction = useGitStore((s) => s.merge)
+  const addToast = useToastStore((s) => s.add)
+
+  function toggleOpen() {
+    if (!open) fetchBranches(projectPath)
+    setOpen((o) => !o)
+    setSelectedBranch(null)
+    setMergeFromMaster(false)
+    setBranchSearch('')
+  }
+
+  // Default baseBranch when branches load
+  useEffect(() => {
+    if (branches && !baseBranch) {
+      const defaultBase = branches.local.find((b) => b === 'master' || b === 'main') ?? branches.local[0] ?? ''
+      setBaseBranch(defaultBase)
+    }
+  }, [branches, baseBranch])
+
+  const allBranches = branches ? [...branches.local, ...branches.remote] : []
+  const isRemoteSelected = selectedBranch?.startsWith('origin/') ?? false
+  const q = branchSearch.toLowerCase()
+  const filteredLocal = branches ? branches.local.filter((b) => !q || b.toLowerCase().includes(q)) : []
+  const filteredRemote = branches ? branches.remote.filter((b) => !q || b.toLowerCase().includes(q)) : []
+  const filteredAll = allBranches.filter((b) => !q || b.toLowerCase().includes(q))
+
+  async function handleSwitch() {
+    if (!selectedBranch) return
+    setSwitching(true)
+    try {
+      await checkoutAction(projectPath, selectedBranch)
+      if (mergeFromMaster) {
+        await mergeAction(projectPath, 'origin/master')
+        addToast({ type: 'success', message: `Switched to ${selectedBranch} and merged origin/master`, duration: 3000 })
+      } else {
+        addToast({ type: 'success', message: `Switched to ${selectedBranch}`, duration: 3000 })
+      }
+      setSelectedBranch(null)
+      setMergeFromMaster(false)
+      setOpen(false)
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Checkout failed', duration: 0 })
+    } finally {
+      setSwitching(false)
+    }
+  }
+
+  async function handleCreate() {
+    if (!newName.trim() || !baseBranch) return
+    setCreating(true)
+    try {
+      await createBranchAction(projectPath, newName.trim(), baseBranch, pullFirst)
+      addToast({ type: 'success', message: `Created and switched to ${newName.trim()}`, duration: 3000 })
+      setNewName('')
+      setOpen(false)
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Create branch failed', duration: 0 })
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  async function handleMerge() {
+    if (!mergeSource) return
+    setMerging(true)
+    setMergeConflicts([])
+    try {
+      await mergeAction(projectPath, mergeSource)
+      addToast({ type: 'success', message: `Merged ${mergeSource} into ${currentBranch}`, duration: 3000 })
+      setMergeSource('')
+      setOpen(false)
+    } catch (err) {
+      const conflicts = (err as { conflicts?: string[] }).conflicts
+      if (conflicts && conflicts.length > 0) {
+        setMergeConflicts(conflicts) // show inline — panel stays open, status already refreshed
+      } else {
+        addToast({ type: 'error', message: err instanceof Error ? err.message : 'Merge failed', duration: 0 })
+      }
+    } finally {
+      setMerging(false)
+    }
+  }
+
+  return (
+    <div style={{ borderBottom: '1px solid var(--color-border)' }}>
+      {/* Branch row */}
+      <div className="flex items-center gap-1.5 px-3 py-2">
+        <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style={{ color: 'var(--color-text-muted)', flexShrink: 0 }}>
+          <path d="M11.75 2.5a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0zm.75 1.942a2.25 2.25 0 1 1 0-3.884V4.5a.75.75 0 0 1-.75.75H9.5a.75.75 0 0 0-.75.75v.5c0 .414.336.75.75.75h2.25V7.5a.75.75 0 0 1-.75.75H5.5a2.25 2.25 0 0 1-2.25-2.25v-.5A2.25 2.25 0 0 1 5.5 3.25h4a2.25 2.25 0 0 1 2.25 2.25v.692a2.25 2.25 0 1 1-1.5 0V5.5A.75.75 0 0 0 9.5 4.75h-4A.75.75 0 0 0 4.75 5.5V6a.75.75 0 0 0 .75.75h5a2.25 2.25 0 0 1 2.25 2.25v.692zM4.25 13.5a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0zm.75 1.942a2.25 2.25 0 1 1 0-3.884V9.75a.75.75 0 0 1 .75-.75h4a.75.75 0 0 0 .75-.75v-.5a.75.75 0 0 0-.75-.75H8.5v-.692a2.25 2.25 0 1 1 1.5 0V7.75A2.25 2.25 0 0 1 7.75 10H5.5a.75.75 0 0 0-.75.75v1.808a2.25 2.25 0 0 1 0 3.884z"/>
+        </svg>
+        <span
+          className="text-xs flex-1 truncate font-mono"
+          style={{ color: 'var(--color-text)' }}
+          title={currentBranch}
+        >
+          {currentBranch}
+        </span>
+        <button
+          onClick={toggleOpen}
+          className="text-[10px] px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors flex items-center gap-1"
+          style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', flexShrink: 0 }}
+        >
+          Branches
+          <svg
+            width="6" height="6" viewBox="0 0 8 8" fill="currentColor"
+            style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}
+          >
+            <path d="M0 2l4 4 4-4z" />
+          </svg>
+        </button>
+      </div>
+
+      {open && (
+        <div className="pb-2">
+          {/* Mode tabs */}
+          <div className="flex px-3 gap-0 mb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            {(['switch', 'new', 'merge'] as BranchMode[]).map((m) => (
+              <button
+                key={m}
+                onClick={() => { setMode(m); setSelectedBranch(null); setBranchSearch('') }}
+                className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors"
+                style={{
+                  color: mode === m ? 'var(--color-text)' : 'var(--color-text-muted)',
+                  borderBottom: mode === m ? '2px solid var(--color-claude)' : '2px solid transparent',
+                  marginBottom: -1,
+                }}
+              >
+                {m === 'switch' ? 'Switch' : m === 'new' ? 'New' : 'Merge'}
+              </button>
+            ))}
+          </div>
+
+          {/* Switch mode */}
+          {mode === 'switch' && (
+            <div className="px-3 space-y-2">
+              <input
+                type="text"
+                value={branchSearch}
+                onChange={(e) => { setBranchSearch(e.target.value); setSelectedBranch(null) }}
+                placeholder="Search branches…"
+                className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                style={{
+                  background: 'var(--color-surface-2)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text)',
+                  fontFamily: 'inherit',
+                }}
+              />
+              {branchLoading ? (
+                <p className="text-xs text-center py-2" style={{ color: 'var(--color-text-muted)' }}>Loading…</p>
+              ) : branches ? (
+                <>
+                  <div
+                    className="rounded overflow-y-auto space-y-0.5"
+                    style={{ maxHeight: 140, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+                  >
+                    {filteredLocal.length > 0 && (
+                      <>
+                        <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Local</div>
+                        {filteredLocal.map((b) => (
+                          <button
+                            key={b}
+                            onClick={() => setSelectedBranch(b === currentBranch ? null : b)}
+                            disabled={b === currentBranch}
+                            className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 disabled:opacity-40 transition-colors"
+                            style={{
+                              background: selectedBranch === b ? 'rgba(232,123,95,0.12)' : 'transparent',
+                              color: b === currentBranch ? 'var(--color-claude)' : 'var(--color-text)',
+                            }}
+                          >
+                            <span className="text-[10px] font-mono truncate flex-1">{b}</span>
+                            {b === currentBranch && <span style={{ fontSize: '0.55rem', color: 'var(--color-claude)' }}>current</span>}
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {filteredRemote.length > 0 && (
+                      <>
+                        <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Remote</div>
+                        {filteredRemote.map((b) => (
+                          <button
+                            key={b}
+                            onClick={() => setSelectedBranch(selectedBranch === b ? null : b)}
+                            className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 transition-colors"
+                            style={{
+                              background: selectedBranch === b ? 'rgba(232,123,95,0.12)' : 'transparent',
+                              color: 'var(--color-text)',
+                            }}
+                          >
+                            <span className="text-[10px] font-mono truncate flex-1">{b}</span>
+                          </button>
+                        ))}
+                      </>
+                    )}
+                    {filteredLocal.length === 0 && filteredRemote.length === 0 && (
+                      <p className="px-2 py-2 text-[10px] text-center" style={{ color: 'var(--color-text-muted)' }}>No branches match.</p>
+                    )}
+                  </div>
+
+                  {selectedBranch && (
+                    <div className="space-y-1.5">
+                      {hasPendingChanges && (
+                        <p className="text-[10px] rounded px-2 py-1" style={{ background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)' }}>
+                          Warning: uncommitted changes may be lost.
+                        </p>
+                      )}
+                      {isRemoteSelected && (
+                        <label className="flex items-center gap-1.5 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={mergeFromMaster}
+                            onChange={(e) => setMergeFromMaster(e.target.checked)}
+                            className="rounded"
+                            style={{ accentColor: 'var(--color-claude)' }}
+                          />
+                          <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Also merge from origin/master</span>
+                        </label>
+                      )}
+                      <button
+                        onClick={handleSwitch}
+                        disabled={switching}
+                        className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                        style={{ background: 'var(--color-claude)', color: '#fff' }}
+                      >
+                        {switching ? 'Checking out…' : `Checkout ${selectedBranch}`}
+                      </button>
+                    </div>
+                  )}
+                </>
+              ) : (
+                <p className="text-xs text-center py-2" style={{ color: 'var(--color-text-muted)' }}>No branches found.</p>
+              )}
+            </div>
+          )}
+
+          {/* New branch mode */}
+          {mode === 'new' && (
+            <div className="px-3 space-y-2">
+              <input
+                type="text"
+                value={newName}
+                onChange={(e) => setNewName(e.target.value)}
+                placeholder="Branch name"
+                onKeyDown={(e) => { if (e.key === 'Enter') handleCreate() }}
+                className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                style={{
+                  background: 'var(--color-surface-2)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text)',
+                  fontFamily: 'inherit',
+                }}
+              />
+              <div className="space-y-1">
+                <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Base branch</p>
+                <select
+                  value={baseBranch}
+                  onChange={(e) => setBaseBranch(e.target.value)}
+                  className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                  style={{
+                    background: 'var(--color-surface-2)',
+                    border: '1px solid var(--color-border)',
+                    color: 'var(--color-text)',
+                  }}
+                >
+                  {branchLoading ? (
+                    <option>Loading…</option>
+                  ) : (
+                    allBranches.map((b) => (
+                      <option key={b} value={b}>{b}</option>
+                    ))
+                  )}
+                </select>
+              </div>
+              <label className="flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={pullFirst}
+                  onChange={(e) => setPullFirst(e.target.checked)}
+                  style={{ accentColor: 'var(--color-claude)' }}
+                />
+                <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Pull origin first (use latest remote)</span>
+              </label>
+              <button
+                onClick={handleCreate}
+                disabled={creating || !newName.trim() || !baseBranch}
+                className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                style={{ background: 'var(--color-claude)', color: '#fff' }}
+              >
+                {creating ? 'Creating…' : 'Create Branch'}
+              </button>
+            </div>
+          )}
+
+          {/* Merge mode */}
+          {mode === 'merge' && (
+            <div className="px-3 space-y-2">
+              <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                Merge into <span className="font-mono" style={{ color: 'var(--color-text)' }}>{currentBranch}</span>
+              </p>
+              <input
+                type="text"
+                value={branchSearch}
+                onChange={(e) => { setBranchSearch(e.target.value); setMergeSource(''); setMergeConflicts([]) }}
+                placeholder="Search branches…"
+                className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                style={{
+                  background: 'var(--color-surface-2)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text)',
+                  fontFamily: 'inherit',
+                }}
+              />
+              {branchLoading ? (
+                <p className="text-xs text-center py-2" style={{ color: 'var(--color-text-muted)' }}>Loading…</p>
+              ) : (
+                <div
+                  className="rounded overflow-y-auto space-y-0.5"
+                  style={{ maxHeight: 120, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+                >
+                  {filteredAll.filter((b) => b !== currentBranch).length === 0 ? (
+                    <p className="px-2 py-2 text-[10px] text-center" style={{ color: 'var(--color-text-muted)' }}>No branches match.</p>
+                  ) : (
+                    filteredAll.filter((b) => b !== currentBranch).map((b) => (
+                      <button
+                        key={b}
+                        onClick={() => { setMergeSource(mergeSource === b ? '' : b); setMergeConflicts([]) }}
+                        className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 transition-colors"
+                        style={{
+                          background: mergeSource === b ? 'rgba(232,123,95,0.12)' : 'transparent',
+                          color: 'var(--color-text)',
+                        }}
+                      >
+                        <span className="text-[10px] font-mono truncate flex-1">{b}</span>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+              {mergeConflicts.length > 0 && (
+                <div className="rounded px-2 py-1.5 space-y-1" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)' }}>
+                  <p className="text-[10px] font-semibold" style={{ color: '#f87171' }}>
+                    Conflicts in {mergeConflicts.length} file{mergeConflicts.length !== 1 ? 's' : ''} — resolve and commit:
+                  </p>
+                  <ul className="space-y-0.5">
+                    {mergeConflicts.map((f) => (
+                      <li key={f} className="text-[10px] font-mono truncate" style={{ color: '#fca5a5' }} title={f}>{f}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              <button
+                onClick={handleMerge}
+                disabled={merging || !mergeSource}
+                className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                style={{ background: 'var(--color-claude)', color: '#fff' }}
+              >
+                {merging ? 'Merging…' : mergeSource ? `Merge ${mergeSource}` : 'Merge'}
+              </button>
+            </div>
           )}
         </div>
       )}
@@ -504,7 +908,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const refreshButton = (
     <button
       onClick={() => projectPath && fetchGit(projectPath)}
-      className="rounded p-1 hover:bg-white/10 transition-colors"
+      className="rounded p-1 hover:bg-white/10 transition-colors mr-1"
       style={{ color: 'var(--color-text-muted)' }}
       title="Refresh"
     >
@@ -527,6 +931,15 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
 
       {!collapsed && (
         <>
+          {/* Branch controls */}
+          {projectPath && gitStatus && (
+            <BranchControls
+              projectPath={projectPath}
+              currentBranch={gitStatus.branch}
+              hasPendingChanges={(gitStatus.files.filter((f) => !f.staged).length) > 0}
+            />
+          )}
+
           {/* Commit box — always shown when expanded */}
           <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
             {!gitStatus ? (
@@ -737,31 +1150,43 @@ function CommandsSection({ threadId }: { threadId: string }) {
   const thread = Object.values(byProject).flat().find((t) => t.id === threadId)
     ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
   const projectId = thread?.project_id ?? null
+  const locationId = thread?.location_id ?? null
 
-  const commands = useCommandStore((s) => projectId ? (s.byProject[projectId] ?? EMPTY_COMMANDS) : EMPTY_COMMANDS)
+  const commands = useCommandStore((s) => {
+    if (!projectId) return EMPTY_COMMANDS
+    return s.byProject[projectId] ?? EMPTY_COMMANDS
+  })
   const statusMap = useCommandStore((s) => s.statusMap)
   const fetch = useCommandStore((s) => s.fetch)
+  const fetchStatuses = useCommandStore((s) => s.fetchStatuses)
   const start = useCommandStore((s) => s.start)
   const stop = useCommandStore((s) => s.stop)
   const restart = useCommandStore((s) => s.restart)
   const setStatus = useCommandStore((s) => s.setStatus)
-  const selectCommand = useCommandStore((s) => s.selectCommand)
+  const selectInstance = useCommandStore((s) => s.selectInstance)
+  const pinInstance = useCommandStore((s) => s.pinInstance)
   const fetchLogs = useCommandStore((s) => s.fetchLogs)
+  const clearFileSelection = useFilesStore((s) => s.clearSelection)
 
   useEffect(() => {
     if (projectId) fetch(projectId)
   }, [projectId, fetch])
 
-  // Subscribe to status events for each command
   useEffect(() => {
-    if (commands.length === 0) return
-    const unsubs = commands.map((cmd) =>
-      window.api.on(`command:status:${cmd.id}`, (status) => {
-        setStatus(cmd.id, status as CommandStatus)
+    if (projectId && locationId) fetchStatuses(projectId, locationId)
+  }, [projectId, locationId, fetchStatuses])
+
+  // Subscribe to per-instance status events
+  useEffect(() => {
+    if (commands.length === 0 || !locationId) return
+    const unsubs = commands.map((cmd) => {
+      const key = instKey(cmd.id, locationId)
+      return window.api.on(`command:status:${key}`, (status) => {
+        setStatus(key, status as CommandStatus)
       })
-    )
+    })
     return () => { for (const unsub of unsubs) unsub() }
-  }, [commands, setStatus])
+  }, [commands, locationId, setStatus])
 
   if (!projectId) return null
 
@@ -774,7 +1199,8 @@ function CommandsSection({ threadId }: { threadId: string }) {
       ) : (
         <ul className="space-y-1">
           {commands.map((cmd) => {
-            const status: CommandStatus = statusMap[cmd.id] ?? 'idle'
+            const key = locationId ? instKey(cmd.id, locationId) : null
+            const status: CommandStatus = (key ? statusMap[key] : null) ?? 'idle'
             const isRunning = status === 'running'
             return (
               <li
@@ -787,7 +1213,12 @@ function CommandsSection({ threadId }: { threadId: string }) {
                   <button
                     className="flex-1 text-left text-xs font-medium truncate hover:underline"
                     style={{ color: 'var(--color-text)' }}
-                    onClick={() => { selectCommand(cmd.id); fetchLogs(cmd.id) }}
+                    onClick={() => {
+                      if (!locationId) return
+                      clearFileSelection()
+                      selectInstance(instKey(cmd.id, locationId))
+                      fetchLogs(cmd.id, locationId)
+                    }}
                     title={cmd.command}
                   >
                     {cmd.name}
@@ -799,8 +1230,16 @@ function CommandsSection({ threadId }: { threadId: string }) {
                 <div className="flex gap-1">
                   {!isRunning ? (
                     <button
-                      onClick={() => start(cmd.id)}
-                      className="flex-1 rounded py-1 text-xs font-medium transition-colors"
+                      onClick={() => {
+                        if (!locationId) return
+                        const key = instKey(cmd.id, locationId)
+                        start(cmd.id, locationId)
+                        pinInstance(key)
+                        selectInstance(key)
+                        fetchLogs(cmd.id, locationId)
+                      }}
+                      disabled={!locationId}
+                      className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-40"
                       style={{ background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.3)' }}
                     >
                       Start
@@ -808,14 +1247,21 @@ function CommandsSection({ threadId }: { threadId: string }) {
                   ) : (
                     <>
                       <button
-                        onClick={() => restart(cmd.id)}
+                        onClick={() => {
+                          if (!locationId) return
+                          const key = instKey(cmd.id, locationId)
+                          restart(cmd.id, locationId)
+                          pinInstance(key)
+                          selectInstance(key)
+                          fetchLogs(cmd.id, locationId)
+                        }}
                         className="flex-1 rounded py-1 text-xs font-medium transition-colors"
                         style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)', border: '1px solid rgba(232, 123, 95, 0.3)' }}
                       >
                         Restart
                       </button>
                       <button
-                        onClick={() => stop(cmd.id)}
+                        onClick={() => locationId && stop(cmd.id, locationId)}
                         className="flex-1 rounded py-1 text-xs font-medium transition-colors"
                         style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}
                       >

@@ -24,6 +24,8 @@ interface ThreadStore {
   queuedMessageByThread: Record<string, QueuedMessage | null>
   /** accumulated token usage keyed by thread ID */
   usageByThread: Record<string, TokenUsage>
+  /** timestamp (ms) when each thread started running, keyed by thread ID */
+  runStartedAtByThread: Record<string, number>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string) => Promise<void>
   create: (projectId: string, name: string, locationId: string) => Promise<void>
@@ -66,6 +68,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   planModeByThread: {},
   queuedMessageByThread: {},
   usageByThread: {},
+  runStartedAtByThread: {},
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -119,6 +122,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedQueue[id]
       const updatedPlanMode = { ...s.planModeByThread }
       delete updatedPlanMode[id]
+      const updatedRunStartedAt = { ...s.runStartedAtByThread }
+      delete updatedRunStartedAt[id]
       return {
         byProject: {
           ...s.byProject,
@@ -131,7 +136,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
         statusMap: updatedStatus,
         queuedMessageByThread: updatedQueue,
-        planModeByThread: updatedPlanMode
+        planModeByThread: updatedPlanMode,
+        runStartedAtByThread: updatedRunStartedAt,
       }
     })
   },
@@ -146,6 +152,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedQueue[id]
       const updatedPlanMode = { ...s.planModeByThread }
       delete updatedPlanMode[id]
+      const updatedRunStartedAt = { ...s.runStartedAtByThread }
+      delete updatedRunStartedAt[id]
       const withoutThread = (s.byProject[projectId] ?? []).filter((t) => t.id !== id)
       if (result === 'deleted') {
         return {
@@ -153,7 +161,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
           statusMap: updatedStatus,
           queuedMessageByThread: updatedQueue,
-          planModeByThread: updatedPlanMode
+          planModeByThread: updatedPlanMode,
+          runStartedAtByThread: updatedRunStartedAt,
         }
       }
       const prevCount = s.archivedCountByProject[projectId] ?? 0
@@ -169,7 +178,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
         statusMap: updatedStatus,
         queuedMessageByThread: updatedQueue,
-        planModeByThread: updatedPlanMode
+        planModeByThread: updatedPlanMode,
+        runStartedAtByThread: updatedRunStartedAt,
       }
     })
   },
@@ -210,7 +220,15 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   select: (id) => set({ selectedThreadId: id }),
 
   setStatus: (threadId, status) =>
-    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: status } })),
+    set((s) => {
+      const runStartedAtByThread = { ...s.runStartedAtByThread }
+      if (status === 'running') {
+        if (!runStartedAtByThread[threadId]) runStartedAtByThread[threadId] = Date.now()
+      } else {
+        delete runStartedAtByThread[threadId]
+      }
+      return { statusMap: { ...s.statusMap, [threadId]: status }, runStartedAtByThread }
+    }),
 
   setName: (threadId, name) =>
     set((s) => {
@@ -284,13 +302,20 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           t.id === threadId ? { ...t, has_messages: true } : t
         )
       }
-      return { statusMap: { ...s.statusMap, [threadId]: 'running' }, byProject: updated }
+      return {
+        statusMap: { ...s.statusMap, [threadId]: 'running' },
+        byProject: updated,
+        runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+      }
     })
     await window.api.invoke('threads:send', threadId, content, options)
   },
 
   approvePlan: async (threadId) => {
-    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
+    set((s) => ({
+      statusMap: { ...s.statusMap, [threadId]: 'running' },
+      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+    }))
     await window.api.invoke('threads:approvePlan', threadId)
   },
 
@@ -304,7 +329,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   answerQuestion: async (threadId, answers) => {
-    set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'running' } }))
+    set((s) => ({
+      statusMap: { ...s.statusMap, [threadId]: 'running' },
+      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+    }))
     await window.api.invoke('threads:answerQuestion', threadId, answers)
   },
 
