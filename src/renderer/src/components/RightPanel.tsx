@@ -147,11 +147,14 @@ function StatusIcon({ status }: { status: Todo['status'] }) {
 
 function TasksSection({ threadId, collapsed, onToggle }: { threadId: string; collapsed: boolean; onToggle: () => void }) {
   const todos = useTodoStore((s) => s.todosByThread[threadId] ?? EMPTY_TODOS)
+  const threadStatus = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const completed = todos.filter((t) => t.status === 'completed').length
   const total = todos.length
   const hasInProgress = todos.some((t) => t.status === 'in_progress')
 
   const badge = total > 0 ? `${completed}/${total}` : undefined
+  const showProgressBar = collapsed && total > 0 && threadStatus === 'running'
+  const progress = total > 0 ? (completed / total) * 100 : 0
 
   return (
     <div className="flex-shrink-0">
@@ -162,6 +165,18 @@ function TasksSection({ threadId, collapsed, onToggle }: { threadId: string; col
         badge={badge}
         badgeActive={hasInProgress}
       />
+      {showProgressBar && (
+        <div style={{ height: 2, background: 'var(--color-border)' }}>
+          <div
+            style={{
+              height: '100%',
+              width: `${progress}%`,
+              background: hasInProgress ? 'var(--color-claude)' : '#4ade80',
+              transition: 'width 0.4s ease',
+            }}
+          />
+        </div>
+      )}
       {!collapsed && (
         <div>
           {todos.length === 0 ? (
@@ -1216,7 +1231,7 @@ function CommandsSection({ threadId }: { threadId: string }) {
                     onClick={() => {
                       if (!locationId) return
                       clearFileSelection()
-                      selectInstance(instKey(cmd.id, locationId))
+                      selectInstance(instKey(cmd.id, locationId), locationId)
                       fetchLogs(cmd.id, locationId)
                     }}
                     title={cmd.command}
@@ -1234,8 +1249,8 @@ function CommandsSection({ threadId }: { threadId: string }) {
                         if (!locationId) return
                         const key = instKey(cmd.id, locationId)
                         start(cmd.id, locationId)
-                        pinInstance(key)
-                        selectInstance(key)
+                        pinInstance(key, locationId)
+                        selectInstance(key, locationId)
                         fetchLogs(cmd.id, locationId)
                       }}
                       disabled={!locationId}
@@ -1251,8 +1266,8 @@ function CommandsSection({ threadId }: { threadId: string }) {
                           if (!locationId) return
                           const key = instKey(cmd.id, locationId)
                           restart(cmd.id, locationId)
-                          pinInstance(key)
-                          selectInstance(key)
+                          pinInstance(key, locationId)
+                          selectInstance(key, locationId)
                           fetchLogs(cmd.id, locationId)
                         }}
                         className="flex-1 rounded py-1 text-xs font-medium transition-colors"
