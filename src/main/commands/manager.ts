@@ -5,6 +5,11 @@ import { getCommandById, listCommands, getLocationById } from '../db/queries'
 
 const LOG_RING_BUFFER_SIZE = 1000
 
+/** Escape a string for use inside single quotes in a POSIX shell. */
+function posixEscape(s: string): string {
+  return "'" + s.replace(/'/g, "'\\''") + "'"
+}
+
 interface RunningCommand {
   commandId: string
   locationId: string
@@ -48,14 +53,11 @@ class CommandManager {
     const cmdDef: ProjectCommand | null = getCommandById(commandId)
     if (!cmdDef) return
 
+    const location = getLocationById(locationId)
+    const connectionType = location?.connection_type ?? 'local'
+
     // Resolve cwd: explicit cwd override > location path
-    let cwd: string | undefined
-    if (cmdDef.cwd) {
-      cwd = cmdDef.cwd
-    } else {
-      const location = getLocationById(locationId)
-      cwd = location?.path ?? undefined
-    }
+    const cwd: string | undefined = cmdDef.cwd ?? location?.path ?? undefined
 
     const entry: RunningCommand = {
       commandId,
@@ -67,11 +69,67 @@ class CommandManager {
     this.running.set(key, entry)
     this.pushStatus(commandId, locationId, 'running')
 
-    const proc = spawn(cmdDef.command, [], {
-      shell: true,
-      cwd,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    let proc: ChildProcess
+
+    if (connectionType === 'wsl' && location?.wsl) {
+      // ── WSL spawn ──────────────────────────────────────────────────────────
+      const workDir = cwd ?? '~'
+      const cdTarget = workDir.startsWith('~')
+        ? '"$HOME"' + posixEscape(workDir.slice(1))
+        : posixEscape(workDir)
+      const innerCmd = `cd ${cdTarget} && ${cmdDef.command}`
+      proc = spawn('wsl', ['-d', location.wsl.distro, '--', 'bash', '-c', innerCmd], {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } else if (connectionType === 'ssh' && location?.ssh) {
+      // ── SSH spawn ──────────────────────────────────────────────────────────
+      const ssh = location.ssh
+      const workDir = cwd ?? '~'
+      const cdTarget = workDir.startsWith('~')
+        ? '"$HOME"' + posixEscape(workDir.slice(1))
+        : posixEscape(workDir)
+      const innerCmd = `cd ${cdTarget} && ${cmdDef.command}`
+      const remoteCmd = `bash -lc ${posixEscape(innerCmd)}`
+      const sshArgs = [
+        '-T',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'StrictHostKeyChecking=accept-new',
+      ]
+      // ControlMaster multiplexing is not supported on Windows OpenSSH
+      if (process.platform !== 'win32') {
+        sshArgs.push(
+          '-o', 'ControlMaster=auto',
+          '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
+          '-o', 'ControlPersist=300',
+        )
+      }
+      if (ssh.port) sshArgs.push('-p', String(ssh.port))
+      if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
+      sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
+      proc = spawn('ssh', sshArgs, {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } else if (cmdDef.shell === 'powershell') {
+      // ── Local PowerShell spawn ─────────────────────────────────────────────
+      // Try pwsh (cross-platform PS 7+) first; users may also have powershell.exe (PS 5)
+      // We always invoke powershell.exe for reliability on Windows; pwsh if on other platforms
+      const psExe = process.platform === 'win32' ? 'powershell.exe' : 'pwsh'
+      proc = spawn(psExe, ['-NonInteractive', '-Command', cmdDef.command], {
+        shell: false,
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } else {
+      // ── Local default shell spawn ──────────────────────────────────────────
+      proc = spawn(cmdDef.command, [], {
+        shell: true,
+        cwd,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    }
+
     entry.process = proc
 
     const pushLog = (text: string, stream: 'stdout' | 'stderr'): void => {

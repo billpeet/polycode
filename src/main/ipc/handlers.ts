@@ -606,12 +606,12 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listCommands(projectId)
   })
 
-  ipcMain.handle('commands:create', (_event, projectId: string, name: string, command: string, cwd?: string | null) => {
-    return createCommand(projectId, name, command, cwd)
+  ipcMain.handle('commands:create', (_event, projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null) => {
+    return createCommand(projectId, name, command, cwd, shell)
   })
 
-  ipcMain.handle('commands:update', (_event, id: string, name: string, command: string, cwd?: string | null) => {
-    return updateCommand(id, name, command, cwd)
+  ipcMain.handle('commands:update', (_event, id: string, name: string, command: string, cwd?: string | null, shell?: string | null) => {
+    return updateCommand(id, name, command, cwd, shell)
   })
 
   ipcMain.handle('commands:delete', (_event, id: string) => {

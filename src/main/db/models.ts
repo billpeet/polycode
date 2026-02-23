@@ -73,6 +73,7 @@ export interface ProjectCommandRow {
   name: string
   command: string
   cwd: string | null
+  shell: string | null
   sort_order: number
   created_at: string
   updated_at: string

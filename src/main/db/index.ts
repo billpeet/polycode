@@ -219,6 +219,12 @@ function runMigrations(database: Database.Database): void {
     `)
   }
 
+  // ── Migrate project_commands: add shell column ────────────────────────────
+  const projectCommandsCols = database.pragma('table_info(project_commands)') as Array<{ name: string }>
+  if (projectCommandsCols.length > 0 && !projectCommandsCols.some((c) => c.name === 'shell')) {
+    database.exec('ALTER TABLE project_commands ADD COLUMN shell TEXT')
+  }
+
   // ── YouTrack servers table ─────────────────────────────────────────────────
   const tablesForYouTrack = database.pragma('table_list') as Array<{ name: string }>
   const hasYouTrackServers = tablesForYouTrack.some((t) => t.name === 'youtrack_servers')

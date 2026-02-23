@@ -31,8 +31,8 @@ interface CommandStore {
   fetch: (projectId: string) => Promise<void>
   /** Fetch statuses for all commands of a project at the given location. */
   fetchStatuses: (projectId: string, locationId: string) => Promise<void>
-  create: (projectId: string, name: string, command: string, cwd?: string | null) => Promise<void>
-  update: (id: string, projectId: string, name: string, command: string, cwd?: string | null) => Promise<void>
+  create: (projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null) => Promise<void>
+  update: (id: string, projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null) => Promise<void>
   remove: (id: string, projectId: string) => Promise<void>
   start: (commandId: string, locationId: string) => Promise<void>
   stop: (commandId: string, locationId: string) => Promise<void>
@@ -74,8 +74,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     set((s) => ({ statusMap: { ...s.statusMap, ...statusUpdate } }))
   },
 
-  create: async (projectId, name, command, cwd) => {
-    const created = await window.api.invoke('commands:create', projectId, name, command, cwd)
+  create: async (projectId, name, command, cwd, shell) => {
+    const created = await window.api.invoke('commands:create', projectId, name, command, cwd, shell)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -84,13 +84,13 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     }))
   },
 
-  update: async (id, projectId, name, command, cwd) => {
-    await window.api.invoke('commands:update', id, name, command, cwd)
+  update: async (id, projectId, name, command, cwd, shell) => {
+    await window.api.invoke('commands:update', id, name, command, cwd, shell)
     set((s) => ({
       byProject: {
         ...s.byProject,
         [projectId]: (s.byProject[projectId] ?? []).map((c) =>
-          c.id === id ? { ...c, name, command, cwd: cwd ?? null } : c
+          c.id === id ? { ...c, name, command, cwd: cwd ?? null, shell: shell ?? null } : c
         ),
       },
     }))

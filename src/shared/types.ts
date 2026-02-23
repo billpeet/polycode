@@ -317,6 +317,8 @@ export interface ProjectCommand {
   name: string
   command: string
   cwd: string | null
+  /** Shell to use for local execution: null = platform default, 'powershell' = PowerShell */
+  shell: string | null
   sort_order: number
   created_at: string
   updated_at: string

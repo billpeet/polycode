@@ -77,8 +77,8 @@ export interface WindowApi {
   invoke(channel: 'window:is-maximized'): Promise<boolean>
   invoke(channel: 'app:install-update'): Promise<void>
   invoke(channel: 'commands:list', projectId: string): Promise<ProjectCommand[]>
-  invoke(channel: 'commands:create', projectId: string, name: string, command: string, cwd?: string | null): Promise<ProjectCommand>
-  invoke(channel: 'commands:update', id: string, name: string, command: string, cwd?: string | null): Promise<void>
+  invoke(channel: 'commands:create', projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null): Promise<ProjectCommand>
+  invoke(channel: 'commands:update', id: string, name: string, command: string, cwd?: string | null, shell?: string | null): Promise<void>
   invoke(channel: 'commands:delete', id: string): Promise<void>
   invoke(channel: 'commands:start', commandId: string, locationId: string): Promise<void>
   invoke(channel: 'commands:stop', commandId: string, locationId: string): Promise<void>

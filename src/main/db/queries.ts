@@ -645,6 +645,7 @@ function rowToCommand(row: ProjectCommandRow): ProjectCommand {
     name: row.name,
     command: row.command,
     cwd: row.cwd ?? null,
+    shell: row.shell ?? null,
     sort_order: row.sort_order,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -658,7 +659,7 @@ export function listCommands(projectId: string): ProjectCommand[] {
   return rows.map(rowToCommand)
 }
 
-export function createCommand(projectId: string, name: string, command: string, cwd?: string | null): ProjectCommand {
+export function createCommand(projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null): ProjectCommand {
   const now = new Date().toISOString()
   const id = uuidv4()
   const countRow = getDb()
@@ -667,16 +668,16 @@ export function createCommand(projectId: string, name: string, command: string, 
   const sortOrder = countRow.count
   getDb()
     .prepare(
-      'INSERT INTO project_commands (id, project_id, name, command, cwd, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO project_commands (id, project_id, name, command, cwd, shell, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(id, projectId, name, command, cwd ?? null, sortOrder, now, now)
-  return { id, project_id: projectId, name, command, cwd: cwd ?? null, sort_order: sortOrder, created_at: now, updated_at: now }
+    .run(id, projectId, name, command, cwd ?? null, shell ?? null, sortOrder, now, now)
+  return { id, project_id: projectId, name, command, cwd: cwd ?? null, shell: shell ?? null, sort_order: sortOrder, created_at: now, updated_at: now }
 }
 
-export function updateCommand(id: string, name: string, command: string, cwd?: string | null): void {
+export function updateCommand(id: string, name: string, command: string, cwd?: string | null, shell?: string | null): void {
   getDb()
-    .prepare('UPDATE project_commands SET name = ?, command = ?, cwd = ?, updated_at = ? WHERE id = ?')
-    .run(name, command, cwd ?? null, new Date().toISOString(), id)
+    .prepare('UPDATE project_commands SET name = ?, command = ?, cwd = ?, shell = ?, updated_at = ? WHERE id = ?')
+    .run(name, command, cwd ?? null, shell ?? null, new Date().toISOString(), id)
 }
 
 export function deleteCommand(id: string): void {
