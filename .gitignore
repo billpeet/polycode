@@ -5,3 +5,4 @@ dist
 *.log
 bun.lockb
 tsconfig.web.tsbuildinfo
+electron.vite.config.*.mjs
