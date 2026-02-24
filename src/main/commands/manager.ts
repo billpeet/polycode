@@ -1,4 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
+import { existsSync } from 'fs'
+import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
@@ -56,8 +58,28 @@ class CommandManager {
     const location = getLocationById(locationId)
     const connectionType = location?.connection_type ?? 'local'
 
-    // Resolve cwd: explicit cwd override > location path
-    const cwd: string | undefined = cmdDef.cwd ?? location?.path ?? undefined
+    // Resolve cwd: if cmdDef.cwd is relative, join it with the location path.
+    // For local connections use path.join (Windows-aware); for WSL/SSH use POSIX join.
+    // Guard local paths against missing directories — spawn() throws ENOENT (with the
+    // executable name in the message!) when cwd doesn't exist on the filesystem.
+    const locationPath = location?.path
+    let cwd: string | undefined
+    if (cmdDef.cwd) {
+      const isAbsolute =
+        connectionType === 'local'
+          ? path.isAbsolute(cmdDef.cwd)
+          : cmdDef.cwd.startsWith('/') || cmdDef.cwd.startsWith('~')
+      cwd = isAbsolute || !locationPath
+        ? cmdDef.cwd
+        : connectionType === 'local'
+          ? path.join(locationPath, cmdDef.cwd)
+          : `${locationPath}/${cmdDef.cwd}`
+    } else {
+      cwd = locationPath ?? undefined
+    }
+    if (cwd !== undefined && connectionType === 'local' && !existsSync(cwd)) {
+      cwd = undefined
+    }
 
     const entry: RunningCommand = {
       commandId,
@@ -113,9 +135,14 @@ class CommandManager {
       })
     } else if (cmdDef.shell === 'powershell') {
       // ── Local PowerShell spawn ─────────────────────────────────────────────
-      // Try pwsh (cross-platform PS 7+) first; users may also have powershell.exe (PS 5)
-      // We always invoke powershell.exe for reliability on Windows; pwsh if on other platforms
-      const psExe = process.platform === 'win32' ? 'powershell.exe' : 'pwsh'
+      // Use absolute path on Windows to avoid ENOENT when PowerShell isn't in PATH
+      let psExe: string
+      if (process.platform === 'win32') {
+        const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+        psExe = `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+      } else {
+        psExe = 'pwsh'
+      }
       proc = spawn(psExe, ['-NonInteractive', '-Command', cmdDef.command], {
         shell: false,
         cwd,
@@ -123,11 +150,23 @@ class CommandManager {
       })
     } else {
       // ── Local default shell spawn ──────────────────────────────────────────
-      proc = spawn(cmdDef.command, [], {
-        shell: true,
-        cwd,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
+      // On Windows, use cmd.exe via ComSpec or absolute path to avoid ENOENT
+      // when C:\Windows\System32 isn't in the Electron process PATH.
+      if (process.platform === 'win32') {
+        const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+        const cmdExe = process.env.ComSpec ?? `${sysRoot}\\System32\\cmd.exe`
+        proc = spawn(cmdExe, ['/d', '/s', '/c', cmdDef.command], {
+          shell: false,
+          cwd,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      } else {
+        proc = spawn('/bin/sh', ['-c', cmdDef.command], {
+          shell: false,
+          cwd,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      }
     }
 
     entry.process = proc

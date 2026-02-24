@@ -6,7 +6,6 @@ import { useYouTrackStore } from '../stores/youtrack'
 import { Project, Thread, RepoLocation } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
 import LocationDialog from './LocationDialog'
-import ImportHistoryDialog from './ImportHistoryDialog'
 import YouTrackSettingsDialog from './YouTrackSettingsDialog'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
@@ -28,11 +27,14 @@ function relativeTime(iso: string): string {
 
 export default function Sidebar() {
   const projects = useProjectStore((s) => s.projects)
+  const archivedProjects = useProjectStore((s) => s.archivedProjects)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const expandedProjectIds = useProjectStore((s) => s.expandedProjectIds)
   const selectProject = useProjectStore((s) => s.select)
   const toggleExpanded = useProjectStore((s) => s.toggleExpanded)
   const removeProject = useProjectStore((s) => s.remove)
+  const archiveProject = useProjectStore((s) => s.archive)
+  const unarchiveProject = useProjectStore((s) => s.unarchive)
 
   const byProject = useThreadStore((s) => s.byProject)
   const archivedByProject = useThreadStore((s) => s.archivedByProject)
@@ -60,9 +62,10 @@ export default function Sidebar() {
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [locationDialog, setLocationDialog] = useState<{ mode: 'create'; projectId: string } | { mode: 'edit'; projectId: string; location: RepoLocation } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; projectId: string } | null>(null)
-  const [importDialogInfo, setImportDialogInfo] = useState<{ projectId: string; locationId: string; locationPath: string } | null>(null)
-  /** Track collapsed locations (all expanded by default) */
+/** Track collapsed locations (all expanded by default) */
   const [collapsedLocationIds, setCollapsedLocationIds] = useState<Set<string>>(new Set())
+  /** Whether the archived projects section is expanded */
+  const [archivedSectionExpanded, setArchivedSectionExpanded] = useState(false)
   /** Git branch name per location id */
   const [branchByLocation, setBranchByLocation] = useState<Record<string, string>>({})
 
@@ -163,6 +166,14 @@ export default function Sidebar() {
   async function handleDeleteProject(id: string): Promise<void> {
     await removeProject(id)
     setConfirmDelete(null)
+  }
+
+  async function handleArchiveProject(id: string): Promise<void> {
+    await archiveProject(id)
+  }
+
+  async function handleUnarchiveProject(id: string): Promise<void> {
+    await unarchiveProject(id)
   }
 
   async function handleDeleteThread(id: string, projectId: string): Promise<void> {
@@ -409,20 +420,24 @@ export default function Sidebar() {
                   style={{ background: isExpanded ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
                 >
                   <button
-                    onClick={() => setLocationDialog({ mode: 'create', projectId: project.id })}
-                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
-                    style={{ color: 'var(--color-text-muted)' }}
-                    title="Add location"
-                  >
-                    +
-                  </button>
-                  <button
                     onClick={() => setProjectDialog({ mode: 'edit', project })}
                     className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Edit project"
                   >
                     ✎
+                  </button>
+                  <button
+                    onClick={() => handleArchiveProject(project.id)}
+                    className="rounded p-1 hover:bg-white/10 transition-colors"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Archive project"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="1" y="7" width="14" height="8" rx="1" />
+                      <path d="M1 7l2-4h10l2 4" />
+                      <path d="M8 9v6M5.5 12.5L8 15l2.5-2.5" />
+                    </svg>
                   </button>
                   <button
                     onClick={() => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id })}
@@ -469,28 +484,6 @@ export default function Sidebar() {
                             )}
                             {connectionBadge(loc.connection_type)}
                           </button>
-                          {/* Location actions */}
-                          <div
-                            className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
-                            style={{ background: 'var(--color-surface)' }}
-                          >
-                            <button
-                              onClick={() => setImportDialogInfo({ projectId: project.id, locationId: loc.id, locationPath: loc.path })}
-                              className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
-                              style={{ color: 'var(--color-text-muted)' }}
-                              title="Import from Claude Code CLI history"
-                            >
-                              ↓
-                            </button>
-                            <button
-                              onClick={() => setLocationDialog({ mode: 'edit', projectId: project.id, location: loc })}
-                              className="rounded p-0.5 text-[10px] hover:bg-white/10 transition-colors"
-                              style={{ color: 'var(--color-text-muted)' }}
-                              title="Edit location"
-                            >
-                              ✎
-                            </button>
-                          </div>
                         </div>
 
                         {/* New thread link */}
@@ -545,12 +538,65 @@ export default function Sidebar() {
           )
         })}
 
-        {!searchQuery.trim() && projects.length === 0 && (
+        {!searchQuery.trim() && projects.length === 0 && archivedProjects.length === 0 && (
           <p className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
             No projects yet.
             <br />
             Click &quot;+ Project&quot; to add one.
           </p>
+        )}
+
+        {/* Archived projects section */}
+        {!searchQuery.trim() && archivedProjects.length > 0 && (
+          <div className="border-t mt-1" style={{ borderColor: 'var(--color-border)' }}>
+            <button
+              onClick={() => setArchivedSectionExpanded((v) => !v)}
+              className="flex w-full items-center px-4 py-2 text-left text-xs transition-opacity opacity-40 hover:opacity-70"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              <span className="mr-1.5 text-[10px] flex-shrink-0" style={{ width: '10px' }}>
+                {archivedSectionExpanded ? '▾' : '▸'}
+              </span>
+              Archived ({archivedProjects.length})
+            </button>
+
+            {archivedSectionExpanded && archivedProjects.map((project) => (
+              <div key={project.id} className="group relative">
+                <div
+                  className="flex w-full items-center px-4 py-2 text-sm min-w-0 opacity-40"
+                  style={{ color: 'var(--color-text)' }}
+                >
+                  <span className="mr-1.5 flex-shrink-0 opacity-50" style={{ width: '10px' }} />
+                  <span className="truncate">{project.name}</span>
+                </div>
+                <div
+                  className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
+                  style={{ background: 'var(--color-surface)' }}
+                >
+                  <button
+                    onClick={() => handleUnarchiveProject(project.id)}
+                    className="rounded p-1 hover:bg-white/10 transition-colors"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Unarchive project"
+                  >
+                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="1" y="7" width="14" height="8" rx="1" />
+                      <path d="M1 7l2-4h10l2 4" />
+                      <path d="M8 11V4M5.5 6.5L8 4l2.5 2.5" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={() => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id })}
+                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Delete project"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
         )}
       </div>
 
@@ -619,17 +665,6 @@ export default function Sidebar() {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Import history dialog */}
-      {importDialogInfo && (
-        <ImportHistoryDialog
-          projectId={importDialogInfo.projectId}
-          locationId={importDialogInfo.locationId}
-          locationPath={importDialogInfo.locationPath}
-          onClose={() => setImportDialogInfo(null)}
-          onImported={() => fetchThreads(importDialogInfo.projectId)}
-        />
       )}
 
       {/* YouTrack settings dialog */}

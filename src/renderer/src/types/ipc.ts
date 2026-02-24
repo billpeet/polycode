@@ -6,9 +6,12 @@ export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDe
 /** Shape of window.api exposed by preload */
 export interface WindowApi {
   invoke(channel: 'projects:list'): Promise<Project[]>
+  invoke(channel: 'projects:listArchived'): Promise<Project[]>
   invoke(channel: 'projects:create', name: string, gitUrl?: string | null): Promise<Project>
   invoke(channel: 'projects:update', id: string, name: string, gitUrl?: string | null): Promise<void>
   invoke(channel: 'projects:delete', id: string): Promise<void>
+  invoke(channel: 'projects:archive', id: string): Promise<void>
+  invoke(channel: 'projects:unarchive', id: string): Promise<void>
   invoke(channel: 'locations:list', projectId: string): Promise<RepoLocation[]>
   invoke(channel: 'locations:create', projectId: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<RepoLocation>
   invoke(channel: 'locations:update', id: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>

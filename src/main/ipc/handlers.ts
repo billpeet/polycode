@@ -3,9 +3,12 @@ import { ipcMain, dialog, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import {
   listProjects,
+  listArchivedProjects,
   createProject,
   updateProject,
   deleteProject,
+  archiveProject,
+  unarchiveProject,
   listLocations,
   createLocation,
   updateLocation,
@@ -141,6 +144,18 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     sessionManager.stopAll()
     commandManager.stopAll()
     return deleteProject(id)
+  })
+
+  ipcMain.handle('projects:listArchived', () => {
+    return listArchivedProjects()
+  })
+
+  ipcMain.handle('projects:archive', (_event, id: string) => {
+    return archiveProject(id)
+  })
+
+  ipcMain.handle('projects:unarchive', (_event, id: string) => {
+    return unarchiveProject(id)
   })
 
   // ── Repo Locations ────────────────────────────────────────────────────────

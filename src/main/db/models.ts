@@ -8,6 +8,7 @@ export interface ProjectRow {
   ssh_port: number | null
   ssh_key_path: string | null
   wsl_distro: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }

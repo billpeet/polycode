@@ -10,14 +10,32 @@ function rowToProject(row: ProjectRow): Project {
     id: row.id,
     name: row.name,
     git_url: row.git_url ?? null,
+    archived_at: row.archived_at ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
   }
 }
 
 export function listProjects(): Project[] {
-  const rows = getDb().prepare('SELECT * FROM projects ORDER BY created_at DESC').all() as ProjectRow[]
+  const rows = getDb().prepare('SELECT * FROM projects WHERE archived_at IS NULL ORDER BY created_at DESC').all() as ProjectRow[]
   return rows.map(rowToProject)
+}
+
+export function listArchivedProjects(): Project[] {
+  const rows = getDb().prepare('SELECT * FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all() as ProjectRow[]
+  return rows.map(rowToProject)
+}
+
+export function archiveProject(id: string): void {
+  getDb()
+    .prepare('UPDATE projects SET archived_at = ?, updated_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), new Date().toISOString(), id)
+}
+
+export function unarchiveProject(id: string): void {
+  getDb()
+    .prepare('UPDATE projects SET archived_at = NULL, updated_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), id)
 }
 
 export function createProject(name: string, gitUrl?: string | null): Project {
@@ -32,6 +50,7 @@ export function createProject(name: string, gitUrl?: string | null): Project {
     id,
     name,
     git_url: gitUrl ?? null,
+    archived_at: null,
     created_at: now,
     updated_at: now,
   }

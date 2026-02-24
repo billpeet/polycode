@@ -641,9 +641,10 @@ function FileStatusBadge({ status, staged }: { status: GitFileChange['status']; 
   )
 }
 
-function basename(p: string): string { return p.split('/').pop() ?? p }
+function basename(p: string): string { const s = p.replace(/\/$/, ''); return s.split('/').pop() ?? s }
 function dirname(p: string): string {
-  const parts = p.split('/')
+  const s = p.replace(/\/$/, '')
+  const parts = s.split('/')
   return parts.length <= 1 ? '' : parts.slice(0, -1).join('/')
 }
 

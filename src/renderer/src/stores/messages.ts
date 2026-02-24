@@ -33,7 +33,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
   },
 
   appendEvent: (threadId, event) => {
-    if (event.type === 'status') return
+    if (event.type === 'status' || event.type === 'rate_limit' || event.type === 'usage') return
 
     // Determine role: check metadata.role first (for question answers), then infer from type
     const role = event.metadata?.role ?? (event.type === 'error' ? 'system' : 'assistant')
@@ -55,7 +55,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
   },
 
   appendEventToSession: (sessionId, threadId, event) => {
-    if (event.type === 'status') return
+    if (event.type === 'status' || event.type === 'rate_limit' || event.type === 'usage') return
 
     const role = event.metadata?.role ?? (event.type === 'error' ? 'system' : 'assistant')
     const msg: Message = {

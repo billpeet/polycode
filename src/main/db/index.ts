@@ -225,6 +225,12 @@ function runMigrations(database: Database.Database): void {
     database.exec('ALTER TABLE project_commands ADD COLUMN shell TEXT')
   }
 
+  // ── archived_at column on projects ────────────────────────────────────────
+  const projColsArchived = database.pragma('table_info(projects)') as Array<{ name: string }>
+  if (!projColsArchived.some((c) => c.name === 'archived_at')) {
+    database.exec('ALTER TABLE projects ADD COLUMN archived_at TEXT')
+  }
+
   // ── YouTrack servers table ─────────────────────────────────────────────────
   const tablesForYouTrack = database.pragma('table_list') as Array<{ name: string }>
   const hasYouTrackServers = tablesForYouTrack.some((t) => t.name === 'youtrack_servers')
