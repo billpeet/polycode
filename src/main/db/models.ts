@@ -8,6 +8,7 @@ export interface ProjectRow {
   ssh_port: number | null
   ssh_key_path: string | null
   wsl_distro: string | null
+  archived_at: string | null
   created_at: string
   updated_at: string
 }
@@ -43,6 +44,7 @@ export interface ThreadRow {
   has_messages?: number
   use_wsl: number
   wsl_distro: string | null
+  git_branch: string | null
   created_at: string
   updated_at: string
 }
@@ -73,6 +75,7 @@ export interface ProjectCommandRow {
   name: string
   command: string
   cwd: string | null
+  shell: string | null
   sort_order: number
   created_at: string
   updated_at: string
@@ -83,6 +86,17 @@ export interface YouTrackServerRow {
   name: string
   url: string
   token: string
+  created_at: string
+  updated_at: string
+}
+
+export interface SlashCommandRow {
+  id: string
+  project_id: string | null
+  name: string
+  description: string | null
+  prompt: string
+  sort_order: number
   created_at: string
   updated_at: string
 }

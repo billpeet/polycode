@@ -260,7 +260,10 @@ export class ClaudeDriver implements CLIDriver {
         const contentBlocks = (message?.content ?? []) as Array<Record<string, unknown>>
         for (const block of contentBlocks) {
           const blockType = block.type as string | undefined
-          if (blockType === 'text') {
+          if (blockType === 'thinking') {
+            const thinking = (block.thinking ?? '') as string
+            if (thinking) events.push({ type: 'thinking', content: thinking, metadata: { type: 'thinking' } })
+          } else if (blockType === 'text') {
             const text = (block.text ?? '') as string
             if (text) events.push({ type: 'text', content: text })
           } else if (blockType === 'tool_use') {

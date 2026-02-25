@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
+import { useRateLimitStore, RateLimitEntry } from '../stores/rateLimits'
 import { useThreadStore } from '../stores/threads'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
@@ -7,9 +8,61 @@ import { useUiStore } from '../stores/ui'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
 import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider, RepoLocation } from '../types/ipc'
+import ImportHistoryDialog from './ImportHistoryDialog'
 
 const EMPTY_TODOS: Todo[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
+const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
+
+// ─── Rate limit helpers ───────────────────────────────────────────────────────
+
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return 'soon'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+function formatRateLimitType(type: string): string {
+  const known: Record<string, string> = {
+    default: 'rate limit',
+    '5_hour': '5h window',
+    '7_day': '7d window',
+    requests_per_minute: 'req/min',
+    requests_per_second: 'req/s',
+    tokens_per_day: 'tokens/day',
+    tokens_per_minute: 'tokens/min',
+  }
+  return known[type] ?? type.replace(/_/g, ' ')
+}
+
+function RateLimitBanner({ limit, nowSeconds }: { limit: RateLimitEntry; nowSeconds: number }) {
+  const isBlocked = limit.status === 'blocked'
+  const color = isBlocked ? '#f87171' : '#facc15'
+  const bgColor = isBlocked ? 'rgba(239, 68, 68, 0.08)' : 'rgba(250, 204, 21, 0.08)'
+  const borderColor = isBlocked ? 'rgba(239, 68, 68, 0.25)' : 'rgba(250, 204, 21, 0.25)'
+  const pct = limit.utilization != null ? Math.round(limit.utilization * 100) : null
+  const remaining = limit.resetsAt ? limit.resetsAt - nowSeconds : null
+  const typeLabel = formatRateLimitType(limit.rateLimitType)
+
+  return (
+    <div
+      className="flex items-center gap-2 text-xs px-2.5 py-1 rounded"
+      style={{ background: bgColor, border: `1px solid ${borderColor}`, color }}
+    >
+      <span style={{ flexShrink: 0 }}>{isBlocked ? '⊘' : '⚠'}</span>
+      <span>
+        {isBlocked
+          ? `Claude Code rate limited (${typeLabel})`
+          : `Claude Code rate limit${pct != null ? ` ${pct}%` : ''} used (${typeLabel})`}
+        {remaining != null && remaining > 0 && ` — resets in ${formatCountdown(remaining)}`}
+      </span>
+    </div>
+  )
+}
 
 function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -59,8 +112,28 @@ export default function ThreadHeader({ threadId }: Props) {
   const isPulling = useGitStore((s) => locationPath ? (s.pullingByPath[locationPath] ?? false) : false)
   const addToast = useToastStore((s) => s.add)
 
+  const fetchThreads = useThreadStore((s) => s.fetch)
+
+  const threadRateLimits = useRateLimitStore((s) => s.limitsByThread[threadId] ?? EMPTY_RATE_LIMITS)
+  const activeRateLimits = Object.values(threadRateLimits).filter(
+    (l) => l.provider === 'claude-code' && (l.status === 'blocked' || l.status === 'allowed_warning')
+  )
+
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+
+  // Tick every second while rate limits are active to update countdowns and clear expired entries
+  useEffect(() => {
+    if (activeRateLimits.length === 0) return
+    const interval = setInterval(() => {
+      useRateLimitStore.getState().clearExpired(threadId)
+      setNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [activeRateLimits.length, threadId])
+
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // WSL distro list — fetched when location is local
@@ -120,9 +193,10 @@ export default function ThreadHeader({ threadId }: Props) {
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+      className="flex flex-col flex-shrink-0 border-b"
       style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
     >
+    <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-3 min-w-0">
         {status === 'running' ? (
           <span className="h-2.5 w-2.5 flex-shrink-0 status-spinner" />
@@ -407,48 +481,88 @@ export default function ThreadHeader({ threadId }: Props) {
         )}
       </div>
 
-      <button
-        onClick={() => togglePanel(threadId)}
-        className="flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors"
-        style={{
-          color: isPanelOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
-          background: isPanelOpen ? 'rgba(232, 123, 95, 0.1)' : 'transparent',
-          border: '1px solid',
-          borderColor: isPanelOpen ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)',
-        }}
-        title={isPanelOpen ? 'Hide panel' : 'Show panel'}
-      >
-        <svg
-          width="12"
-          height="12"
-          viewBox="0 0 12 12"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-        >
-          <line x1="2" y1="3" x2="10" y2="3" />
-          <line x1="2" y1="6" x2="10" y2="6" />
-          <line x1="2" y1="9" x2="10" y2="9" />
-        </svg>
-        <span>Panel</span>
-        {todoTotal > 0 && (
-          <span
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {/* Import from CLI history — only for new threads with a location */}
+        {!thread?.has_messages && location && selectedProjectId && thread?.location_id && (
+          <button
+            onClick={() => setImportDialogOpen(true)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
             style={{
-              fontSize: '0.6rem',
-              fontWeight: 600,
-              padding: '1px 5px',
-              borderRadius: 999,
-              background: hasInProgress
-                ? 'rgba(232, 123, 95, 0.2)'
-                : 'rgba(74, 222, 128, 0.12)',
-              color: hasInProgress ? 'var(--color-claude)' : '#4ade80',
+              color: 'var(--color-text-muted)',
+              background: 'transparent',
+              border: '1px solid var(--color-border)',
             }}
+            title="Import from Claude Code CLI history"
           >
-            {todoCompleted}/{todoTotal}
-          </span>
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M8 2v10M4 8l4 4 4-4" />
+              <path d="M2 14h12" />
+            </svg>
+            Import history
+          </button>
         )}
-      </button>
+        <button
+          onClick={() => togglePanel(threadId)}
+          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors"
+          style={{
+            color: isPanelOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
+            background: isPanelOpen ? 'rgba(232, 123, 95, 0.1)' : 'transparent',
+            border: '1px solid',
+            borderColor: isPanelOpen ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)',
+          }}
+          title={isPanelOpen ? 'Hide panel' : 'Show panel'}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.5"
+            strokeLinecap="round"
+          >
+            <line x1="2" y1="3" x2="10" y2="3" />
+            <line x1="2" y1="6" x2="10" y2="6" />
+            <line x1="2" y1="9" x2="10" y2="9" />
+          </svg>
+          <span>Panel</span>
+          {todoTotal > 0 && (
+            <span
+              style={{
+                fontSize: '0.6rem',
+                fontWeight: 600,
+                padding: '1px 5px',
+                borderRadius: 999,
+                background: hasInProgress
+                  ? 'rgba(232, 123, 95, 0.2)'
+                  : 'rgba(74, 222, 128, 0.12)',
+                color: hasInProgress ? 'var(--color-claude)' : '#4ade80',
+              }}
+            >
+              {todoCompleted}/{todoTotal}
+            </span>
+          )}
+        </button>
+      </div>
+
+      {importDialogOpen && selectedProjectId && thread?.location_id && location?.path && (
+        <ImportHistoryDialog
+          projectId={selectedProjectId}
+          locationId={thread.location_id}
+          locationPath={location.path}
+          onClose={() => setImportDialogOpen(false)}
+          onImported={() => fetchThreads(selectedProjectId)}
+        />
+      )}
+    </div>
+
+      {activeRateLimits.length > 0 && (
+        <div className="flex flex-col gap-1 px-4 pb-2">
+          {activeRateLimits.map((limit) => (
+            <RateLimitBanner key={limit.rateLimitType} limit={limit} nowSeconds={nowSeconds} />
+          ))}
+        </div>
+      )}
     </div>
   )
 }

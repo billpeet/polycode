@@ -5,6 +5,8 @@ import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 
+const EMPTY_PINNED: string[] = []
+
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
@@ -431,8 +433,21 @@ function CommandLogPanel({
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function CommandLogs() {
-  const selectedInstance = useCommandStore((s) => s.selectedInstance)
-  const pinnedInstances = useCommandStore((s) => s.pinnedInstances)
+  const currentLocationId = useThreadStore((s) => {
+    if (!s.selectedThreadId) return null
+    for (const threads of Object.values(s.byProject)) {
+      const t = threads.find((t) => t.id === s.selectedThreadId)
+      if (t) return t.location_id ?? null
+    }
+    return null
+  })
+
+  const selectedInstance = useCommandStore((s) =>
+    currentLocationId ? (s.selectedInstanceByLocation[currentLocationId] ?? null) : null
+  )
+  const pinnedInstances = useCommandStore((s) =>
+    currentLocationId ? (s.pinnedInstancesByLocation[currentLocationId] ?? EMPTY_PINNED) : EMPTY_PINNED
+  )
   const pinInstance = useCommandStore((s) => s.pinInstance)
   const unpinInstance = useCommandStore((s) => s.unpinInstance)
   const selectInstance = useCommandStore((s) => s.selectInstance)
@@ -470,9 +485,13 @@ export default function CommandLogs() {
           <CommandLogPanel
             instanceKey={key}
             isPinned={isPinned}
-            onPin={() => pinInstance(key)}
-            onUnpin={() => unpinInstance(key)}
-            onClose={() => isPinned ? unpinInstance(key) : selectInstance(null)}
+            onPin={() => pinInstance(key, parseInstKey(key).locationId)}
+            onUnpin={() => unpinInstance(key, parseInstKey(key).locationId)}
+            onClose={() => {
+              const { locationId } = parseInstKey(key)
+              if (isPinned) unpinInstance(key, locationId)
+              if (currentLocationId) selectInstance(null, currentLocationId)
+            }}
           />
         </Fragment>
       ))}

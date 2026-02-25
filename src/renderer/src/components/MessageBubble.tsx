@@ -1,5 +1,6 @@
 import MarkdownContent from './MarkdownContent'
 import ToolCallBlock from './ToolCallBlock'
+import ThinkingBlock from './ThinkingBlock'
 import { MessageEntry } from './MessageStream'
 
 interface Props {
@@ -11,6 +12,10 @@ export default function MessageBubble({ entry }: Props) {
   const isUser = message.role === 'user'
   const isToolCall = metadata?.type === 'tool_call' || metadata?.type === 'tool_use'
   const isToolResult = metadata?.type === 'tool_result'
+
+  if (metadata?.type === 'thinking') {
+    return <ThinkingBlock message={message} />
+  }
 
   if (isToolCall) {
     return <ToolCallBlock message={message} metadata={metadata} result={result} resultMetadata={resultMetadata} />

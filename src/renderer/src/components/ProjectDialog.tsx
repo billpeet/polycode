@@ -400,11 +400,13 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const [newCmdName, setNewCmdName] = useState('')
   const [newCmdCommand, setNewCmdCommand] = useState('')
   const [newCmdCwd, setNewCmdCwd] = useState('')
+  const [newCmdShell, setNewCmdShell] = useState<string | null>(null)
   const [cmdError, setCmdError] = useState('')
   const [editingCmdId, setEditingCmdId] = useState<string | null>(null)
   const [editCmdName, setEditCmdName] = useState('')
   const [editCmdCommand, setEditCmdCommand] = useState('')
   const [editCmdCwd, setEditCmdCwd] = useState('')
+  const [editCmdShell, setEditCmdShell] = useState<string | null>(null)
   const [editCmdError, setEditCmdError] = useState('')
 
   const isEdit = mode === 'edit'
@@ -669,9 +671,19 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                       style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-claude)' : 'var(--color-border)'}` }}
                     >
                       <div className="flex-1 min-w-0">
-                        <span className="text-xs font-medium truncate block" style={{ color: 'var(--color-text)' }}>
-                          {cmd.name}
-                        </span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text)' }}>
+                            {cmd.name}
+                          </span>
+                          {cmd.shell === 'powershell' && (
+                            <span
+                              className="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+                              style={{ background: 'rgba(99, 179, 237, 0.15)', color: '#63b3ed' }}
+                            >
+                              PS
+                            </span>
+                          )}
+                        </div>
                         <span className="text-[10px] font-mono truncate block" style={{ color: 'var(--color-text-muted)' }}>
                           {cmd.command}
                         </span>
@@ -686,6 +698,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                             setEditCmdName(cmd.name)
                             setEditCmdCommand(cmd.command)
                             setEditCmdCwd(cmd.cwd ?? '')
+                            setEditCmdShell(cmd.shell ?? null)
                             setEditCmdError('')
                           }
                         }}
@@ -745,6 +758,28 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                             placeholder="/path/to/subdir"
                           />
                         </div>
+                        <div>
+                          <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                            Shell <span style={{ opacity: 0.5 }}>(local only)</span>
+                          </label>
+                          <div className="flex gap-1">
+                            {[{ value: null, label: 'Default' }, { value: 'powershell', label: 'PowerShell' }].map((opt) => (
+                              <button
+                                key={String(opt.value)}
+                                type="button"
+                                onClick={() => setEditCmdShell(opt.value)}
+                                className="rounded px-2.5 py-1 text-xs font-medium transition-colors"
+                                style={{
+                                  background: editCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-surface-2)',
+                                  color: editCmdShell === opt.value ? '#fff' : 'var(--color-text-muted)',
+                                  border: `1px solid ${editCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-border)'}`,
+                                }}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
                         {editCmdError && <p className="text-xs" style={{ color: '#f87171' }}>{editCmdError}</p>}
                         <div className="flex justify-end gap-2 pt-0.5">
                           <button
@@ -762,7 +797,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                               if (!project || !editCmdName.trim() || !editCmdCommand.trim()) return
                               setEditCmdError('')
                               try {
-                                await updateCommand(cmd.id, project.id, editCmdName.trim(), editCmdCommand.trim(), editCmdCwd.trim() || null)
+                                await updateCommand(cmd.id, project.id, editCmdName.trim(), editCmdCommand.trim(), editCmdCwd.trim() || null, editCmdShell)
                                 setEditingCmdId(null)
                               } catch (err) {
                                 setEditCmdError(String(err))
@@ -822,6 +857,28 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                   placeholder="/path/to/subdir"
                 />
               </div>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  Shell <span style={{ opacity: 0.5 }}>(local only)</span>
+                </label>
+                <div className="flex gap-1">
+                  {[{ value: null, label: 'Default' }, { value: 'powershell', label: 'PowerShell' }].map((opt) => (
+                    <button
+                      key={String(opt.value)}
+                      type="button"
+                      onClick={() => setNewCmdShell(opt.value)}
+                      className="rounded px-2.5 py-1 text-xs font-medium transition-colors"
+                      style={{
+                        background: newCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-surface-2)',
+                        color: newCmdShell === opt.value ? '#fff' : 'var(--color-text-muted)',
+                        border: `1px solid ${newCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-border)'}`,
+                      }}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
               {cmdError && <p className="text-xs" style={{ color: '#f87171' }}>{cmdError}</p>}
               <div className="flex justify-end">
                 <button
@@ -831,10 +888,11 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                     if (!project || !newCmdName.trim() || !newCmdCommand.trim()) return
                     setCmdError('')
                     try {
-                      await createCommand(project.id, newCmdName.trim(), newCmdCommand.trim(), newCmdCwd.trim() || null)
+                      await createCommand(project.id, newCmdName.trim(), newCmdCommand.trim(), newCmdCwd.trim() || null, newCmdShell)
                       setNewCmdName('')
                       setNewCmdCommand('')
                       setNewCmdCwd('')
+                      setNewCmdShell(null)
                     } catch (err) {
                       setCmdError(String(err))
                     }

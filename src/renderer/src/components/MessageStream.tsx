@@ -47,6 +47,13 @@ function getToolGroupKey(toolName: string): string {
   return TOOL_GROUP_KEY[toolName] ?? toolName
 }
 
+function getEntryStatus(entry: MessageEntry): string {
+  if (entry.result === null) return 'pending'
+  if (entry.resultMetadata?.cancelled === true) return 'cancelled'
+  if (entry.resultMetadata?.is_error === true) return 'error'
+  return 'done'
+}
+
 /** Pair tool_call messages with their matching tool_result by tool_use_id. */
 function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   // Build a lookup of tool_result messages by tool_use_id
@@ -108,12 +115,14 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
     }
     const toolName = (entry.metadata?.name as string) ?? entry.message.content
     const groupKey = getToolGroupKey(toolName)
-    // Find the run of consecutive tool entries that share the same group key
+    const entryStatus = getEntryStatus(entry)
+    // Find the run of consecutive tool entries that share the same group key and status
     let j = i + 1
     while (
       j < flat.length &&
       (flat[j].metadata?.type === 'tool_call' || flat[j].metadata?.type === 'tool_use') &&
-      getToolGroupKey((flat[j].metadata?.name as string) ?? flat[j].message.content) === groupKey
+      getToolGroupKey((flat[j].metadata?.name as string) ?? flat[j].message.content) === groupKey &&
+      getEntryStatus(flat[j]) === entryStatus
     ) {
       j++
     }

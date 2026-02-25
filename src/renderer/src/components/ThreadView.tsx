@@ -3,6 +3,7 @@ import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
+import { useRateLimitStore } from '../stores/rateLimits'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useSessionStore } from '../stores/sessions'
 import { useGitStore } from '../stores/git'
@@ -126,23 +127,10 @@ export default function ThreadView({ threadId }: Props) {
 
       if (event.type === 'rate_limit' && event.metadata) {
         const info = event.metadata as { status?: string; resetsAt?: number; rateLimitType?: string; utilization?: number }
-        const resetMsg = info.resetsAt
-          ? ` Resets at ${new Date(info.resetsAt * 1000).toLocaleTimeString()}.`
-          : ''
-        if (info.status === 'blocked') {
-          useToastStore.getState().add({
-            type: 'error',
-            message: `Rate limit reached (${info.rateLimitType ?? 'unknown'}).${resetMsg}`,
-            duration: 10000,
-          })
-        } else if (info.status === 'allowed_warning') {
-          const pct = info.utilization != null ? ` ${Math.round(info.utilization * 100)}%` : ''
-          useToastStore.getState().add({
-            type: 'warning',
-            message: `Rate limit${pct} used (${info.rateLimitType ?? 'unknown'}).${resetMsg}`,
-            duration: 8000,
-          })
-        }
+        const threadState = useThreadStore.getState()
+        const currentThread = Object.values(threadState.byProject).flat().find((t) => t.id === threadId)
+        const provider = currentThread?.provider ?? 'claude-code'
+        useRateLimitStore.getState().setLimit(threadId, provider, info)
       }
     })
 

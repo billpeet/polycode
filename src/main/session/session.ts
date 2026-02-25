@@ -34,6 +34,7 @@ export class Session {
   private pendingPlanContent: string | null = null
   private questionPending = false
   private pendingQuestions: Question[] = []
+  private stopped = false
 
   constructor(threadId: string, workingDir: string, window: BrowserWindow, sshConfig?: SshConfig | null, wslConfig?: WslConfig | null) {
     this.threadId = threadId
@@ -148,6 +149,7 @@ export class Session {
     if (!driver) return
 
     this.setStatus('running')
+    this.stopped = false
     this.planPending = false
     this.pendingPlanContent = null
     this.questionPending = false
@@ -179,6 +181,7 @@ export class Session {
   }
 
   stop(): void {
+    this.stopped = true
     if (this.activeSessionId) {
       const driver = this.drivers.get(this.activeSessionId)
       driver?.stop()
@@ -234,7 +237,7 @@ export class Session {
   }
 
   /** Answer pending question and continue execution */
-  answerQuestion(answers: Record<string, string>): void {
+  answerQuestion(answers: Record<string, string>, questionComments: Record<string, string> = {}, generalComment = ''): void {
     if (!this.questionPending || !this.activeSessionId) return
 
     const driver = this.drivers.get(this.activeSessionId)
@@ -247,8 +250,15 @@ export class Session {
       if (answer) {
         qaLines.push(`**${q.header}**: ${q.question}`)
         qaLines.push(`→ ${answer}`)
+        const comment = questionComments[q.question]
+        if (comment?.trim()) {
+          qaLines.push(`  ↳ ${comment.trim()}`)
+        }
         qaLines.push('')
       }
+    }
+    if (generalComment?.trim()) {
+      qaLines.push(`Additional notes: ${generalComment.trim()}`)
     }
     const qaText = qaLines.join('\n').trim()
 
@@ -268,9 +278,16 @@ export class Session {
     this.setStatus('running')
 
     // Format the answer as a response message for Claude
-    const answerText = Object.entries(answers)
-      .map(([question, answer]) => `${question}: ${answer}`)
-      .join('\n')
+    const answerLines = Object.entries(answers).map(([question, answer]) => {
+      const comment = questionComments[question]
+      return comment?.trim()
+        ? `${question}: ${answer}\n  (clarification: ${comment.trim()})`
+        : `${question}: ${answer}`
+    })
+    if (generalComment?.trim()) {
+      answerLines.push(`\nAdditional clarification: ${generalComment.trim()}`)
+    }
+    const answerText = answerLines.join('\n')
 
     driver.sendMessage(
       answerText,
@@ -305,6 +322,11 @@ export class Session {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
         break
+      case 'thinking':
+        if (this.activeSessionId) {
+          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
+        }
+        break
       case 'plan_ready':
         // Mark that we received a plan — will set status to plan_pending on completion
         this.planPending = true
@@ -334,6 +356,25 @@ export class Session {
   }
 
   private handleDone(error?: Error): void {
+    // If the user intentionally stopped the session, keep the stopped status
+    // regardless of how the process exited (non-zero exit from SIGTERM looks
+    // like an error but shouldn't be treated as one).
+    if (this.stopped) {
+      if (this.activeSessionId) {
+        const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
+        for (const msg of cancelled) {
+          this.window.webContents.send(`thread:output:${this.threadId}`, {
+            type: 'tool_result',
+            content: '',
+            metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
+            sessionId: this.activeSessionId,
+          } satisfies OutputEvent)
+        }
+      }
+      this.window.webContents.send(`thread:complete:${this.threadId}`, 'stopped')
+      return
+    }
+
     // Always ensure status transitions to a terminal state
     let finalStatus: ThreadStatus
     if (error) {

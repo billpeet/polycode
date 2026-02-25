@@ -151,6 +151,12 @@ function runMigrations(database: Database.Database): void {
     database.exec('ALTER TABLE threads ADD COLUMN wsl_distro TEXT')
   }
 
+  // ── Git branch at thread creation ─────────────────────────────────────────
+  const threadColsBranch = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsBranch.some((c) => c.name === 'git_branch')) {
+    database.exec('ALTER TABLE threads ADD COLUMN git_branch TEXT')
+  }
+
   // ── Remap stale Codex model IDs to current ones ───────────────────────────
   // Old placeholder models (o4-mini, o3, gpt-4o, gpt-4.1) were never valid
   // Codex CLI models. Migrate any threads still referencing them.
@@ -219,6 +225,18 @@ function runMigrations(database: Database.Database): void {
     `)
   }
 
+  // ── Migrate project_commands: add shell column ────────────────────────────
+  const projectCommandsCols = database.pragma('table_info(project_commands)') as Array<{ name: string }>
+  if (projectCommandsCols.length > 0 && !projectCommandsCols.some((c) => c.name === 'shell')) {
+    database.exec('ALTER TABLE project_commands ADD COLUMN shell TEXT')
+  }
+
+  // ── archived_at column on projects ────────────────────────────────────────
+  const projColsArchived = database.pragma('table_info(projects)') as Array<{ name: string }>
+  if (!projColsArchived.some((c) => c.name === 'archived_at')) {
+    database.exec('ALTER TABLE projects ADD COLUMN archived_at TEXT')
+  }
+
   // ── YouTrack servers table ─────────────────────────────────────────────────
   const tablesForYouTrack = database.pragma('table_list') as Array<{ name: string }>
   const hasYouTrackServers = tablesForYouTrack.some((t) => t.name === 'youtrack_servers')
@@ -229,6 +247,24 @@ function runMigrations(database: Database.Database): void {
         name TEXT NOT NULL,
         url TEXT NOT NULL,
         token TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+  }
+
+  // ── Slash commands table ───────────────────────────────────────────────────
+  const tablesForSlash = database.pragma('table_list') as Array<{ name: string }>
+  const hasSlashCommands = tablesForSlash.some((t) => t.name === 'slash_commands')
+  if (!hasSlashCommands) {
+    database.exec(`
+      CREATE TABLE slash_commands (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        description TEXT,
+        prompt TEXT NOT NULL,
+        sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       )
