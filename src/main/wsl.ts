@@ -36,7 +36,9 @@ export function wslExec(wsl: WslConfig, cwd: string, cmd: string): Promise<strin
 
     proc.on('close', (code) => {
       if (code === 0) {
-        resolve(stdout.trim())
+        // Preserve leading whitespace (needed by parsers like git porcelain),
+        // while removing trailing newlines from command output.
+        resolve(stdout.trimEnd())
       } else {
         reject(new Error(stderr.trim() || `WSL command exited with code ${code}`))
       }
