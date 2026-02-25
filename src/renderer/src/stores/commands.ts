@@ -138,12 +138,17 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   stop: async (commandId, locationId) => {
+    const key = instKey(commandId, locationId)
+    set((s) => ({ statusMap: { ...s.statusMap, [key]: 'stopped' } }))
     await window.api.invoke('commands:stop', commandId, locationId)
   },
 
   restart: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    set((s) => ({ statusMap: { ...s.statusMap, [key]: 'running' } }))
+    set((s) => ({
+      statusMap: { ...s.statusMap, [key]: 'running' },
+      logsByCommand: { ...s.logsByCommand, [key]: [] },
+    }))
     await window.api.invoke('commands:restart', commandId, locationId)
   },
 

@@ -57,7 +57,13 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
     // Ahead/behind against upstream
     let ahead = 0
     let behind = 0
+    let hasUpstream = false
     try {
+      const upstreamRef = (await git(repoPath, ['rev-parse', '--abbrev-ref', '@{u}'], ssh, wsl)).trim()
+      // Only treat as "has upstream" when the remote branch name matches the local branch name,
+      // i.e. origin/<branch>. A branch created from origin/master will have @{u}=origin/master
+      // but we still need to publish it to origin/<branch>.
+      hasUpstream = upstreamRef === `origin/${branch}`
       const ab = await git(repoPath, ['rev-list', '--left-right', '--count', '@{u}...HEAD'], ssh, wsl)
       const parts = ab.split('\t')
       behind = parseInt(parts[0] ?? '0', 10) || 0
@@ -126,7 +132,7 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
       // no commits yet
     }
 
-    return { branch, ahead, behind, additions, deletions, files }
+    return { branch, ahead, behind, additions, deletions, files, hasUpstream }
   } catch (err) {
     console.error(`[git:status] failed (${via}) for ${repoPath}:`, err)
     return null
@@ -160,7 +166,15 @@ export async function unstageAll(repoPath: string, ssh?: SshConfig | null, wsl?:
 }
 
 export async function gitPush(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pushed: true }> {
-  await git(repoPath, ['push'], ssh, wsl)
+  // Always push to origin/<local-branch-name> and set/update upstream tracking.
+  // This handles: no upstream, upstream pointing to a differently-named branch (e.g. origin/master),
+  // and normal repeat pushes.
+  await git(repoPath, ['push', '--set-upstream', 'origin', 'HEAD'], ssh, wsl)
+  return { pushed: true }
+}
+
+export async function gitPushSetUpstream(repoPath: string, branch: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pushed: true }> {
+  await git(repoPath, ['push', '--set-upstream', 'origin', branch], ssh, wsl)
   return { pushed: true }
 }
 
@@ -348,6 +362,87 @@ export async function createBranch(repoPath: string, name: string, base: string,
   } else {
     await git(repoPath, ['checkout', '-b', name, base], ssh, wsl)
   }
+}
+
+/**
+ * Find local branches that have been squash-merged (or regular-merged) into the main branch.
+ * Uses the git-delete-squashed technique: creates a virtual commit with the branch's tree
+ * parented at the merge-base, then checks if that patch is already in origin/master|main.
+ */
+export async function findMergedBranches(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string[]> {
+  let current = 'HEAD'
+  try {
+    current = (await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)).trim()
+  } catch { /* ignore */ }
+
+  let localOut = ''
+  try {
+    localOut = await git(repoPath, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'], ssh, wsl)
+  } catch {
+    return []
+  }
+
+  const local = localOut.split('\n').filter(Boolean)
+  const mainBranch = local.find(b => b === 'master' || b === 'main') ?? 'master'
+  const targetRef = `origin/${mainBranch}`
+
+  // Fetch latest state of origin/<main> so comparisons are up-to-date
+  try {
+    await git(repoPath, ['fetch', 'origin', mainBranch], ssh, wsl)
+  } catch { /* no remote or offline — continue with stale refs */ }
+
+  // Verify target ref exists
+  try {
+    await git(repoPath, ['rev-parse', '--verify', targetRef], ssh, wsl)
+  } catch {
+    return []
+  }
+
+  const merged: string[] = []
+
+  for (const branch of local) {
+    if (branch === current || branch === mainBranch) continue
+
+    try {
+      // 1. Regular merge: branch tip is an ancestor of target
+      try {
+        await git(repoPath, ['merge-base', '--is-ancestor', branch, targetRef], ssh, wsl)
+        merged.push(branch)
+        continue
+      } catch { /* not a regular merge */ }
+
+      // 2. Squash merge detection (git-delete-squashed technique):
+      //    Create a virtual commit whose tree is the branch's tree, parented at
+      //    the merge-base. If git cherry says that patch is already in target, it
+      //    was squash-merged.
+      const mergeBase = (await git(repoPath, ['merge-base', targetRef, branch], ssh, wsl)).trim()
+      const branchTree = (await git(repoPath, ['rev-parse', `${branch}^{tree}`], ssh, wsl)).trim()
+      const tempCommit = (await git(repoPath, ['commit-tree', branchTree, '-p', mergeBase, '-m', 'temp'], ssh, wsl)).trim()
+      const cherryResult = (await git(repoPath, ['cherry', targetRef, tempCommit], ssh, wsl)).trim()
+
+      if (cherryResult.startsWith('-')) {
+        merged.push(branch)
+      }
+    } catch { /* skip branch if any git command fails */ }
+  }
+
+  return merged
+}
+
+export async function deleteBranches(repoPath: string, branches: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }> {
+  const deleted: string[] = []
+  const failed: Array<{ branch: string; error: string }> = []
+
+  for (const branch of branches) {
+    try {
+      await git(repoPath, ['branch', '-D', branch], ssh, wsl)
+      deleted.push(branch)
+    } catch (err) {
+      failed.push({ branch, error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  return { deleted, failed }
 }
 
 export async function mergeBranch(repoPath: string, source: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ conflicts: string[] }> {

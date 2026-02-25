@@ -107,6 +107,8 @@ export interface Thread {
   has_messages: boolean
   use_wsl: boolean
   wsl_distro: string | null
+  /** Branch that was active when this thread was created */
+  git_branch: string | null
   created_at: string
   updated_at: string
 }
@@ -173,7 +175,7 @@ export interface RateLimitInfo {
   overageDisabledReason?: string
 }
 
-export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'usage' | 'rate_limit'
+export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'usage' | 'rate_limit' | 'thinking'
 
 export interface OutputEvent {
   type: OutputEventType
@@ -198,6 +200,7 @@ export interface GitStatus {
   additions: number
   deletions: number
   files: GitFileChange[]
+  hasUpstream: boolean
 }
 
 export interface GitBranches {
@@ -330,4 +333,17 @@ export interface CommandLogLine {
   text: string
   stream: 'stdout' | 'stderr'
   timestamp: string
+}
+
+// ── Slash Commands ─────────────────────────────────────────────────────────────
+
+export interface SlashCommand {
+  id: string
+  project_id: string | null  // null = global
+  name: string               // trigger name (without /)
+  description: string | null
+  prompt: string
+  sort_order: number
+  created_at: string
+  updated_at: string
 }

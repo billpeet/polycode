@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -28,7 +28,7 @@ export interface WindowApi {
   invoke(channel: 'threads:approvePlan', threadId: string): Promise<void>
   invoke(channel: 'threads:rejectPlan', threadId: string): Promise<void>
   invoke(channel: 'threads:getQuestions', threadId: string): Promise<Question[]>
-  invoke(channel: 'threads:answerQuestion', threadId: string, answers: Record<string, string>): Promise<void>
+  invoke(channel: 'threads:answerQuestion', threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string): Promise<void>
   invoke(channel: 'threads:updateName', id: string, name: string): Promise<void>
   invoke(channel: 'threads:archivedCount', projectId: string): Promise<number>
   invoke(channel: 'threads:listArchived', projectId: string): Promise<Thread[]>
@@ -56,12 +56,15 @@ export interface WindowApi {
   invoke(channel: 'git:generateCommitMessage', repoPath: string): Promise<string>
   invoke(channel: 'git:generateCommitMessageWithContext', repoPath: string, filePaths: string[], context: string): Promise<string>
   invoke(channel: 'git:push', repoPath: string): Promise<void>
+  invoke(channel: 'git:pushSetUpstream', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:pull', repoPath: string): Promise<void>
   invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
   invoke(channel: 'git:branches', repoPath: string): Promise<GitBranches>
   invoke(channel: 'git:checkout', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:createBranch', repoPath: string, name: string, base: string, pullFirst: boolean): Promise<void>
   invoke(channel: 'git:merge', repoPath: string, source: string): Promise<{ conflicts: string[] }>
+  invoke(channel: 'git:findMergedBranches', repoPath: string): Promise<string[]>
+  invoke(channel: 'git:deleteBranches', repoPath: string, branches: string[]): Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>
@@ -95,6 +98,10 @@ export interface WindowApi {
   invoke(channel: 'youtrack:servers:delete', id: string): Promise<void>
   invoke(channel: 'youtrack:search', url: string, token: string, query: string): Promise<YouTrackIssue[]>
   invoke(channel: 'youtrack:test', url: string, token: string): Promise<{ ok: boolean; error?: string }>
+  invoke(channel: 'slash-commands:list', projectId?: string | null): Promise<SlashCommand[]>
+  invoke(channel: 'slash-commands:create', projectId: string | null, name: string, description: string | null, prompt: string): Promise<SlashCommand>
+  invoke(channel: 'slash-commands:update', id: string, name: string, description: string | null, prompt: string): Promise<void>
+  invoke(channel: 'slash-commands:delete', id: string): Promise<void>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

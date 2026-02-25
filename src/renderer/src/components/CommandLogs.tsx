@@ -487,12 +487,11 @@ export default function CommandLogs() {
             isPinned={isPinned}
             onPin={() => pinInstance(key, parseInstKey(key).locationId)}
             onUnpin={() => unpinInstance(key, parseInstKey(key).locationId)}
-            onClose={() => isPinned
-              ? unpinInstance(key, parseInstKey(key).locationId)
-              : currentLocationId
-                ? selectInstance(null, currentLocationId)
-                : undefined
-            }
+            onClose={() => {
+              const { locationId } = parseInstKey(key)
+              if (isPinned) unpinInstance(key, locationId)
+              if (currentLocationId) selectInstance(null, currentLocationId)
+            }}
           />
         </Fragment>
       ))}

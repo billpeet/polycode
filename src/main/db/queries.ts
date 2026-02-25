@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
-import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer } from '../../shared/types'
+import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow } from './models'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -224,6 +224,7 @@ function rowToThread(r: ThreadRow): Thread {
     has_messages: (r.has_messages ?? 0) === 1,
     use_wsl: r.use_wsl === 1,
     wsl_distro: r.wsl_distro ?? null,
+    git_branch: r.git_branch ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }
@@ -273,7 +274,7 @@ export function unarchiveThread(id: string): void {
     .run(new Date().toISOString(), id)
 }
 
-export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-5'): Thread {
+export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-5', gitBranch: string | null = null): Thread {
   const now = new Date().toISOString()
   const thread: ThreadRow = {
     id: uuidv4(),
@@ -290,12 +291,13 @@ export function createThread(projectId: string, name: string, locationId: string
     has_messages: 0,
     use_wsl: 0,
     wsl_distro: null,
+    git_branch: gitBranch,
     created_at: now,
     updated_at: now
   }
   getDb()
     .prepare(
-      'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       thread.id,
@@ -305,6 +307,7 @@ export function createThread(projectId: string, name: string, locationId: string
       thread.provider,
       thread.model,
       thread.status,
+      thread.git_branch,
       thread.created_at,
       thread.updated_at
     )
@@ -355,6 +358,14 @@ export function getThreadWsl(id: string): { use_wsl: boolean; wsl_distro: string
     .prepare('SELECT use_wsl, wsl_distro FROM threads WHERE id = ?')
     .get(id) as { use_wsl: number; wsl_distro: string | null } | undefined
   return { use_wsl: (row?.use_wsl ?? 0) === 1, wsl_distro: row?.wsl_distro ?? null }
+}
+
+/** Sets git_branch only if it hasn't been set yet. Returns true if it was updated. */
+export function setThreadGitBranchIfUnset(id: string, branch: string): boolean {
+  const result = getDb()
+    .prepare('UPDATE threads SET git_branch = ?, updated_at = ? WHERE id = ? AND git_branch IS NULL')
+    .run(branch, new Date().toISOString(), id)
+  return result.changes > 0
 }
 
 export function updateThreadWsl(id: string, useWsl: boolean, wslDistro: string | null): void {
@@ -747,6 +758,73 @@ export function updateYouTrackServer(id: string, name: string, url: string, toke
 
 export function deleteYouTrackServer(id: string): void {
   getDb().prepare('DELETE FROM youtrack_servers WHERE id = ?').run(id)
+}
+
+// ── Slash Commands ────────────────────────────────────────────────────────────
+
+function rowToSlashCommand(row: SlashCommandRow): SlashCommand {
+  return {
+    id: row.id,
+    project_id: row.project_id ?? null,
+    name: row.name,
+    description: row.description ?? null,
+    prompt: row.prompt,
+    sort_order: row.sort_order,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+/** List global commands plus project-specific commands for the given projectId. */
+export function listSlashCommands(projectId?: string | null): SlashCommand[] {
+  if (projectId) {
+    const rows = getDb()
+      .prepare(
+        'SELECT * FROM slash_commands WHERE project_id IS NULL OR project_id = ? ORDER BY project_id NULLS FIRST, sort_order ASC, created_at ASC'
+      )
+      .all(projectId) as SlashCommandRow[]
+    return rows.map(rowToSlashCommand)
+  }
+  // Global only
+  const rows = getDb()
+    .prepare('SELECT * FROM slash_commands WHERE project_id IS NULL ORDER BY sort_order ASC, created_at ASC')
+    .all() as SlashCommandRow[]
+  return rows.map(rowToSlashCommand)
+}
+
+export function createSlashCommand(
+  projectId: string | null,
+  name: string,
+  description: string | null,
+  prompt: string
+): SlashCommand {
+  const now = new Date().toISOString()
+  const id = uuidv4()
+  const countRow = getDb()
+    .prepare('SELECT COUNT(*) as count FROM slash_commands WHERE project_id IS ?')
+    .get(projectId) as { count: number }
+  const sortOrder = countRow.count
+  getDb()
+    .prepare(
+      'INSERT INTO slash_commands (id, project_id, name, description, prompt, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(id, projectId, name, description, prompt, sortOrder, now, now)
+  return { id, project_id: projectId, name, description, prompt, sort_order: sortOrder, created_at: now, updated_at: now }
+}
+
+export function updateSlashCommand(
+  id: string,
+  name: string,
+  description: string | null,
+  prompt: string
+): void {
+  getDb()
+    .prepare('UPDATE slash_commands SET name = ?, description = ?, prompt = ?, updated_at = ? WHERE id = ?')
+    .run(name, description, prompt, new Date().toISOString(), id)
+}
+
+export function deleteSlashCommand(id: string): void {
+  getDb().prepare('DELETE FROM slash_commands WHERE id = ?').run(id)
 }
 
 export function importThread(

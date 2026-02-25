@@ -7,6 +7,7 @@ import { Project, Thread, RepoLocation } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
 import LocationDialog from './LocationDialog'
 import YouTrackSettingsDialog from './YouTrackSettingsDialog'
+import SlashCommandsDialog from './SlashCommandsDialog'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 
@@ -58,6 +59,7 @@ export default function Sidebar() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [youtrackDialogOpen, setYoutrackDialogOpen] = useState(false)
+  const [slashCommandsDialogOpen, setSlashCommandsDialogOpen] = useState(false)
 
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [locationDialog, setLocationDialog] = useState<{ mode: 'create'; projectId: string } | { mode: 'edit'; projectId: string; location: RepoLocation } | null>(null)
@@ -254,6 +256,21 @@ export default function Sidebar() {
             >
               {relativeTime(thread.updated_at)}
             </span>
+            {(() => {
+              const currentBranch = thread.location_id ? branchByLocation[thread.location_id] : undefined
+              if (thread.git_branch && currentBranch && thread.git_branch !== currentBranch) {
+                return (
+                  <span
+                    className="text-[10px] leading-tight truncate"
+                    style={{ color: '#f59e0b' }}
+                    title={`Started on branch '${thread.git_branch}', current branch is '${currentBranch}'`}
+                  >
+                    ⎇ {thread.git_branch}
+                  </span>
+                )
+              }
+              return null
+            })()}
           </span>
         </button>
 
@@ -310,6 +327,16 @@ export default function Sidebar() {
           PolyCode
         </span>
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setSlashCommandsDialogOpen(true)}
+            className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+            title="Slash commands"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="16" y1="4" x2="8" y2="20" />
+            </svg>
+          </button>
           <button
             onClick={() => setYoutrackDialogOpen(true)}
             className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
@@ -670,6 +697,15 @@ export default function Sidebar() {
       {/* YouTrack settings dialog */}
       {youtrackDialogOpen && (
         <YouTrackSettingsDialog onClose={() => setYoutrackDialogOpen(false)} />
+      )}
+
+      {/* Slash commands dialog */}
+      {slashCommandsDialogOpen && (
+        <SlashCommandsDialog
+          projectId={selectedProjectId ?? null}
+          projectName={projects.find((p) => p.id === selectedProjectId)?.name}
+          onClose={() => setSlashCommandsDialogOpen(false)}
+        />
       )}
     </aside>
   )

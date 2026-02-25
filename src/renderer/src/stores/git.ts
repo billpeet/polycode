@@ -25,12 +25,15 @@ interface GitStore {
   generateCommitMessage: (repoPath: string) => Promise<void>
   generateCommitMessageWithContext: (repoPath: string, filePaths: string[], context: string) => Promise<void>
   push: (repoPath: string) => Promise<void>
+  pushSetUpstream: (repoPath: string, branch: string) => Promise<void>
   pull: (repoPath: string) => Promise<void>
   fetchModifiedFiles: (threadId: string) => Promise<void>
   fetchBranches: (repoPath: string) => Promise<void>
   checkout: (repoPath: string, branch: string) => Promise<void>
   createBranch: (repoPath: string, name: string, base: string, pullFirst: boolean) => Promise<void>
   merge: (repoPath: string, source: string) => Promise<void>
+  findMergedBranches: (repoPath: string) => Promise<string[]>
+  deleteBranches: (repoPath: string, branches: string[]) => Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }>
 }
 
 export const useGitStore = create<GitStore>((set, get) => ({
@@ -133,6 +136,17 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
+  pushSetUpstream: async (repoPath, branch) => {
+    if (get().pushingByPath[repoPath]) return
+    set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:pushSetUpstream', repoPath, branch)
+    } finally {
+      set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: false } }))
+      await get().fetch(repoPath)
+    }
+  },
+
   pull: async (repoPath) => {
     if (get().pullingByPath[repoPath]) return
     set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
@@ -189,5 +203,15 @@ export const useGitStore = create<GitStore>((set, get) => ({
       ;(err as Error & { conflicts: string[] }).conflicts = result.conflicts
       throw err
     }
+  },
+
+  findMergedBranches: async (repoPath) => {
+    return window.api.invoke('git:findMergedBranches', repoPath)
+  },
+
+  deleteBranches: async (repoPath, branches) => {
+    const result = await window.api.invoke('git:deleteBranches', repoPath, branches)
+    await get().fetchBranches(repoPath)
+    return result
   },
 }))

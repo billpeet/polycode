@@ -38,6 +38,7 @@ import {
   getThreadModifiedFiles,
   getThreadWsl,
   updateThreadWsl,
+  setThreadGitBranchIfUnset,
   listCommands,
   createCommand,
   updateCommand,
@@ -46,11 +47,15 @@ import {
   createYouTrackServer,
   updateYouTrackServer,
   deleteYouTrackServer,
+  listSlashCommands,
+  createSlashCommand,
+  updateSlashCommand,
+  deleteSlashCommand,
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPull, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
@@ -372,6 +377,13 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const wslConfig = getWslConfigForThread(threadId)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
     session.sendMessage(content, options)
+    // Capture git branch on first message (fire-and-forget, doesn't block send)
+    const location = getLocationForThread(threadId)
+    if (location) {
+      getGitBranch(location.path, location.ssh, location.wsl).then((branch) => {
+        if (branch) setThreadGitBranchIfUnset(threadId, branch)
+      }).catch(() => {/* not a git repo */})
+    }
   })
 
   ipcMain.handle('threads:approvePlan', (_event, threadId: string) => {
@@ -393,10 +405,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return session?.getPendingQuestions() ?? []
   })
 
-  ipcMain.handle('threads:answerQuestion', (_event, threadId: string, answers: Record<string, string>) => {
+  ipcMain.handle('threads:answerQuestion', (_event, threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
-      session.answerQuestion(answers)
+      session.answerQuestion(answers, questionComments, generalComment)
     }
   })
 
@@ -507,6 +519,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return gitPush(repoPath, ssh, wsl)
   })
 
+  ipcMain.handle('git:pushSetUpstream', (_event, repoPath: string, branch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return gitPushSetUpstream(repoPath, branch, ssh, wsl)
+  })
+
   ipcMain.handle('git:pull', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return gitPull(repoPath, ssh, wsl)
@@ -535,6 +552,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:merge', (_event, repoPath: string, source: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return mergeBranch(repoPath, source, ssh, wsl)
+  })
+
+  ipcMain.handle('git:findMergedBranches', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return findMergedBranches(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:deleteBranches', (_event, repoPath: string, branches: string[]) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return deleteBranches(repoPath, branches, ssh, wsl)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────
@@ -701,6 +728,24 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     } catch {
       return []
     }
+  })
+
+  // ── Slash Commands ─────────────────────────────────────────────────────────
+
+  ipcMain.handle('slash-commands:list', (_event, projectId?: string | null) => {
+    return listSlashCommands(projectId)
+  })
+
+  ipcMain.handle('slash-commands:create', (_event, projectId: string | null, name: string, description: string | null, prompt: string) => {
+    return createSlashCommand(projectId, name, description, prompt)
+  })
+
+  ipcMain.handle('slash-commands:update', (_event, id: string, name: string, description: string | null, prompt: string) => {
+    return updateSlashCommand(id, name, description, prompt)
+  })
+
+  ipcMain.handle('slash-commands:delete', (_event, id: string) => {
+    return deleteSlashCommand(id)
   })
 
   // ── Window Controls ────────────────────────────────────────────────────────

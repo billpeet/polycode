@@ -7,7 +7,9 @@ import { useToastStore } from '../stores/toast'
 import { useUiStore, RightPanelTab } from '../stores/ui'
 import { useFilesStore } from '../stores/files'
 import { useCommandStore, EMPTY_COMMANDS, instKey } from '../stores/commands'
-import { GitFileChange, CommandStatus } from '../types/ipc'
+import { useSlashCommandStore } from '../stores/slashCommands'
+import { useProjectStore } from '../stores/projects'
+import { GitFileChange, CommandStatus, SlashCommand } from '../types/ipc'
 import FileTree from './FileTree'
 
 function SparkleIcon() {
@@ -217,7 +219,7 @@ function TasksSection({ threadId, collapsed, onToggle }: { threadId: string; col
 
 // ─── Branch controls ──────────────────────────────────────────────────────────
 
-type BranchMode = 'switch' | 'new' | 'merge'
+type BranchMode = 'switch' | 'new' | 'merge' | 'clean'
 
 function BranchControls({
   projectPath,
@@ -248,12 +250,21 @@ function BranchControls({
   const [merging, setMerging] = useState(false)
   const [mergeConflicts, setMergeConflicts] = useState<string[]>([])
 
+  // Clean state
+  const [mergedBranches, setMergedBranches] = useState<string[]>([])
+  const [scanning, setScanning] = useState(false)
+  const [scanned, setScanned] = useState(false)
+  const [selectedForDelete, setSelectedForDelete] = useState<Set<string>>(new Set())
+  const [deleting, setDeleting] = useState(false)
+
   const branches = useGitStore((s) => s.branchesByPath[projectPath] ?? null)
   const branchLoading = useGitStore((s) => s.branchLoadingByPath[projectPath] ?? false)
   const fetchBranches = useGitStore((s) => s.fetchBranches)
   const checkoutAction = useGitStore((s) => s.checkout)
   const createBranchAction = useGitStore((s) => s.createBranch)
   const mergeAction = useGitStore((s) => s.merge)
+  const findMergedAction = useGitStore((s) => s.findMergedBranches)
+  const deleteBranchesAction = useGitStore((s) => s.deleteBranches)
   const addToast = useToastStore((s) => s.add)
 
   function toggleOpen() {
@@ -315,6 +326,49 @@ function BranchControls({
     }
   }
 
+  async function handleScan() {
+    setScanning(true)
+    setScanned(false)
+    setMergedBranches([])
+    setSelectedForDelete(new Set())
+    try {
+      const branches = await findMergedAction(projectPath)
+      setMergedBranches(branches)
+      setSelectedForDelete(new Set(branches))
+      setScanned(true)
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Scan failed', duration: 0 })
+    } finally {
+      setScanning(false)
+    }
+  }
+
+  async function handleDeleteBranches() {
+    if (selectedForDelete.size === 0) return
+    setDeleting(true)
+    try {
+      const result = await deleteBranchesAction(projectPath, [...selectedForDelete])
+      if (result.deleted.length > 0) {
+        addToast({ type: 'success', message: `Deleted ${result.deleted.length} branch${result.deleted.length !== 1 ? 'es' : ''}`, duration: 3000 })
+      }
+      if (result.failed.length > 0) {
+        addToast({ type: 'error', message: `Failed to delete: ${result.failed.map((f) => f.branch).join(', ')}`, duration: 0 })
+      }
+      // Re-scan after deletion
+      setScanned(false)
+      setMergedBranches([])
+      setSelectedForDelete(new Set())
+      const remaining = await findMergedAction(projectPath)
+      setMergedBranches(remaining)
+      setSelectedForDelete(new Set(remaining))
+      setScanned(true)
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Delete failed', duration: 0 })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   async function handleMerge() {
     if (!mergeSource) return
     setMerging(true)
@@ -369,10 +423,17 @@ function BranchControls({
         <div className="pb-2">
           {/* Mode tabs */}
           <div className="flex px-3 gap-0 mb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            {(['switch', 'new', 'merge'] as BranchMode[]).map((m) => (
+            {(['switch', 'new', 'merge', 'clean'] as BranchMode[]).map((m) => (
               <button
                 key={m}
-                onClick={() => { setMode(m); setSelectedBranch(null); setBranchSearch('') }}
+                onClick={() => {
+                  setMode(m)
+                  setSelectedBranch(null)
+                  setBranchSearch('')
+                  if (m === 'clean' && !scanned && !scanning) {
+                    handleScan()
+                  }
+                }}
                 className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors"
                 style={{
                   color: mode === m ? 'var(--color-text)' : 'var(--color-text-muted)',
@@ -380,7 +441,7 @@ function BranchControls({
                   marginBottom: -1,
                 }}
               >
-                {m === 'switch' ? 'Switch' : m === 'new' ? 'New' : 'Merge'}
+                {m === 'switch' ? 'Switch' : m === 'new' ? 'New' : m === 'merge' ? 'Merge' : 'Clean'}
               </button>
             ))}
           </div>
@@ -611,6 +672,99 @@ function BranchControls({
               >
                 {merging ? 'Merging…' : mergeSource ? `Merge ${mergeSource}` : 'Merge'}
               </button>
+            </div>
+          )}
+          {/* Clean mode */}
+          {mode === 'clean' && (
+            <div className="px-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                  Branches squash-merged into master
+                </p>
+                <button
+                  onClick={handleScan}
+                  disabled={scanning}
+                  className="rounded p-0.5 hover:bg-white/10 transition-colors disabled:opacity-40"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title="Re-scan"
+                >
+                  <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className={scanning ? 'animate-spin' : ''}>
+                    <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z"/>
+                    <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+                  </svg>
+                </button>
+              </div>
+
+              {scanning && (
+                <p className="text-xs text-center py-3" style={{ color: 'var(--color-text-muted)' }}>
+                  Scanning… (fetching origin)
+                </p>
+              )}
+
+              {!scanning && scanned && mergedBranches.length === 0 && (
+                <p className="text-xs text-center py-3" style={{ color: 'var(--color-text-muted)' }}>
+                  No merged branches to clean up.
+                </p>
+              )}
+
+              {!scanning && scanned && mergedBranches.length > 0 && (
+                <>
+                  <div className="flex items-center justify-between mb-0.5">
+                    <button
+                      onClick={() => setSelectedForDelete(new Set(mergedBranches))}
+                      className="text-[10px] hover:underline"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      Select all
+                    </button>
+                    <button
+                      onClick={() => setSelectedForDelete(new Set())}
+                      className="text-[10px] hover:underline"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      Deselect all
+                    </button>
+                  </div>
+                  <div
+                    className="rounded overflow-y-auto space-y-0.5 py-1"
+                    style={{ maxHeight: 160, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+                  >
+                    {mergedBranches.map((b) => (
+                      <label
+                        key={b}
+                        className="flex items-center gap-2 px-2 py-1 hover:bg-white/5 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedForDelete.has(b)}
+                          onChange={(e) => {
+                            setSelectedForDelete((prev) => {
+                              const next = new Set(prev)
+                              if (e.target.checked) next.add(b)
+                              else next.delete(b)
+                              return next
+                            })
+                          }}
+                          style={{ accentColor: 'var(--color-claude)', flexShrink: 0 }}
+                        />
+                        <span className="text-[10px] font-mono truncate" style={{ color: 'var(--color-text)' }}>{b}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <button
+                    onClick={handleDeleteBranches}
+                    disabled={deleting || selectedForDelete.size === 0}
+                    className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                    style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}
+                  >
+                    {deleting
+                      ? 'Deleting…'
+                      : selectedForDelete.size > 0
+                        ? `Delete ${selectedForDelete.size} branch${selectedForDelete.size !== 1 ? 'es' : ''}`
+                        : 'Delete'}
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -1043,7 +1197,11 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                       if (!projectPath) return
                       try {
                         await pushGit(projectPath)
-                        addToast({ type: 'success', message: 'Pushed successfully', duration: 3000 })
+                        addToast({
+                          type: 'success',
+                          message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully',
+                          duration: 3000,
+                        })
                       } catch (err) {
                         addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 })
                       }
@@ -1051,11 +1209,11 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                     disabled={isPushing}
                     className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
                     style={{
-                      background: 'var(--color-surface-2)',
-                      border: '1px solid var(--color-border)',
-                      color: gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)',
+                      background: !gitStatus.hasUpstream ? 'rgba(232, 123, 95, 0.12)' : 'var(--color-surface-2)',
+                      border: !gitStatus.hasUpstream ? '1px solid rgba(232, 123, 95, 0.4)' : '1px solid var(--color-border)',
+                      color: !gitStatus.hasUpstream ? 'var(--color-claude)' : gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)',
                     }}
-                    title="Push to remote"
+                    title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin` : 'Push to remote'}
                   >
                     {isPushing ? (
                       <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
@@ -1066,7 +1224,9 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                         <path d="M8 4l4 4H9.5v4h-3V8H4l4-4z"/>
                       </svg>
                     )}
-                    Push{gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}
+                    {isPushing
+                      ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…')
+                      : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}
                   </button>
                 </div>
               </>
@@ -1295,6 +1455,277 @@ function CommandsSection({ threadId }: { threadId: string }) {
   )
 }
 
+// ─── Prompts section ──────────────────────────────────────────────────────────
+
+function PromptsSection() {
+  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
+  const commands = useSlashCommandStore((s) => s.commands)
+  const fetch = useSlashCommandStore((s) => s.fetch)
+  const create = useSlashCommandStore((s) => s.create)
+  const update = useSlashCommandStore((s) => s.update)
+  const remove = useSlashCommandStore((s) => s.remove)
+  const addToast = useToastStore((s) => s.add)
+
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [showForm, setShowForm] = useState(false)
+  const [formScope, setFormScope] = useState<'project' | 'global'>('project')
+  const [formName, setFormName] = useState('')
+  const [formDesc, setFormDesc] = useState('')
+  const [formPrompt, setFormPrompt] = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    fetch(selectedProjectId ?? undefined)
+  }, [selectedProjectId, fetch])
+
+  const projectCmds = commands.filter((c) => c.project_id !== null)
+  const globalCmds = commands.filter((c) => c.project_id === null)
+
+  function resetForm() {
+    setEditingId(null)
+    setShowForm(false)
+    setFormScope('project')
+    setFormName('')
+    setFormDesc('')
+    setFormPrompt('')
+  }
+
+  function startEdit(cmd: SlashCommand) {
+    setEditingId(cmd.id)
+    setShowForm(true)
+    setFormScope(cmd.project_id ? 'project' : 'global')
+    setFormName(cmd.name)
+    setFormDesc(cmd.description ?? '')
+    setFormPrompt(cmd.prompt)
+  }
+
+  async function handleSave() {
+    const name = formName.trim()
+    const prompt = formPrompt.trim()
+    if (!name || !prompt) return
+
+    setSaving(true)
+    try {
+      if (editingId) {
+        await update(editingId, name, formDesc.trim() || null, prompt)
+      } else {
+        const projectId = formScope === 'project' ? (selectedProjectId ?? null) : null
+        await create(projectId, name, formDesc.trim() || null, prompt)
+      }
+      resetForm()
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to save', duration: 0 })
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleDelete(id: string) {
+    try {
+      await remove(id)
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to delete', duration: 0 })
+    }
+  }
+
+  function renderCommandList(cmds: SlashCommand[], label: string) {
+    if (cmds.length === 0) return null
+    return (
+      <div className="mb-2">
+        <div
+          className="px-3 py-1 text-[10px] font-semibold uppercase tracking-wider"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
+          {label}
+        </div>
+        <ul className="space-y-1 px-3">
+          {cmds.map((cmd) => (
+            <li
+              key={cmd.id}
+              className="rounded px-2 py-1.5"
+              style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+            >
+              <div className="flex items-center gap-1.5">
+                <span
+                  className="flex-1 truncate font-mono text-xs font-medium"
+                  style={{ color: 'var(--color-claude)' }}
+                >
+                  /{cmd.name}
+                </span>
+                <button
+                  onClick={() => startEdit(cmd)}
+                  className="rounded p-0.5 hover:bg-white/10 transition-colors"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title="Edit"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => handleDelete(cmd.id)}
+                  className="rounded p-0.5 hover:bg-white/10 transition-colors"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title="Delete"
+                >
+                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <polyline points="3 6 5 6 21 6" />
+                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                    <path d="M10 11v6M14 11v6" />
+                    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                  </svg>
+                </button>
+              </div>
+              {cmd.description && (
+                <p className="mt-0.5 truncate text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                  {cmd.description}
+                </p>
+              )}
+            </li>
+          ))}
+        </ul>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-0 px-0 py-3">
+      {/* Add button */}
+      {!showForm && (
+        <div className="mb-3 px-3">
+          <button
+            onClick={() => {
+              resetForm()
+              setShowForm(true)
+            }}
+            className="w-full rounded py-1.5 text-xs font-medium transition-opacity hover:opacity-80"
+            style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+          >
+            + New Prompt
+          </button>
+        </div>
+      )}
+
+      {/* Create / edit form */}
+      {showForm && (
+        <div
+          className="mx-3 mb-3 rounded-lg p-3"
+          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+        >
+          <div className="mb-2 text-xs font-semibold" style={{ color: 'var(--color-text)' }}>
+            {editingId ? 'Edit Prompt' : 'New Prompt'}
+          </div>
+
+          {/* Scope selector — only for new commands */}
+          {!editingId && (
+            <div className="mb-2 flex gap-1">
+              <button
+                onClick={() => setFormScope('project')}
+                className="flex-1 rounded py-1 text-[10px] font-medium transition-colors"
+                style={{
+                  background: formScope === 'project' ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
+                  border: `1px solid ${formScope === 'project' ? 'rgba(232, 123, 95, 0.4)' : 'var(--color-border)'}`,
+                  color: formScope === 'project' ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                }}
+              >
+                Project
+              </button>
+              <button
+                onClick={() => setFormScope('global')}
+                className="flex-1 rounded py-1 text-[10px] font-medium transition-colors"
+                style={{
+                  background: formScope === 'global' ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
+                  border: `1px solid ${formScope === 'global' ? 'rgba(232, 123, 95, 0.4)' : 'var(--color-border)'}`,
+                  color: formScope === 'global' ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                }}
+              >
+                Global
+              </button>
+            </div>
+          )}
+
+          {/* Name */}
+          <div className="mb-2 flex items-center gap-1">
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>/</span>
+            <input
+              type="text"
+              value={formName}
+              onChange={(e) => setFormName(e.target.value.replace(/\s/g, '-').toLowerCase())}
+              placeholder="name"
+              className="flex-1 rounded px-2 py-1 text-xs outline-none"
+              style={{
+                background: 'var(--color-surface-2)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text)',
+              }}
+            />
+          </div>
+
+          {/* Description */}
+          <input
+            type="text"
+            value={formDesc}
+            onChange={(e) => setFormDesc(e.target.value)}
+            placeholder="Description (optional)"
+            className="mb-2 w-full rounded px-2 py-1 text-xs outline-none"
+            style={{
+              background: 'var(--color-surface-2)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text)',
+            }}
+          />
+
+          {/* Prompt content */}
+          <textarea
+            value={formPrompt}
+            onChange={(e) => setFormPrompt(e.target.value)}
+            placeholder="Prompt content…"
+            rows={4}
+            className="mb-2 w-full resize-none rounded px-2 py-1.5 text-xs outline-none"
+            style={{
+              background: 'var(--color-surface-2)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text)',
+              fontFamily: 'inherit',
+            }}
+          />
+
+          <div className="flex gap-1.5">
+            <button
+              onClick={handleSave}
+              disabled={saving || !formName.trim() || !formPrompt.trim()}
+              className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+              style={{ background: 'var(--color-claude)', color: '#fff' }}
+            >
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+            <button
+              onClick={resetForm}
+              className="rounded px-3 py-1.5 text-xs transition-colors hover:bg-white/10"
+              style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Command lists */}
+      {commands.length === 0 && !showForm ? (
+        <p className="px-4 py-6 text-center text-xs" style={{ color: 'var(--color-text-muted)' }}>
+          No prompts yet. Click "+ New Prompt" to create one.
+        </p>
+      ) : (
+        <>
+          {renderCommandList(projectCmds, 'Project')}
+          {renderCommandList(globalCmds, 'Global')}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Tab button ────────────────────────────────────────────────────────────────
 
 function TabButton({
@@ -1347,6 +1778,7 @@ export default function RightPanel({ threadId }: Props) {
         <TabButton label="Tasks" active={activeTab === 'tasks'} onClick={() => setActiveTab('tasks')} />
         <TabButton label="Files" active={activeTab === 'files'} onClick={() => setActiveTab('files')} />
         <TabButton label="Commands" active={activeTab === 'commands'} onClick={() => setActiveTab('commands')} />
+        <TabButton label="Prompts" active={activeTab === 'prompts'} onClick={() => setActiveTab('prompts')} />
       </div>
 
       {/* Tab content */}
@@ -1370,8 +1802,10 @@ export default function RightPanel({ threadId }: Props) {
           </>
         ) : activeTab === 'files' ? (
           <FileTree threadId={threadId} />
-        ) : (
+        ) : activeTab === 'commands' ? (
           <CommandsSection threadId={threadId} />
+        ) : (
+          <PromptsSection />
         )}
       </div>
     </aside>

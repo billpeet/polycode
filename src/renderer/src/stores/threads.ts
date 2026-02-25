@@ -48,7 +48,7 @@ interface ThreadStore {
   approvePlan: (threadId: string) => Promise<void>
   rejectPlan: (threadId: string) => Promise<void>
   getQuestions: (threadId: string) => Promise<Question[]>
-  answerQuestion: (threadId: string, answers: Record<string, string>) => Promise<void>
+  answerQuestion: (threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string) => Promise<void>
   setDraft: (threadId: string, draft: string) => void
   setPlanMode: (threadId: string, planMode: boolean) => void
   queueMessage: (threadId: string, content: string, planMode: boolean) => void
@@ -328,12 +328,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     return await window.api.invoke('threads:getQuestions', threadId)
   },
 
-  answerQuestion: async (threadId, answers) => {
+  answerQuestion: async (threadId, answers, questionComments, generalComment) => {
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'running' },
       runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
     }))
-    await window.api.invoke('threads:answerQuestion', threadId, answers)
+    await window.api.invoke('threads:answerQuestion', threadId, answers, questionComments, generalComment)
   },
 
   setDraft: (threadId, draft) =>

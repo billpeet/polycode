@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
+import { useRateLimitStore, RateLimitEntry } from '../stores/rateLimits'
 import { useThreadStore } from '../stores/threads'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
@@ -11,6 +12,57 @@ import ImportHistoryDialog from './ImportHistoryDialog'
 
 const EMPTY_TODOS: Todo[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
+const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
+
+// ─── Rate limit helpers ───────────────────────────────────────────────────────
+
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return 'soon'
+  const h = Math.floor(seconds / 3600)
+  const m = Math.floor((seconds % 3600) / 60)
+  const s = seconds % 60
+  if (h > 0) return `${h}h ${m}m ${s}s`
+  if (m > 0) return `${m}m ${s}s`
+  return `${s}s`
+}
+
+function formatRateLimitType(type: string): string {
+  const known: Record<string, string> = {
+    default: 'rate limit',
+    '5_hour': '5h window',
+    '7_day': '7d window',
+    requests_per_minute: 'req/min',
+    requests_per_second: 'req/s',
+    tokens_per_day: 'tokens/day',
+    tokens_per_minute: 'tokens/min',
+  }
+  return known[type] ?? type.replace(/_/g, ' ')
+}
+
+function RateLimitBanner({ limit, nowSeconds }: { limit: RateLimitEntry; nowSeconds: number }) {
+  const isBlocked = limit.status === 'blocked'
+  const color = isBlocked ? '#f87171' : '#facc15'
+  const bgColor = isBlocked ? 'rgba(239, 68, 68, 0.08)' : 'rgba(250, 204, 21, 0.08)'
+  const borderColor = isBlocked ? 'rgba(239, 68, 68, 0.25)' : 'rgba(250, 204, 21, 0.25)'
+  const pct = limit.utilization != null ? Math.round(limit.utilization * 100) : null
+  const remaining = limit.resetsAt ? limit.resetsAt - nowSeconds : null
+  const typeLabel = formatRateLimitType(limit.rateLimitType)
+
+  return (
+    <div
+      className="flex items-center gap-2 text-xs px-2.5 py-1 rounded"
+      style={{ background: bgColor, border: `1px solid ${borderColor}`, color }}
+    >
+      <span style={{ flexShrink: 0 }}>{isBlocked ? '⊘' : '⚠'}</span>
+      <span>
+        {isBlocked
+          ? `Claude Code rate limited (${typeLabel})`
+          : `Claude Code rate limit${pct != null ? ` ${pct}%` : ''} used (${typeLabel})`}
+        {remaining != null && remaining > 0 && ` — resets in ${formatCountdown(remaining)}`}
+      </span>
+    </div>
+  )
+}
 
 function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
@@ -61,6 +113,23 @@ export default function ThreadHeader({ threadId }: Props) {
   const addToast = useToastStore((s) => s.add)
 
   const fetchThreads = useThreadStore((s) => s.fetch)
+
+  const threadRateLimits = useRateLimitStore((s) => s.limitsByThread[threadId] ?? EMPTY_RATE_LIMITS)
+  const activeRateLimits = Object.values(threadRateLimits).filter(
+    (l) => l.provider === 'claude-code' && (l.status === 'blocked' || l.status === 'allowed_warning')
+  )
+
+  const [nowSeconds, setNowSeconds] = useState(() => Math.floor(Date.now() / 1000))
+
+  // Tick every second while rate limits are active to update countdowns and clear expired entries
+  useEffect(() => {
+    if (activeRateLimits.length === 0) return
+    const interval = setInterval(() => {
+      useRateLimitStore.getState().clearExpired(threadId)
+      setNowSeconds(Math.floor(Date.now() / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [activeRateLimits.length, threadId])
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -124,9 +193,10 @@ export default function ThreadHeader({ threadId }: Props) {
 
   return (
     <div
-      className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+      className="flex flex-col flex-shrink-0 border-b"
       style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
     >
+    <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-3 min-w-0">
         {status === 'running' ? (
           <span className="h-2.5 w-2.5 flex-shrink-0 status-spinner" />
@@ -483,6 +553,15 @@ export default function ThreadHeader({ threadId }: Props) {
           onClose={() => setImportDialogOpen(false)}
           onImported={() => fetchThreads(selectedProjectId)}
         />
+      )}
+    </div>
+
+      {activeRateLimits.length > 0 && (
+        <div className="flex flex-col gap-1 px-4 pb-2">
+          {activeRateLimits.map((limit) => (
+            <RateLimitBanner key={limit.rateLimitType} limit={limit} nowSeconds={nowSeconds} />
+          ))}
+        </div>
       )}
     </div>
   )

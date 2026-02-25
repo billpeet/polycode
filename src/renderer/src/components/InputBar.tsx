@@ -14,11 +14,14 @@ import {
   MAX_ATTACHMENTS_PER_MESSAGE,
   Thread,
   RepoLocation,
+  SlashCommand,
 } from '../types/ipc'
 import FileMentionPopup from './FileMentionPopup'
 import YouTrackMentionPopup from './YouTrackMentionPopup'
+import SlashCommandPopup from './SlashCommandPopup'
 import AttachmentPreview from './AttachmentPreview'
 import { useYouTrackStore } from '../stores/youtrack'
+import { useSlashCommandStore } from '../stores/slashCommands'
 import QueuedMessageBanner from './QueuedMessageBanner'
 
 interface Props {
@@ -140,6 +143,7 @@ function QueueIcon({ className }: { className?: string }) {
 
 const EMPTY_THREADS: Thread[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
+const EMPTY_SLASH_COMMANDS: SlashCommand[] = []
 
 interface MentionState {
   active: boolean
@@ -147,6 +151,13 @@ interface MentionState {
   query: string
   position: { top: number; left: number }
   type: 'file' | 'youtrack'
+}
+
+interface SlashState {
+  active: boolean
+  startIndex: number
+  query: string
+  position: { top: number; left: number }
 }
 
 /** Matches YouTrack issue ID patterns like JS-, JS-123, MYPROJ-42 (all uppercase project code) */
@@ -163,6 +174,8 @@ export default function InputBar({ threadId }: Props) {
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({})
+  const [questionComments, setQuestionComments] = useState<Record<string, string>>({})
+  const [generalComment, setGeneralComment] = useState('')
   const [mention, setMention] = useState<MentionState>({
     active: false,
     startIndex: -1,
@@ -173,6 +186,12 @@ export default function InputBar({ threadId }: Props) {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const [slashCmd, setSlashCmd] = useState<SlashState>({
+    active: false,
+    startIndex: -1,
+    query: '',
+    position: { top: 0, left: 0 },
+  })
   const runStartedAt = useThreadStore((s) => s.runStartedAtByThread[threadId] ?? 0)
 
   const send = useThreadStore((s) => s.send)
@@ -200,6 +219,10 @@ export default function InputBar({ threadId }: Props) {
   const addToast = useToastStore((s) => s.add)
 
   const youtrackServers = useYouTrackStore((s) => s.servers)
+  const slashCommandsByScope = useSlashCommandStore((s) => s.commandsByScope)
+  const fetchSlashCommands = useSlashCommandStore((s) => s.fetch)
+  const slashCommands = slashCommandsByScope[selectedProjectId ?? 'global'] ?? slashCommandsByScope['global'] ?? EMPTY_SLASH_COMMANDS
+  const sendingRef = useRef(false)
 
   const isProcessing = status === 'running'
   const isPlanPending = status === 'plan_pending'
@@ -229,10 +252,14 @@ export default function InputBar({ threadId }: Props) {
       getQuestions(threadId).then((qs) => {
         setQuestions(qs)
         setSelectedAnswers({})
+        setQuestionComments({})
+        setGeneralComment('')
       })
     } else {
       setQuestions([])
       setSelectedAnswers({})
+      setQuestionComments({})
+      setGeneralComment('')
     }
   }, [isQuestionPending, threadId, getQuestions])
 
@@ -244,63 +271,81 @@ export default function InputBar({ threadId }: Props) {
     return () => window.removeEventListener('focus-input', onFocusInput)
   }, [])
 
+  // Fetch slash commands whenever the active project changes
+  useEffect(() => {
+    fetchSlashCommands(selectedProjectId ?? null)
+  }, [selectedProjectId, fetchSlashCommands])
+
   async function handleSend(): Promise<void> {
+    // Guard against concurrent sends (e.g. rapid Enter presses before React re-renders)
+    if (sendingRef.current) return
+
     const trimmed = value.trim()
     if ((!trimmed && attachments.length === 0) || !project) return
 
-    // Save attachments to temp and build @ mentions
-    const savedPaths: string[] = []
-    for (const att of attachments) {
-      if (att.dataUrl) {
-        const { tempPath } = await window.api.invoke(
-          'attachments:save',
-          att.dataUrl,
-          att.name,
-          threadId
-        )
-        savedPaths.push(tempPath)
-      } else if (att.tempPath) {
-        savedPaths.push(att.tempPath)
-      }
-    }
+    sendingRef.current = true
 
-    // Build final message with @ mentions for attachments
-    let finalContent = trimmed
-    if (savedPaths.length > 0) {
-      const mentions = savedPaths.map((p) => `@${p}`).join(' ')
-      finalContent = finalContent ? `${mentions}\n\n${trimmed}` : mentions
-    }
+    // Snapshot state before any async work
+    const currentAttachments = attachments
+    const currentPlanMode = planMode
 
-    // Clear state
+    // Clear input immediately so the UI feels responsive before async work completes
     setDraft(threadId, '')
     setAttachments([])
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
 
-    // If processing, queue the message instead of sending
-    if (isProcessing) {
-      queueMessage(threadId, finalContent, planMode)
-      if (planMode) setPlanMode(threadId, false)
-      return
-    }
+    try {
+      // Save attachments to temp and build @ mentions
+      const savedPaths: string[] = []
+      for (const att of currentAttachments) {
+        if (att.dataUrl) {
+          const { tempPath } = await window.api.invoke(
+            'attachments:save',
+            att.dataUrl,
+            att.name,
+            threadId
+          )
+          savedPaths.push(tempPath)
+        } else if (att.tempPath) {
+          savedPaths.push(att.tempPath)
+        }
+      }
 
-    // Append optimistic user message to the correct store based on active session
-    const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
-    if (activeSessionId) {
-      useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent)
-    } else {
-      appendUserMessage(threadId, finalContent)
+      // Build final message with @ mentions for attachments
+      let finalContent = trimmed
+      if (savedPaths.length > 0) {
+        const mentions = savedPaths.map((p) => `@${p}`).join(' ')
+        finalContent = finalContent ? `${mentions}\n\n${trimmed}` : mentions
+      }
+
+      // If processing, queue the message instead of sending
+      if (isProcessing) {
+        queueMessage(threadId, finalContent, currentPlanMode)
+        if (currentPlanMode) setPlanMode(threadId, false)
+        return
+      }
+
+      // Append optimistic user message to the correct store based on active session
+      const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
+      if (activeSessionId) {
+        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent)
+      } else {
+        appendUserMessage(threadId, finalContent)
+      }
+      await send(threadId, finalContent, { planMode: currentPlanMode })
+      if (currentPlanMode) setPlanMode(threadId, false)
+    } finally {
+      sendingRef.current = false
     }
-    await send(threadId, finalContent, { planMode })
-    if (planMode) setPlanMode(threadId, false)
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): void {
-    // If mention popup is active, let it handle navigation keys
-    if (mention.active) {
+    // If mention or slash popup is active, let it handle navigation keys
+    if (mention.active || slashCmd.active) {
       if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
-        // These are handled by FileMentionPopup's document keydown listener
+        // These are handled by the popup's document keydown listener
         return
       }
     }
@@ -349,10 +394,30 @@ export default function InputBar({ threadId }: Props) {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }
 
-  // Detect '@' trigger for file or YouTrack issue mentions
+  // Detect '@' trigger for file or YouTrack mentions, and '/' trigger for slash commands
   const checkForMention = useCallback((text: string, cursorPos: number) => {
-    // Find the '@' before the cursor
     const textBeforeCursor = text.slice(0, cursorPos)
+    const el = textareaRef.current
+    if (!el) return
+    const rect = el.getBoundingClientRect()
+    const popupPosition = { top: rect.top - 8, left: rect.left }
+
+    // ── Slash command detection ──────────────────────────────────────────────
+    const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
+    if (lastSlashIndex !== -1) {
+      const charBeforeSlash = lastSlashIndex > 0 ? text[lastSlashIndex - 1] : ' '
+      const slashQuery = text.slice(lastSlashIndex + 1, cursorPos)
+      if (/\s/.test(charBeforeSlash) || lastSlashIndex === 0) {
+        if (!slashQuery.includes(' ') && !slashQuery.includes('\n')) {
+          setSlashCmd({ active: true, startIndex: lastSlashIndex, query: slashQuery, position: popupPosition })
+          setMention((m) => (m.active ? { ...m, active: false } : m))
+          return
+        }
+      }
+    }
+    setSlashCmd((s) => (s.active ? { ...s, active: false } : s))
+
+    // ── @ mention detection ──────────────────────────────────────────────────
     const lastAtIndex = textBeforeCursor.lastIndexOf('@')
 
     if (lastAtIndex === -1) {
@@ -376,16 +441,6 @@ export default function InputBar({ threadId }: Props) {
       return
     }
 
-    // Calculate popup position
-    const el = textareaRef.current
-    if (!el) return
-
-    const rect = el.getBoundingClientRect()
-    const position = {
-      top: rect.top - 8,
-      left: rect.left,
-    }
-
     // Determine mention type: YouTrack IDs are all-uppercase project codes (e.g. JS-, JS-123)
     const type: 'youtrack' | 'file' =
       query.length >= 1 && YOUTRACK_QUERY_REGEX.test(query) ? 'youtrack' : 'file'
@@ -394,7 +449,7 @@ export default function InputBar({ threadId }: Props) {
       active: true,
       startIndex: lastAtIndex,
       query,
-      position,
+      position: popupPosition,
       type,
     })
   }, [])
@@ -428,6 +483,29 @@ export default function InputBar({ threadId }: Props) {
 
   const closeMention = useCallback(() => {
     setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
+  }, [])
+
+  const handleSlashSelect = useCallback((cmd: SlashCommand) => {
+    const el = textareaRef.current
+    if (!el) return
+
+    const before = value.slice(0, slashCmd.startIndex)
+    const after = value.slice(el.selectionStart)
+    const newValue = `${before}${cmd.prompt}${after}`
+
+    setDraft(threadId, newValue)
+    setSlashCmd({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
+
+    requestAnimationFrame(() => {
+      el.focus()
+      const cursorPos = slashCmd.startIndex + cmd.prompt.length
+      el.selectionStart = el.selectionEnd = cursorPos
+      handleInput()
+    })
+  }, [value, slashCmd.startIndex, threadId, setDraft])
+
+  const closeSlashCmd = useCallback(() => {
+    setSlashCmd({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
   }, [])
 
   const handleYouTrackSelect = useCallback((issueId: string) => {
@@ -759,12 +837,41 @@ export default function InputBar({ threadId }: Props) {
                   )
                 })}
               </div>
+              <input
+                type="text"
+                value={questionComments[q.question] ?? ''}
+                onChange={(e) =>
+                  setQuestionComments((prev) => ({ ...prev, [q.question]: e.target.value }))
+                }
+                placeholder="Add a comment for this question... (optional)"
+                className="mt-2 w-full rounded-lg px-3 py-1.5 text-xs outline-none"
+                style={{
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                  color: 'var(--color-text)',
+                }}
+              />
             </div>
           ))}
 
-          <div className="mt-4 flex justify-end">
+          <div className="mt-3">
+            <textarea
+              value={generalComment}
+              onChange={(e) => setGeneralComment(e.target.value)}
+              placeholder="General comments or clarifications... (optional)"
+              rows={2}
+              className="w-full resize-none rounded-lg px-3 py-2 text-xs outline-none"
+              style={{
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text)',
+              }}
+            />
+          </div>
+
+          <div className="mt-3 flex justify-end">
             <button
-              onClick={() => answerQuestion(threadId, selectedAnswers)}
+              onClick={() => answerQuestion(threadId, selectedAnswers, questionComments, generalComment)}
               disabled={Object.keys(selectedAnswers).length < questions.length}
               className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
               style={{
@@ -873,7 +980,7 @@ export default function InputBar({ threadId }: Props) {
             onFocus={() => setIsFocused(true)}
             onBlur={() => setIsFocused(false)}
             rows={1}
-            placeholder={isProcessing ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...') : 'Ask Claude anything... (@ for files or @JS-123 for YouTrack)'}
+            placeholder={isProcessing ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...') : 'Ask Claude... (/ for slash commands, @ for files, @JS-123 for YouTrack)'}
             disabled={isPlanPending || isQuestionPending}
             className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
             style={{
@@ -964,6 +1071,17 @@ export default function InputBar({ threadId }: Props) {
           onSelect={handleYouTrackSelect}
           onClose={closeMention}
           position={mention.position}
+        />
+      )}
+
+      {/* Slash command popup */}
+      {slashCmd.active && slashCommands.length > 0 && (
+        <SlashCommandPopup
+          commands={slashCommands}
+          query={slashCmd.query}
+          onSelect={handleSlashSelect}
+          onClose={closeSlashCmd}
+          position={slashCmd.position}
         />
       )}
     </div>
