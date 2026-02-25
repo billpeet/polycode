@@ -37,6 +37,27 @@ function ToastItem({ toast }: { toast: Toast }) {
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {toast.message}
       </span>
+      {toast.actionLabel ? (
+        <button
+          onClick={() => {
+            void toast.onAction?.()
+          }}
+          style={{
+            flexShrink: 0,
+            background: 'transparent',
+            border: `1px solid ${color}`,
+            borderRadius: '9999px',
+            cursor: 'pointer',
+            color: 'inherit',
+            fontSize: '0.72rem',
+            lineHeight: 1,
+            padding: '0.2rem 0.5rem',
+            fontWeight: 600,
+          }}
+        >
+          {toast.actionLabel}
+        </button>
+      ) : null}
       <button
         onClick={() => remove(toast.id)}
         style={{

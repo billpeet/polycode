@@ -5,6 +5,8 @@ export interface Toast {
   type: 'success' | 'error' | 'info' | 'warning'
   message: string
   duration?: number // ms, default 4000; 0 = persist until dismissed
+  actionLabel?: string
+  onAction?: () => void | Promise<void>
 }
 
 interface ToastStore {

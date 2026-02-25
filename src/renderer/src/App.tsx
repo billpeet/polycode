@@ -141,6 +141,18 @@ export default function App() {
         type: 'info',
         message: 'Update ready — restart Polycode to install.',
         duration: 0,
+        actionLabel: 'Restart now',
+        onAction: async () => {
+          try {
+            await window.api.invoke('app:install-update')
+          } catch (err) {
+            useToastStore.getState().add({
+              type: 'error',
+              message: err instanceof Error ? err.message : 'Failed to restart for update.',
+              duration: 0,
+            })
+          }
+        },
       })
     })
   }, [])
