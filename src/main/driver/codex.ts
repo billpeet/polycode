@@ -137,7 +137,30 @@ export class CodexDriver implements CLIDriver {
       const cdTarget = workDir.startsWith('~')
         ? '"$HOME"' + shellEscape(workDir.slice(1))
         : shellEscape(workDir)
-      const innerCmd = `cd ${cdTarget} && codex ${args.map(shellEscape).join(' ')}`
+      // Like WSL, login/non-interactive shells may skip node manager init.
+      // Load common managers explicitly so `codex` resolves on remote hosts.
+      const loadNodeManagers = [
+        '[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"',
+        '[ -d "$HOME/.volta/bin" ] && export PATH="$HOME/.volta/bin:$PATH"',
+        '[ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"',
+        '[ -d "$HOME/.npm-global/bin" ] && export PATH="$HOME/.npm-global/bin:$PATH"',
+        'command -v fnm &>/dev/null && eval "$(fnm env 2>/dev/null)"',
+      ].join('; ')
+      // Resolve codex explicitly for environments where PATH differs between
+      // interactive and non-interactive/login shells.
+      const resolveCodex = [
+        'CODEX_BIN=""',
+        'command -v codex >/dev/null 2>&1 && CODEX_BIN="$(command -v codex)"',
+        'case "$CODEX_BIN" in /mnt/c/*) CODEX_BIN="";; esac',
+        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.local/bin/codex" ] && CODEX_BIN="$HOME/.local/bin/codex"',
+        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.npm/bin/codex" ] && CODEX_BIN="$HOME/.npm/bin/codex"',
+        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.npm-global/bin/codex" ] && CODEX_BIN="$HOME/.npm-global/bin/codex"',
+        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.volta/bin/codex" ] && CODEX_BIN="$HOME/.volta/bin/codex"',
+        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.bun/bin/codex" ] && CODEX_BIN="$HOME/.bun/bin/codex"',
+        '[ -z "$CODEX_BIN" ] && [ -d "$HOME/.nvm/versions/node" ] && CODEX_BIN="$(ls -1d "$HOME"/.nvm/versions/node/*/bin/codex 2>/dev/null | tail -n 1)"',
+        '[ -n "$CODEX_BIN" ] || { echo "codex not found; PATH=$PATH" >&2; exit 127; }',
+      ].join('; ')
+      const innerCmd = `${loadNodeManagers}; ${resolveCodex}; cd ${cdTarget} && "$CODEX_BIN" ${args.map(shellEscape).join(' ')}`
       const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
       const sshArgs = [
         '-T',
@@ -181,6 +204,8 @@ export class CodexDriver implements CLIDriver {
       const loadNodeManagers = [
         '[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"',
         '[ -d "$HOME/.volta/bin" ] && export PATH="$HOME/.volta/bin:$PATH"',
+        '[ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"',
+        '[ -d "$HOME/.npm-global/bin" ] && export PATH="$HOME/.npm-global/bin:$PATH"',
         'command -v fnm &>/dev/null && eval "$(fnm env 2>/dev/null)"',
       ].join('; ')
       const innerCmd = `${loadNodeManagers}; cd ${cdTarget} && codex ${args.map(shellEscape).join(' ')}`
