@@ -102,7 +102,23 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   create: async (projectId, name, locationId) => {
-    const thread = await window.api.invoke('threads:create', projectId, name, locationId)
+    const projectThreads = get().byProject[projectId] ?? []
+    const selectedThread = projectThreads.find((t) => t.id === get().selectedThreadId)
+    const sourceThread =
+      (selectedThread && selectedThread.location_id === locationId) ? selectedThread
+        : projectThreads.find((t) => t.location_id === locationId) ?? null
+
+    let thread = await window.api.invoke('threads:create', projectId, name, locationId)
+
+    // Carry over per-thread WSL override for this location to new threads.
+    if (
+      sourceThread &&
+      (thread.use_wsl !== sourceThread.use_wsl || thread.wsl_distro !== sourceThread.wsl_distro)
+    ) {
+      await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
+      thread = { ...thread, use_wsl: sourceThread.use_wsl, wsl_distro: sourceThread.wsl_distro }
+    }
+
     set((s) => ({
       byProject: {
         ...s.byProject,
