@@ -129,8 +129,40 @@ export class CodexDriver implements CLIDriver {
     this.announcedItemIds.clear()
     this.completedItemIds.clear()
 
+    const ssh = this.options.ssh
     const wsl = this.options.wsl
-    if (wsl) {
+    if (ssh) {
+      // ── SSH remote spawn ────────────────────────────────────────────────────
+      const workDir = this.options.workingDir
+      const cdTarget = workDir.startsWith('~')
+        ? '"$HOME"' + shellEscape(workDir.slice(1))
+        : shellEscape(workDir)
+      const innerCmd = `cd ${cdTarget} && codex ${args.map(shellEscape).join(' ')}`
+      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+      const sshArgs = [
+        '-T',
+        '-o', 'ConnectTimeout=10',
+        '-o', 'StrictHostKeyChecking=accept-new',
+      ]
+      if (process.platform !== 'win32') {
+        sshArgs.push(
+          '-o', 'ControlMaster=auto',
+          '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
+          '-o', 'ControlPersist=300',
+        )
+      }
+      if (ssh.port) sshArgs.push('-p', String(ssh.port))
+      if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
+      sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
+
+      console.log('[CodexDriver] Spawning SSH: ssh', sshArgs.join(' '))
+
+      this.process = spawn('ssh', sshArgs, {
+        shell: false,
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      this.process.stdin?.end()
+    } else if (wsl) {
       // ── WSL spawn ────────────────────────────────────────────────────────────
       const workDir = this.options.workingDir
       const cdTarget = workDir.startsWith('~')
