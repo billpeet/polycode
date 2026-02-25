@@ -55,7 +55,7 @@ import {
 import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
@@ -527,6 +527,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:pull', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return gitPull(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:pullOrigin', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return gitPullOrigin(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:diff', (_event, repoPath: string, filePath: string, staged: boolean) => {

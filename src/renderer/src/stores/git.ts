@@ -27,6 +27,7 @@ interface GitStore {
   push: (repoPath: string) => Promise<void>
   pushSetUpstream: (repoPath: string, branch: string) => Promise<void>
   pull: (repoPath: string) => Promise<void>
+  pullOrigin: (repoPath: string) => Promise<void>
   fetchModifiedFiles: (threadId: string) => Promise<void>
   fetchBranches: (repoPath: string) => Promise<void>
   checkout: (repoPath: string, branch: string) => Promise<void>
@@ -152,6 +153,17 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
     try {
       await window.api.invoke('git:pull', repoPath)
+    } finally {
+      set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
+      await get().fetch(repoPath)
+    }
+  },
+
+  pullOrigin: async (repoPath) => {
+    if (get().pullingByPath[repoPath]) return
+    set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:pullOrigin', repoPath)
     } finally {
       set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
       await get().fetch(repoPath)

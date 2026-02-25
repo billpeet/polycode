@@ -265,7 +265,10 @@ function BranchControls({
   const mergeAction = useGitStore((s) => s.merge)
   const findMergedAction = useGitStore((s) => s.findMergedBranches)
   const deleteBranchesAction = useGitStore((s) => s.deleteBranches)
+  const pullOriginAction = useGitStore((s) => s.pullOrigin)
+  const pullingByPath = useGitStore((s) => s.pullingByPath)
   const addToast = useToastStore((s) => s.add)
+  const isPullingOrigin = pullingByPath[projectPath] ?? false
 
   function toggleOpen() {
     if (!open) fetchBranches(projectPath)
@@ -421,6 +424,29 @@ function BranchControls({
 
       {open && (
         <div className="pb-2">
+          <div className="px-3 mb-2">
+            <button
+              onClick={async () => {
+                try {
+                  await pullOriginAction(projectPath)
+                  addToast({ type: 'success', message: 'Pulled from origin successfully', duration: 3000 })
+                } catch (err) {
+                  addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull from origin failed', duration: 0 })
+                }
+              }}
+              disabled={isPullingOrigin}
+              className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+              style={{
+                background: 'var(--color-surface-2)',
+                border: '1px solid var(--color-border)',
+                color: 'var(--color-text-muted)',
+              }}
+              title="Run git pull origin"
+            >
+              {isPullingOrigin ? 'Pulling…' : 'Pull Master'}
+            </button>
+          </div>
+
           {/* Mode tabs */}
           <div className="flex px-3 gap-0 mb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
             {(['switch', 'new', 'merge', 'clean'] as BranchMode[]).map((m) => (
@@ -993,9 +1019,12 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const showThreadSplit = threadUnstagedFiles.length > 0 && stagedFiles.length === 0
 
   async function handleCommit(): Promise<void> {
-    if (!projectPath || !commitMsg.trim()) return
+    if (!projectPath || !commitMsg.trim() || (gitStatus?.files.length ?? 0) === 0) return
     setCommitting(true)
     try {
+      if (stagedFiles.length === 0) {
+        await stageAllFiles(projectPath)
+      }
       await commitGit(projectPath, commitMsg.trim())
       addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
     } catch (err) {
@@ -1153,7 +1182,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                 </div>
                 <button
                   onClick={handleCommit}
-                  disabled={!commitMsg.trim() || committing || stagedFiles.length === 0}
+                  disabled={!commitMsg.trim() || committing || totalChanges === 0}
                   className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
                   style={{ background: 'var(--color-claude)', color: '#fff' }}
                 >

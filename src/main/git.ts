@@ -183,6 +183,11 @@ export async function gitPull(repoPath: string, ssh?: SshConfig | null, wsl?: Ws
   return { pulled: true }
 }
 
+export async function gitPullOrigin(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pulled: true }> {
+  await git(repoPath, ['pull', 'origin'], ssh, wsl)
+  return { pulled: true }
+}
+
 export async function generateCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   // Get the diff of staged changes
   let diff = ''

@@ -58,6 +58,7 @@ export interface WindowApi {
   invoke(channel: 'git:push', repoPath: string): Promise<void>
   invoke(channel: 'git:pushSetUpstream', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:pull', repoPath: string): Promise<void>
+  invoke(channel: 'git:pullOrigin', repoPath: string): Promise<void>
   invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
   invoke(channel: 'git:branches', repoPath: string): Promise<GitBranches>
   invoke(channel: 'git:checkout', repoPath: string, branch: string): Promise<void>
