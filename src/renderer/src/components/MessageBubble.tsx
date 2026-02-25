@@ -2,6 +2,7 @@ import MarkdownContent from './MarkdownContent'
 import ToolCallBlock from './ToolCallBlock'
 import ThinkingBlock from './ThinkingBlock'
 import { MessageEntry } from './MessageStream'
+import { parseFileMentions } from './FileMention'
 
 interface Props {
   entry: MessageEntry
@@ -27,6 +28,11 @@ export default function MessageBubble({ entry }: Props) {
   }
 
   const isError = message.role === 'system' || metadata?.type === 'error'
+  const mentionNodes = parseFileMentions(
+    message.content,
+    isUser ? 'message-user' : 'message-assistant'
+  )
+  const hasMentionComponents = mentionNodes.some((node) => typeof node !== 'string')
 
   if (isError) {
     return (
@@ -52,7 +58,11 @@ export default function MessageBubble({ entry }: Props) {
           border: isUser ? 'none' : '1px solid var(--color-border)'
         }}
       >
+        {hasMentionComponents ? (
+          <div className="whitespace-pre-wrap break-words">{mentionNodes}</div>
+        ) : (
           <MarkdownContent content={message.content} />
+        )}
       </div>
     </div>
   )
