@@ -2,6 +2,7 @@ import { spawn, ChildProcess } from 'child_process'
 import { writeFileSync, unlinkSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
+import * as Sentry from '@sentry/electron/main'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
 
@@ -198,6 +199,12 @@ export class ClaudeDriver implements CLIDriver {
         if (stderrBuffer.trim()) {
           console.error('[ClaudeDriver] stderr:', stderrBuffer)
         }
+        Sentry.addBreadcrumb({
+          category: 'driver.exit',
+          message: `ClaudeDriver exited with code ${code}`,
+          level: 'error',
+          data: { exitCode: code },
+        })
         onDone(new Error(`Claude process exited with code ${code}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
       } else {
         onDone()
@@ -206,6 +213,7 @@ export class ClaudeDriver implements CLIDriver {
 
     this.process.on('error', (err) => {
       this.process = null
+      Sentry.captureException(err, { tags: { driver: 'ClaudeDriver' } })
       onDone(err)
     })
   }

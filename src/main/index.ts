@@ -2,12 +2,23 @@ import { app, BrowserWindow, shell, protocol, net, Tray, Menu, dialog } from 'el
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { autoUpdater } from 'electron-updater'
+import * as Sentry from '@sentry/electron/main'
 import { initDb, closeDb } from './db/index'
 import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
+import { SENTRY_DSN } from '../shared/sentry.config'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
+
+if (!isDev) {
+  Sentry.init({
+    dsn: SENTRY_DSN,
+    release: `polycode@${process.env.npm_package_version ?? '0.0.0'}`,
+    environment: 'production',
+    tracesSampleRate: 0.1,
+  })
+}
 
 let tray: Tray | null = null
 let isQuitting = false
@@ -118,6 +129,7 @@ app.whenReady().then(() => {
 
   if (!isDev) {
     autoUpdater.on('error', (err) => {
+      Sentry.captureException(err)
       console.error('Auto-updater error:', err.message)
     })
     autoUpdater.on('update-downloaded', () => {

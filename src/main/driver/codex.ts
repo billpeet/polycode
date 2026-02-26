@@ -1,4 +1,5 @@
 import { spawn, ChildProcess } from 'child_process'
+import * as Sentry from '@sentry/electron/main'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
 
@@ -267,6 +268,12 @@ export class CodexDriver implements CLIDriver {
       this.process = null
       if (code !== 0 && code !== null) {
         console.error('[CodexDriver] Process exited with code', code)
+        Sentry.addBreadcrumb({
+          category: 'driver.exit',
+          message: `CodexDriver exited with code ${code}`,
+          level: 'error',
+          data: { exitCode: code },
+        })
         onDone(new Error(`Codex process exited with code ${code}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
       } else {
         onDone()
@@ -275,6 +282,7 @@ export class CodexDriver implements CLIDriver {
 
     this.process.on('error', (err) => {
       this.process = null
+      Sentry.captureException(err, { tags: { driver: 'CodexDriver' } })
       onDone(err)
     })
   }

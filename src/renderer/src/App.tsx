@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react'
+import { ErrorBoundary } from '@sentry/react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
@@ -171,7 +172,11 @@ export default function App() {
   }, [selectedThreadId])
 
   return (
-    <>
+    <ErrorBoundary fallback={
+      <div className="flex h-full w-full items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
+        Something went wrong. Please restart Polycode.
+      </div>
+    }>
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
         <TitleBar />
         <div className="flex flex-1 overflow-hidden">
@@ -201,6 +206,6 @@ export default function App() {
         </div>
       </div>
       <ToastStack />
-    </>
+    </ErrorBoundary>
   )
 }
