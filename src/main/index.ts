@@ -11,6 +11,18 @@ import { SENTRY_DSN } from '../shared/sentry.config'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
+// EPIPE errors from network streams (e.g. electron-updater downloading latest.yml)
+// can escape electron-updater's own error handler and surface as uncaught exceptions.
+// They are not fatal — absorb them and let Sentry record them at warning level.
+process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EPIPE') {
+    console.warn('[main] EPIPE on network stream (ignored):', err.message)
+    if (!isDev) Sentry.captureException(err, { level: 'warning', tags: { source: 'epipe' } })
+    return
+  }
+  throw err
+})
+
 if (!isDev) {
   Sentry.init({
     dsn: SENTRY_DSN,
