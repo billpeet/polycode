@@ -77,6 +77,7 @@ interface Props {
 export default function ThreadHeader({ threadId }: Props) {
   const byProject = useThreadStore((s) => s.byProject)
   const statusMap = useThreadStore((s) => s.statusMap)
+  const pidByThread = useThreadStore((s) => s.pidByThread)
   const rename = useThreadStore((s) => s.rename)
   const setModel = useThreadStore((s) => s.setModel)
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
@@ -87,6 +88,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
   const thread = threads.find((t) => t.id === threadId)
   const status = statusMap[threadId] ?? 'idle'
+  const pid = pidByThread[threadId] ?? null
 
   // Look up location for this thread
   const projectLocations = useLocationStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
@@ -199,7 +201,18 @@ export default function ThreadHeader({ threadId }: Props) {
     <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-3 min-w-0">
         {status === 'running' ? (
-          <span className="h-2.5 w-2.5 flex-shrink-0 status-spinner" />
+          <span className="flex items-center gap-1 flex-shrink-0">
+            <span className="h-2.5 w-2.5 status-spinner" />
+            {pid !== null && (
+              <span
+                className="text-xs"
+                style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: '0.6rem' }}
+                title={`Process ID: ${pid}`}
+              >
+                pid:{pid}
+              </span>
+            )}
+          </span>
         ) : (
           <span
             className="h-2.5 w-2.5 rounded-full flex-shrink-0"

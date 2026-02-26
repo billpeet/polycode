@@ -243,7 +243,11 @@ export default function ThreadView({ threadId }: Props) {
       useSessionStore.getState().fetch(threadId)
     })
 
-    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle, unsubSessionSwitch]
+    const unsubPid = window.api.on(`thread:pid:${threadId}`, (...args) => {
+      useThreadStore.getState().setPid(threadId, (args[0] as number | null) ?? null)
+    })
+
+    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle, unsubSessionSwitch, unsubPid]
 
     return () => {
       cleanupRef.current.forEach((fn) => fn())

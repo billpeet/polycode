@@ -122,6 +122,11 @@ export class CodexDriver implements CLIDriver {
     onDone: (error?: Error) => void,
     _options?: MessageOptions  // plan mode is Claude-specific; ignored for Codex
   ): void {
+    if (this.process) {
+      console.warn('[CodexDriver] sendMessage called while process is already running — ignoring')
+      return
+    }
+
     const args = buildCodexArgs(this.codexThreadId, this.options.model, content)
 
     this.buffer = ''
@@ -277,12 +282,26 @@ export class CodexDriver implements CLIDriver {
   stop(): void {
     if (this.process) {
       this.process.kill('SIGTERM')
-      this.process = null
+      // Do NOT null this.process here — let the close event handler do it so
+      // that isRunning() stays true until the OS confirms the process has exited.
+      const proc = this.process
+      setTimeout(() => {
+        try {
+          if (proc.exitCode === null && !proc.killed) {
+            console.warn('[CodexDriver] Process did not exit after SIGTERM, sending SIGKILL')
+            proc.kill('SIGKILL')
+          }
+        } catch { /* process already gone */ }
+      }, 5000)
     }
   }
 
   isRunning(): boolean {
     return this.process !== null
+  }
+
+  getPid(): number | null {
+    return this.process?.pid ?? null
   }
 
   private processBuffer(onEvent: (event: OutputEvent) => void): void {

@@ -26,6 +26,8 @@ interface ThreadStore {
   usageByThread: Record<string, TokenUsage>
   /** timestamp (ms) when each thread started running, keyed by thread ID */
   runStartedAtByThread: Record<string, number>
+  /** OS PID of the running process, keyed by thread ID (null when not running) */
+  pidByThread: Record<string, number | null>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string) => Promise<void>
   create: (projectId: string, name: string, locationId: string) => Promise<void>
@@ -55,6 +57,7 @@ interface ThreadStore {
   clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
   addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window: number) => void
+  setPid: (threadId: string, pid: number | null) => void
 }
 
 export const useThreadStore = create<ThreadStore>((set, get) => ({
@@ -69,6 +72,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   queuedMessageByThread: {},
   usageByThread: {},
   runStartedAtByThread: {},
+  pidByThread: {},
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -140,6 +144,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedPlanMode[id]
       const updatedRunStartedAt = { ...s.runStartedAtByThread }
       delete updatedRunStartedAt[id]
+      const updatedPid = { ...s.pidByThread }
+      delete updatedPid[id]
       return {
         byProject: {
           ...s.byProject,
@@ -154,6 +160,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         queuedMessageByThread: updatedQueue,
         planModeByThread: updatedPlanMode,
         runStartedAtByThread: updatedRunStartedAt,
+        pidByThread: updatedPid,
       }
     })
   },
@@ -170,6 +177,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedPlanMode[id]
       const updatedRunStartedAt = { ...s.runStartedAtByThread }
       delete updatedRunStartedAt[id]
+      const updatedPid = { ...s.pidByThread }
+      delete updatedPid[id]
       const withoutThread = (s.byProject[projectId] ?? []).filter((t) => t.id !== id)
       if (result === 'deleted') {
         return {
@@ -179,6 +188,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           queuedMessageByThread: updatedQueue,
           planModeByThread: updatedPlanMode,
           runStartedAtByThread: updatedRunStartedAt,
+          pidByThread: updatedPid,
         }
       }
       const prevCount = s.archivedCountByProject[projectId] ?? 0
@@ -196,6 +206,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         queuedMessageByThread: updatedQueue,
         planModeByThread: updatedPlanMode,
         runStartedAtByThread: updatedRunStartedAt,
+        pidByThread: updatedPid,
       }
     })
   },
@@ -396,4 +407,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         }
       }
     }),
+
+  setPid: (threadId, pid) =>
+    set((s) => ({ pidByThread: { ...s.pidByThread, [threadId]: pid } })),
 }))

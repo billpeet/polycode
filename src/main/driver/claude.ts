@@ -33,6 +33,11 @@ export class ClaudeDriver implements CLIDriver {
     onDone: (error?: Error) => void,
     options?: MessageOptions
   ): void {
+    if (this.process) {
+      console.warn('[ClaudeDriver] sendMessage called while process is already running — ignoring')
+      return
+    }
+
     const planMode = options?.planMode ?? false
 
     // Build args: first message vs resume
@@ -208,12 +213,27 @@ export class ClaudeDriver implements CLIDriver {
   stop(): void {
     if (this.process) {
       this.process.kill('SIGTERM')
-      this.process = null
+      // Do NOT null this.process here — let the close event handler do it so
+      // that isRunning() stays true until the OS confirms the process has exited.
+      // Add a SIGKILL fallback in case SIGTERM is ignored.
+      const proc = this.process
+      setTimeout(() => {
+        try {
+          if (proc.exitCode === null && !proc.killed) {
+            console.warn('[ClaudeDriver] Process did not exit after SIGTERM, sending SIGKILL')
+            proc.kill('SIGKILL')
+          }
+        } catch { /* process already gone */ }
+      }, 5000)
     }
   }
 
   isRunning(): boolean {
     return this.process !== null
+  }
+
+  getPid(): number | null {
+    return this.process?.pid ?? null
   }
 
   private processBuffer(onEvent: (event: OutputEvent) => void): void {

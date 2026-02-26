@@ -24,6 +24,7 @@ export interface WindowApi {
   invoke(channel: 'threads:delete', id: string): Promise<void>
   invoke(channel: 'threads:start', threadId: string): Promise<void>
   invoke(channel: 'threads:stop', threadId: string): Promise<void>
+  invoke(channel: 'threads:getPid', threadId: string): Promise<number | null>
   invoke(channel: 'threads:send', threadId: string, content: string, options?: SendOptions): Promise<void>
   invoke(channel: 'threads:approvePlan', threadId: string): Promise<void>
   invoke(channel: 'threads:rejectPlan', threadId: string): Promise<void>

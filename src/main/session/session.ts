@@ -148,6 +148,11 @@ export class Session {
     const driver = this.drivers.get(this.activeSessionId)
     if (!driver) return
 
+    if (driver.isRunning()) {
+      console.warn('[Session] sendMessage called while driver is already running — ignoring for thread', this.threadId)
+      return
+    }
+
     this.setStatus('running')
     this.stopped = false
     this.planPending = false
@@ -178,6 +183,10 @@ export class Session {
       (error?: Error) => this.handleDone(error),
       { planMode: options?.planMode }
     )
+
+    // Broadcast the spawned PID to the renderer for visibility
+    const pid = driver.getPid()
+    this.window.webContents.send(`thread:pid:${this.threadId}`, pid)
   }
 
   stop(): void {
@@ -186,13 +195,21 @@ export class Session {
       const driver = this.drivers.get(this.activeSessionId)
       driver?.stop()
     }
-    this.setStatus('stopped')
+    // Do NOT call setStatus('stopped') here — wait for the process to actually
+    // exit (the close event fires handleDone which sets the final status).
+    // This ensures the UI is never updated while the process is still running.
   }
 
   isRunning(): boolean {
     if (!this.activeSessionId) return false
     const driver = this.drivers.get(this.activeSessionId)
     return driver?.isRunning() ?? false
+  }
+
+  getPid(): number | null {
+    if (!this.activeSessionId) return null
+    const driver = this.drivers.get(this.activeSessionId)
+    return driver?.getPid() ?? null
   }
 
   /** Approve pending plan and continue execution in the same session */
@@ -211,6 +228,7 @@ export class Session {
       (event: OutputEvent) => this.handleEvent(event),
       (error?: Error) => this.handleDone(error)
     )
+    this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
   /** Reject pending plan and return to idle */
@@ -294,9 +312,14 @@ export class Session {
       (event: OutputEvent) => this.handleEvent(event),
       (error?: Error) => this.handleDone(error)
     )
+    this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
   private handleEvent(event: OutputEvent): void {
+    // Drop all events after stop is requested — the process is winding down
+    // and we don't want orphaned output appearing in the UI or DB.
+    if (this.stopped) return
+
     // Include sessionId in all events sent to renderer
     const eventWithSession: OutputEvent = { ...event, sessionId: this.activeSessionId ?? undefined }
 
@@ -356,6 +379,9 @@ export class Session {
   }
 
   private handleDone(error?: Error): void {
+    // Clear the PID — the process has exited
+    this.window.webContents.send(`thread:pid:${this.threadId}`, null)
+
     // If the user intentionally stopped the session, keep the stopped status
     // regardless of how the process exited (non-zero exit from SIGTERM looks
     // like an error but shouldn't be treated as one).
@@ -371,6 +397,7 @@ export class Session {
           } satisfies OutputEvent)
         }
       }
+      this.setStatus('stopped')
       this.window.webContents.send(`thread:complete:${this.threadId}`, 'stopped')
       return
     }

@@ -16,6 +16,8 @@ export interface CLIDriver {
   stop(): void
   /** Returns true if the process is currently running */
   isRunning(): boolean
+  /** Returns the OS PID of the running process, or null if not running */
+  getPid(): number | null
 }
 
 export interface DriverOptions {

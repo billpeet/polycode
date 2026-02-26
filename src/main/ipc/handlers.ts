@@ -368,7 +368,12 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       // No live session (e.g. after restart) — force-reset stuck status in DB and notify renderer
       updateThreadStatus(threadId, 'idle')
       window.webContents.send(`thread:status:${threadId}`, 'idle')
+      window.webContents.send(`thread:pid:${threadId}`, null)
     }
+  })
+
+  ipcMain.handle('threads:getPid', (_event, threadId: string) => {
+    return sessionManager.get(threadId)?.getPid() ?? null
   })
 
   ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean }) => {
@@ -376,6 +381,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
+    if (session.isRunning()) {
+      console.warn('[handlers] threads:send while session is running — ignoring for thread', threadId)
+      return
+    }
     session.sendMessage(content, options)
     // Capture git branch on first message (fire-and-forget, doesn't block send)
     const location = getLocationForThread(threadId)
