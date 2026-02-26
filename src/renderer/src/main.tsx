@@ -4,7 +4,7 @@ import * as Sentry from '@sentry/electron/renderer'
 import { init as reactInit } from '@sentry/react'
 import './index.css'
 import App from './App'
-import { SENTRY_DSN } from '../../../shared/sentry.config'
+import { SENTRY_DSN } from '../../shared/sentry.config'
 
 if (import.meta.env.PROD) {
   Sentry.init(
