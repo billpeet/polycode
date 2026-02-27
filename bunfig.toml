@@ -1,0 +1,2 @@
+[test]
+preload = ["./src/main/driver/__tests__/setup.ts"]

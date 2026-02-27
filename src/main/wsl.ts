@@ -1,18 +1,6 @@
 import { spawn } from 'child_process'
 import { WslConfig, FileEntry, SearchableFile } from '../shared/types'
-
-/** Escape a string for use inside single quotes in a POSIX shell. */
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
-
-/** Resolve a path, expanding ~ to $HOME. */
-function remotePathExpr(p: string): string {
-  if (p.startsWith('~')) {
-    return '"$HOME"' + shellEscape(p.slice(1))
-  }
-  return shellEscape(p)
-}
+import { shellEscape, cdTarget } from './driver/runner'
 
 /**
  * Execute a command inside a WSL distribution.
@@ -20,8 +8,7 @@ function remotePathExpr(p: string): string {
  */
 export function wslExec(wsl: WslConfig, cwd: string, cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const cdTarget = remotePathExpr(cwd)
-    const innerCmd = `cd ${cdTarget} && ${cmd}`
+    const innerCmd = `cd ${cdTarget(cwd)} && ${cmd}`
 
     const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd], {
       shell: false,
@@ -62,7 +49,7 @@ const IGNORED_DIRS = new Set([
  * Returns the same shape as the local `listDirectory`.
  */
 export async function wslListDirectory(wsl: WslConfig, dirPath: string): Promise<FileEntry[]> {
-  const target = remotePathExpr(dirPath)
+  const target = cdTarget(dirPath)
   const cmd = `find ${target} -maxdepth 1 -mindepth 1 \\( -name '.*' ! -name '.env' \\) -prune -o -printf '%y\\t%f\\n' 2>/dev/null`
 
   let output: string
@@ -106,7 +93,7 @@ export async function wslReadFileContent(
   filePath: string
 ): Promise<{ content: string; truncated: boolean } | null> {
   const MAX_FILE_SIZE = 1048576 // 1MB
-  const target = remotePathExpr(filePath)
+  const target = cdTarget(filePath)
 
   try {
     const sizeStr = await wslExec(wsl, '/', `wc -c < ${target}`)
@@ -129,7 +116,7 @@ export async function wslReadFileContent(
  */
 export async function wslListAllFiles(wsl: WslConfig, rootPath: string): Promise<SearchableFile[]> {
   const MAX_SEARCH_FILES = 5000
-  const target = remotePathExpr(rootPath)
+  const target = cdTarget(rootPath)
 
   const excludes = Array.from(IGNORED_DIRS)
     .map(d => `-name ${shellEscape(d)} -prune`)

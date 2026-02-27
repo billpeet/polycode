@@ -52,7 +52,8 @@ import {
   updateSlashCommand,
   deleteSlashCommand,
 } from '../db/queries'
-import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
+import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
+import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches } from '../git'
@@ -776,6 +777,28 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('app:install-update', () => {
     autoUpdater.quitAndInstall()
+  })
+
+  // ── CLI health & updates ────────────────────────────────────────────────────
+
+  ipcMain.handle('cli:health', (
+    _event,
+    provider: Provider,
+    connectionType: string,
+    ssh?: SshConfig | null,
+    wsl?: WslConfig | null,
+  ) => {
+    return checkCliHealth(provider, connectionType, ssh, wsl)
+  })
+
+  ipcMain.handle('cli:update', (
+    _event,
+    provider: Provider,
+    connectionType: string,
+    ssh?: SshConfig | null,
+    wsl?: WslConfig | null,
+  ) => {
+    return updateCli(provider, connectionType, ssh, wsl)
   })
 }
 

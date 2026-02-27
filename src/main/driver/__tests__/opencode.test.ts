@@ -13,9 +13,9 @@ function makeDriver(opts: Partial<DriverOptions> = {}): OpenCodeDriver {
   })
 }
 
-/** Call the private parseOpenCodeEvent method via any-cast. */
+/** Call the (now inherited) parseEvent method via any-cast. */
 function parse(driver: OpenCodeDriver, data: Record<string, unknown>): OutputEvent[] {
-  return (driver as any).parseOpenCodeEvent(data)
+  return (driver as any).parseEvent(data)
 }
 
 /** Feed a full JSONL string through processBuffer and collect events. */

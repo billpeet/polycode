@@ -297,9 +297,10 @@ function PdfIcon({ variant }: { variant: string }) {
 /**
  * Regex to match YouTrack issue mentions: @PROJ-123
  * Project codes are uppercase letters/digits, followed by a dash and issue number.
- * Must be followed by whitespace, end-of-string, or common punctuation.
+ * Must be preceded by whitespace or start-of-string, and followed by whitespace,
+ * end-of-string, or common punctuation.
  */
-const YOUTRACK_MENTION_REGEX = /@([A-Z][A-Z0-9]+-[0-9]+)(?=[\s,!?.;]|$)/g
+const YOUTRACK_MENTION_REGEX = /(?<!\S)@([A-Z][A-Z0-9]+-[0-9]+)(?=[\s,!?.;]|$)/g
 
 /**
  * Styled inline YouTrack issue mention badge
@@ -348,10 +349,13 @@ function YouTrackBadgeIcon() {
 /**
  * Regex to match file and directory mentions: @path/to/file.ext or @path/to/dir/
  * Handles both Unix and Windows paths, including absolute paths with drive letters.
- * File mentions end with an extension (.ext); directory mentions end with a slash (/).
+ * File mentions end with an extension (.ext); directory mentions must have at least
+ * two path segments (e.g. @src/components/) to avoid false-positives on npm scoped
+ * packages like @scope/pkg or other @-prefixed tokens.
+ * Requires @ to be at start-of-string or preceded by whitespace ((?<!\S)).
  * File pattern is first so paths like @src/file.ts match as files, not truncated dirs.
  */
-const FILE_MENTION_REGEX = /@([A-Za-z]:)?([^\s@]+\.\w+|[^\s@]+\/)/g
+const FILE_MENTION_REGEX = /(?<!\S)@([A-Za-z]:)?([^\s@]+\.\w+|[^\s@/]+\/[^\s@]+\/)/g
 
 /**
  * Parse text and replace file and YouTrack issue mentions with styled components.

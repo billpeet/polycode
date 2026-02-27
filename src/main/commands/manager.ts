@@ -4,13 +4,9 @@ import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
+import { shellEscape, cdTarget, buildSshBaseArgs } from '../driver/runner'
 
 const LOG_RING_BUFFER_SIZE = 1000
-
-/** Escape a string for use inside single quotes in a POSIX shell. */
-function posixEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
 
 interface RunningCommand {
   commandId: string
@@ -96,10 +92,7 @@ class CommandManager {
     if (connectionType === 'wsl' && location?.wsl) {
       // ── WSL spawn ──────────────────────────────────────────────────────────
       const workDir = cwd ?? '~'
-      const cdTarget = workDir.startsWith('~')
-        ? '"$HOME"' + posixEscape(workDir.slice(1))
-        : posixEscape(workDir)
-      const innerCmd = `cd ${cdTarget} && ${cmdDef.command}`
+      const innerCmd = `cd ${cdTarget(workDir)} && ${cmdDef.command}`
       proc = spawn('wsl', ['-d', location.wsl.distro, '--', 'bash', '-c', innerCmd], {
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -108,26 +101,9 @@ class CommandManager {
       // ── SSH spawn ──────────────────────────────────────────────────────────
       const ssh = location.ssh
       const workDir = cwd ?? '~'
-      const cdTarget = workDir.startsWith('~')
-        ? '"$HOME"' + posixEscape(workDir.slice(1))
-        : posixEscape(workDir)
-      const innerCmd = `cd ${cdTarget} && ${cmdDef.command}`
-      const remoteCmd = `bash -lc ${posixEscape(innerCmd)}`
-      const sshArgs = [
-        '-T',
-        '-o', 'ConnectTimeout=10',
-        '-o', 'StrictHostKeyChecking=accept-new',
-      ]
-      // ControlMaster multiplexing is not supported on Windows OpenSSH
-      if (process.platform !== 'win32') {
-        sshArgs.push(
-          '-o', 'ControlMaster=auto',
-          '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
-          '-o', 'ControlPersist=300',
-        )
-      }
-      if (ssh.port) sshArgs.push('-p', String(ssh.port))
-      if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
+      const innerCmd = `cd ${cdTarget(workDir)} && ${cmdDef.command}`
+      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+      const sshArgs = buildSshBaseArgs(ssh)
       sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
       proc = spawn('ssh', sshArgs, {
         shell: false,

@@ -1,12 +1,7 @@
-import { spawn, ChildProcess } from 'child_process'
-import * as Sentry from '@sentry/electron/main'
-import { CLIDriver, DriverOptions, MessageOptions } from './types'
+import { DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
-
-/** Escape a string for use inside single quotes in a POSIX shell. */
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
+import { SpawnCommand } from './runner/types'
+import { BaseDriver } from './base'
 
 /**
  * Build the argv array for an `opencode run` invocation.
@@ -25,182 +20,35 @@ export function buildOpenCodeArgs(
   return args
 }
 
-export class OpenCodeDriver implements CLIDriver {
-  private process: ChildProcess | null = null
-  private options: DriverOptions
+export class OpenCodeDriver extends BaseDriver {
   /** OpenCode session ID used for session resumption (stored as claude_session_id in DB). */
   private sessionId: string | null = null
-  private buffer = ''
 
   constructor(options: DriverOptions) {
-    this.options = options
+    super(options)
     if (options.initialSessionId) {
       this.sessionId = options.initialSessionId
     }
   }
 
-  sendMessage(
+  get driverName(): string { return 'OpenCodeDriver' }
+
+  protected buildCommand(
     content: string,
-    onEvent: (event: OutputEvent) => void,
-    onDone: (error?: Error) => void,
+    _runnerType: 'local' | 'wsl' | 'ssh',
     _options?: MessageOptions  // plan mode is Claude-specific; ignored for OpenCode
-  ): void {
-    if (this.process) {
-      console.warn('[OpenCodeDriver] sendMessage called while process is already running — ignoring')
-      return
-    }
-
-    const args = buildOpenCodeArgs(this.sessionId, this.options.model)
-
-    this.buffer = ''
-
-    const ssh = this.options.ssh
-    const wsl = this.options.wsl
-
-    if (ssh) {
-      // ── SSH remote spawn ──────────────────────────────────────────────────
-      const workDir = this.options.workingDir
-      const cdTarget = workDir.startsWith('~')
-        ? '"$HOME"' + shellEscape(workDir.slice(1))
-        : shellEscape(workDir)
-      const innerCmd = `cd ${cdTarget} && opencode ${args.map(shellEscape).join(' ')}`
-      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-      const sshArgs = [
-        '-T',
-        '-o', 'ConnectTimeout=10',
-        '-o', 'StrictHostKeyChecking=accept-new',
-      ]
-      if (process.platform !== 'win32') {
-        sshArgs.push(
-          '-o', 'ControlMaster=auto',
-          '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
-          '-o', 'ControlPersist=300',
-        )
-      }
-      if (ssh.port) sshArgs.push('-p', String(ssh.port))
-      if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
-      sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
-
-      console.log('[OpenCodeDriver] Spawning SSH: ssh', sshArgs.join(' '))
-
-      this.process = spawn('ssh', sshArgs, {
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      this.process.stdin?.end(content)
-    } else if (wsl) {
-      // ── WSL spawn ──────────────────────────────────────────────────────────
-      const workDir = this.options.workingDir
-      const cdTarget = workDir.startsWith('~')
-        ? '"$HOME"' + shellEscape(workDir.slice(1))
-        : shellEscape(workDir)
-      const innerCmd = `cd ${cdTarget} && opencode ${args.map(shellEscape).join(' ')}`
-      const wslArgs = ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd]
-
-      console.log('[OpenCodeDriver] Spawning WSL: wsl', wslArgs.join(' '))
-
-      this.process = spawn('wsl', wslArgs, {
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      this.process.stdin?.end(content)
-    } else {
-      // ── Local spawn ────────────────────────────────────────────────────────
-      console.log('[OpenCodeDriver] Spawning: opencode', args.join(' '))
-
-      this.process = spawn('opencode', args, {
-        cwd: this.options.workingDir,
-        shell: process.platform === 'win32',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      this.process.stdin?.end(content)
-    }
-
-    let stderrBuffer = ''
-
-    this.process.stdout?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8')
-      console.log('[OpenCodeDriver] stdout chunk:', text.slice(0, 200))
-      this.buffer += text
-      this.processBuffer(onEvent)
-    })
-
-    this.process.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8')
-      console.error('[OpenCodeDriver] stderr:', text)
-      stderrBuffer += text
-    })
-
-    this.process.on('close', (code) => {
-      this.processBuffer(onEvent)
-      this.process = null
-      if (code !== 0 && code !== null) {
-        console.error('[OpenCodeDriver] Process exited with code', code)
-        Sentry.addBreadcrumb({
-          category: 'driver.exit',
-          message: `OpenCodeDriver exited with code ${code}`,
-          level: 'error',
-          data: { exitCode: code },
-        })
-        onDone(new Error(`OpenCode process exited with code ${code}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
-      } else {
-        onDone()
-      }
-    })
-
-    this.process.on('error', (err) => {
-      this.process = null
-      Sentry.captureException(err, { tags: { driver: 'OpenCodeDriver' } })
-      onDone(err)
-    })
-  }
-
-  stop(): void {
-    if (this.process) {
-      this.process.kill('SIGTERM')
-      // Do NOT null this.process here — let the close event handler do it so
-      // that isRunning() stays true until the OS confirms the process has exited.
-      const proc = this.process
-      setTimeout(() => {
-        try {
-          if (proc.exitCode === null && !proc.killed) {
-            console.warn('[OpenCodeDriver] Process did not exit after SIGTERM, sending SIGKILL')
-            proc.kill('SIGKILL')
-          }
-        } catch { /* process already gone */ }
-      }, 5000)
+  ): SpawnCommand {
+    // OpenCode always reads the prompt from stdin — no positional prompt arg.
+    // No preamble needed (opencode is typically installed as a standalone binary).
+    return {
+      binary: 'opencode',
+      args: buildOpenCodeArgs(this.sessionId, this.options.model),
+      workDir: this.options.workingDir,
+      stdinContent: content,
     }
   }
 
-  isRunning(): boolean {
-    return this.process !== null
-  }
-
-  getPid(): number | null {
-    return this.process?.pid ?? null
-  }
-
-  private processBuffer(onEvent: (event: OutputEvent) => void): void {
-    const lines = this.buffer.split('\n')
-    this.buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-
-      try {
-        const parsed = JSON.parse(trimmed) as Record<string, unknown>
-        const events = this.parseOpenCodeEvent(parsed)
-        for (const event of events) {
-          onEvent(event)
-        }
-      } catch {
-        // Non-JSON stdout line — silently skip
-      }
-    }
-  }
-
-  private parseOpenCodeEvent(data: Record<string, unknown>): OutputEvent[] {
+  protected parseEvent(data: Record<string, unknown>): OutputEvent[] {
     // OpenCode --format json emits newline-delimited JSON with a `type` field.
     // Every event carries `sessionID` and `timestamp` at the top level.
     // See: https://opencode.ai/docs/cli/

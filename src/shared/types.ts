@@ -184,7 +184,7 @@ export interface OutputEvent {
   sessionId?: string
 }
 
-export type ThreadStatus = 'idle' | 'running' | 'error' | 'stopped' | 'plan_pending' | 'question_pending'
+export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending'
 
 export interface GitFileChange {
   status: 'M' | 'A' | 'D' | 'R' | 'U' | '?'
@@ -333,6 +333,21 @@ export interface CommandLogLine {
   text: string
   stream: 'stdout' | 'stderr'
   timestamp: string
+}
+
+// ── CLI Health ─────────────────────────────────────────────────────────────────
+
+export interface CliHealthResult {
+  installed: boolean
+  currentVersion: string | null
+  latestVersion: string | null
+  /** null when either version is unavailable */
+  upToDate: boolean | null
+}
+
+export interface CliUpdateResult {
+  success: boolean
+  output: string
 }
 
 // ── Slash Commands ─────────────────────────────────────────────────────────────

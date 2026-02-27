@@ -13,9 +13,9 @@ function makeDriver(opts: Partial<DriverOptions> = {}): CodexDriver {
   })
 }
 
-/** Call the private parseCodexEvent method via any-cast. */
+/** Call the (now inherited) parseEvent method via any-cast. */
 function parse(driver: CodexDriver, data: Record<string, unknown>): OutputEvent[] {
-  return (driver as any).parseCodexEvent(data)
+  return (driver as any).parseEvent(data)
 }
 
 /** Feed a full JSONL string through processBuffer and collect events. */

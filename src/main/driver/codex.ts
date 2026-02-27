@@ -1,12 +1,8 @@
-import { spawn, ChildProcess } from 'child_process'
-import * as Sentry from '@sentry/electron/main'
-import { CLIDriver, DriverOptions, MessageOptions } from './types'
+import { DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
-
-/** Escape a string for use inside single quotes in a POSIX shell. */
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
+import { SpawnCommand } from './runner/types'
+import { LOAD_NODE_MANAGERS, RESOLVE_CODEX_BIN } from './runner/utils'
+import { BaseDriver } from './base'
 
 /**
  * Given a raw command string from a Codex command_execution item, return a
@@ -58,11 +54,10 @@ function makeToolCallEvent(item: Record<string, unknown>): { content: string; me
  * Quote a single argument for cmd.exe (Windows shell).
  * When spawn uses shell:true on Windows, Node joins args with plain spaces,
  * so arguments with spaces must be explicitly double-quoted.
+ *
+ * Re-exported from runner/utils for backwards compatibility with existing consumers.
  */
-export function winQuote(s: string): string {
-  if (!/[ \t"&|<>^]/.test(s)) return s
-  return '"' + s.replace(/"/g, '\\"') + '"'
-}
+export { winQuote } from './runner/utils'
 
 /**
  * Build the argv array for a `codex exec` invocation.
@@ -86,12 +81,9 @@ export function buildCodexArgs(
   return args
 }
 
-export class CodexDriver implements CLIDriver {
-  private process: ChildProcess | null = null
-  private options: DriverOptions
+export class CodexDriver extends BaseDriver {
   /** Codex thread_id used for session resumption (stored as claude_session_id in DB). */
   private codexThreadId: string | null = null
-  private buffer = ''
   /**
    * Item IDs that have received at least one streaming delta this turn.
    * Used to suppress the duplicate full text in item.completed for streamed items.
@@ -111,228 +103,48 @@ export class CodexDriver implements CLIDriver {
   private completedItemIds = new Set<string>()
 
   constructor(options: DriverOptions) {
-    this.options = options
+    super(options)
     if (options.initialSessionId) {
       this.codexThreadId = options.initialSessionId
     }
   }
 
-  sendMessage(
-    content: string,
-    onEvent: (event: OutputEvent) => void,
-    onDone: (error?: Error) => void,
-    _options?: MessageOptions  // plan mode is Claude-specific; ignored for Codex
-  ): void {
-    if (this.process) {
-      console.warn('[CodexDriver] sendMessage called while process is already running — ignoring')
-      return
-    }
+  get driverName(): string { return 'CodexDriver' }
 
-    const args = buildCodexArgs(this.codexThreadId, this.options.model, content)
-
-    this.buffer = ''
+  protected beforeSendMessage(): void {
     this.streamedItemIds.clear()
     this.announcedItemIds.clear()
     this.completedItemIds.clear()
+  }
 
-    const ssh = this.options.ssh
-    const wsl = this.options.wsl
-    if (ssh) {
-      // ── SSH remote spawn ────────────────────────────────────────────────────
-      const workDir = this.options.workingDir
-      const cdTarget = workDir.startsWith('~')
-        ? '"$HOME"' + shellEscape(workDir.slice(1))
-        : shellEscape(workDir)
-      // Like WSL, login/non-interactive shells may skip node manager init.
-      // Load common managers explicitly so `codex` resolves on remote hosts.
-      const loadNodeManagers = [
-        '[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"',
-        '[ -d "$HOME/.volta/bin" ] && export PATH="$HOME/.volta/bin:$PATH"',
-        '[ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"',
-        '[ -d "$HOME/.npm-global/bin" ] && export PATH="$HOME/.npm-global/bin:$PATH"',
-        'command -v fnm &>/dev/null && eval "$(fnm env 2>/dev/null)"',
-      ].join('; ')
-      // Resolve codex explicitly for environments where PATH differs between
-      // interactive and non-interactive/login shells.
-      const resolveCodex = [
-        'CODEX_BIN=""',
-        'command -v codex >/dev/null 2>&1 && CODEX_BIN="$(command -v codex)"',
-        'case "$CODEX_BIN" in /mnt/c/*) CODEX_BIN="";; esac',
-        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.local/bin/codex" ] && CODEX_BIN="$HOME/.local/bin/codex"',
-        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.npm/bin/codex" ] && CODEX_BIN="$HOME/.npm/bin/codex"',
-        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.npm-global/bin/codex" ] && CODEX_BIN="$HOME/.npm-global/bin/codex"',
-        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.volta/bin/codex" ] && CODEX_BIN="$HOME/.volta/bin/codex"',
-        '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.bun/bin/codex" ] && CODEX_BIN="$HOME/.bun/bin/codex"',
-        '[ -z "$CODEX_BIN" ] && [ -d "$HOME/.nvm/versions/node" ] && CODEX_BIN="$(ls -1d "$HOME"/.nvm/versions/node/*/bin/codex 2>/dev/null | tail -n 1)"',
-        '[ -n "$CODEX_BIN" ] || { echo "codex not found; PATH=$PATH" >&2; exit 127; }',
-      ].join('; ')
-      const innerCmd = `${loadNodeManagers}; ${resolveCodex}; cd ${cdTarget} && "$CODEX_BIN" ${args.map(shellEscape).join(' ')}`
-      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-      const sshArgs = [
-        '-T',
-        '-o', 'ConnectTimeout=10',
-        '-o', 'StrictHostKeyChecking=accept-new',
-      ]
-      if (process.platform !== 'win32') {
-        sshArgs.push(
-          '-o', 'ControlMaster=auto',
-          '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
-          '-o', 'ControlPersist=300',
-        )
+  protected buildCommand(
+    content: string,
+    runnerType: 'local' | 'wsl' | 'ssh',
+    _options?: MessageOptions  // plan mode is Claude-specific; ignored for Codex
+  ): SpawnCommand {
+    const args = buildCodexArgs(this.codexThreadId, this.options.model, content)
+
+    if (runnerType === 'wsl' || runnerType === 'ssh') {
+      // For WSL/SSH: load node managers and resolve codex binary explicitly,
+      // since non-interactive login shells may not have the right PATH.
+      const preamble = [LOAD_NODE_MANAGERS, RESOLVE_CODEX_BIN].join('; ')
+      return {
+        binary: '"$CODEX_BIN"',  // set by RESOLVE_CODEX_BIN
+        args,
+        workDir: this.options.workingDir,
+        preamble,
       }
-      if (ssh.port) sshArgs.push('-p', String(ssh.port))
-      if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
-      sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
-
-      console.log('[CodexDriver] Spawning SSH: ssh', sshArgs.join(' '))
-
-      this.process = spawn('ssh', sshArgs, {
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      this.process.stdin?.end()
-    } else if (wsl) {
-      // ── WSL spawn ────────────────────────────────────────────────────────────
-      const workDir = this.options.workingDir
-      const cdTarget = workDir.startsWith('~')
-        ? '"$HOME"' + shellEscape(workDir.slice(1))
-        : shellEscape(workDir)
-      // Load node version managers directly, bypassing .bashrc's interactive guard.
-      //
-      // Problem: bash -lc is a login shell but NOT interactive, so .bashrc typically
-      // bails out immediately via `case $- in *i*) ;; *) return;; esac` before
-      // reaching nvm/volta/fnm setup. WSL's Windows PATH interop then causes
-      // `codex` to resolve to the Windows-installed wrapper at
-      // /mnt/c/Program Files/nodejs/codex, which fails because `node` is not found.
-      //
-      // Fix: source the version manager init scripts directly by well-known path,
-      // which works regardless of .bashrc interactive guards.
-      const loadNodeManagers = [
-        '[ -s "$HOME/.nvm/nvm.sh" ] && source "$HOME/.nvm/nvm.sh"',
-        '[ -d "$HOME/.volta/bin" ] && export PATH="$HOME/.volta/bin:$PATH"',
-        '[ -d "$HOME/.bun/bin" ] && export PATH="$HOME/.bun/bin:$PATH"',
-        '[ -d "$HOME/.npm-global/bin" ] && export PATH="$HOME/.npm-global/bin:$PATH"',
-        'command -v fnm &>/dev/null && eval "$(fnm env 2>/dev/null)"',
-      ].join('; ')
-      const innerCmd = `${loadNodeManagers}; cd ${cdTarget} && codex ${args.map(shellEscape).join(' ')}`
-
-      const wslArgs = ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd]
-
-      console.log('[CodexDriver] Spawning WSL: wsl', wslArgs.join(' '))
-
-      this.process = spawn('wsl', wslArgs, {
-        shell: false,
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
-      this.process.stdin?.end()
     } else {
-      // ── Local spawn ──────────────────────────────────────────────────────────
-      console.log('[CodexDriver] Spawning: codex', args.join(' '))
-
-      if (process.platform === 'win32') {
-        // npm .cmd wrappers require shell:true on Windows. Node's default array
-        // join doesn't individually quote args, so build the command string
-        // ourselves with explicit double-quoting for args that contain spaces.
-        const cmdStr = ['codex', ...args.map(winQuote)].join(' ')
-        this.process = spawn(cmdStr, [], {
-          cwd: this.options.workingDir,
-          shell: true,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-      } else {
-        this.process = spawn('codex', args, {
-          cwd: this.options.workingDir,
-          shell: false,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-      }
-    }
-
-    let stderrBuffer = ''
-
-    this.process.stdout?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8')
-      console.log('[CodexDriver] stdout chunk:', text.slice(0, 200))
-      this.buffer += text
-      this.processBuffer(onEvent)
-    })
-
-    this.process.stderr?.on('data', (chunk: Buffer) => {
-      const text = chunk.toString('utf8')
-      console.error('[CodexDriver] stderr:', text)
-      stderrBuffer += text
-    })
-
-    this.process.on('close', (code) => {
-      this.processBuffer(onEvent)
-      this.process = null
-      if (code !== 0 && code !== null) {
-        console.error('[CodexDriver] Process exited with code', code)
-        Sentry.addBreadcrumb({
-          category: 'driver.exit',
-          message: `CodexDriver exited with code ${code}`,
-          level: 'error',
-          data: { exitCode: code },
-        })
-        onDone(new Error(`Codex process exited with code ${code}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
-      } else {
-        onDone()
-      }
-    })
-
-    this.process.on('error', (err) => {
-      this.process = null
-      Sentry.captureException(err, { tags: { driver: 'CodexDriver' } })
-      onDone(err)
-    })
-  }
-
-  stop(): void {
-    if (this.process) {
-      this.process.kill('SIGTERM')
-      // Do NOT null this.process here — let the close event handler do it so
-      // that isRunning() stays true until the OS confirms the process has exited.
-      const proc = this.process
-      setTimeout(() => {
-        try {
-          if (proc.exitCode === null && !proc.killed) {
-            console.warn('[CodexDriver] Process did not exit after SIGTERM, sending SIGKILL')
-            proc.kill('SIGKILL')
-          }
-        } catch { /* process already gone */ }
-      }, 5000)
-    }
-  }
-
-  isRunning(): boolean {
-    return this.process !== null
-  }
-
-  getPid(): number | null {
-    return this.process?.pid ?? null
-  }
-
-  private processBuffer(onEvent: (event: OutputEvent) => void): void {
-    const lines = this.buffer.split('\n')
-    this.buffer = lines.pop() ?? ''
-
-    for (const line of lines) {
-      const trimmed = line.trim()
-      if (!trimmed) continue
-
-      try {
-        const parsed = JSON.parse(trimmed) as Record<string, unknown>
-        const events = this.parseCodexEvent(parsed)
-        for (const event of events) {
-          onEvent(event)
-        }
-      } catch {
-        // Non-JSON stdout line — silently skip
+      // Local: runner handles Windows shell:true + winQuote internally
+      return {
+        binary: 'codex',
+        args,
+        workDir: this.options.workingDir,
       }
     }
   }
 
-  private parseCodexEvent(data: Record<string, unknown>): OutputEvent[] {
+  protected parseEvent(data: Record<string, unknown>): OutputEvent[] {
     // Codex --json emits newline-delimited JSON with a `type` field.
     // The schema is not formally published and has changed across versions;
     // see: https://github.com/openai/codex/issues/1673

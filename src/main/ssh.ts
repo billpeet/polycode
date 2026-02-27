@@ -1,18 +1,6 @@
 import { spawn } from 'child_process'
 import { SshConfig, FileEntry, SearchableFile } from '../shared/types'
-
-/** Escape a string for use inside single quotes in a POSIX shell. */
-function shellEscape(s: string): string {
-  return "'" + s.replace(/'/g, "'\\''") + "'"
-}
-
-/** Resolve a remote path, expanding ~ to $HOME. */
-function remotePathExpr(p: string): string {
-  if (p.startsWith('~')) {
-    return '"$HOME"' + shellEscape(p.slice(1))
-  }
-  return shellEscape(p)
-}
+import { shellEscape, cdTarget, buildSshBaseArgs } from './driver/runner'
 
 /**
  * Execute a command on a remote host via SSH.
@@ -20,25 +8,11 @@ function remotePathExpr(p: string): string {
  */
 export function sshExec(ssh: SshConfig, cwd: string, cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const cdTarget = remotePathExpr(cwd)
-    const innerCmd = `cd ${cdTarget} && ${cmd}`
+    const innerCmd = `cd ${cdTarget(cwd)} && ${cmd}`
     const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
 
-    const sshArgs = [
-      '-T',
-      '-o', 'ConnectTimeout=10',
-      '-o', 'StrictHostKeyChecking=accept-new',
-      '-o', 'BatchMode=yes',
-    ]
-    if (process.platform !== 'win32') {
-      sshArgs.push(
-        '-o', 'ControlMaster=auto',
-        '-o', 'ControlPath=/tmp/polycode-ssh-%r@%h:%p',
-        '-o', 'ControlPersist=300',
-      )
-    }
-    if (ssh.port) sshArgs.push('-p', String(ssh.port))
-    if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
+    const sshArgs = buildSshBaseArgs(ssh)
+    sshArgs.push('-o', 'BatchMode=yes')
     sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
 
     const proc = spawn('ssh', sshArgs, {
@@ -82,7 +56,7 @@ const IGNORED_DIRS = new Set([
 export async function sshListDirectory(ssh: SshConfig, dirPath: string): Promise<FileEntry[]> {
   // List entries with type prefix: "d\tname" or "f\tname"
   // Uses find at depth 1 to get type info, skipping hidden files
-  const target = remotePathExpr(dirPath)
+  const target = cdTarget(dirPath)
   const cmd = `find ${target} -maxdepth 1 -mindepth 1 \\( -name '.*' ! -name '.env' \\) -prune -o -print0 2>/dev/null` +
     ` | xargs -0 -I{} sh -c 'if [ -d "{}" ]; then echo "d\t$(basename "{}")"; else echo "f\t$(basename "{}")"; fi'`
 
@@ -130,7 +104,7 @@ export async function sshReadFileContent(
   filePath: string
 ): Promise<{ content: string; truncated: boolean } | null> {
   const MAX_FILE_SIZE = 1048576 // 1MB
-  const target = remotePathExpr(filePath)
+  const target = cdTarget(filePath)
 
   try {
     // Check file size first
@@ -154,7 +128,7 @@ export async function sshReadFileContent(
  */
 export async function sshListAllFiles(ssh: SshConfig, rootPath: string): Promise<SearchableFile[]> {
   const MAX_SEARCH_FILES = 5000
-  const target = remotePathExpr(rootPath)
+  const target = cdTarget(rootPath)
 
   // Build find exclusions
   const excludes = Array.from(IGNORED_DIRS)

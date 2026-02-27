@@ -195,9 +195,11 @@ export class Session {
       const driver = this.drivers.get(this.activeSessionId)
       driver?.stop()
     }
-    // Do NOT call setStatus('stopped') here — wait for the process to actually
-    // exit (the close event fires handleDone which sets the final status).
-    // This ensures the UI is never updated while the process is still running.
+    // Immediately tell the UI we're stopping, but skip the DB write — 'stopping'
+    // is a transient state and we don't want it persisted (a crash would leave
+    // the DB in 'stopping' which startup wouldn't know to handle).
+    // The DB and final UI status are both set in handleDone() when the process exits.
+    this.window.webContents.send(`thread:status:${this.threadId}`, 'stopping')
   }
 
   isRunning(): boolean {
@@ -261,24 +263,37 @@ export class Session {
     const driver = this.drivers.get(this.activeSessionId)
     if (!driver) return
 
-    // Build a nice formatted Q&A for display and persistence
+    // Capture questions before clearing
+    const questions = this.pendingQuestions
+
+    // Build formatted Q&A for display/persistence and for Claude — in one pass
     const qaLines: string[] = []
-    for (const q of this.pendingQuestions) {
+    const answerLines: string[] = []
+
+    for (const q of questions) {
       const answer = answers[q.question]
-      if (answer) {
-        qaLines.push(`**${q.header}**: ${q.question}`)
-        qaLines.push(`→ ${answer}`)
-        const comment = questionComments[q.question]
-        if (comment?.trim()) {
-          qaLines.push(`  ↳ ${comment.trim()}`)
-        }
-        qaLines.push('')
-      }
+      const comment = questionComments[q.question]?.trim()
+      if (!answer && !comment) continue
+
+      // Display block
+      qaLines.push(`**${q.header}**: ${q.question}`)
+      if (answer) qaLines.push(`→ ${answer}`)
+      if (comment) qaLines.push(`  ↳ ${comment}`)
+      qaLines.push('')
+
+      // Claude text
+      let claudeLine = answer ? `${q.question}: ${answer}` : `${q.question}: (no selection)`
+      if (comment) claudeLine += `\n  (clarification: ${comment})`
+      answerLines.push(claudeLine)
     }
+
     if (generalComment?.trim()) {
       qaLines.push(`Additional notes: ${generalComment.trim()}`)
+      answerLines.push(`\nAdditional clarification: ${generalComment.trim()}`)
     }
+
     const qaText = qaLines.join('\n').trim()
+    const answerText = answerLines.join('\n')
 
     // Persist the Q&A as a user message
     insertMessage(this.threadId, 'user', qaText, { type: 'question_answer' }, this.activeSessionId)
@@ -294,18 +309,6 @@ export class Session {
     this.questionPending = false
     this.pendingQuestions = []
     this.setStatus('running')
-
-    // Format the answer as a response message for Claude
-    const answerLines = Object.entries(answers).map(([question, answer]) => {
-      const comment = questionComments[question]
-      return comment?.trim()
-        ? `${question}: ${answer}\n  (clarification: ${comment.trim()})`
-        : `${question}: ${answer}`
-    })
-    if (generalComment?.trim()) {
-      answerLines.push(`\nAdditional clarification: ${generalComment.trim()}`)
-    }
-    const answerText = answerLines.join('\n')
 
     driver.sendMessage(
       answerText,

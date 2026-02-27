@@ -224,14 +224,15 @@ export default function InputBar({ threadId }: Props) {
   const slashCommands = slashCommandsByScope[selectedProjectId ?? 'global'] ?? slashCommandsByScope['global'] ?? EMPTY_SLASH_COMMANDS
   const sendingRef = useRef(false)
 
-  const isProcessing = status === 'running'
+  const isProcessing = status === 'running' || status === 'stopping'
+  const isStopping = status === 'stopping'
   const isPlanPending = status === 'plan_pending'
   const isQuestionPending = status === 'question_pending'
   const hasContent = value.trim().length > 0 || attachments.length > 0
   // Can send when idle and has content
   const canSend = !isProcessing && !isPlanPending && !isQuestionPending && hasContent
-  // Can queue when processing (and no existing queue) and has content
-  const canQueue = isProcessing && !queuedMessage && hasContent
+  // Can queue only when actively running (not while stopping) and no existing queue
+  const canQueue = status === 'running' && !queuedMessage && hasContent
 
   // Elapsed timer while processing
   useEffect(() => {
@@ -794,7 +795,7 @@ export default function InputBar({ threadId }: Props) {
                 Claude needs your input
               </div>
               <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                Select an option for each question below
+                Select an option or add a comment — all fields are optional
               </div>
             </div>
           </div>
@@ -819,7 +820,10 @@ export default function InputBar({ threadId }: Props) {
                     <button
                       key={optIndex}
                       onClick={() =>
-                        setSelectedAnswers((prev) => ({ ...prev, [q.question]: opt.label }))
+                        setSelectedAnswers((prev) => ({
+                          ...prev,
+                          [q.question]: prev[q.question] === opt.label ? '' : opt.label,
+                        }))
                       }
                       className="rounded-lg px-3 py-2 text-left transition-all"
                       style={{
@@ -872,8 +876,7 @@ export default function InputBar({ threadId }: Props) {
           <div className="mt-3 flex justify-end">
             <button
               onClick={() => answerQuestion(threadId, selectedAnswers, questionComments, generalComment)}
-              disabled={Object.keys(selectedAnswers).length < questions.length}
-              className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
+              className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
               style={{
                 background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
                 color: '#fff',
@@ -993,33 +996,40 @@ export default function InputBar({ threadId }: Props) {
           {/* Send / Queue / Stop buttons */}
           {isProcessing ? (
             <>
-              {/* Queue button */}
+              {/* Queue button — hidden while stopping */}
+              {!isStopping && (
+                <button
+                  onClick={handleSend}
+                  disabled={!canQueue}
+                  className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 disabled:cursor-not-allowed"
+                  style={{
+                    background: canQueue
+                      ? 'linear-gradient(135deg, #a855f7 0%, #9333ea 100%)'
+                      : 'var(--color-surface-2)',
+                    boxShadow: canQueue ? '0 2px 8px rgba(168, 85, 247, 0.3)' : 'none',
+                    opacity: canQueue ? 1 : 0.4,
+                  }}
+                  title={queuedMessage ? 'Message already queued' : 'Queue message (Enter)'}
+                >
+                  <QueueIcon className={canQueue ? 'text-white' : 'text-gray-500'} />
+                </button>
+              )}
+              {/* Stop button — disabled while already stopping */}
               <button
-                onClick={handleSend}
-                disabled={!canQueue}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 disabled:cursor-not-allowed"
+                onClick={() => !isStopping && stop(threadId)}
+                disabled={isStopping}
+                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150"
                 style={{
-                  background: canQueue
-                    ? 'linear-gradient(135deg, #a855f7 0%, #9333ea 100%)'
-                    : 'var(--color-surface-2)',
-                  boxShadow: canQueue ? '0 2px 8px rgba(168, 85, 247, 0.3)' : 'none',
-                  opacity: canQueue ? 1 : 0.4,
+                  background: isStopping
+                    ? 'var(--color-surface-2)'
+                    : 'linear-gradient(135deg, #f87171 0%, #ef4444 100%)',
+                  boxShadow: isStopping ? 'none' : '0 2px 8px rgba(248, 113, 113, 0.3)',
+                  opacity: isStopping ? 0.5 : 1,
+                  cursor: isStopping ? 'not-allowed' : 'pointer',
                 }}
-                title={queuedMessage ? 'Message already queued' : 'Queue message (Enter)'}
+                title={isStopping ? 'Stopping…' : 'Stop generation'}
               >
-                <QueueIcon className={canQueue ? 'text-white' : 'text-gray-500'} />
-              </button>
-              {/* Stop button */}
-              <button
-                onClick={() => stop(threadId)}
-                className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 hover:scale-105"
-                style={{
-                  background: 'linear-gradient(135deg, #f87171 0%, #ef4444 100%)',
-                  boxShadow: '0 2px 8px rgba(248, 113, 113, 0.3)',
-                }}
-                title="Stop generation"
-              >
-                <StopIcon className="text-white" />
+                <StopIcon className={isStopping ? 'text-gray-500' : 'text-white'} />
               </button>
             </>
           ) : (

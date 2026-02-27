@@ -8,6 +8,7 @@ import ProjectDialog from './ProjectDialog'
 import LocationDialog from './LocationDialog'
 import YouTrackSettingsDialog from './YouTrackSettingsDialog'
 import SlashCommandsDialog from './SlashCommandsDialog'
+import CliHealthDialog from './CliHealthDialog'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 
@@ -60,6 +61,7 @@ export default function Sidebar() {
   const [searchQuery, setSearchQuery] = useState('')
   const [youtrackDialogOpen, setYoutrackDialogOpen] = useState(false)
   const [slashCommandsDialogOpen, setSlashCommandsDialogOpen] = useState(false)
+  const [cliHealthDialogOpen, setCliHealthDialogOpen] = useState(false)
 
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [locationDialog, setLocationDialog] = useState<{ mode: 'create'; projectId: string } | { mode: 'edit'; projectId: string; location: RepoLocation } | null>(null)
@@ -92,12 +94,12 @@ export default function Sidebar() {
           setName(threadId, args[0] as string)
         })
         const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
-          setStatus(threadId, args[0] as 'idle' | 'running' | 'error' | 'stopped')
+          setStatus(threadId, args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
         })
-        // Safety net: reset status to idle on complete if still running
+        // Safety net: reset status to idle on complete if stuck in running/stopping
         const unsubComplete = window.api.on(`thread:complete:${threadId}`, () => {
           const currentStatus = useThreadStore.getState().statusMap[threadId]
-          if (currentStatus === 'running') {
+          if (currentStatus === 'running' || currentStatus === 'stopping') {
             setStatus(threadId, 'idle')
           }
         })
@@ -220,6 +222,7 @@ export default function Sidebar() {
     const status = statusMap[thread.id] ?? 'idle'
     const statusColor =
       status === 'running' ? '#4ade80'
+      : status === 'stopping' ? '#fb923c'
       : status === 'error' ? '#f87171'
       : status === 'stopped' ? '#facc15'
       : 'var(--color-text-muted)'
@@ -238,9 +241,10 @@ export default function Sidebar() {
             color: 'var(--color-text-muted)'
           }}
         >
-          {!isArchived && status === 'running' ? (
+          {!isArchived && (status === 'running' || status === 'stopping') ? (
             <span
               className="mr-2 h-1.5 w-1.5 flex-shrink-0 status-spinner"
+              style={status === 'stopping' ? { opacity: 0.5, filter: 'hue-rotate(30deg)' } : undefined}
             />
           ) : (
             <span
@@ -327,6 +331,16 @@ export default function Sidebar() {
           PolyCode
         </span>
         <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => setCliHealthDialogOpen(true)}
+            className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+            title="CLI health &amp; updates"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+            </svg>
+          </button>
           <button
             onClick={() => setSlashCommandsDialogOpen(true)}
             className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
@@ -422,7 +436,7 @@ export default function Sidebar() {
           const projectArchivedThreads = archivedByProject[project.id] ?? []
           const projectArchivedCount = archivedCountByProject[project.id] ?? 0
           const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
-          const runningThreads = projectThreads.filter((t) => statusMap[t.id] === 'running')
+          const runningThreads = projectThreads.filter((t) => statusMap[t.id] === 'running' || statusMap[t.id] === 'stopping')
 
           return (
             <div key={project.id}>
@@ -524,8 +538,34 @@ export default function Sidebar() {
                           </button>
                         )}
 
-                        {/* Threads under this location */}
-                        {isLocationExpanded && locationThreads.map((thread) => renderThread(thread, false, project.id))}
+                        {/* Threads under this location — split by branch */}
+                        {isLocationExpanded && (() => {
+                          const currentBranch = branchByLocation[loc.id]
+                          const currentBranchThreads = locationThreads.filter((t) =>
+                            !t.git_branch || !currentBranch || t.git_branch === currentBranch
+                          )
+                          const otherBranchThreads = locationThreads.filter((t) =>
+                            t.git_branch && currentBranch && t.git_branch !== currentBranch
+                          )
+                          return (
+                            <>
+                              {currentBranchThreads.map((thread) => renderThread(thread, false, project.id))}
+                              {otherBranchThreads.length > 0 && (
+                                <>
+                                  <div
+                                    className="flex items-center pl-10 pr-2 py-0.5 gap-1.5"
+                                    style={{ color: 'var(--color-text-muted)', opacity: 0.4 }}
+                                  >
+                                    <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
+                                    <span className="text-[9px] uppercase tracking-wide flex-shrink-0">other branches</span>
+                                    <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
+                                  </div>
+                                  {otherBranchThreads.map((thread) => renderThread(thread, false, project.id))}
+                                </>
+                              )}
+                            </>
+                          )
+                        })()}
                       </div>
                     )
                   })}
@@ -706,6 +746,11 @@ export default function Sidebar() {
           projectName={projects.find((p) => p.id === selectedProjectId)?.name}
           onClose={() => setSlashCommandsDialogOpen(false)}
         />
+      )}
+
+      {/* CLI health dialog */}
+      {cliHealthDialogOpen && (
+        <CliHealthDialog onClose={() => setCliHealthDialogOpen(false)} />
       )}
     </aside>
   )

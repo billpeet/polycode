@@ -135,7 +135,7 @@ export default function ThreadView({ threadId }: Props) {
     })
 
     const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
-      const status = args[0] as 'idle' | 'running' | 'error' | 'stopped'
+      const status = args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
       setStatus(threadId, status)
       if (status === 'error') {
         useToastStore.getState().add({

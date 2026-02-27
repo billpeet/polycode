@@ -165,11 +165,13 @@ export default function ThreadHeader({ threadId }: Props) {
   const statusColor =
     status === 'running'
       ? '#4ade80'
-      : status === 'error'
-        ? '#f87171'
-        : status === 'stopped'
-          ? '#facc15'
-          : 'var(--color-text-muted)'
+      : status === 'stopping'
+        ? '#fb923c'
+        : status === 'error'
+          ? '#f87171'
+          : status === 'stopped'
+            ? '#facc15'
+            : 'var(--color-text-muted)'
 
   function startEditing(): void {
     setEditValue(thread?.name ?? '')
@@ -200,16 +202,19 @@ export default function ThreadHeader({ threadId }: Props) {
     >
     <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-3 min-w-0">
-        {status === 'running' ? (
+        {status === 'running' || status === 'stopping' ? (
           <span className="flex items-center gap-1 flex-shrink-0">
-            <span className="h-2.5 w-2.5 status-spinner" />
+            <span
+              className="h-2.5 w-2.5 status-spinner"
+              style={status === 'stopping' ? { opacity: 0.5, filter: 'hue-rotate(30deg)' } : undefined}
+            />
             {pid !== null && (
               <span
                 className="text-xs"
                 style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace', fontSize: '0.6rem' }}
                 title={`Process ID: ${pid}`}
               >
-                pid:{pid}
+                {status === 'stopping' ? 'stopping…' : `pid:${pid}`}
               </span>
             )}
           </span>
@@ -321,13 +326,13 @@ export default function ThreadHeader({ threadId }: Props) {
             const defaultModel = getDefaultModelForProvider(provider)
             setProviderAndModel(threadId, provider, defaultModel)
           }}
-          disabled={status === 'running'}
+          disabled={status === 'running' || status === 'stopping'}
           className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
           style={{
             color: 'var(--color-text-muted)',
             borderColor: 'var(--color-border)',
             background: 'var(--color-surface)',
-            opacity: status === 'running' ? 0.4 : 1,
+            opacity: status === 'running' || status === 'stopping' ? 0.4 : 1,
           }}
           title="Select provider"
         >
@@ -340,13 +345,13 @@ export default function ThreadHeader({ threadId }: Props) {
         <select
           value={thread?.model ?? getDefaultModelForProvider((thread?.provider ?? 'claude-code') as Provider)}
           onChange={(e) => setModel(threadId, e.target.value)}
-          disabled={status === 'running'}
+          disabled={status === 'running' || status === 'stopping'}
           className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
           style={{
             color: 'var(--color-text-muted)',
             borderColor: 'var(--color-border)',
             background: 'var(--color-surface)',
-            opacity: status === 'running' ? 0.4 : 1,
+            opacity: status === 'running' || status === 'stopping' ? 0.4 : 1,
           }}
           title="Select model"
         >
