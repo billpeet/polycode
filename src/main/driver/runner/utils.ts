@@ -93,11 +93,16 @@ const RESOLVE_CODEX_BIN_LINES = [
   '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.volta/bin/codex" ] && CODEX_BIN="$HOME/.volta/bin/codex"',
   '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.bun/bin/codex" ] && CODEX_BIN="$HOME/.bun/bin/codex"',
   '[ -z "$CODEX_BIN" ] && [ -d "$HOME/.nvm/versions/node" ] && CODEX_BIN="$(ls -1d "$HOME"/.nvm/versions/node/*/bin/codex 2>/dev/null | tail -n 1)"',
+  // ~/bin and ~/.cargo/bin are common manual install locations
+  '[ -z "$CODEX_BIN" ] && [ -x "$HOME/bin/codex" ] && CODEX_BIN="$HOME/bin/codex"',
+  '[ -z "$CODEX_BIN" ] && [ -x "$HOME/.cargo/bin/codex" ] && CODEX_BIN="$HOME/.cargo/bin/codex"',
+  // Resolve npm global prefix dynamically (handles custom npm prefix configurations)
+  '[ -z "$CODEX_BIN" ] && command -v npm >/dev/null 2>&1 && { _NP="$(npm prefix -g 2>/dev/null)/bin/codex"; [ -x "$_NP" ] && CODEX_BIN="$_NP"; }',
 ]
 
 export const RESOLVE_CODEX_BIN = [
   ...RESOLVE_CODEX_BIN_LINES,
-  '[ -n "$CODEX_BIN" ] || { echo "codex not found; PATH=$PATH" >&2; exit 127; }',
+  '[ -n "$CODEX_BIN" ] || { echo "codex not found — install it inside WSL with: npm i -g @openai/codex; PATH=$PATH" >&2; exit 127; }',
 ].join('; ')
 
 /**

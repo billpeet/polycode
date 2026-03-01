@@ -22,6 +22,7 @@ import SlashCommandPopup from './SlashCommandPopup'
 import AttachmentPreview from './AttachmentPreview'
 import { useYouTrackStore } from '../stores/youtrack'
 import { useSlashCommandStore } from '../stores/slashCommands'
+import { useCliHealthStore } from '../stores/cliHealth'
 import QueuedMessageBanner from './QueuedMessageBanner'
 
 interface Props {
@@ -218,6 +219,22 @@ export default function InputBar({ threadId }: Props) {
   const location = currentThread?.location_id ? projectLocations.find((l) => l.id === currentThread.location_id) : null
   const addToast = useToastStore((s) => s.add)
 
+  const [locationPathMissing, setLocationPathMissing] = useState(false)
+
+  // Check if the thread's local location path exists
+  useEffect(() => {
+    if (!location || location.connection_type !== 'local') {
+      setLocationPathMissing(false)
+      return
+    }
+    window.api.invoke('locations:pathExists', location.path).then((exists) => {
+      setLocationPathMissing(!exists)
+    }).catch(() => {})
+  }, [location])
+
+  const cliHealth = useCliHealthStore((s) => s.healthByThread[threadId])
+  const cliUnavailable = cliHealth?.status === 'unavailable' || cliHealth?.status === 'error'
+
   const youtrackServers = useYouTrackStore((s) => s.servers)
   const slashCommandsByScope = useSlashCommandStore((s) => s.commandsByScope)
   const fetchSlashCommands = useSlashCommandStore((s) => s.fetch)
@@ -229,10 +246,10 @@ export default function InputBar({ threadId }: Props) {
   const isPlanPending = status === 'plan_pending'
   const isQuestionPending = status === 'question_pending'
   const hasContent = value.trim().length > 0 || attachments.length > 0
-  // Can send when idle and has content
-  const canSend = !isProcessing && !isPlanPending && !isQuestionPending && hasContent
+  // Can send when idle and has content, location path exists, and CLI is available
+  const canSend = !isProcessing && !isPlanPending && !isQuestionPending && hasContent && !locationPathMissing && !cliUnavailable
   // Can queue only when actively running (not while stopping) and no existing queue
-  const canQueue = status === 'running' && !queuedMessage && hasContent
+  const canQueue = status === 'running' && !queuedMessage && hasContent && !locationPathMissing && !cliUnavailable
 
   // Elapsed timer while processing
   useEffect(() => {
@@ -689,6 +706,51 @@ export default function InputBar({ threadId }: Props) {
         }}
       />
 
+      {/* Missing location path banner */}
+      {locationPathMissing && location && (
+        <div
+          className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+          style={{
+            background: 'rgba(248, 113, 113, 0.1)',
+            border: '1px solid rgba(248, 113, 113, 0.3)',
+            color: '#f87171',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span>
+            Directory not found: <span className="font-mono">{location.path}</span>
+            {' '}— update the location or restore the directory.
+          </span>
+        </div>
+      )}
+
+      {/* CLI unavailable banner */}
+      {cliUnavailable && (
+        <div
+          className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+          style={{
+            background: 'rgba(248, 113, 113, 0.1)',
+            border: '1px solid rgba(248, 113, 113, 0.3)',
+            color: '#f87171',
+          }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="8" x2="12" y2="12" />
+            <line x1="12" y1="16" x2="12.01" y2="16" />
+          </svg>
+          <span>
+            {cliHealth?.status === 'error'
+              ? `CLI health check failed: ${cliHealth.error ?? 'unknown error'}`
+              : `CLI not found for this provider — install it or switch to a different provider.`}
+          </span>
+        </div>
+      )}
+
       {/* Error banner */}
       {status === 'error' && (
         <div
@@ -953,13 +1015,6 @@ export default function InputBar({ threadId }: Props) {
           )}
         </div>
 
-        {/* Attachment previews */}
-        <AttachmentPreview
-          attachments={attachments}
-          onRemove={removeAttachment}
-          disabled={isProcessing}
-        />
-
         {/* Textarea row */}
         <div className="flex items-end gap-2 px-3 py-3">
           {/* Paperclip button */}
@@ -973,25 +1028,41 @@ export default function InputBar({ threadId }: Props) {
             <PaperclipIcon />
           </button>
 
-          <textarea
-            ref={textareaRef}
-            value={value}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onInput={handleInput}
-            onPaste={handlePaste}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            rows={1}
-            placeholder={isProcessing ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...') : 'Ask Claude... (/ for slash commands, @ for files, @JS-123 for YouTrack)'}
-            disabled={isPlanPending || isQuestionPending}
-            className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
-            style={{
-              color: 'var(--color-text)',
-              maxHeight: '200px',
-              minHeight: '24px',
-            }}
-          />
+          {/* Inline attachment chips + textarea */}
+          <div className="flex flex-1 flex-wrap items-end gap-1.5">
+            <AttachmentPreview
+              attachments={attachments}
+              onRemove={removeAttachment}
+              disabled={isProcessing}
+              inline
+            />
+
+            <textarea
+              ref={textareaRef}
+              value={value}
+              onChange={handleChange}
+              onKeyDown={handleKeyDown}
+              onInput={handleInput}
+              onPaste={handlePaste}
+              onFocus={() => setIsFocused(true)}
+              onBlur={() => setIsFocused(false)}
+              rows={1}
+              placeholder={
+                cliUnavailable
+                  ? 'CLI not available — input disabled'
+                  : isProcessing
+                    ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
+                    : 'Ask Claude... (/ for slash commands, @ for files, @JS-123 for YouTrack)'
+              }
+              disabled={isPlanPending || isQuestionPending || cliUnavailable}
+              className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
+              style={{
+                color: 'var(--color-text)',
+                maxHeight: '200px',
+                minHeight: '24px',
+              }}
+            />
+          </div>
 
           {/* Send / Queue / Stop buttons */}
           {isProcessing ? (

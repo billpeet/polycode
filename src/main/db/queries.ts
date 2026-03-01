@@ -605,7 +605,7 @@ interface ToolCallMetadata {
   type: 'tool_call'
   id: string          // Claude API tool_use block uses 'id'
   name: string
-  input?: { file_path?: string; filePath?: string }
+  input?: { file_path?: string; filePath?: string; changes?: Array<{ path: string; kind: string }> }
 }
 
 interface ToolResultMetadata {
@@ -643,6 +643,15 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
       if (filePath && meta.id) {
         toolCallFiles.set(meta.id, filePath)
       }
+    } else if (meta.type === 'tool_call' && meta.name === 'FileChange' && Array.isArray(meta.input?.changes) && meta.id) {
+      // Codex file_change items carry a changes array; track them all under the item id
+      // by joining paths with a delimiter — they'll be split out below.
+      const paths = (meta.input!.changes as Array<{ path: string; kind: string }>)
+        .filter((c) => c.kind !== 'delete')
+        .map((c) => c.path)
+      if (paths.length > 0) {
+        toolCallFiles.set(meta.id, '\x00' + paths.join('\x00'))
+      }
     } else if (meta.type === 'tool_result' && meta.tool_use_id) {
       // Consider it successful if is_error is not true
       if (meta.is_error !== true) {
@@ -655,11 +664,17 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
   const files = new Set<string>()
   for (const [toolId, filePath] of toolCallFiles) {
     if (successfulToolIds.has(toolId)) {
-      // Resolve relative paths against workingDir
-      const resolved = filePath.startsWith('/') || /^[a-zA-Z]:/.test(filePath)
-        ? filePath
-        : `${workingDir}/${filePath}`
-      files.add(resolved)
+      // Multi-path encoding used by FileChange: paths joined by \x00, prefixed with \x00
+      const rawPaths = filePath.startsWith('\x00')
+        ? filePath.slice(1).split('\x00').filter(Boolean)
+        : [filePath]
+      for (const p of rawPaths) {
+        // Resolve relative paths against workingDir
+        const resolved = p.startsWith('/') || /^[a-zA-Z]:/.test(p)
+          ? p
+          : `${workingDir}/${p}`
+        files.add(resolved)
+      }
     }
   }
 
@@ -902,4 +917,15 @@ export function importThread(
   insertMany(messages)
 
   return rowToThread(thread)
+}
+
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+export function getSetting(key: string): string | null {
+  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
+  return row?.value ?? null
+}
+
+export function setSetting(key: string, value: string): void {
+  getDb().prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
 }

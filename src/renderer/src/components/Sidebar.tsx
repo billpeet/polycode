@@ -30,6 +30,7 @@ function relativeTime(iso: string): string {
 export default function Sidebar() {
   const projects = useProjectStore((s) => s.projects)
   const archivedProjects = useProjectStore((s) => s.archivedProjects)
+  const projectsLoading = useProjectStore((s) => s.loading)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const expandedProjectIds = useProjectStore((s) => s.expandedProjectIds)
   const selectProject = useProjectStore((s) => s.select)
@@ -72,6 +73,8 @@ export default function Sidebar() {
   const [archivedSectionExpanded, setArchivedSectionExpanded] = useState(false)
   /** Git branch name per location id */
   const [branchByLocation, setBranchByLocation] = useState<Record<string, string>>({})
+  /** Whether each local location's path exists on disk (undefined = not yet checked) */
+  const [pathExistsByLocation, setPathExistsByLocation] = useState<Record<string, boolean>>({})
 
   const setStatus = useThreadStore((s) => s.setStatus)
 
@@ -148,6 +151,22 @@ export default function Sidebar() {
     refreshBranches()
     const interval = setInterval(refreshBranches, 10000)
     return () => clearInterval(interval)
+  }, [expandedProjectIds, locationsByProject])
+
+  // Check whether local location paths exist on disk
+  useEffect(() => {
+    for (const projectId of expandedProjectIds) {
+      const locations = locationsByProject[projectId] ?? []
+      for (const loc of locations) {
+        if (loc.connection_type !== 'local') continue
+        window.api.invoke('locations:pathExists', loc.path).then((exists) => {
+          setPathExistsByLocation((prev) => {
+            if (prev[loc.id] === exists) return prev
+            return { ...prev, [loc.id]: exists }
+          })
+        }).catch(() => {})
+      }
+    }
   }, [expandedProjectIds, locationsByProject])
 
   function handleToggleProject(id: string): void {
@@ -508,24 +527,41 @@ export default function Sidebar() {
                     return (
                       <div key={loc.id}>
                         {/* Location subheader */}
-                        <div className="group relative">
-                          <button
-                            onClick={() => toggleLocationCollapsed(loc.id)}
-                            className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs transition-colors min-w-0"
-                            style={{ color: 'var(--color-text-muted)' }}
-                          >
-                            <span className="mr-1 text-[9px] flex-shrink-0 opacity-50" style={{ width: '8px' }}>
-                              {isLocationExpanded ? '▾' : '▸'}
-                            </span>
-                            <span className="truncate opacity-70">{loc.label}</span>
-                            {branchByLocation[loc.id] && (
-                              <span className="ml-1 flex-shrink-0 opacity-50 text-[9px]">
-                                ({branchByLocation[loc.id]})
-                              </span>
-                            )}
-                            {connectionBadge(loc.connection_type)}
-                          </button>
-                        </div>
+                        {(() => {
+                          const pathMissing = loc.connection_type === 'local' && pathExistsByLocation[loc.id] === false
+                          return (
+                            <div className="group relative">
+                              <button
+                                onClick={() => toggleLocationCollapsed(loc.id)}
+                                className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs transition-colors min-w-0"
+                                style={{ color: pathMissing ? '#f87171' : 'var(--color-text-muted)' }}
+                                title={pathMissing ? `Directory not found: ${loc.path}` : undefined}
+                              >
+                                <span className="mr-1 text-[9px] flex-shrink-0 opacity-50" style={{ width: '8px' }}>
+                                  {isLocationExpanded ? '▾' : '▸'}
+                                </span>
+                                <span className={`truncate ${pathMissing ? '' : 'opacity-70'}`}>{loc.label}</span>
+                                {pathMissing ? (
+                                  <span
+                                    className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+                                    style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
+                                  >
+                                    not found
+                                  </span>
+                                ) : (
+                                  <>
+                                    {branchByLocation[loc.id] && (
+                                      <span className="ml-1 flex-shrink-0 opacity-50 text-[9px]">
+                                        ({branchByLocation[loc.id]})
+                                      </span>
+                                    )}
+                                    {connectionBadge(loc.connection_type)}
+                                  </>
+                                )}
+                              </button>
+                            </div>
+                          )
+                        })()}
 
                         {/* New thread link */}
                         {isLocationExpanded && (
@@ -605,7 +641,14 @@ export default function Sidebar() {
           )
         })}
 
-        {!searchQuery.trim() && projects.length === 0 && archivedProjects.length === 0 && (
+        {!searchQuery.trim() && projectsLoading && projects.length === 0 && (
+          <div className="px-4 py-6 flex flex-col items-center gap-2" style={{ color: 'var(--color-text-muted)' }}>
+            <div className="status-spinner h-3 w-3" />
+            <span className="text-xs">Loading…</span>
+          </div>
+        )}
+
+        {!searchQuery.trim() && !projectsLoading && projects.length === 0 && archivedProjects.length === 0 && (
           <p className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
             No projects yet.
             <br />

@@ -4,6 +4,7 @@ import { CodexDriver } from '../driver/codex'
 import { OpenCodeDriver } from '../driver/opencode'
 import { CLIDriver } from '../driver/types'
 import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
+import { logThreadEvent } from '../thread-logger'
 import {
   updateThreadStatus,
   updateThreadName,
@@ -159,6 +160,12 @@ export class Session {
     this.pendingPlanContent = null
     this.questionPending = false
     this.pendingQuestions = []
+
+    logThreadEvent(this.threadId, {
+      ts: new Date().toISOString(),
+      type: 'message_sent',
+      content: content.slice(0, 500),
+    })
 
     // Persist to DB with session ID
     insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId)
@@ -323,6 +330,13 @@ export class Session {
     // and we don't want orphaned output appearing in the UI or DB.
     if (this.stopped) return
 
+    logThreadEvent(this.threadId, {
+      ts: new Date().toISOString(),
+      type: event.type,
+      content: event.content ? event.content.slice(0, 500) : undefined,
+      metadata: event.metadata,
+    })
+
     // Include sessionId in all events sent to renderer
     const eventWithSession: OutputEvent = { ...event, sessionId: this.activeSessionId ?? undefined }
 
@@ -382,6 +396,12 @@ export class Session {
   }
 
   private handleDone(error?: Error): void {
+    logThreadEvent(this.threadId, {
+      ts: new Date().toISOString(),
+      type: 'done',
+      metadata: { error: error?.message ?? null },
+    })
+
     // Clear the PID — the process has exited
     this.window.webContents.send(`thread:pid:${this.threadId}`, null)
 

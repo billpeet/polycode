@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult } from '../../shared/types'
-import { shellEscape, LOAD_NODE_MANAGERS, FIX_HOME, RESOLVE_CODEX_BIN_SOFT, buildSshBaseArgs } from '../driver/runner'
+import { shellEscape, LOAD_NODE_MANAGERS, buildSshBaseArgs } from '../driver/runner'
 
 interface SpawnResult {
   output: string
@@ -97,20 +97,18 @@ async function runVersionCheck(
   wsl?: WslConfig | null,
 ): Promise<SpawnResult> {
   const info = PROVIDER_INFO[provider]
+  const versionCmd = `${info.cmd} --version 2>&1`
 
   if (connectionType === 'ssh' && ssh) {
-    const versionCmd = provider === 'codex'
-      ? `${LOAD_NODE_MANAGERS}; ${RESOLVE_CODEX_BIN_SOFT}; [ -n "$CODEX_BIN" ] && "$CODEX_BIN" --version 2>&1 || echo "codex not found"`
-      : `${info.cmd} --version 2>&1`
-    const remoteCmd = `bash -lc ${shellEscape(versionCmd)}`
+    // LOAD_NODE_MANAGERS adds common tool dirs to PATH (.bashrc skips them in
+    // non-interactive shells due to `case $- in *i*)` guard).
+    const innerCmd = `${LOAD_NODE_MANAGERS}; ${versionCmd}`
+    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
     return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 20000 })
   }
 
   if (connectionType === 'wsl' && wsl) {
-    const versionCmd = provider === 'codex'
-      ? `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${RESOLVE_CODEX_BIN_SOFT}; [ -n "$CODEX_BIN" ] && "$CODEX_BIN" --version 2>&1 || echo "codex not found"`
-      : `${info.cmd} --version 2>&1`
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-lc', versionCmd], { timeout: 20000 })
+    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', versionCmd], { timeout: 20000 })
   }
 
   // Local
@@ -134,20 +132,17 @@ async function runUpdate(
     if (info.updateCmd) {
       return `${info.updateCmd.join(' ')} 2>&1`
     }
-    const base = `npm install -g ${info.updatePkg} 2>&1`
-    return provider === 'codex' ? `${LOAD_NODE_MANAGERS}; ${base}` : base
+    return `npm install -g ${info.updatePkg} 2>&1`
   }
 
   if (connectionType === 'ssh' && ssh) {
-    const remoteCmd = `bash -lc ${shellEscape(buildUpdateShellCmd())}`
+    const innerCmd = `${LOAD_NODE_MANAGERS}; ${buildUpdateShellCmd()}`
+    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
     return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 120000 })
   }
 
   if (connectionType === 'wsl' && wsl) {
-    const innerCmd = provider === 'codex'
-      ? `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; npm install -g ${info.updatePkg} 2>&1`
-      : buildUpdateShellCmd()
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd], { timeout: 120000 })
+    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', buildUpdateShellCmd()], { timeout: 120000 })
   }
 
   // Local

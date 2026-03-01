@@ -18,11 +18,12 @@ interface Props {
 interface LocationFormSectionProps {
   projectId: string
   location?: RepoLocation
+  gitUrl?: string | null
   onSaved: () => void
   onCancel: () => void
 }
 
-function LocationFormSection({ projectId, location, onSaved, onCancel }: LocationFormSectionProps) {
+function LocationFormSection({ projectId, location, gitUrl, onSaved, onCancel }: LocationFormSectionProps) {
   const createLocation = useLocationStore((s) => s.create)
   const updateLocation = useLocationStore((s) => s.update)
 
@@ -38,6 +39,48 @@ function LocationFormSection({ projectId, location, onSaved, onCancel }: Locatio
   const [error, setError] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null)
+
+  // Clone mode state (only for new locations, local connection type)
+  const [cloneMode, setCloneMode] = useState(false)
+  const [baseDir, setBaseDir] = useState('~/source')
+  const [suggestedPath, setSuggestedPath] = useState('')
+  const [cloneLabel, setCloneLabel] = useState('')
+  const [cloning, setCloning] = useState(false)
+  const [cloneError, setCloneError] = useState('')
+
+  // Load default source dir when switching into clone mode
+  useEffect(() => {
+    if (!cloneMode) return
+    window.api.invoke('settings:get', 'default_source_dir').then((val) => {
+      setBaseDir(val ?? '~/source')
+    }).catch(() => {})
+  }, [cloneMode])
+
+  // Auto-suggest path when baseDir or gitUrl changes in clone mode
+  useEffect(() => {
+    if (!cloneMode || !gitUrl) { setSuggestedPath(''); return }
+    const repoName = gitUrl.replace(/\.git$/, '').split('/').filter(Boolean).pop() ?? 'repo'
+    if (!cloneLabel) setCloneLabel(repoName)
+    window.api.invoke('locations:suggestPath', baseDir, repoName).then(setSuggestedPath).catch(() => {})
+  }, [cloneMode, baseDir, gitUrl])
+
+  async function handleClone(): Promise<void> {
+    if (!gitUrl || !suggestedPath) return
+    const labelToUse = cloneLabel.trim() || suggestedPath.split(/[/\\]/).pop() || 'Local'
+    setCloning(true)
+    setCloneError('')
+    try {
+      await window.api.invoke('locations:clone', projectId, labelToUse, gitUrl, suggestedPath)
+      onSaved()
+    } catch (err) {
+      setCloneError(String(err).replace(/^Error:\s*/, ''))
+    }
+    setCloning(false)
+  }
+
+  function handleSetAsDefault(): void {
+    window.api.invoke('settings:set', 'default_source_dir', baseDir).catch(() => {})
+  }
 
   const isSSH = connectionType === 'ssh'
   const isWSL = connectionType === 'wsl'
@@ -191,7 +234,7 @@ function LocationFormSection({ projectId, location, onSaved, onCancel }: Locatio
             <button
               key={type}
               type="button"
-              onClick={() => { setConnectionType(type); setTestResult(null); setError('') }}
+              onClick={() => { setConnectionType(type); setTestResult(null); setError(''); if (type !== 'local') setCloneMode(false) }}
               className="flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors"
               style={toggleStyle(connectionType === type)}
             >
@@ -201,176 +244,292 @@ function LocationFormSection({ projectId, location, onSaved, onCancel }: Locatio
         </div>
       </div>
 
-      {/* Label */}
-      <div>
-        <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Label</label>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          className="w-full rounded px-3 py-1.5 text-sm outline-none"
-          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          placeholder={isSSH ? 'SSH Prod' : isWSL ? 'WSL Ubuntu' : 'Local'}
-          autoFocus
-        />
-      </div>
-
-      {/* SSH fields */}
-      {isSSH && (
-        <>
-          <div className="flex gap-2">
-            <div className="flex-1">
-              <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Host</label>
-              <input
-                type="text"
-                value={sshHost}
-                onChange={(e) => setSshHost(e.target.value)}
-                className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
-                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                placeholder="example.com"
-              />
-            </div>
-            <div style={{ width: 72 }}>
-              <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Port</label>
-              <input
-                type="number"
-                value={sshPort}
-                onChange={(e) => setSshPort(e.target.value)}
-                className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
-                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                placeholder="22"
-              />
-            </div>
-          </div>
-          <div>
-            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>User</label>
-            <input
-              type="text"
-              value={sshUser}
-              onChange={(e) => setSshUser(e.target.value)}
-              className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
-              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              placeholder="ubuntu"
-            />
-          </div>
-          <div>
-            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              Key Path <span style={{ opacity: 0.5 }}>(optional)</span>
-            </label>
-            <input
-              type="text"
-              value={sshKeyPath}
-              onChange={(e) => setSshKeyPath(e.target.value)}
-              className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
-              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              placeholder="~/.ssh/id_rsa"
-            />
-          </div>
-        </>
-      )}
-
-      {/* WSL fields */}
-      {isWSL && (
+      {/* Clone mode toggle — only for new local locations */}
+      {!location && connectionType === 'local' && (
         <div>
-          <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Distro</label>
-          {availableDistros.length > 0 ? (
-            <select
-              value={wslDistro}
-              onChange={(e) => setWslDistro(e.target.value)}
-              className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
-              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+          <div className="flex gap-1">
+            <button
+              type="button"
+              onClick={() => { setCloneMode(false); setCloneError('') }}
+              className="flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors"
+              style={toggleStyle(!cloneMode)}
             >
-              {availableDistros.map((d) => <option key={d} value={d}>{d}</option>)}
-            </select>
-          ) : (
-            <input
-              type="text"
-              value={wslDistro}
-              onChange={(e) => setWslDistro(e.target.value)}
-              className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
-              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              placeholder="Ubuntu"
-            />
-          )}
+              Use Existing
+            </button>
+            <button
+              type="button"
+              onClick={() => { setCloneMode(true); setError('') }}
+              className="flex-1 rounded px-2 py-1.5 text-xs font-medium transition-colors"
+              style={toggleStyle(cloneMode)}
+            >
+              Clone New
+            </button>
+          </div>
         </div>
       )}
 
-      {/* Path */}
-      <div>
-        <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>{pathLabel}</label>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={path}
-            onChange={(e) => setPath(e.target.value)}
-            className="flex-1 rounded px-3 py-1.5 text-sm outline-none font-mono"
-            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-            placeholder={pathPlaceholder}
-          />
-          {!isSSH && !isWSL && (
+      {/* Clone mode form */}
+      {cloneMode && !location && (
+        <>
+          {!gitUrl ? (
+            <p className="text-xs py-1" style={{ color: '#f87171' }}>
+              Set a Git URL on the project before cloning.
+            </p>
+          ) : (
+            <>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Label</label>
+                <input
+                  type="text"
+                  value={cloneLabel}
+                  onChange={(e) => setCloneLabel(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="Local"
+                  autoFocus
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Base directory</label>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={baseDir}
+                    onChange={(e) => setBaseDir(e.target.value)}
+                    className="flex-1 rounded px-3 py-1.5 text-sm outline-none font-mono"
+                    style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                    placeholder="~/source"
+                  />
+                  <button
+                    type="button"
+                    onClick={handleSetAsDefault}
+                    className="rounded px-2.5 py-1.5 text-xs whitespace-nowrap"
+                    style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+                    title="Save as default base directory"
+                  >
+                    Set default
+                  </button>
+                </div>
+              </div>
+              {suggestedPath && (
+                <div>
+                  <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Clone path</label>
+                  <div
+                    className="rounded px-3 py-1.5 text-sm font-mono"
+                    style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+                  >
+                    {suggestedPath}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+          {cloneError && <p className="text-xs" style={{ color: '#f87171' }}>{cloneError}</p>}
+          <div className="flex justify-end gap-2 pt-0.5">
             <button
               type="button"
-              onClick={handleBrowse}
+              onClick={onCancel}
+              disabled={cloning}
               className="rounded px-3 py-1.5 text-xs"
               style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
             >
-              Browse
+              Cancel
             </button>
-          )}
-        </div>
-      </div>
-
-      {/* Test connection */}
-      {(isSSH || isWSL) && (
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleTest}
-            disabled={!canTest || testing}
-            className="rounded px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40"
-            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          >
-            {testing ? 'Testing...' : 'Test Connection'}
-          </button>
-          {testing && (
-            <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              <span className="streaming-dot" style={{ background: 'var(--color-claude)', width: 6, height: 6 }} />
-              {isWSL ? 'Testing WSL...' : 'Connecting...'}
-            </span>
-          )}
-          {!testing && testResult === 'success' && (
-            <span className="text-xs font-medium" style={{ color: '#4ade80' }}>
-              {isWSL ? 'Path valid' : 'Connected'}
-            </span>
-          )}
-          {!testing && testResult === 'fail' && (
-            <span className="text-xs font-medium" style={{ color: '#f87171' }}>Failed</span>
-          )}
-        </div>
+            <button
+              type="button"
+              onClick={handleClone}
+              disabled={!gitUrl || !suggestedPath || cloning}
+              className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+              style={{ background: 'var(--color-claude)', color: '#fff' }}
+            >
+              {cloning ? (
+                <span className="flex items-center gap-1.5">
+                  <span className="streaming-dot" style={{ background: '#fff', width: 5, height: 5 }} />
+                  Cloning...
+                </span>
+              ) : 'Clone'}
+            </button>
+          </div>
+          {/* Stop rendering the rest of the form in clone mode */}
+          {/* We return early from JSX by rendering nothing else */}
+        </>
       )}
 
-      {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+      {/* Existing path form — hidden when clone mode is active */}
+      {!cloneMode && (
+        <>
+          {/* Label */}
+          <div>
+            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Label</label>
+            <input
+              type="text"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              className="w-full rounded px-3 py-1.5 text-sm outline-none"
+              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+              placeholder={isSSH ? 'SSH Prod' : isWSL ? 'WSL Ubuntu' : 'Local'}
+              autoFocus
+            />
+          </div>
 
-      <div className="flex justify-end gap-2 pt-0.5">
-        <button
-          type="button"
-          onClick={onCancel}
-          disabled={testing}
-          className="rounded px-3 py-1.5 text-xs"
-          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-        >
-          Cancel
-        </button>
-        <button
-          type="button"
-          onClick={handleSave}
-          disabled={testing}
-          className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-          style={{ background: 'var(--color-claude)', color: '#fff' }}
-        >
-          {testing ? 'Testing...' : location ? 'Save' : 'Add'}
-        </button>
-      </div>
+          {/* SSH fields */}
+          {isSSH && (
+            <>
+              <div className="flex gap-2">
+                <div className="flex-1">
+                  <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Host</label>
+                  <input
+                    type="text"
+                    value={sshHost}
+                    onChange={(e) => setSshHost(e.target.value)}
+                    className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                    style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                    placeholder="example.com"
+                  />
+                </div>
+                <div style={{ width: 72 }}>
+                  <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Port</label>
+                  <input
+                    type="number"
+                    value={sshPort}
+                    onChange={(e) => setSshPort(e.target.value)}
+                    className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                    style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                    placeholder="22"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>User</label>
+                <input
+                  type="text"
+                  value={sshUser}
+                  onChange={(e) => setSshUser(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="ubuntu"
+                />
+              </div>
+              <div>
+                <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  Key Path <span style={{ opacity: 0.5 }}>(optional)</span>
+                </label>
+                <input
+                  type="text"
+                  value={sshKeyPath}
+                  onChange={(e) => setSshKeyPath(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="~/.ssh/id_rsa"
+                />
+              </div>
+            </>
+          )}
+
+          {/* WSL fields */}
+          {isWSL && (
+            <div>
+              <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Distro</label>
+              {availableDistros.length > 0 ? (
+                <select
+                  value={wslDistro}
+                  onChange={(e) => setWslDistro(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                >
+                  {availableDistros.map((d) => <option key={d} value={d}>{d}</option>)}
+                </select>
+              ) : (
+                <input
+                  type="text"
+                  value={wslDistro}
+                  onChange={(e) => setWslDistro(e.target.value)}
+                  className="w-full rounded px-3 py-1.5 text-sm outline-none font-mono"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                  placeholder="Ubuntu"
+                />
+              )}
+            </div>
+          )}
+
+          {/* Path */}
+          <div>
+            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>{pathLabel}</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={path}
+                onChange={(e) => setPath(e.target.value)}
+                className="flex-1 rounded px-3 py-1.5 text-sm outline-none font-mono"
+                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                placeholder={pathPlaceholder}
+              />
+              {!isSSH && !isWSL && (
+                <button
+                  type="button"
+                  onClick={handleBrowse}
+                  className="rounded px-3 py-1.5 text-xs"
+                  style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                >
+                  Browse
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Test connection */}
+          {(isSSH || isWSL) && (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={handleTest}
+                disabled={!canTest || testing}
+                className="rounded px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40"
+                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+              >
+                {testing ? 'Testing...' : 'Test Connection'}
+              </button>
+              {testing && (
+                <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  <span className="streaming-dot" style={{ background: 'var(--color-claude)', width: 6, height: 6 }} />
+                  {isWSL ? 'Testing WSL...' : 'Connecting...'}
+                </span>
+              )}
+              {!testing && testResult === 'success' && (
+                <span className="text-xs font-medium" style={{ color: '#4ade80' }}>
+                  {isWSL ? 'Path valid' : 'Connected'}
+                </span>
+              )}
+              {!testing && testResult === 'fail' && (
+                <span className="text-xs font-medium" style={{ color: '#f87171' }}>Failed</span>
+              )}
+            </div>
+          )}
+
+          {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+
+          <div className="flex justify-end gap-2 pt-0.5">
+            <button
+              type="button"
+              onClick={onCancel}
+              disabled={testing}
+              className="rounded px-3 py-1.5 text-xs"
+              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={testing}
+              className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50"
+              style={{ background: 'var(--color-claude)', color: '#fff' }}
+            >
+              {testing ? 'Testing...' : location ? 'Save' : 'Add'}
+            </button>
+          </div>
+        </>
+      )}
     </div>
   )
 }
@@ -613,6 +772,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
               <div className={locations.length > 0 ? 'mt-1' : ''}>
                 <LocationFormSection
                   projectId={project.id}
+                  gitUrl={gitUrl.trim() || null}
                   onSaved={() => setLocationForm({ mode: 'none' })}
                   onCancel={() => setLocationForm({ mode: 'none' })}
                 />

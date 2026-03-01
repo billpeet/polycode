@@ -362,3 +362,12 @@ export interface SlashCommand {
   created_at: string
   updated_at: string
 }
+
+// ── Thread Log Entries ─────────────────────────────────────────────────────────
+
+export interface ThreadLogEntry {
+  ts: string
+  type: string
+  content?: string
+  metadata?: unknown
+}

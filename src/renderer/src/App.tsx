@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 import { ErrorBoundary } from '@sentry/react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
@@ -16,18 +16,18 @@ import { useToastStore } from './stores/toast'
 import { useCommandStore } from './stores/commands'
 import { useYouTrackStore } from './stores/youtrack'
 
-const STORAGE_PROJECT_KEY = 'polycode:selectedProjectId'
-const STORAGE_THREAD_KEY = 'polycode:selectedThreadId'
+const SETTING_PROJECT_KEY = 'selectedProjectId'
+const SETTING_THREAD_KEY = 'selectedThreadId'
 
 export default function App() {
   const fetchProjects = useProjectStore((s) => s.fetch)
   const projects = useProjectStore((s) => s.projects)
+  const projectsLoading = useProjectStore((s) => s.loading)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
   const selectProject = useProjectStore((s) => s.select)
   const expandProject = useProjectStore((s) => s.expand)
 
   const fetchThreads = useThreadStore((s) => s.fetch)
-  const byProject = useThreadStore((s) => s.byProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const selectThread = useThreadStore((s) => s.select)
@@ -56,56 +56,32 @@ export default function App() {
     currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
   )
 
-  // Track whether we've attempted restore yet
-  const restored = useRef(false)
-
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
 
-  // 1. Load projects and YouTrack servers on mount
+  // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
-    fetchProjects()
-    fetchYouTrackServers()
-  }, [fetchProjects, fetchYouTrackServers])
+    Promise.all([
+      window.api.invoke('settings:get', SETTING_PROJECT_KEY),
+      window.api.invoke('settings:get', SETTING_THREAD_KEY),
+      fetchProjects(),
+      fetchYouTrackServers(),
+    ]).then(([savedProjectId, savedThreadId]) => {
+      if (!savedProjectId) return
+      const project = useProjectStore.getState().projects.find((p) => p.id === savedProjectId)
+      if (!project) return
 
-  // 2. Once projects arrive, restore last selection
-  useEffect(() => {
-    if (restored.current || projects.length === 0) return
+      selectProject(project.id)
+      expandProject(project.id)
+      fetchLocations(project.id)
 
-    const savedProjectId = localStorage.getItem(STORAGE_PROJECT_KEY)
-    const savedThreadId = localStorage.getItem(STORAGE_THREAD_KEY)
-
-    const project = projects.find((p) => p.id === savedProjectId)
-    if (!project) return // saved project no longer exists — leave unselected
-
-    restored.current = true
-    selectProject(project.id)
-    expandProject(project.id)
-    fetchLocations(project.id)
-    fetchThreads(project.id).then(() => {
-      // selectThread is called inside the byProject effect below
+      fetchThreads(project.id).then(() => {
+        if (!savedThreadId) return
+        const thread = useThreadStore.getState().byProject[project.id]?.find((t) => t.id === savedThreadId)
+        if (thread) selectThread(thread.id)
+      })
     })
-
-    // Stash thread ID to restore after threads load
-    if (savedThreadId) {
-      pendingThreadId.current = savedThreadId
-    }
-  }, [projects, selectProject, expandProject, fetchThreads, fetchLocations])
-
-  // Ref to carry the desired thread ID across the async fetch
-  const pendingThreadId = useRef<string | null>(null)
-
-  // 3. Once threads arrive for the restored project, select the saved thread
-  useEffect(() => {
-    const pending = pendingThreadId.current
-    if (!pending || !selectedProjectId) return
-    const threads = byProject[selectedProjectId] ?? []
-    if (threads.length === 0) return
-    const thread = threads.find((t) => t.id === pending)
-    if (thread) {
-      pendingThreadId.current = null
-      selectThread(thread.id)
-    }
-  }, [byProject, selectedProjectId, selectThread])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -158,16 +134,16 @@ export default function App() {
     })
   }, [])
 
-  // 4. Persist selections whenever they change (after initial restore)
+  // 4. Persist selections whenever they change
   useEffect(() => {
     if (selectedProjectId) {
-      localStorage.setItem(STORAGE_PROJECT_KEY, selectedProjectId)
+      window.api.invoke('settings:set', SETTING_PROJECT_KEY, selectedProjectId)
     }
   }, [selectedProjectId])
 
   useEffect(() => {
     if (selectedThreadId) {
-      localStorage.setItem(STORAGE_THREAD_KEY, selectedThreadId)
+      window.api.invoke('settings:set', SETTING_THREAD_KEY, selectedThreadId)
     }
   }, [selectedThreadId])
 
@@ -196,8 +172,13 @@ export default function App() {
                 {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
               </>
             ) : (
-              <div className="flex flex-1 items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-                {selectedProjectId
+              <div className="flex flex-1 items-center justify-center gap-2" style={{ color: 'var(--color-text-muted)' }}>
+                {projectsLoading && projects.length === 0 ? (
+                  <>
+                    <span className="status-spinner h-3 w-3" />
+                    <span className="text-sm">Loading…</span>
+                  </>
+                ) : selectedProjectId
                   ? 'Select or create a thread to get started'
                   : 'Select or create a project to get started'}
               </div>

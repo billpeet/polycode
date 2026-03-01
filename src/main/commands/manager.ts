@@ -4,7 +4,7 @@ import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
-import { shellEscape, cdTarget, buildSshBaseArgs } from '../driver/runner'
+import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from '../driver/runner'
 
 const LOG_RING_BUFFER_SIZE = 1000
 
@@ -91,9 +91,11 @@ class CommandManager {
 
     if (connectionType === 'wsl' && location?.wsl) {
       // ── WSL spawn ──────────────────────────────────────────────────────────
+      // bash -ilc (interactive + login) ensures .bashrc runs in full, giving
+      // the user's real PATH instead of Windows tools bleeding in via /mnt/c/.
       const workDir = cwd ?? '~'
       const innerCmd = `cd ${cdTarget(workDir)} && ${cmdDef.command}`
-      proc = spawn('wsl', ['-d', location.wsl.distro, '--', 'bash', '-c', innerCmd], {
+      proc = spawn('wsl', ['-d', location.wsl.distro, '--', 'bash', '-ilc', innerCmd], {
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
@@ -101,7 +103,7 @@ class CommandManager {
       // ── SSH spawn ──────────────────────────────────────────────────────────
       const ssh = location.ssh
       const workDir = cwd ?? '~'
-      const innerCmd = `cd ${cdTarget(workDir)} && ${cmdDef.command}`
+      const innerCmd = `${LOAD_NODE_MANAGERS}; cd ${cdTarget(workDir)} && ${cmdDef.command}`
       const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
       const sshArgs = buildSshBaseArgs(ssh)
       sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)

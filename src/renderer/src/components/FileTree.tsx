@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useFilesStore } from '../stores/files'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
+import { useGitStore } from '../stores/git'
 import { FileEntry } from '../types/ipc'
 
 const EMPTY_ENTRIES: FileEntry[] = []
@@ -277,6 +278,7 @@ export default function FileTree({ threadId }: { threadId: string }) {
 
   const entriesByPath = useFilesStore((s) => s.entriesByPath)
   const fetchDirectory = useFilesStore((s) => s.fetchDirectory)
+  const refreshDirectory = useFilesStore((s) => s.refreshDirectory)
   const loadingPaths = useFilesStore((s) => s.loadingPaths)
 
   const rootEntries = projectPath ? (entriesByPath[projectPath] ?? EMPTY_ENTRIES) : EMPTY_ENTRIES
@@ -291,6 +293,26 @@ export default function FileTree({ threadId }: { threadId: string }) {
       fetchDirectory(projectPath)
     }
   }, [projectPath, entriesByPath, fetchDirectory])
+
+  // Auto-refresh every 30 seconds
+  useEffect(() => {
+    if (!projectPath) return
+    const id = setInterval(() => {
+      refreshDirectory(projectPath)
+    }, 30_000)
+    return () => clearInterval(id)
+  }, [projectPath, refreshDirectory])
+
+  // Refresh when the git branch changes
+  const currentBranch = useGitStore((s) => projectPath ? s.statusByPath[projectPath]?.branch ?? null : null)
+  const prevBranchRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (currentBranch === null) return
+    if (prevBranchRef.current !== null && prevBranchRef.current !== currentBranch) {
+      refreshDirectory(projectPath!)
+    }
+    prevBranchRef.current = currentBranch
+  }, [currentBranch, projectPath, refreshDirectory])
 
   const searchResults = useMemo(() => {
     const q = search.trim().toLowerCase()
@@ -318,8 +340,8 @@ export default function FileTree({ threadId }: { threadId: string }) {
   return (
     <div className="flex flex-col" style={{ height: '100%' }}>
       {/* Search bar */}
-      <div className="px-2 py-1.5" style={{ borderBottom: '1px solid var(--color-border)' }}>
-        <div className="relative">
+      <div className="px-2 py-1.5 flex items-center gap-1.5" style={{ borderBottom: '1px solid var(--color-border)' }}>
+        <div className="relative flex-1">
           <svg
             width="12"
             height="12"
@@ -363,6 +385,37 @@ export default function FileTree({ threadId }: { threadId: string }) {
             </button>
           )}
         </div>
+        <button
+          onClick={() => refreshDirectory(projectPath)}
+          title="Refresh files"
+          className="flex items-center justify-center flex-shrink-0 transition-opacity hover:opacity-100"
+          style={{
+            width: 22,
+            height: 22,
+            borderRadius: 4,
+            opacity: isLoading ? 0.4 : 0.6,
+            color: 'var(--color-text-muted)',
+            cursor: isLoading ? 'default' : 'pointer',
+          }}
+          disabled={isLoading}
+        >
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{
+              animation: isLoading ? 'spin 1s linear infinite' : 'none',
+            }}
+          >
+            <path d="M13.5 2.5A7 7 0 1 0 14 8" />
+            <polyline points="14 2 14 6 10 6" />
+          </svg>
+        </button>
       </div>
 
       {/* File list */}

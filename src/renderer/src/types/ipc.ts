@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -16,6 +16,9 @@ export interface WindowApi {
   invoke(channel: 'locations:create', projectId: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<RepoLocation>
   invoke(channel: 'locations:update', id: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'locations:delete', id: string): Promise<void>
+  invoke(channel: 'locations:pathExists', path: string): Promise<boolean>
+  invoke(channel: 'locations:suggestPath', baseDir: string, repoName: string): Promise<string>
+  invoke(channel: 'locations:clone', projectId: string, label: string, gitUrl: string, clonePath: string): Promise<RepoLocation>
   invoke(channel: 'ssh:test', ssh: SshConfig, remotePath: string): Promise<{ ok: boolean; error?: string }>
   invoke(channel: 'wsl:test', wsl: WslConfig, wslPath: string): Promise<{ ok: boolean; error?: string }>
   invoke(channel: 'wsl:list-distros'): Promise<string[]>
@@ -45,6 +48,7 @@ export interface WindowApi {
   invoke(channel: 'sessions:switch', threadId: string, sessionId: string): Promise<void>
   invoke(channel: 'threads:executePlanInNewContext', threadId: string): Promise<void>
   invoke(channel: 'threads:getModifiedFiles', threadId: string): Promise<string[]>
+  invoke(channel: 'threads:getLogs', threadId: string): Promise<ThreadLogEntry[]>
   invoke(channel: 'dialog:open-directory'): Promise<string | null>
   invoke(channel: 'git:branch', repoPath: string): Promise<string | null>
   invoke(channel: 'git:status', repoPath: string): Promise<GitStatus | null>
@@ -67,6 +71,8 @@ export interface WindowApi {
   invoke(channel: 'git:merge', repoPath: string, source: string): Promise<{ conflicts: string[] }>
   invoke(channel: 'git:findMergedBranches', repoPath: string): Promise<string[]>
   invoke(channel: 'git:deleteBranches', repoPath: string, branches: string[]): Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }>
+  invoke(channel: 'git:init', repoPath: string): Promise<void>
+  invoke(channel: 'git:isRepo', repoPath: string): Promise<boolean>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>
@@ -79,6 +85,9 @@ export interface WindowApi {
   invoke(channel: 'attachments:cleanup', threadId: string): Promise<void>
   invoke(channel: 'attachments:getFileInfo', filePath: string): Promise<{ size: number; mimeType: string } | null>
   invoke(channel: 'dialog:open-files'): Promise<string[]>
+  invoke(channel: 'shell:copyPath', dirPath: string): Promise<void>
+  invoke(channel: 'shell:openInExplorer', dirPath: string): Promise<void>
+  invoke(channel: 'shell:openInTerminal', dirPath: string, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'window:minimize'): Promise<void>
   invoke(channel: 'window:maximize'): Promise<void>
   invoke(channel: 'window:close'): Promise<void>
@@ -106,6 +115,8 @@ export interface WindowApi {
   invoke(channel: 'slash-commands:delete', id: string): Promise<void>
   invoke(channel: 'cli:health', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliHealthResult>
   invoke(channel: 'cli:update', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliUpdateResult>
+  invoke(channel: 'settings:get', key: string): Promise<string | null>
+  invoke(channel: 'settings:set', key: string, value: string): Promise<void>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

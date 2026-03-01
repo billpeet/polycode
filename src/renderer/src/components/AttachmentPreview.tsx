@@ -4,6 +4,7 @@ interface Props {
   attachments: PendingAttachment[]
   onRemove: (id: string) => void
   disabled?: boolean
+  inline?: boolean
 }
 
 function PdfIcon({ className }: { className?: string }) {
@@ -72,72 +73,63 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`
 }
 
-export default function AttachmentPreview({ attachments, onRemove, disabled }: Props) {
+export default function AttachmentPreview({ attachments, onRemove, disabled, inline }: Props) {
   if (attachments.length === 0) return null
+
+  const chips = attachments.map((att) => (
+    <div
+      key={att.id}
+      className="group relative flex items-center gap-1.5 rounded-md px-1.5 py-1"
+      style={{
+        background: 'var(--color-surface-2)',
+        border: '1px solid var(--color-border)',
+      }}
+    >
+      {/* Thumbnail or icon */}
+      {att.type === 'image' && att.dataUrl ? (
+        <img
+          src={att.dataUrl}
+          alt={att.name}
+          className="h-5 w-5 rounded object-cover"
+        />
+      ) : att.type === 'pdf' ? (
+        <PdfIcon className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+      ) : (
+        <FileIcon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
+      )}
+
+      {/* Filename */}
+      <span
+        className="max-w-[120px] truncate text-xs font-medium"
+        style={{ color: 'var(--color-text)' }}
+      >
+        {att.name}
+      </span>
+
+      {/* Remove button */}
+      {!disabled && (
+        <button
+          onClick={() => onRemove(att.id)}
+          className="flex h-4 w-4 items-center justify-center rounded-full transition-all hover:bg-red-500/20"
+          style={{ color: 'var(--color-text-muted)' }}
+          title="Remove attachment"
+        >
+          <CloseIcon />
+        </button>
+      )}
+    </div>
+  ))
+
+  if (inline) {
+    return <>{chips}</>
+  }
 
   return (
     <div
       className="flex flex-wrap gap-2 px-3 py-2"
       style={{ borderBottom: '1px solid var(--color-border)' }}
     >
-      {attachments.map((att) => (
-        <div
-          key={att.id}
-          className="group relative flex items-center gap-2 rounded-lg px-2 py-1.5"
-          style={{
-            background: 'var(--color-surface-2)',
-            border: '1px solid var(--color-border)',
-          }}
-        >
-          {/* Thumbnail or icon */}
-          {att.type === 'image' && att.dataUrl ? (
-            <img
-              src={att.dataUrl}
-              alt={att.name}
-              className="h-8 w-8 rounded object-cover"
-            />
-          ) : att.type === 'pdf' ? (
-            <div
-              className="flex h-8 w-8 items-center justify-center rounded"
-              style={{ background: 'rgba(239, 68, 68, 0.1)' }}
-            >
-              <PdfIcon className="h-5 w-5 text-red-400" />
-            </div>
-          ) : (
-            <div
-              className="flex h-8 w-8 items-center justify-center rounded"
-              style={{ background: 'var(--color-surface)' }}
-            >
-              <FileIcon className="h-5 w-5" style={{ color: 'var(--color-text-muted)' }} />
-            </div>
-          )}
-
-          {/* Filename and size */}
-          <div className="flex flex-col">
-            <span
-              className="max-w-[120px] truncate text-xs font-medium"
-              style={{ color: 'var(--color-text)' }}
-            >
-              {att.name}
-            </span>
-            <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-              {formatSize(att.size)}
-            </span>
-          </div>
-
-          {/* Remove button */}
-          {!disabled && (
-            <button
-              onClick={() => onRemove(att.id)}
-              className="ml-1 flex h-5 w-5 items-center justify-center rounded-full transition-all hover:bg-red-500/20"
-              style={{ color: 'var(--color-text-muted)' }}
-              title="Remove attachment"
-            >
-              <CloseIcon />
-            </button>
-          )}
-        </div>
-      ))}
+      {chips}
     </div>
   )
 }

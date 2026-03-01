@@ -29,6 +29,7 @@ interface FilesStore {
 
   // Actions
   fetchDirectory: (dirPath: string) => Promise<void>
+  refreshDirectory: (dirPath: string) => Promise<void>
   toggleExpanded: (dirPath: string) => void
   selectFile: (filePath: string | null) => void
   fetchFileContent: (filePath: string) => Promise<void>
@@ -65,6 +66,32 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
         loadingPaths: new Set([...s.loadingPaths].filter((p) => p !== dirPath)),
       }))
     }
+  },
+
+  refreshDirectory: async (dirPath: string) => {
+    // Force-refresh: re-fetch the root dir and all currently expanded subdirs
+    const { expandedPaths } = get()
+    const pathsToRefresh = [dirPath, ...Array.from(expandedPaths)]
+
+    set((s) => ({
+      loadingPaths: new Set([...s.loadingPaths, ...pathsToRefresh]),
+    }))
+
+    await Promise.all(
+      pathsToRefresh.map(async (p) => {
+        try {
+          const entries = await window.api.invoke('files:list', p) as FileEntry[]
+          set((s) => ({
+            entriesByPath: { ...s.entriesByPath, [p]: entries },
+            loadingPaths: new Set([...s.loadingPaths].filter((lp) => lp !== p)),
+          }))
+        } catch {
+          set((s) => ({
+            loadingPaths: new Set([...s.loadingPaths].filter((lp) => lp !== p)),
+          }))
+        }
+      })
+    )
   },
 
   toggleExpanded: (dirPath: string) => {

@@ -5,12 +5,16 @@ import { shellEscape, cdTarget } from './driver/runner'
 /**
  * Execute a command inside a WSL distribution.
  * Returns stdout on success, throws on non-zero exit.
+ *
+ * Uses bash -ilc (interactive + login) so .bashrc runs in full, giving the
+ * user's real PATH. Without -i, bash skips .bashrc and Windows tools on
+ * /mnt/c/ shadow Linux ones.
  */
 export function wslExec(wsl: WslConfig, cwd: string, cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
     const innerCmd = `cd ${cdTarget(cwd)} && ${cmd}`
 
-    const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd], {
+    const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     })

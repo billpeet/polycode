@@ -11,6 +11,7 @@ import { useSlashCommandStore } from '../stores/slashCommands'
 import { useProjectStore } from '../stores/projects'
 import { GitFileChange, CommandStatus, SlashCommand } from '../types/ipc'
 import FileTree from './FileTree'
+import CommandsEditModal from './CommandsEditModal'
 
 function SparkleIcon() {
   return (
@@ -962,16 +963,21 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   }, [threadProjectId, locationsLoaded, fetchLocations])
 
   const statusByPath = useGitStore((s) => s.statusByPath)
+  const notRepoByPath = useGitStore((s) => s.notRepoByPath)
   const commitMessageByPath = useGitStore((s) => s.commitMessageByPath)
   const generatingMessageByPath = useGitStore((s) => s.generatingMessageByPath)
   const pushingByPath = useGitStore((s) => s.pushingByPath)
   const pullingByPath = useGitStore((s) => s.pullingByPath)
+  const initializingByPath = useGitStore((s) => s.initializingByPath)
 
   const gitStatus = projectPath ? (statusByPath[projectPath] ?? null) : null
+  const isNotRepo = projectPath ? (notRepoByPath[projectPath] ?? false) : false
+  const isInitializing = projectPath ? (initializingByPath[projectPath] ?? false) : false
   const commitMsg = projectPath ? (commitMessageByPath[projectPath] ?? '') : ''
   const isGeneratingMessage = projectPath ? (generatingMessageByPath[projectPath] ?? false) : false
   const modifiedFiles = useGitStore((s) => s.modifiedFilesByThread[threadId] ?? EMPTY_FILES)
   const fetchGit = useGitStore((s) => s.fetch)
+  const initRepo = useGitStore((s) => s.initRepo)
   const commitGit = useGitStore((s) => s.commit)
   const setCommitMsg = useGitStore((s) => s.setCommitMessage)
   const generateMsg = useGitStore((s) => s.generateCommitMessage)
@@ -1131,7 +1137,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
       {!collapsed && (
         <>
           {/* Branch controls */}
-          {projectPath && gitStatus && (
+          {projectPath && gitStatus && !isNotRepo && (
             <BranchControls
               projectPath={projectPath}
               currentBranch={gitStatus.branch}
@@ -1141,9 +1147,31 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
 
           {/* Commit box — always shown when expanded */}
           <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-            {!gitStatus ? (
+            {isNotRepo ? (
+              <div className="py-3 flex flex-col items-center gap-2">
+                <p className="text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
+                  No Git repository found.
+                </p>
+                <button
+                  onClick={async () => {
+                    if (!projectPath) return
+                    try {
+                      await initRepo(projectPath)
+                      addToast({ type: 'success', message: 'Git repository initialised', duration: 3000 })
+                    } catch (err) {
+                      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to initialise repository', duration: 0 })
+                    }
+                  }}
+                  disabled={isInitializing || !projectPath}
+                  className="rounded px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                  style={{ background: 'var(--color-claude)', color: '#fff' }}
+                >
+                  {isInitializing ? 'Initialising…' : 'Initialise Repository'}
+                </button>
+              </div>
+            ) : !gitStatus ? (
               <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
-                {!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for project.' : 'Not a Git repository.'}
+                {!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for project.' : 'Loading...'}
               </p>
             ) : (
               <>
@@ -1357,6 +1385,8 @@ function CommandsSection({ threadId }: { threadId: string }) {
   const projectId = thread?.project_id ?? null
   const locationId = thread?.location_id ?? null
 
+  const [editModalOpen, setEditModalOpen] = useState(false)
+
   const commands = useCommandStore((s) => {
     if (!projectId) return EMPTY_COMMANDS
     return s.byProject[projectId] ?? EMPTY_COMMANDS
@@ -1396,14 +1426,28 @@ function CommandsSection({ threadId }: { threadId: string }) {
   if (!projectId) return null
 
   return (
-    <div className="px-3 py-3">
-      {commands.length === 0 ? (
-        <p className="text-xs text-center py-6" style={{ color: 'var(--color-text-muted)' }}>
-          No commands. Edit the project to add some.
-        </p>
-      ) : (
-        <ul className="space-y-1">
-          {commands.map((cmd) => {
+    <>
+      {editModalOpen && (
+        <CommandsEditModal projectId={projectId} onClose={() => setEditModalOpen(false)} />
+      )}
+      <div className="px-3 py-3">
+        <div className="flex justify-end mb-2">
+          <button
+            type="button"
+            onClick={() => setEditModalOpen(true)}
+            className="text-xs hover:underline"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            Edit commands
+          </button>
+        </div>
+        {commands.length === 0 ? (
+          <p className="text-xs text-center py-6" style={{ color: 'var(--color-text-muted)' }}>
+            No commands yet.
+          </p>
+        ) : (
+          <ul className="space-y-1">
+            {commands.map((cmd) => {
             const key = locationId ? instKey(cmd.id, locationId) : null
             const status: CommandStatus = (key ? statusMap[key] : null) ?? 'idle'
             const isRunning = status === 'running'
@@ -1479,8 +1523,9 @@ function CommandsSection({ threadId }: { threadId: string }) {
             )
           })}
         </ul>
-      )}
-    </div>
+        )}
+      </div>
+    </>
   )
 }
 

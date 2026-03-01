@@ -1,7 +1,6 @@
 import { DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
-import { LOAD_NODE_MANAGERS, RESOLVE_CODEX_BIN } from './runner/utils'
 import { BaseDriver } from './base'
 
 /**
@@ -38,6 +37,19 @@ function makeToolCallEvent(item: Record<string, unknown>): { content: string; me
       metadata: { ...item, type: 'tool_call', name, input: { command: innerCmd } },
     }
   }
+
+  // file_change items carry a `changes` array with path + kind for each file touched.
+  const changes = item.changes as Array<{ path: string; kind: string }> | undefined
+  if (Array.isArray(changes) && changes.length > 0) {
+    // Use the first changed file as the short label; full list is in metadata.
+    const firstPath = changes[0].path
+    const label = firstPath.length > 120 ? '…' + firstPath.slice(-120) : firstPath
+    return {
+      content: label,
+      metadata: { ...item, type: 'tool_call', name: 'FileChange', input: { changes } },
+    }
+  }
+
   // Non-command items (file_edit, web_search, …) — use path/label/type as label
   const label =
     (item.path as string | undefined) ??
@@ -124,23 +136,12 @@ export class CodexDriver extends BaseDriver {
   ): SpawnCommand {
     const args = buildCodexArgs(this.codexThreadId, this.options.model, content)
 
-    if (runnerType === 'wsl' || runnerType === 'ssh') {
-      // For WSL/SSH: load node managers and resolve codex binary explicitly,
-      // since non-interactive login shells may not have the right PATH.
-      const preamble = [LOAD_NODE_MANAGERS, RESOLVE_CODEX_BIN].join('; ')
-      return {
-        binary: '"$CODEX_BIN"',  // set by RESOLVE_CODEX_BIN
-        args,
-        workDir: this.options.workingDir,
-        preamble,
-      }
-    } else {
-      // Local: runner handles Windows shell:true + winQuote internally
-      return {
-        binary: 'codex',
-        args,
-        workDir: this.options.workingDir,
-      }
+    // The runners (WslRunner, SshRunner) inject RESOLVE_CODEX_BIN via preamble,
+    // ensuring codex is on PATH for all connection types.
+    return {
+      binary: 'codex',
+      args,
+      workDir: this.options.workingDir,
     }
   }
 

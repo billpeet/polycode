@@ -1,14 +1,18 @@
 import { spawn } from 'child_process'
 import { SshConfig, FileEntry, SearchableFile } from '../shared/types'
-import { shellEscape, cdTarget, buildSshBaseArgs } from './driver/runner'
+import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from './driver/runner'
 
 /**
  * Execute a command on a remote host via SSH.
  * Returns stdout on success, throws on non-zero exit.
+ *
+ * LOAD_NODE_MANAGERS adds common tool directories to PATH that .bashrc
+ * would normally set up (but doesn't in non-interactive `bash -lc` shells
+ * due to the `case $- in *i*)` guard).
  */
 export function sshExec(ssh: SshConfig, cwd: string, cmd: string): Promise<string> {
   return new Promise((resolve, reject) => {
-    const innerCmd = `cd ${cdTarget(cwd)} && ${cmd}`
+    const innerCmd = `${LOAD_NODE_MANAGERS}; cd ${cdTarget(cwd)} && ${cmd}`
     const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
 
     const sshArgs = buildSshBaseArgs(ssh)

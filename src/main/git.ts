@@ -450,6 +450,19 @@ export async function deleteBranches(repoPath: string, branches: string[], ssh?:
   return { deleted, failed }
 }
 
+export async function gitInit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['init'], ssh, wsl)
+}
+
+export async function isGitRepo(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {
+  try {
+    await git(repoPath, ['rev-parse', '--git-dir'], ssh, wsl)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function mergeBranch(repoPath: string, source: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ conflicts: string[] }> {
   try {
     await git(repoPath, ['merge', source], ssh, wsl)

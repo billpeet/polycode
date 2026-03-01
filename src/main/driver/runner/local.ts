@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process'
-import { writeFileSync, unlinkSync } from 'fs'
+import { writeFileSync, unlinkSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Runner, SpawnCommand } from './types'
@@ -11,6 +11,10 @@ export class LocalRunner implements Runner {
   spawn(cmd: SpawnCommand): ChildProcess {
     const { binary, args, workDir, stdinContent } = cmd
     const isWindows = process.platform === 'win32'
+
+    if (!workDir || !existsSync(workDir)) {
+      throw new Error(`Working directory does not exist: "${workDir}"`)
+    }
 
     if (isWindows) {
       const isUNC = workDir.startsWith('\\\\')

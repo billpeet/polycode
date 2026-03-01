@@ -7,12 +7,59 @@ import { useTodoStore, Todo } from '../stores/todos'
 import { useUiStore } from '../stores/ui'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
+import { useCliHealthStore } from '../stores/cliHealth'
 import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider, RepoLocation } from '../types/ipc'
 import ImportHistoryDialog from './ImportHistoryDialog'
+import ThreadLogsModal from './ThreadLogsModal'
 
 const EMPTY_TODOS: Todo[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
+
+function CliHealthIndicator({ threadId }: { threadId: string }) {
+  const health = useCliHealthStore((s) => s.healthByThread[threadId])
+
+  if (!health || health.status === 'idle') return null
+
+  if (health.status === 'checking') {
+    return (
+      <span
+        title="Checking CLI availability…"
+        style={{ color: 'var(--color-text-muted)', lineHeight: 1 }}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
+          <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" />
+        </svg>
+      </span>
+    )
+  }
+
+  if (health.status === 'ok') {
+    return (
+      <span
+        title={`CLI available${health.result?.currentVersion ? ` (v${health.result.currentVersion})` : ''}`}
+        style={{ color: '#4ade80', lineHeight: 1 }}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="2,8 6,12 14,4" />
+        </svg>
+      </span>
+    )
+  }
+
+  // unavailable or error
+  const msg = health.status === 'unavailable'
+    ? 'CLI not found — install it or update the path'
+    : `CLI check failed: ${health.error ?? 'unknown error'}`
+  return (
+    <span title={msg} style={{ color: '#f87171', lineHeight: 1 }}>
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
+        <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z" />
+      </svg>
+    </span>
+  )
+}
 
 // ─── Rate limit helpers ───────────────────────────────────────────────────────
 
@@ -136,6 +183,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
   const [importDialogOpen, setImportDialogOpen] = useState(false)
+  const [logsOpen, setLogsOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
   // WSL distro list — fetched when location is local
@@ -146,6 +194,27 @@ export default function ThreadHeader({ threadId }: Props) {
     if (!isLocalLocation) return
     window.api.invoke('wsl:list-distros').then(setAvailableDistros)
   }, [isLocalLocation])
+
+  // Run a CLI health check whenever the effective provider/connection configuration changes
+  const checkCliHealth = useCliHealthStore((s) => s.check)
+  const clearCliHealth = useCliHealthStore((s) => s.clear)
+  useEffect(() => {
+    if (!thread || !location) {
+      clearCliHealth(threadId)
+      return
+    }
+    const provider = (thread.provider ?? 'claude-code') as Provider
+    const connectionType = location.connection_type
+    // For local+WSL, use wsl connection type so the check runs via WSL
+    const effectiveConnectionType = (connectionType === 'local' && thread.use_wsl) ? 'wsl' : connectionType
+    const wslConfig = connectionType === 'wsl'
+      ? (location.wsl ?? null)
+      : (connectionType === 'local' && thread.use_wsl && thread.wsl_distro)
+        ? { distro: thread.wsl_distro }
+        : null
+    checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread?.provider, thread?.use_wsl, thread?.wsl_distro, location?.connection_type, location?.id, threadId])
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -271,6 +340,56 @@ export default function ThreadHeader({ threadId }: Props) {
           </span>
         )}
 
+        {/* Location quick-actions */}
+        {locationPath && (
+          <span className="flex items-center gap-0.5 flex-shrink-0">
+            <button
+              onClick={() => window.api.invoke('shell:copyPath', locationPath)}
+              className="rounded p-0.5 hover:opacity-70 transition-opacity"
+              style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
+              title={`Copy path: ${locationPath}`}
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="5" y="5" width="9" height="9" rx="1" />
+                <path d="M2 11V2h9" />
+              </svg>
+            </button>
+            <button
+              onClick={() => window.api.invoke('shell:openInExplorer', locationPath)}
+              className="rounded p-0.5 hover:opacity-70 transition-opacity"
+              style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
+              title="Open in Explorer"
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h2.586a1 1 0 0 1 .707.293L8 4.5h4.5A1.5 1.5 0 0 1 14 6v5.5A1.5 1.5 0 0 1 12.5 13h-9A1.5 1.5 0 0 1 2 11.5v-7z" />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                const wslConfig =
+                  location?.connection_type === 'wsl' ? (location.wsl ?? null) :
+                  (location?.connection_type === 'local' && thread?.use_wsl && thread.wsl_distro)
+                    ? { distro: thread.wsl_distro }
+                    : null
+                window.api.invoke('shell:openInTerminal', locationPath, wslConfig)
+              }}
+              className="rounded p-0.5 hover:opacity-70 transition-opacity"
+              style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
+              title={
+                (location?.connection_type === 'wsl' || (location?.connection_type === 'local' && thread?.use_wsl))
+                  ? 'Open in WSL Terminal'
+                  : 'Open in Terminal'
+              }
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="1" y="2" width="14" height="12" rx="1.5" />
+                <path d="M4 6l3 3-3 3" />
+                <path d="M9 12h3" />
+              </svg>
+            </button>
+          </span>
+        )}
+
         {/* WSL toggle for local locations */}
         {isLocalLocation && thread && availableDistros.length > 0 && (
           <span className="flex items-center gap-1 flex-shrink-0">
@@ -319,29 +438,33 @@ export default function ThreadHeader({ threadId }: Props) {
           </span>
         )}
 
-        <select
-          value={thread?.provider ?? 'claude-code'}
-          onChange={(e) => {
-            const provider = e.target.value as Provider
-            const defaultModel = getDefaultModelForProvider(provider)
-            setProviderAndModel(threadId, provider, defaultModel)
-          }}
-          disabled={status === 'running' || status === 'stopping'}
-          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
-          style={{
-            color: 'var(--color-text-muted)',
-            borderColor: 'var(--color-border)',
-            background: 'var(--color-surface)',
-            opacity: status === 'running' || status === 'stopping' ? 0.4 : 1,
-          }}
-          title="Select provider"
-        >
-          {PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        {/* Provider + health indicator */}
+        <span className="flex items-center gap-1 flex-shrink-0">
+          <CliHealthIndicator threadId={threadId} />
+          <select
+            value={thread?.provider ?? 'claude-code'}
+            onChange={(e) => {
+              const provider = e.target.value as Provider
+              const defaultModel = getDefaultModelForProvider(provider)
+              setProviderAndModel(threadId, provider, defaultModel)
+            }}
+            disabled={status === 'running' || status === 'stopping'}
+            className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
+            style={{
+              color: 'var(--color-text-muted)',
+              borderColor: 'var(--color-border)',
+              background: 'var(--color-surface)',
+              opacity: status === 'running' || status === 'stopping' ? 0.4 : 1,
+            }}
+            title="Select provider"
+          >
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </span>
         <select
           value={thread?.model ?? getDefaultModelForProvider((thread?.provider ?? 'claude-code') as Provider)}
           onChange={(e) => setModel(threadId, e.target.value)}
@@ -520,6 +643,21 @@ export default function ThreadHeader({ threadId }: Props) {
           </button>
         )}
         <button
+          onClick={() => setLogsOpen(true)}
+          className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
+          style={{
+            color: 'var(--color-text-muted)',
+            background: 'transparent',
+            border: '1px solid var(--color-border)',
+          }}
+          title="View thread logs"
+        >
+          <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M2 4h12M2 8h8M2 12h5" />
+          </svg>
+          Logs
+        </button>
+        <button
           onClick={() => togglePanel(threadId)}
           className="flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors"
           style={{
@@ -571,6 +709,9 @@ export default function ThreadHeader({ threadId }: Props) {
           onClose={() => setImportDialogOpen(false)}
           onImported={() => fetchThreads(selectedProjectId)}
         />
+      )}
+      {logsOpen && (
+        <ThreadLogsModal threadId={threadId} onClose={() => setLogsOpen(false)} />
       )}
     </div>
 

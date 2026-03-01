@@ -5,16 +5,20 @@ interface GitStore {
   // Keyed by project path
   statusByPath: Record<string, GitStatus | null>
   loadingByPath: Record<string, boolean>
+  /** true = confirmed not a git repo (after a fetch returned null) */
+  notRepoByPath: Record<string, boolean>
   commitMessageByPath: Record<string, string>
   generatingMessageByPath: Record<string, boolean>
   pushingByPath: Record<string, boolean>
   pullingByPath: Record<string, boolean>
   branchesByPath: Record<string, GitBranches | null>
   branchLoadingByPath: Record<string, boolean>
+  initializingByPath: Record<string, boolean>
   // Keyed by threadId
   modifiedFilesByThread: Record<string, string[]>
 
   fetch: (repoPath: string) => Promise<void>
+  initRepo: (repoPath: string) => Promise<void>
   commit: (repoPath: string, message: string) => Promise<void>
   stage: (repoPath: string, filePath: string) => Promise<void>
   unstage: (repoPath: string, filePath: string) => Promise<void>
@@ -40,25 +44,49 @@ interface GitStore {
 export const useGitStore = create<GitStore>((set, get) => ({
   statusByPath: {},
   loadingByPath: {},
+  notRepoByPath: {},
   commitMessageByPath: {},
   generatingMessageByPath: {},
   pushingByPath: {},
   pullingByPath: {},
   branchesByPath: {},
   branchLoadingByPath: {},
+  initializingByPath: {},
   modifiedFilesByThread: {},
 
   fetch: async (repoPath) => {
     if (get().loadingByPath[repoPath]) return
     set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: true } }))
     try {
+      const isRepo = await window.api.invoke('git:isRepo', repoPath)
+      if (!isRepo) {
+        set((s) => ({
+          statusByPath: { ...s.statusByPath, [repoPath]: null },
+          notRepoByPath: { ...s.notRepoByPath, [repoPath]: true },
+          loadingByPath: { ...s.loadingByPath, [repoPath]: false },
+        }))
+        return
+      }
       const status = await window.api.invoke('git:status', repoPath)
       set((s) => ({
         statusByPath: { ...s.statusByPath, [repoPath]: status },
+        notRepoByPath: { ...s.notRepoByPath, [repoPath]: false },
         loadingByPath: { ...s.loadingByPath, [repoPath]: false },
       }))
     } catch {
       set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: false } }))
+    }
+  },
+
+  initRepo: async (repoPath) => {
+    if (get().initializingByPath[repoPath]) return
+    set((s) => ({ initializingByPath: { ...s.initializingByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:init', repoPath)
+      set((s) => ({ notRepoByPath: { ...s.notRepoByPath, [repoPath]: false } }))
+      await get().fetch(repoPath)
+    } finally {
+      set((s) => ({ initializingByPath: { ...s.initializingByPath, [repoPath]: false } }))
     }
   },
 

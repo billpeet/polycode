@@ -271,6 +271,17 @@ function runMigrations(database: Database.Database): void {
     `)
   }
 
+  // ── Settings table (persistent key-value store) ────────────────────────────
+  const tablesForSettings = database.pragma('table_list') as Array<{ name: string }>
+  if (!tablesForSettings.some((t) => t.name === 'settings')) {
+    database.exec(`
+      CREATE TABLE settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      )
+    `)
+  }
+
   // ── Backfill: migrate existing project paths into repo_locations ────────────
   // Only runs once, when repo_locations is newly created.
   if (!hasRepoLocations) {

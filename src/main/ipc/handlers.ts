@@ -1,5 +1,8 @@
 import { spawn } from 'child_process'
-import { ipcMain, dialog, BrowserWindow } from 'electron'
+import { existsSync, mkdirSync } from 'fs'
+import { join } from 'path'
+import { homedir } from 'os'
+import { ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import {
   listProjects,
@@ -51,12 +54,14 @@ import {
   createSlashCommand,
   updateSlashCommand,
   deleteSlashCommand,
+  getSetting,
+  setSetting,
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
 import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo } from '../git'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
@@ -67,6 +72,7 @@ import {
   cleanupThreadAttachments,
   getFileInfo,
 } from '../attachments'
+import { getThreadLogs } from '../thread-logger'
 
 /** Get SSH config from the thread's linked repo location. */
 function getSshConfigForThread(threadId: string): SshConfig | null {
@@ -121,6 +127,20 @@ function getEffectiveWorkingDir(threadId: string): string {
     }
   }
   return location.path
+}
+
+/**
+ * Returns an error message if the thread's local working directory doesn't exist,
+ * or null if it's fine (or is SSH/WSL where we can't check locally).
+ */
+function getLocalPathError(threadId: string): string | null {
+  const location = getLocationForThread(threadId)
+  if (!location) return null
+  if (location.connection_type !== 'local') return null
+  if (!existsSync(location.path)) {
+    return `Directory not found: "${location.path}". Update the location path or restore the directory.`
+  }
+  return null
 }
 
 /** Look up SSH/WSL config for a given path by searching repo_locations. */
@@ -182,6 +202,54 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return deleteLocation(id)
   })
 
+  ipcMain.handle('locations:pathExists', (_event, path: string): boolean => {
+    return existsSync(path)
+  })
+
+  ipcMain.handle('locations:suggestPath', (_event, baseDir: string, repoName: string): string => {
+    const resolvedBase = baseDir.replace(/^~/, homedir())
+    const candidate = join(resolvedBase, repoName)
+    if (!existsSync(candidate)) return candidate
+    let n = 2
+    while (existsSync(join(resolvedBase, `${repoName}-${n}`))) n++
+    return join(resolvedBase, `${repoName}-${n}`)
+  })
+
+  ipcMain.handle('locations:clone', (_event, projectId: string, label: string, gitUrl: string, clonePath: string): Promise<unknown> => {
+    return new Promise((resolve, reject) => {
+      try {
+        mkdirSync(join(clonePath, '..'), { recursive: true })
+      } catch {
+        // parent may already exist
+      }
+
+      const proc = spawn('git', ['clone', gitUrl, clonePath], {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+
+      let stderr = ''
+      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          try {
+            const location = createLocation(projectId, label, 'local', clonePath, null, null)
+            resolve(location)
+          } catch (err) {
+            reject(err)
+          }
+        } else {
+          reject(new Error(stderr.trim() || `git clone exited with code ${code}`))
+        }
+      })
+
+      proc.on('error', (err) => {
+        reject(new Error(`Failed to run git: ${err.message}`))
+      })
+    })
+  })
+
   // ── SSH / WSL test ──────────────────────────────────────────────────────────
 
   ipcMain.handle('ssh:test', (_event, ssh: SshConfig, remotePath: string): Promise<{ ok: boolean; error?: string }> => {
@@ -234,7 +302,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
         : "'" + wslPath.replace(/'/g, "'\\''") + "'"
       const innerCmd = `test -d ${testPath} && echo __POLYCODE_OK__`
 
-      const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-lc', innerCmd], {
+      const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], {
         shell: false,
         stdio: ['ignore', 'pipe', 'pipe'],
         timeout: 15000,
@@ -352,6 +420,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('threads:start', (_event, threadId: string) => {
+    const pathError = getLocalPathError(threadId)
+    if (pathError) throw new Error(pathError)
     const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
@@ -378,6 +448,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean }) => {
+    const pathError = getLocalPathError(threadId)
+    if (pathError) throw new Error(pathError)
     const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
@@ -433,6 +505,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('threads:getModifiedFiles', (_event, threadId: string) => {
     const workingDir = getWorkingDirForThread(threadId) ?? ''
     return getThreadModifiedFiles(threadId, workingDir)
+  })
+
+  ipcMain.handle('threads:getLogs', (_event, threadId: string) => {
+    return getThreadLogs(threadId)
   })
 
   // ── Sessions ────────────────────────────────────────────────────────────────
@@ -577,6 +653,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:deleteBranches', (_event, repoPath: string, branches: string[]) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return deleteBranches(repoPath, branches, ssh, wsl)
+  })
+
+  ipcMain.handle('git:init', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return gitInit(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:isRepo', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return isGitRepo(repoPath, ssh, wsl)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────
@@ -761,6 +847,46 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('slash-commands:delete', (_event, id: string) => {
     return deleteSlashCommand(id)
+  })
+
+  // ── Settings ───────────────────────────────────────────────────────────────
+
+  ipcMain.handle('settings:get', (_event, key: string) => {
+    return getSetting(key)
+  })
+
+  ipcMain.handle('settings:set', (_event, key: string, value: string) => {
+    setSetting(key, value)
+  })
+
+  // ── Shell helpers ──────────────────────────────────────────────────────────
+
+  ipcMain.handle('shell:copyPath', (_event, dirPath: string) => {
+    clipboard.writeText(dirPath)
+  })
+
+  ipcMain.handle('shell:openInExplorer', (_event, dirPath: string) => {
+    shell.openPath(dirPath)
+  })
+
+  ipcMain.handle('shell:openInTerminal', (_event, dirPath: string, wsl?: WslConfig | null) => {
+    if (wsl) {
+      // Launch a WSL terminal in the given distro, cd-ing to the WSL path
+      const wslPath = /^[A-Za-z]:[/\\]/.test(dirPath) ? windowsPathToWsl(dirPath) : dirPath
+      spawn('wsl.exe', ['-d', wsl.distro, '--cd', wslPath], { detached: true, stdio: 'ignore' }).unref()
+    } else if (process.platform === 'win32') {
+      spawn('start', ['powershell.exe', '-NoExit', '-Command', `Set-Location '${dirPath.replace(/'/g, "''")}'`], { cwd: dirPath, detached: true, stdio: 'ignore', shell: true }).unref()
+    } else if (process.platform === 'darwin') {
+      spawn('open', ['-a', 'Terminal', dirPath], { detached: true, stdio: 'ignore' }).unref()
+    } else {
+      const terms = ['gnome-terminal', 'konsole', 'xterm']
+      for (const term of terms) {
+        try {
+          spawn(term, [], { cwd: dirPath, detached: true, stdio: 'ignore' }).unref()
+          break
+        } catch { /* try next */ }
+      }
+    }
   })
 
   // ── Window Controls ────────────────────────────────────────────────────────

@@ -51,6 +51,16 @@ function getInputSummary(toolName: string, input: unknown): string | null {
     return fp.length > 120 ? '…' + fp.slice(-120) : fp
   }
 
+  // FileChange: show first file path (or count if multiple)
+  if (toolName === 'FileChange' && Array.isArray(inp.changes) && inp.changes.length > 0) {
+    const changes = inp.changes as Array<{ path: string; kind: string }>
+    if (changes.length === 1) {
+      const fp = changes[0].path
+      return fp.length > 120 ? '…' + fp.slice(-120) : fp
+    }
+    return `${changes.length} files`
+  }
+
   const preferred = ['command', 'file_path', 'filePath', 'path', 'pattern', 'query', 'url']
   for (const key of preferred) {
     if (typeof inp[key] === 'string' && inp[key]) {
@@ -196,6 +206,35 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
             </div>
           </div>
         )}
+      </div>
+    )
+  }
+
+  // FileChange: list each file with its change kind (update / create / delete)
+  if (toolName === 'FileChange' && inp && Array.isArray(inp.changes)) {
+    const changes = inp.changes as Array<{ path: string; kind: string }>
+    const kindColor = (kind: string): string => {
+      if (kind === 'create') return '#4ade80'
+      if (kind === 'delete') return '#f87171'
+      return 'var(--color-text-muted)'  // update / rename / etc.
+    }
+    const kindLabel = (kind: string): string => {
+      if (kind === 'create') return 'created'
+      if (kind === 'delete') return 'deleted'
+      return 'updated'
+    }
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+        {changes.map((c, i) => (
+          <div key={i} style={{ display: 'flex', alignItems: 'baseline', gap: '0.5rem' }}>
+            <span style={{ fontSize: '0.6rem', fontWeight: 600, color: kindColor(c.kind), flexShrink: 0, minWidth: '4.5ch' }}>
+              {kindLabel(c.kind)}
+            </span>
+            <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)', wordBreak: 'break-all' }}>
+              {c.path}
+            </span>
+          </div>
+        ))}
       </div>
     )
   }

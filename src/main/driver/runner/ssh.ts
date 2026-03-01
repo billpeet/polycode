@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'child_process'
 import { SshConfig } from '../../../shared/types'
 import { Runner, SpawnCommand } from './types'
-import { shellEscape, cdTarget, buildSshBaseArgs } from './utils'
+import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from './utils'
 
 export class SshRunner implements Runner {
   readonly type = 'ssh' as const
@@ -11,12 +11,14 @@ export class SshRunner implements Runner {
   spawn(cmd: SpawnCommand): ChildProcess {
     const { binary, args, workDir, preamble, stdinContent } = cmd
 
-    const parts: string[] = []
+    // .bashrc guards against non-interactive shells (`case $- in *i*)`)
+    // so PATH additions users put there never load in `bash -lc`.
+    // LOAD_NODE_MANAGERS explicitly adds common tool directories to PATH.
+    const parts: string[] = [LOAD_NODE_MANAGERS]
     if (preamble) parts.push(preamble)
     parts.push(`cd ${cdTarget(workDir)} && ${binary} ${args.map(shellEscape).join(' ')}`)
     const innerCmd = parts.join('; ')
 
-    // Wrap in login shell so .profile/.bashrc are sourced (makes the binary available in PATH)
     const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
 
     const sshArgs = [
