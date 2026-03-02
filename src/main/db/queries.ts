@@ -332,6 +332,13 @@ export function deleteThread(id: string): void {
   getDb().prepare('DELETE FROM threads WHERE id = ?').run(id)
 }
 
+export function threadExists(id: string): boolean {
+  const row = getDb()
+    .prepare('SELECT 1 AS found FROM threads WHERE id = ? LIMIT 1')
+    .get(id) as { found: number } | undefined
+  return !!row
+}
+
 export function updateThreadStatus(id: string, status: string): void {
   getDb()
     .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
@@ -497,6 +504,9 @@ export function getSessionClaudeId(sessionId: string): string | null {
 }
 
 export function getOrCreateActiveSession(threadId: string): Session {
+  if (!threadExists(threadId)) {
+    throw new Error(`Thread not found: ${threadId}`)
+  }
   let session = getActiveSession(threadId)
   if (!session) {
     // Check if thread has a legacy claude_session_id we should migrate

@@ -27,6 +27,7 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadStatus,
+  threadExists,
   threadHasMessages,
   archiveThread,
   unarchiveThread,
@@ -420,6 +421,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('threads:start', (_event, threadId: string) => {
+    if (!threadExists(threadId)) return
     const pathError = getLocalPathError(threadId)
     if (pathError) throw new Error(pathError)
     const effectiveDir = getEffectiveWorkingDir(threadId)
@@ -448,6 +450,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean }) => {
+    if (!threadExists(threadId)) {
+      sessionManager.remove(threadId)
+      console.warn('[handlers] threads:send for missing thread — ignoring', threadId)
+      return
+    }
     const pathError = getLocalPathError(threadId)
     if (pathError) throw new Error(pathError)
     const effectiveDir = getEffectiveWorkingDir(threadId)
@@ -495,6 +502,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string) => {
+    if (!threadExists(threadId)) return
     const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
@@ -522,6 +530,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('sessions:switch', (_event, threadId: string, sessionId: string) => {
+    if (!threadExists(threadId)) return
     const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
