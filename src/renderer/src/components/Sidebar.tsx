@@ -136,21 +136,51 @@ export default function Sidebar() {
 
   // Fetch git branch for each location in expanded projects
   useEffect(() => {
-    function refreshBranches() {
+    let cancelled = false
+
+    async function refreshBranches() {
+      const locationPairs: Array<{ id: string; path: string }> = []
       for (const projectId of expandedProjectIds) {
         const locations = locationsByProject[projectId] ?? []
         for (const loc of locations) {
-          window.api.invoke('git:branch', loc.path).then((branch) => {
-            if (branch) {
-              setBranchByLocation((prev) => ({ ...prev, [loc.id]: branch }))
-            }
-          }).catch(() => {/* not a git repo */})
+          locationPairs.push({ id: loc.id, path: loc.path })
         }
       }
+
+      if (locationPairs.length === 0) return
+
+      const results = await Promise.all(
+        locationPairs.map(async ({ id, path }) => {
+          try {
+            const branch = await window.api.invoke('git:branch', path)
+            return { id, branch: branch || null }
+          } catch {
+            return { id, branch: null }
+          }
+        })
+      )
+
+      if (cancelled) return
+
+      setBranchByLocation((prev) => {
+        let changed = false
+        const next = { ...prev }
+        for (const { id, branch } of results) {
+          if (!branch) continue
+          if (next[id] === branch) continue
+          next[id] = branch
+          changed = true
+        }
+        return changed ? next : prev
+      })
     }
-    refreshBranches()
-    const interval = setInterval(refreshBranches, 10000)
-    return () => clearInterval(interval)
+
+    void refreshBranches()
+    const interval = setInterval(() => { void refreshBranches() }, 10000)
+    return () => {
+      cancelled = true
+      clearInterval(interval)
+    }
   }, [expandedProjectIds, locationsByProject])
 
   // Check whether local location paths exist on disk

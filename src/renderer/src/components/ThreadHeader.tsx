@@ -175,7 +175,8 @@ export default function ThreadHeader({ threadId }: Props) {
     if (activeRateLimits.length === 0) return
     const interval = setInterval(() => {
       useRateLimitStore.getState().clearExpired(threadId)
-      setNowSeconds(Math.floor(Date.now() / 1000))
+      const now = Math.floor(Date.now() / 1000)
+      setNowSeconds((prev) => (prev === now ? prev : now))
     }, 1000)
     return () => clearInterval(interval)
   }, [activeRateLimits.length, threadId])

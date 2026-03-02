@@ -257,9 +257,11 @@ export default function InputBar({ threadId }: Props) {
       setElapsedSeconds(0)
       return
     }
-    setElapsedSeconds(Math.floor((Date.now() - runStartedAt) / 1000))
+    const nextElapsed = Math.floor((Date.now() - runStartedAt) / 1000)
+    setElapsedSeconds((prev) => (prev === nextElapsed ? prev : nextElapsed))
     const id = setInterval(() => {
-      setElapsedSeconds(Math.floor((Date.now() - runStartedAt) / 1000))
+      const elapsed = Math.floor((Date.now() - runStartedAt) / 1000)
+      setElapsedSeconds((prev) => (prev === elapsed ? prev : elapsed))
     }, 1000)
     return () => clearInterval(id)
   }, [isProcessing, runStartedAt])
