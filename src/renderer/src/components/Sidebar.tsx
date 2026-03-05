@@ -3,7 +3,7 @@ import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { useYouTrackStore } from '../stores/youtrack'
-import { Project, Thread, RepoLocation } from '../types/ipc'
+import { Project, Thread, RepoLocation, LocationPool } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
 import LocationDialog from './LocationDialog'
 import YouTrackSettingsDialog from './YouTrackSettingsDialog'
@@ -11,6 +11,7 @@ import SlashCommandsDialog from './SlashCommandsDialog'
 import CliHealthDialog from './CliHealthDialog'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
+const EMPTY_POOLS: LocationPool[] = []
 
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime()
@@ -55,7 +56,11 @@ export default function Sidebar() {
   const setName = useThreadStore((s) => s.setName)
 
   const locationsByProject = useLocationStore((s) => s.byProject)
+  const poolsByProject = useLocationStore((s) => s.poolsByProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
+  const fetchPools = useLocationStore((s) => s.fetchPools)
+  const checkoutLocation = useLocationStore((s) => s.checkout)
+  const returnLocationToPool = useLocationStore((s) => s.returnToPool)
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
 
@@ -73,6 +78,8 @@ export default function Sidebar() {
   const [archivedSectionExpanded, setArchivedSectionExpanded] = useState(false)
   /** Git branch name per location id */
   const [branchByLocation, setBranchByLocation] = useState<Record<string, string>>({})
+  /** Tracks which pool's available locations are expanded */
+  const [expandedAvailablePools, setExpandedAvailablePools] = useState<Set<string>>(new Set())
   /** Whether each local location's path exists on disk (undefined = not yet checked) */
   const [pathExistsByLocation, setPathExistsByLocation] = useState<Record<string, boolean>>({})
 
@@ -208,6 +215,7 @@ export default function Sidebar() {
     // Fetch threads and locations if not already loaded
     if (!byProject[id]) fetchThreads(id)
     if (!locationsByProject[id]) fetchLocations(id)
+    if (!poolsByProject[id]) fetchPools(id)
   }
 
   async function handleNewThread(projectId: string, locationId: string): Promise<void> {
@@ -247,6 +255,15 @@ export default function Sidebar() {
       const next = new Set(prev)
       if (next.has(locationId)) next.delete(locationId)
       else next.add(locationId)
+      return next
+    })
+  }
+
+  function togglePoolAvailableExpanded(poolId: string): void {
+    setExpandedAvailablePools((prev) => {
+      const next = new Set(prev)
+      if (next.has(poolId)) next.delete(poolId)
+      else next.add(poolId)
       return next
     })
   }
@@ -362,6 +379,114 @@ export default function Sidebar() {
             </button>
           )}
         </div>
+      </div>
+    )
+  }
+
+  function renderLocationSection(projectId: string, loc: RepoLocation, projectThreads: Thread[], showPoolActions = false) {
+    const isLocationExpanded = !collapsedLocationIds.has(loc.id)
+    const locationThreads = projectThreads.filter((t) => t.location_id === loc.id)
+    const isCheckedOut = !loc.pool_id || loc.checked_out
+    const pathMissing = loc.connection_type === 'local' && pathExistsByLocation[loc.id] === false
+
+    return (
+      <div key={loc.id}>
+        <div className="group relative">
+          <button
+            onClick={() => toggleLocationCollapsed(loc.id)}
+            className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs transition-colors min-w-0"
+            style={{ color: pathMissing ? '#f87171' : 'var(--color-text-muted)' }}
+            title={pathMissing ? `Directory not found: ${loc.path}` : undefined}
+          >
+            <span className="mr-1 text-[9px] flex-shrink-0 opacity-50" style={{ width: '8px' }}>
+              {isLocationExpanded ? '▾' : '▸'}
+            </span>
+            <span className="truncate opacity-70">{loc.label}</span>
+            {branchByLocation[loc.id] && (
+              <span className="ml-1 flex-shrink-0 opacity-50 text-[9px]">
+                ({branchByLocation[loc.id]})
+              </span>
+            )}
+            {connectionBadge(loc.connection_type)}
+            {loc.pool_id && (
+              <span
+                className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
+                style={{ background: isCheckedOut ? 'rgba(74, 222, 128, 0.15)' : 'rgba(148, 163, 184, 0.15)', color: isCheckedOut ? '#4ade80' : '#94a3b8' }}
+              >
+                {isCheckedOut ? 'checked out' : 'available'}
+              </span>
+            )}
+            {pathMissing && (
+              <span
+                className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+                style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
+              >
+                not found
+              </span>
+            )}
+          </button>
+          {showPoolActions && loc.pool_id && (
+            <div className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              {loc.checked_out ? (
+                <button
+                  onClick={() => returnLocationToPool(loc.id, projectId)}
+                  className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title="Return to pool"
+                >
+                  Return
+                </button>
+              ) : (
+                <button
+                  onClick={() => checkoutLocation(loc.id, projectId)}
+                  className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title="Checkout location"
+                >
+                  Checkout
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+
+        {isLocationExpanded && isCheckedOut && (
+          <button
+            onClick={() => handleNewThread(projectId, loc.id)}
+            className="flex w-full items-center pl-10 pr-2 py-0.5 text-left text-[10px] opacity-40 hover:opacity-80 transition-opacity"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            + New thread
+          </button>
+        )}
+
+        {isLocationExpanded && (() => {
+          const currentBranch = branchByLocation[loc.id]
+          const currentBranchThreads = locationThreads.filter((t) =>
+            !t.git_branch || !currentBranch || t.git_branch === currentBranch
+          )
+          const otherBranchThreads = locationThreads.filter((t) =>
+            t.git_branch && currentBranch && t.git_branch !== currentBranch
+          )
+          return (
+            <>
+              {currentBranchThreads.map((thread) => renderThread(thread, false, projectId))}
+              {otherBranchThreads.length > 0 && (
+                <>
+                  <div
+                    className="flex items-center pl-10 pr-2 py-0.5 gap-1.5"
+                    style={{ color: 'var(--color-text-muted)', opacity: 0.4 }}
+                  >
+                    <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
+                    <span className="text-[9px] uppercase tracking-wide flex-shrink-0">other branches</span>
+                    <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
+                  </div>
+                  {otherBranchThreads.map((thread) => renderThread(thread, false, projectId))}
+                </>
+              )}
+            </>
+          )
+        })()}
       </div>
     )
   }
@@ -485,6 +610,7 @@ export default function Sidebar() {
           const projectArchivedThreads = archivedByProject[project.id] ?? []
           const projectArchivedCount = archivedCountByProject[project.id] ?? 0
           const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
+          const pools = poolsByProject[project.id] ?? EMPTY_POOLS
           const runningThreads = projectThreads.filter((t) => statusMap[t.id] === 'running' || statusMap[t.id] === 'stopping')
 
           return (
@@ -550,91 +676,50 @@ export default function Sidebar() {
               {/* Expanded: show locations with nested threads */}
               {isExpanded && (
                 <div>
-                  {locations.map((loc) => {
-                    const isLocationExpanded = !collapsedLocationIds.has(loc.id)
-                    const locationThreads = projectThreads.filter((t) => t.location_id === loc.id)
+                  {pools.length > 0 ? (
+                    <>
+                      {pools.map((pool) => {
+                        const pooledLocations = locations.filter((l) => l.pool_id === pool.id)
+                        const checkedOut = pooledLocations.filter((l) => l.checked_out)
+                        const available = pooledLocations.filter((l) => !l.checked_out)
+                        const showAvailable = expandedAvailablePools.has(pool.id)
 
-                    return (
-                      <div key={loc.id}>
-                        {/* Location subheader */}
-                        {(() => {
-                          const pathMissing = loc.connection_type === 'local' && pathExistsByLocation[loc.id] === false
-                          return (
-                            <div className="group relative">
-                              <button
-                                onClick={() => toggleLocationCollapsed(loc.id)}
-                                className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs transition-colors min-w-0"
-                                style={{ color: pathMissing ? '#f87171' : 'var(--color-text-muted)' }}
-                                title={pathMissing ? `Directory not found: ${loc.path}` : undefined}
-                              >
-                                <span className="mr-1 text-[9px] flex-shrink-0 opacity-50" style={{ width: '8px' }}>
-                                  {isLocationExpanded ? '▾' : '▸'}
-                                </span>
-                                <span className={`truncate ${pathMissing ? '' : 'opacity-70'}`}>{loc.label}</span>
-                                {pathMissing ? (
-                                  <span
-                                    className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
-                                    style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
-                                  >
-                                    not found
-                                  </span>
-                                ) : (
-                                  <>
-                                    {branchByLocation[loc.id] && (
-                                      <span className="ml-1 flex-shrink-0 opacity-50 text-[9px]">
-                                        ({branchByLocation[loc.id]})
-                                      </span>
-                                    )}
-                                    {connectionBadge(loc.connection_type)}
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )
-                        })()}
-
-                        {/* New thread link */}
-                        {isLocationExpanded && (
-                          <button
-                            onClick={() => handleNewThread(project.id, loc.id)}
-                            className="flex w-full items-center pl-10 pr-2 py-0.5 text-left text-[10px] opacity-40 hover:opacity-80 transition-opacity"
-                            style={{ color: 'var(--color-text-muted)' }}
-                          >
-                            + New thread
-                          </button>
-                        )}
-
-                        {/* Threads under this location — split by branch */}
-                        {isLocationExpanded && (() => {
-                          const currentBranch = branchByLocation[loc.id]
-                          const currentBranchThreads = locationThreads.filter((t) =>
-                            !t.git_branch || !currentBranch || t.git_branch === currentBranch
-                          )
-                          const otherBranchThreads = locationThreads.filter((t) =>
-                            t.git_branch && currentBranch && t.git_branch !== currentBranch
-                          )
-                          return (
-                            <>
-                              {currentBranchThreads.map((thread) => renderThread(thread, false, project.id))}
-                              {otherBranchThreads.length > 0 && (
-                                <>
-                                  <div
-                                    className="flex items-center pl-10 pr-2 py-0.5 gap-1.5"
-                                    style={{ color: 'var(--color-text-muted)', opacity: 0.4 }}
-                                  >
-                                    <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
-                                    <span className="text-[9px] uppercase tracking-wide flex-shrink-0">other branches</span>
-                                    <div className="flex-1 h-px" style={{ background: 'var(--color-border)' }} />
-                                  </div>
-                                  {otherBranchThreads.map((thread) => renderThread(thread, false, project.id))}
-                                </>
+                        return (
+                          <div key={pool.id}>
+                            <div
+                              className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs"
+                              style={{ color: 'var(--color-text-muted)' }}
+                            >
+                              <span className="truncate opacity-80">{pool.name}</span>
+                              <span className="ml-2 text-[10px] opacity-50">
+                                {checkedOut.length} checked out
+                              </span>
+                              {available.length > 0 && (
+                                <button
+                                  onClick={() => togglePoolAvailableExpanded(pool.id)}
+                                  className="ml-2 rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                >
+                                  {showAvailable ? `Hide available (${available.length})` : `Show available (${available.length})`}
+                                </button>
                               )}
-                            </>
-                          )
-                        })()}
-                      </div>
-                    )
-                  })}
+                            </div>
+
+                            {checkedOut.map((loc) => renderLocationSection(project.id, loc, projectThreads, true))}
+                            {showAvailable && available.map((loc) => renderLocationSection(project.id, loc, projectThreads, true))}
+                          </div>
+                        )
+                      })}
+
+                      {locations
+                        .filter((l) => !l.pool_id)
+                        .map((loc) => renderLocationSection(project.id, loc, projectThreads))}
+                    </>
+                  ) : (
+                    <>
+                      {locations.map((loc) => renderLocationSection(project.id, loc, projectThreads))}
+                    </>
+                  )}
 
                   {/* Threads without a location (orphaned) */}
                   {projectThreads

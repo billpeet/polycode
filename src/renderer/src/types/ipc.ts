@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -13,9 +13,15 @@ export interface WindowApi {
   invoke(channel: 'projects:archive', id: string): Promise<void>
   invoke(channel: 'projects:unarchive', id: string): Promise<void>
   invoke(channel: 'locations:list', projectId: string): Promise<RepoLocation[]>
-  invoke(channel: 'locations:create', projectId: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<RepoLocation>
-  invoke(channel: 'locations:update', id: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>
+  invoke(channel: 'locations:create', projectId: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<RepoLocation>
+  invoke(channel: 'locations:update', id: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'locations:delete', id: string): Promise<void>
+  invoke(channel: 'locations:checkout', id: string): Promise<void>
+  invoke(channel: 'locations:returnToPool', id: string): Promise<void>
+  invoke(channel: 'location-pools:list', projectId: string): Promise<LocationPool[]>
+  invoke(channel: 'location-pools:create', projectId: string, name: string): Promise<LocationPool>
+  invoke(channel: 'location-pools:update', id: string, name: string): Promise<void>
+  invoke(channel: 'location-pools:delete', id: string): Promise<void>
   invoke(channel: 'locations:pathExists', path: string): Promise<boolean>
   invoke(channel: 'locations:suggestPath', baseDir: string, repoName: string): Promise<string>
   invoke(channel: 'locations:clone', projectId: string, label: string, gitUrl: string, clonePath: string): Promise<RepoLocation>
@@ -65,6 +71,8 @@ export interface WindowApi {
   invoke(channel: 'git:pull', repoPath: string): Promise<void>
   invoke(channel: 'git:pullOrigin', repoPath: string): Promise<void>
   invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
+  invoke(channel: 'git:compareToMain', repoPath: string): Promise<GitCompareResult>
+  invoke(channel: 'git:compareDiffToMain', repoPath: string, filePath: string): Promise<string>
   invoke(channel: 'git:branches', repoPath: string): Promise<GitBranches>
   invoke(channel: 'git:checkout', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:createBranch', repoPath: string, name: string, base: string, pullFirst: boolean): Promise<void>
@@ -73,6 +81,14 @@ export interface WindowApi {
   invoke(channel: 'git:deleteBranches', repoPath: string, branches: string[]): Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }>
   invoke(channel: 'git:init', repoPath: string): Promise<void>
   invoke(channel: 'git:isRepo', repoPath: string): Promise<boolean>
+  invoke(channel: 'azdo:pr:list', repoPath: string): Promise<AzureDevOpsPullRequest[]>
+  invoke(channel: 'azdo:pr:current', repoPath: string, branch: string): Promise<AzureDevOpsPullRequest | null>
+  invoke(channel: 'azdo:pr:create', repoPath: string, payload: { target: string; title: string; description?: string }): Promise<AzureDevOpsPullRequest>
+  invoke(channel: 'azdo:pr:checkout', repoPath: string, prId: number): Promise<{ branch: string }>
+  invoke(channel: 'gh:pr:list', repoPath: string): Promise<GitHubPullRequest[]>
+  invoke(channel: 'gh:pr:current', repoPath: string, branch: string): Promise<GitHubPullRequest | null>
+  invoke(channel: 'gh:pr:create', repoPath: string, payload: { target: string; title: string; description?: string }): Promise<GitHubPullRequest>
+  invoke(channel: 'gh:pr:checkout', repoPath: string, prId: number): Promise<{ branch: string }>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>
@@ -103,6 +119,7 @@ export interface WindowApi {
   invoke(channel: 'commands:getStatus', commandId: string, locationId: string): Promise<CommandStatus>
   invoke(channel: 'commands:getLogs', commandId: string, locationId: string): Promise<CommandLogLine[]>
   invoke(channel: 'commands:getPid', commandId: string, locationId: string): Promise<number | null>
+  invoke(channel: 'commands:getPorts', commandId: string, locationId: string): Promise<number[]>
   invoke(channel: 'youtrack:servers:list'): Promise<YouTrackServer[]>
   invoke(channel: 'youtrack:servers:create', name: string, url: string, token: string): Promise<YouTrackServer>
   invoke(channel: 'youtrack:servers:update', id: string, name: string, url: string, token: string): Promise<void>

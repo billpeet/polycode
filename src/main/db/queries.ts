@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
-import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand } from '../../shared/types'
+import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow } from './models'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -90,6 +90,8 @@ function rowToLocation(row: RepoLocationRow): RepoLocation {
   return {
     id: row.id,
     project_id: row.project_id,
+    pool_id: row.pool_id ?? null,
+    checked_out: row.checked_out === 1,
     label: row.label,
     connection_type: row.connection_type as ConnectionType,
     path: row.path,
@@ -112,6 +114,7 @@ export function createLocation(
   label: string,
   connectionType: ConnectionType,
   locationPath: string,
+  poolId?: string | null,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null
 ): RepoLocation {
@@ -119,10 +122,10 @@ export function createLocation(
   const id = uuidv4()
   getDb()
     .prepare(
-      'INSERT INTO repo_locations (id, project_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
-      id, projectId, label, connectionType, locationPath,
+      id, projectId, poolId ?? null, label, connectionType, locationPath,
       ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null,
       wsl?.distro ?? null,
       now, now
@@ -130,6 +133,8 @@ export function createLocation(
   return {
     id,
     project_id: projectId,
+    pool_id: poolId ?? null,
+    checked_out: false,
     label,
     connection_type: connectionType,
     path: locationPath,
@@ -145,15 +150,17 @@ export function updateLocation(
   label: string,
   connectionType: ConnectionType,
   locationPath: string,
+  poolId?: string | null,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null
 ): void {
   getDb()
     .prepare(
-      'UPDATE repo_locations SET label = ?, connection_type = ?, path = ?, ssh_host = ?, ssh_user = ?, ssh_port = ?, ssh_key_path = ?, wsl_distro = ?, updated_at = ? WHERE id = ?'
+      'UPDATE repo_locations SET label = ?, connection_type = ?, path = ?, pool_id = ?, checked_out = CASE WHEN ? IS NULL THEN 0 ELSE checked_out END, ssh_host = ?, ssh_user = ?, ssh_port = ?, ssh_key_path = ?, wsl_distro = ?, updated_at = ? WHERE id = ?'
     )
     .run(
       label, connectionType, locationPath,
+      poolId ?? null, poolId ?? null,
       ssh?.host ?? null, ssh?.user ?? null, ssh?.port ?? null, ssh?.keyPath ?? null,
       wsl?.distro ?? null,
       new Date().toISOString(), id
@@ -176,6 +183,60 @@ export function getLocationForThread(threadId: string): RepoLocation | null {
     .prepare('SELECT l.* FROM repo_locations l JOIN threads t ON t.location_id = l.id WHERE t.id = ?')
     .get(threadId) as RepoLocationRow | undefined
   return row ? rowToLocation(row) : null
+}
+
+// ── Location Pools ───────────────────────────────────────────────────────────
+
+function rowToLocationPool(row: LocationPoolRow): LocationPool {
+  return {
+    id: row.id,
+    project_id: row.project_id,
+    name: row.name,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
+  }
+}
+
+export function listLocationPools(projectId: string): LocationPool[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM location_pools WHERE project_id = ? ORDER BY created_at ASC')
+    .all(projectId) as LocationPoolRow[]
+  return rows.map(rowToLocationPool)
+}
+
+export function createLocationPool(projectId: string, name: string): LocationPool {
+  const now = new Date().toISOString()
+  const id = uuidv4()
+  getDb()
+    .prepare('INSERT INTO location_pools (id, project_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .run(id, projectId, name, now, now)
+  return { id, project_id: projectId, name, created_at: now, updated_at: now }
+}
+
+export function updateLocationPool(id: string, name: string): void {
+  getDb()
+    .prepare('UPDATE location_pools SET name = ?, updated_at = ? WHERE id = ?')
+    .run(name, new Date().toISOString(), id)
+}
+
+export function deleteLocationPool(id: string): void {
+  const db = getDb()
+  const now = new Date().toISOString()
+  db.prepare('UPDATE repo_locations SET pool_id = NULL, checked_out = 0, updated_at = ? WHERE pool_id = ?')
+    .run(now, id)
+  db.prepare('DELETE FROM location_pools WHERE id = ?').run(id)
+}
+
+export function checkoutLocation(id: string): void {
+  getDb()
+    .prepare('UPDATE repo_locations SET checked_out = 1, updated_at = ? WHERE id = ? AND pool_id IS NOT NULL')
+    .run(new Date().toISOString(), id)
+}
+
+export function returnLocationToPool(id: string): void {
+  getDb()
+    .prepare('UPDATE repo_locations SET checked_out = 0, updated_at = ? WHERE id = ?')
+    .run(new Date().toISOString(), id)
 }
 
 /** Find a location whose path matches (prefix match for file lookups). */

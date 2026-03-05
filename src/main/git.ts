@@ -23,6 +23,29 @@ export interface GitStatus {
   files: GitFileChange[]
 }
 
+function parseNameStatus(output: string): GitFileChange[] {
+  if (!output) return []
+  const files: GitFileChange[] = []
+  const lines = output.split(/\r?\n/).filter(Boolean)
+  for (const line of lines) {
+    const parts = line.split('\t')
+    const rawStatus = parts[0] ?? ''
+    const status = rawStatus[0]
+    if (!status || !['M', 'A', 'D', 'R', 'U', '?'].includes(status)) continue
+    if (status === 'R') {
+      const oldPath = parts[1]
+      const newPath = parts[2]
+      if (!newPath) continue
+      files.push({ status: 'R', path: newPath, oldPath, staged: false })
+      continue
+    }
+    const path = parts[1]
+    if (!path) continue
+    files.push({ status, path, staged: false })
+  }
+  return files
+}
+
 async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
   if (ssh) {
@@ -251,6 +274,86 @@ export async function getFileDiff(repoPath: string, filePath: string, staged: bo
       return header + lines.map(l => `+${l}`).join('\n')
     }
     return await git(repoPath, ['diff', '--', filePath], ssh, wsl)
+  } catch {
+    return ''
+  }
+}
+
+async function resolveCompareMainRef(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<string | null> {
+  let localOut = ''
+  let remoteOut = ''
+  try {
+    localOut = await git(repoPath, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/'], ssh, wsl)
+  } catch {
+    // ignore
+  }
+  try {
+    remoteOut = await git(repoPath, ['for-each-ref', '--format=%(refname:short)', 'refs/remotes/origin/'], ssh, wsl)
+  } catch {
+    // ignore
+  }
+
+  const local = new Set(localOut.split('\n').filter(Boolean))
+  const remote = new Set(
+    remoteOut
+      .split('\n')
+      .filter(Boolean)
+      .map((b) => b.replace(/^origin\//, ''))
+      .filter((b) => b !== 'HEAD')
+  )
+
+  const mainBranch =
+    (remote.has('main') ? 'main' : null) ??
+    (remote.has('master') ? 'master' : null) ??
+    (local.has('main') ? 'main' : null) ??
+    (local.has('master') ? 'master' : null)
+
+  if (!mainBranch) return null
+
+  try {
+    await git(repoPath, ['fetch', 'origin', mainBranch], ssh, wsl)
+  } catch {
+    // continue with possibly stale refs
+  }
+
+  const baseRef = `origin/${mainBranch}`
+  try {
+    await git(repoPath, ['rev-parse', '--verify', baseRef], ssh, wsl)
+    return baseRef
+  } catch {
+    return null
+  }
+}
+
+export async function getCompareToMainChanges(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<{ baseRef: string; files: GitFileChange[] }> {
+  const baseRef = (await resolveCompareMainRef(repoPath, ssh, wsl)) ?? 'origin/main'
+  try {
+    const mergeBase = await git(repoPath, ['merge-base', baseRef, 'HEAD'], ssh, wsl)
+    const out = await git(repoPath, ['diff', '--name-status', '--find-renames', mergeBase], ssh, wsl)
+    return { baseRef, files: parseNameStatus(out) }
+  } catch {
+    return { baseRef, files: [] }
+  }
+}
+
+export async function getCompareToMainFileDiff(
+  repoPath: string,
+  filePath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<string> {
+  const baseRef = (await resolveCompareMainRef(repoPath, ssh, wsl)) ?? 'origin/main'
+  try {
+    const mergeBase = await git(repoPath, ['merge-base', baseRef, 'HEAD'], ssh, wsl)
+    return await git(repoPath, ['diff', mergeBase, '--', filePath], ssh, wsl)
   } catch {
     return ''
   }

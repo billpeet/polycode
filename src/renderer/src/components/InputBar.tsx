@@ -1054,7 +1054,7 @@ export default function InputBar({ threadId }: Props) {
                   ? 'CLI not available — input disabled'
                   : isProcessing
                     ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
-                    : 'Ask Claude... (/ for slash commands, @ for files, @JS-123 for YouTrack)'
+                    : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
               }
               disabled={isPlanPending || isQuestionPending || cliUnavailable}
               className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"

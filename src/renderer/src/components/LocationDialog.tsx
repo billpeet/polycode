@@ -165,9 +165,9 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
 
     try {
       if (mode === 'edit' && location) {
-        await updateLocation(location.id, projectId, label.trim(), connectionType, path.trim(), ssh, wsl)
+        await updateLocation(location.id, projectId, label.trim(), connectionType, path.trim(), location.pool_id, ssh, wsl)
       } else {
-        await createLocation(projectId, label.trim(), connectionType, path.trim(), ssh, wsl)
+        await createLocation(projectId, label.trim(), connectionType, path.trim(), null, ssh, wsl)
       }
       onClose()
     } catch (err) {

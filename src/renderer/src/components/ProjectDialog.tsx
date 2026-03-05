@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
 import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
-import { Project, RepoLocation, ConnectionType, SshConfig, WslConfig } from '../types/ipc'
+import { Project, RepoLocation, ConnectionType, SshConfig, WslConfig, LocationPool } from '../types/ipc'
 
 const EMPTY: RepoLocation[] = []
 
@@ -18,17 +18,19 @@ interface Props {
 interface LocationFormSectionProps {
   projectId: string
   location?: RepoLocation
+  pools: LocationPool[]
   gitUrl?: string | null
   onSaved: () => void
   onCancel: () => void
 }
 
-function LocationFormSection({ projectId, location, gitUrl, onSaved, onCancel }: LocationFormSectionProps) {
+function LocationFormSection({ projectId, location, pools, gitUrl, onSaved, onCancel }: LocationFormSectionProps) {
   const createLocation = useLocationStore((s) => s.create)
   const updateLocation = useLocationStore((s) => s.update)
 
   const [label, setLabel] = useState(location?.label ?? '')
   const [path, setPath] = useState(location?.path ?? '')
+  const [poolId, setPoolId] = useState<string>(location?.pool_id ?? '')
   const [connectionType, setConnectionType] = useState<ConnectionType>(location?.connection_type ?? 'local')
   const [sshHost, setSshHost] = useState(location?.ssh?.host ?? '')
   const [sshUser, setSshUser] = useState(location?.ssh?.user ?? '')
@@ -202,9 +204,9 @@ function LocationFormSection({ projectId, location, gitUrl, onSaved, onCancel }:
 
     try {
       if (location) {
-        await updateLocation(location.id, projectId, label.trim(), connectionType, path.trim(), ssh, wsl)
+        await updateLocation(location.id, projectId, label.trim(), connectionType, path.trim(), poolId || null, ssh, wsl)
       } else {
-        await createLocation(projectId, label.trim(), connectionType, path.trim(), ssh, wsl)
+        await createLocation(projectId, label.trim(), connectionType, path.trim(), poolId || null, ssh, wsl)
       }
       onSaved()
     } catch (err) {
@@ -370,6 +372,23 @@ function LocationFormSection({ projectId, location, gitUrl, onSaved, onCancel }:
               placeholder={isSSH ? 'SSH Prod' : isWSL ? 'WSL Ubuntu' : 'Local'}
               autoFocus
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              Location Pool <span style={{ opacity: 0.5 }}>(optional)</span>
+            </label>
+            <select
+              value={poolId}
+              onChange={(e) => setPoolId(e.target.value)}
+              className="w-full rounded px-3 py-1.5 text-sm outline-none"
+              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+            >
+              <option value="">No pool</option>
+              {pools.map((pool) => (
+                <option key={pool.id} value={pool.id}>{pool.name}</option>
+              ))}
+            </select>
           </div>
 
           {/* SSH fields */}
@@ -544,11 +563,19 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const updateProject = useProjectStore((s) => s.update)
 
   const locations = useLocationStore((s) => project ? (s.byProject[project.id] ?? EMPTY) : EMPTY)
+  const pools = useLocationStore((s) => project ? (s.poolsByProject[project.id] ?? []) : [])
   const fetchLocations = useLocationStore((s) => s.fetch)
+  const fetchPools = useLocationStore((s) => s.fetchPools)
   const removeLocation = useLocationStore((s) => s.remove)
+  const createPool = useLocationStore((s) => s.createPool)
+  const updatePool = useLocationStore((s) => s.updatePool)
+  const removePool = useLocationStore((s) => s.removePool)
 
   const [locationForm, setLocationForm] = useState<LocationFormState>({ mode: 'none' })
   const [deleteConfirm, setDeleteConfirm] = useState<RepoLocation | null>(null)
+  const [newPoolName, setNewPoolName] = useState('')
+  const [editingPoolId, setEditingPoolId] = useState<string | null>(null)
+  const [editingPoolName, setEditingPoolName] = useState('')
 
   // Commands
   const commands = useCommandStore((s) => project ? (s.byProject[project.id] ?? EMPTY_COMMANDS) : EMPTY_COMMANDS)
@@ -573,6 +600,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   useEffect(() => {
     if (isEdit && project) {
       fetchLocations(project.id)
+      fetchPools(project.id)
       fetchCommands(project.id)
     }
   }, [isEdit, project?.id])
@@ -599,6 +627,28 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
     if (!project) return
     await removeLocation(loc.id, project.id)
     setDeleteConfirm(null)
+  }
+
+  async function handleCreatePool(): Promise<void> {
+    if (!project || !newPoolName.trim()) return
+    await createPool(project.id, newPoolName.trim())
+    setNewPoolName('')
+  }
+
+  async function handleSavePool(poolId: string): Promise<void> {
+    if (!project || !editingPoolName.trim()) return
+    await updatePool(poolId, project.id, editingPoolName.trim())
+    setEditingPoolId(null)
+    setEditingPoolName('')
+  }
+
+  async function handleDeletePool(poolId: string): Promise<void> {
+    if (!project) return
+    await removePool(poolId, project.id)
+    if (editingPoolId === poolId) {
+      setEditingPoolId(null)
+      setEditingPoolName('')
+    }
   }
 
   function connectionBadge(connType: string) {
@@ -690,6 +740,109 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
             <div className="my-5 border-t" style={{ borderColor: 'var(--color-border)' }} />
 
             <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Location Pools</span>
+            </div>
+
+            {pools.length === 0 && (
+              <p className="text-xs py-1 mb-2" style={{ color: 'var(--color-text-muted)' }}>
+                No pools yet. Locations will behave as before until you create one.
+              </p>
+            )}
+
+            <div className="space-y-1 mb-2">
+              {pools.map((pool) => {
+                const inUseCount = locations.filter((l) => l.pool_id === pool.id).length
+                const isEditing = editingPoolId === pool.id
+                return (
+                  <div
+                    key={pool.id}
+                    className="flex items-center gap-2 rounded px-3 py-2"
+                    style={{ background: 'var(--color-surface)', border: `1px solid ${isEditing ? 'var(--color-claude)' : 'var(--color-border)'}` }}
+                  >
+                    {isEditing ? (
+                      <input
+                        type="text"
+                        value={editingPoolName}
+                        onChange={(e) => setEditingPoolName(e.target.value)}
+                        className="flex-1 rounded px-2 py-1 text-xs outline-none"
+                        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                        autoFocus
+                      />
+                    ) : (
+                      <div className="flex-1 min-w-0">
+                        <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text)' }}>{pool.name}</span>
+                        <span className="ml-2 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{inUseCount} location{inUseCount === 1 ? '' : 's'}</span>
+                      </div>
+                    )}
+                    {isEditing ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => handleSavePool(pool.id)}
+                          className="rounded px-2 py-1 text-[10px]"
+                          style={{ background: 'var(--color-claude)', color: '#fff' }}
+                        >
+                          Save
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingPoolId(null); setEditingPoolName('') }}
+                          className="rounded px-2 py-1 text-[10px]"
+                          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                        >
+                          Cancel
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => { setEditingPoolId(pool.id); setEditingPoolName(pool.name) }}
+                          className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                          style={{ color: 'var(--color-text-muted)' }}
+                          title="Edit pool"
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeletePool(pool.id)}
+                          className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                          style={{ color: 'var(--color-text-muted)' }}
+                          title="Delete pool"
+                        >
+                          ✕
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+
+            <div className="flex items-center gap-2 mb-4">
+              <input
+                type="text"
+                value={newPoolName}
+                onChange={(e) => setNewPoolName(e.target.value)}
+                className="flex-1 rounded px-3 py-1.5 text-xs outline-none"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                placeholder="New pool name"
+              />
+              <button
+                type="button"
+                onClick={handleCreatePool}
+                disabled={!newPoolName.trim()}
+                className="rounded px-2.5 py-1 text-xs disabled:opacity-50"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+              >
+                + Add Pool
+              </button>
+            </div>
+
+            <div className="my-5 border-t" style={{ borderColor: 'var(--color-border)' }} />
+
+            <div className="flex items-center justify-between mb-2">
               <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>Locations</span>
               {locationForm.mode === 'none' && (
                 <button
@@ -723,6 +876,14 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                           <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text)' }}>
                             {loc.label}
                           </span>
+                          {loc.pool_id && (
+                            <span
+                              className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
+                              style={{ background: 'rgba(74, 222, 128, 0.12)', color: '#4ade80' }}
+                            >
+                              {pools.find((p) => p.id === loc.pool_id)?.name ?? 'Pool'}
+                            </span>
+                          )}
                           {connectionBadge(loc.connection_type)}
                         </div>
                         <span className="text-[10px] font-mono truncate block" style={{ color: 'var(--color-text-muted)' }}>
@@ -759,6 +920,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                       <LocationFormSection
                         projectId={project.id}
                         location={loc}
+                        pools={pools}
                         onSaved={() => setLocationForm({ mode: 'none' })}
                         onCancel={() => setLocationForm({ mode: 'none' })}
                       />
@@ -772,6 +934,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
               <div className={locations.length > 0 ? 'mt-1' : ''}>
                 <LocationFormSection
                   projectId={project.id}
+                  pools={pools}
                   gitUrl={gitUrl.trim() || null}
                   onSaved={() => setLocationForm({ mode: 'none' })}
                   onCancel={() => setLocationForm({ mode: 'none' })}

@@ -35,6 +35,7 @@ interface FilesStore {
   fetchFileContent: (filePath: string) => Promise<void>
   clearSelection: () => void
   selectDiff: (repoPath: string, filePath: string, staged: boolean) => Promise<void>
+  selectCompareDiffToMain: (repoPath: string, filePath: string) => Promise<void>
   clearDiff: () => void
   switchDiffToFile: (repoPath: string) => void
 }
@@ -145,6 +146,16 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     try {
       const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
       set({ diffView: { filePath, diff, staged }, loadingDiff: false })
+    } catch {
+      set({ loadingDiff: false })
+    }
+  },
+
+  selectCompareDiffToMain: async (repoPath, filePath) => {
+    set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
+    try {
+      const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
+      set({ diffView: { filePath, diff, staged: false }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }

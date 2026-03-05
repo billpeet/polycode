@@ -75,6 +75,7 @@ function stripAnsi(s: string): string {
 function StatusDot({ status }: { status: CommandStatus }) {
   const color =
     status === 'running' ? '#4ade80'
+    : status === 'stopping' ? '#fb923c'
     : status === 'error' ? '#f87171'
     : 'var(--color-text-muted)'
   return (
@@ -110,7 +111,10 @@ function CommandLogPanel({
 
   const logs = useCommandStore((s) => s.logsByCommand[instanceKey] ?? EMPTY_LOGS)
   const status = useCommandStore((s) => s.statusMap[instanceKey] ?? 'idle')
+  const ports = useCommandStore((s) => s.portsMap[instanceKey] ?? [])
   const appendLog = useCommandStore((s) => s.appendLog)
+  const setPorts = useCommandStore((s) => s.setPorts)
+  const fetchPorts = useCommandStore((s) => s.fetchPorts)
   const start = useCommandStore((s) => s.start)
   const stop = useCommandStore((s) => s.stop)
   const restart = useCommandStore((s) => s.restart)
@@ -198,6 +202,13 @@ function CommandLogPanel({
   }, [instanceKey, appendLog])
 
   useEffect(() => {
+    const unsub = window.api.on(`command:ports:${instanceKey}`, (nextPorts) => {
+      setPorts(instanceKey, nextPorts as number[])
+    })
+    return unsub
+  }, [instanceKey, setPorts])
+
+  useEffect(() => {
     if (!userScrolled && !searchQuery) {
       scrollToBottom()
     }
@@ -211,14 +222,17 @@ function CommandLogPanel({
   const [pid, setPid] = useState<number | null>(null)
 
   useEffect(() => {
-    if (status === 'running') {
+    if (status === 'running' || status === 'stopping') {
       window.api.invoke('commands:getPid', commandId, locationId).then((p) => setPid(p))
+      void fetchPorts(commandId, locationId)
     } else {
       setPid(null)
     }
-  }, [commandId, locationId, status])
+  }, [commandId, locationId, status, fetchPorts])
 
-  const hasRun = status === 'running' || status === 'stopped' || status === 'error'
+  const isActive = status === 'running' || status === 'stopping'
+  const isStopping = status === 'stopping'
+  const hasRun = isActive || status === 'stopped' || status === 'error'
 
   return (
     <div className="flex flex-col flex-1 min-h-0">
@@ -247,8 +261,17 @@ function CommandLogPanel({
               {pid}
             </span>
           )}
+          {ports.length > 0 && (
+            <span
+              className="text-[10px] font-mono px-1 rounded flex-shrink-0"
+              style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.12)' }}
+              title="Listening ports"
+            >
+              {ports.join(', ')}
+            </span>
+          )}
           {/* Start / Stop */}
-          {status !== 'running' ? (
+          {!isActive ? (
             <button
               onClick={() => start(commandId, locationId)}
               className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
@@ -261,10 +284,11 @@ function CommandLogPanel({
             </button>
           ) : (
             <button
-              onClick={() => stop(commandId, locationId)}
-              className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
+              onClick={() => !isStopping && stop(commandId, locationId)}
+              disabled={isStopping}
+              className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0 disabled:opacity-50"
               style={{ color: '#f87171' }}
-              title="Stop"
+              title={isStopping ? 'Stopping' : 'Stop'}
             >
               <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
                 <path d="M5 3.5h6A1.5 1.5 0 0 1 12.5 5v6a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 11V5A1.5 1.5 0 0 1 5 3.5z"/>
@@ -274,10 +298,11 @@ function CommandLogPanel({
           {/* Restart */}
           {hasRun && (
             <button
-              onClick={() => restart(commandId, locationId)}
-              className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
+              onClick={() => !isStopping && restart(commandId, locationId)}
+              disabled={isStopping}
+              className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0 disabled:opacity-50"
               style={{ color: 'var(--color-text-muted)' }}
-              title="Restart"
+              title={isStopping ? 'Stopping' : 'Restart'}
             >
               <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
                 <path fillRule="evenodd" d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>

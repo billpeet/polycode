@@ -1,10 +1,12 @@
 import { BrowserWindow } from 'electron'
+import { spawn, ChildProcess } from 'child_process'
 import { ClaudeDriver } from '../driver/claude'
 import { CodexDriver } from '../driver/codex'
 import { OpenCodeDriver } from '../driver/opencode'
 import { CLIDriver } from '../driver/types'
 import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
+import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from '../driver/runner'
 import {
   updateThreadStatus,
   updateThreadName,
@@ -36,6 +38,7 @@ export class Session {
   private questionPending = false
   private pendingQuestions: Question[] = []
   private stopped = false
+  private shellProcess: ChildProcess | null = null
 
   constructor(threadId: string, workingDir: string, window: BrowserWindow, sshConfig?: SshConfig | null, wslConfig?: WslConfig | null) {
     this.threadId = threadId
@@ -184,16 +187,20 @@ export class Session {
       this.triggerAutoTitle(content)
     }
 
-    driver.sendMessage(
-      content,
-      (event: OutputEvent) => this.handleEvent(event),
-      (error?: Error) => this.handleDone(error),
-      { planMode: options?.planMode }
-    )
+    const shellMode = parseShellMode(content)
+    if (shellMode.enabled) {
+      this.executeShellModeCommand(shellMode.command)
+    } else {
+      driver.sendMessage(
+        content,
+        (event: OutputEvent) => this.handleEvent(event),
+        (error?: Error) => this.handleDone(error),
+        { planMode: options?.planMode }
+      )
+    }
 
     // Broadcast the spawned PID to the renderer for visibility
-    const pid = driver.getPid()
-    this.window.webContents.send(`thread:pid:${this.threadId}`, pid)
+    this.window.webContents.send(`thread:pid:${this.threadId}`, this.getPid())
   }
 
   stop(): void {
@@ -201,6 +208,9 @@ export class Session {
     if (this.activeSessionId) {
       const driver = this.drivers.get(this.activeSessionId)
       driver?.stop()
+    }
+    if (this.shellProcess) {
+      killProcessTree(this.shellProcess)
     }
     // Immediately tell the UI we're stopping, but skip the DB write — 'stopping'
     // is a transient state and we don't want it persisted (a crash would leave
@@ -210,15 +220,182 @@ export class Session {
   }
 
   isRunning(): boolean {
+    if (this.shellProcess && this.shellProcess.exitCode == null && this.shellProcess.signalCode == null) {
+      return true
+    }
     if (!this.activeSessionId) return false
     const driver = this.drivers.get(this.activeSessionId)
     return driver?.isRunning() ?? false
   }
 
   getPid(): number | null {
+    if (this.shellProcess && this.shellProcess.exitCode == null && this.shellProcess.signalCode == null) {
+      return this.shellProcess.pid ?? null
+    }
     if (!this.activeSessionId) return null
     const driver = this.drivers.get(this.activeSessionId)
     return driver?.getPid() ?? null
+  }
+
+  private executeShellModeCommand(command: string): void {
+    const toolUseId = `shell-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const toolCallEvent: OutputEvent = {
+      type: 'tool_call',
+      content: `!${command}`,
+      metadata: {
+        type: 'tool_call',
+        id: toolUseId,
+        name: 'Bash',
+        input: { command },
+      },
+      sessionId: this.activeSessionId ?? undefined,
+    }
+    this.handleEvent(toolCallEvent)
+
+    if (!command) {
+      const resultEvent: OutputEvent = {
+        type: 'tool_result',
+        content: 'Shell mode requires a command after "!".',
+        metadata: {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: 'Shell mode requires a command after "!".',
+          is_error: true,
+        },
+        sessionId: this.activeSessionId ?? undefined,
+      }
+      this.handleEvent(resultEvent)
+      this.handleDone()
+      return
+    }
+
+    try {
+      const proc = this.spawnShellCommand(command)
+      this.shellProcess = proc
+      this.window.webContents.send(`thread:pid:${this.threadId}`, this.getPid())
+
+      let stdout = ''
+      let stderr = ''
+      let done = false
+
+      const finish = (error?: Error): void => {
+        if (done) return
+        done = true
+        if (this.shellProcess === proc) {
+          this.shellProcess = null
+        }
+        this.handleDone(error)
+      }
+
+      proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+
+      proc.on('error', (err) => {
+        const resultEvent: OutputEvent = {
+          type: 'tool_result',
+          content: err.message,
+          metadata: {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: err.message,
+            is_error: true,
+          },
+          sessionId: this.activeSessionId ?? undefined,
+        }
+        this.handleEvent(resultEvent)
+        finish(err)
+      })
+
+      proc.on('close', (code, signal) => {
+        if (this.stopped) {
+          finish()
+          return
+        }
+
+        const sections: string[] = []
+        if (stdout.trim()) sections.push(stdout.trimEnd())
+        if (stderr.trim()) sections.push(stderr.trimEnd())
+        if (sections.length === 0) {
+          sections.push(code === 0 ? 'Command completed with no output.' : 'Command failed with no output.')
+        }
+        const resultText = sections.join('\n\n')
+        const exitCode = code ?? null
+        const isError = exitCode !== 0
+
+        const resultEvent: OutputEvent = {
+          type: 'tool_result',
+          content: resultText,
+          metadata: {
+            type: 'tool_result',
+            tool_use_id: toolUseId,
+            content: resultText,
+            exit_code: exitCode,
+            signal: signal ?? null,
+            is_error: isError,
+          },
+          sessionId: this.activeSessionId ?? undefined,
+        }
+        this.handleEvent(resultEvent)
+        finish()
+      })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      const resultEvent: OutputEvent = {
+        type: 'tool_result',
+        content: message,
+        metadata: {
+          type: 'tool_result',
+          tool_use_id: toolUseId,
+          content: message,
+          is_error: true,
+        },
+        sessionId: this.activeSessionId ?? undefined,
+      }
+      this.handleEvent(resultEvent)
+      this.handleDone(new Error(message))
+    }
+  }
+
+  private spawnShellCommand(command: string): ChildProcess {
+    const workDir = this.workingDir || '~'
+
+    if (this.wslConfig) {
+      const innerCmd = `cd ${cdTarget(workDir)} && ${command}`
+      return spawn('wsl', ['-d', this.wslConfig.distro, '--', 'bash', '-ilc', innerCmd], {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    }
+
+    if (this.sshConfig) {
+      const innerCmd = `${LOAD_NODE_MANAGERS}; cd ${cdTarget(workDir)} && ${command}`
+      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+      const sshArgs = [
+        ...buildSshBaseArgs(this.sshConfig),
+        `${this.sshConfig.user}@${this.sshConfig.host}`,
+        remoteCmd,
+      ]
+      return spawn('ssh', sshArgs, {
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    }
+
+    if (process.platform === 'win32') {
+      const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+      const cmdExe = process.env.ComSpec ?? `${sysRoot}\\System32\\cmd.exe`
+      return spawn(cmdExe, ['/d', '/s', '/c', command], {
+        shell: false,
+        cwd: workDir,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    }
+
+    return spawn('/bin/sh', ['-c', command], {
+      shell: false,
+      cwd: workDir,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   }
 
   /** Approve pending plan and continue execution in the same session */
@@ -480,5 +657,25 @@ export class Session {
       .catch((err) => {
         console.error('[auto-title]', err.message)
       })
+  }
+}
+
+function parseShellMode(content: string): { enabled: boolean; command: string } {
+  const trimmedStart = content.trimStart()
+  if (!trimmedStart.startsWith('!')) return { enabled: false, command: '' }
+  const command = trimmedStart.slice(1).trim()
+  return { enabled: true, command }
+}
+
+function killProcessTree(proc: ChildProcess): void {
+  if (proc.exitCode != null || proc.signalCode != null) return
+  if (process.platform === 'win32' && proc.pid != null) {
+    spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { shell: false })
+    return
+  }
+  try {
+    proc.kill('SIGTERM')
+  } catch {
+    // ignore
   }
 }

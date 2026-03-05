@@ -171,6 +171,21 @@ function runMigrations(database: Database.Database): void {
     updateModel.run(newId, oldId)
   }
 
+  // ── Location pools table ───────────────────────────────────────────────────
+  const tablesAfterPools = database.pragma('table_list') as Array<{ name: string }>
+  const hasLocationPools = tablesAfterPools.some((t) => t.name === 'location_pools')
+  if (!hasLocationPools) {
+    database.exec(`
+      CREATE TABLE location_pools (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      )
+    `)
+  }
+
   // ── Repo locations table ───────────────────────────────────────────────────
   const tablesAfter = database.pragma('table_list') as Array<{ name: string }>
   const hasRepoLocations = tablesAfter.some((t) => t.name === 'repo_locations')
@@ -180,6 +195,8 @@ function runMigrations(database: Database.Database): void {
       CREATE TABLE repo_locations (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        pool_id TEXT REFERENCES location_pools(id) ON DELETE SET NULL,
+        checked_out INTEGER NOT NULL DEFAULT 0,
         label TEXT NOT NULL,
         connection_type TEXT NOT NULL DEFAULT 'local',
         path TEXT NOT NULL,
@@ -192,6 +209,14 @@ function runMigrations(database: Database.Database): void {
         updated_at TEXT NOT NULL
       )
     `)
+  }
+
+  const repoLocationCols = database.pragma('table_info(repo_locations)') as Array<{ name: string }>
+  if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'pool_id')) {
+    database.exec('ALTER TABLE repo_locations ADD COLUMN pool_id TEXT REFERENCES location_pools(id) ON DELETE SET NULL')
+  }
+  if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'checked_out')) {
+    database.exec('ALTER TABLE repo_locations ADD COLUMN checked_out INTEGER NOT NULL DEFAULT 0')
   }
 
   // ── git_url column on projects ──────────────────────────────────────────────

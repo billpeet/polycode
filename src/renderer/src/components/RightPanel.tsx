@@ -9,9 +9,20 @@ import { useFilesStore } from '../stores/files'
 import { useCommandStore, EMPTY_COMMANDS, instKey } from '../stores/commands'
 import { useSlashCommandStore } from '../stores/slashCommands'
 import { useProjectStore } from '../stores/projects'
-import { GitFileChange, CommandStatus, SlashCommand } from '../types/ipc'
+import { GitFileChange, GitCompareResult, CommandStatus, SlashCommand } from '../types/ipc'
 import FileTree from './FileTree'
 import CommandsEditModal from './CommandsEditModal'
+
+type PullRequestItem = {
+  id: number
+  title: string
+  status: string
+  sourceBranch: string
+  targetBranch: string
+  authorName: string
+  url: string
+  creationDate: string
+}
 
 function SparkleIcon() {
   return (
@@ -832,14 +843,24 @@ function dirname(p: string): string {
 interface FileGroupProps {
   label: string
   files: GitFileChange[]
-  onFileAction: (filePath: string) => void
-  onGroupAction: () => void
-  actionIcon: 'plus' | 'minus'
-  actionTitle: string
+  onFileAction?: (filePath: string) => void
+  onGroupAction?: () => void
+  actionIcon?: 'plus' | 'minus'
+  actionTitle?: string
+  showActions?: boolean
   onFileClick?: (file: GitFileChange) => void
 }
 
-function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, actionTitle, onFileClick }: FileGroupProps) {
+function FileGroup({
+  label,
+  files,
+  onFileAction,
+  onGroupAction,
+  actionIcon = 'plus',
+  actionTitle = 'Action',
+  showActions = true,
+  onFileClick,
+}: FileGroupProps) {
   const [collapsed, setCollapsed] = useState(false)
   return (
     <div>
@@ -865,21 +886,23 @@ function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, acti
             {files.length}
           </span>
         </button>
-        <button
-          onClick={(e) => { e.stopPropagation(); onGroupAction() }}
-          className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all"
-          title={`${actionTitle} All`}
-        >
-          {actionIcon === 'plus' ? (
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-            </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
-            </svg>
-          )}
-        </button>
+        {showActions && onGroupAction && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onGroupAction() }}
+            className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all"
+            title={`${actionTitle} All`}
+          >
+            {actionIcon === 'plus' ? (
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
+              </svg>
+            )}
+          </button>
+        )}
       </div>
       {!collapsed && (
         <ul>
@@ -908,21 +931,23 @@ function FileGroup({ label, files, onFileAction, onGroupAction, actionIcon, acti
                     {dir}
                   </span>
                 )}
-                <button
-                  onClick={() => onFileAction(file.path)}
-                  className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all flex-shrink-0"
-                  title={actionTitle}
-                >
-                  {actionIcon === 'plus' ? (
-                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
-                    </svg>
-                  ) : (
-                    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-                      <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
-                    </svg>
-                  )}
-                </button>
+                {showActions && onFileAction && (
+                  <button
+                    onClick={() => onFileAction(file.path)}
+                    className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all flex-shrink-0"
+                    title={actionTitle}
+                  >
+                    {actionIcon === 'plus' ? (
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M8 4a.5.5 0 0 1 .5.5v3h3a.5.5 0 0 1 0 1h-3v3a.5.5 0 0 1-1 0v-3h-3a.5.5 0 0 1 0-1h3v-3A.5.5 0 0 1 8 4z"/>
+                      </svg>
+                    ) : (
+                      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                        <path d="M4 8a.5.5 0 0 1 .5-.5h7a.5.5 0 0 1 0 1h-7A.5.5 0 0 1 4 8z"/>
+                      </svg>
+                    )}
+                  </button>
+                )}
               </li>
             )
           })}
@@ -989,6 +1014,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const fetchModifiedFiles = useGitStore((s) => s.fetchModifiedFiles)
   const addToast = useToastStore((s) => s.add)
   const selectDiff = useFilesStore((s) => s.selectDiff)
+  const selectCompareDiffToMain = useFilesStore((s) => s.selectCompareDiffToMain)
 
   const pushGit = useGitStore((s) => s.push)
   const pullGit = useGitStore((s) => s.pull)
@@ -996,6 +1022,23 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const isPulling = projectPath ? (pullingByPath[projectPath] ?? false) : false
 
   const [committing, setCommitting] = useState(false)
+  const [openPrs, setOpenPrs] = useState<PullRequestItem[]>([])
+  const [currentPr, setCurrentPr] = useState<PullRequestItem | null>(null)
+  const [prProvider, setPrProvider] = useState<'azure' | 'github' | null>(null)
+  const [loadingPrs, setLoadingPrs] = useState(false)
+  const [prError, setPrError] = useState<string | null>(null)
+  const [checkingOutPrId, setCheckingOutPrId] = useState<number | null>(null)
+  const [showCreatePr, setShowCreatePr] = useState(false)
+  const [createPrTarget, setCreatePrTarget] = useState('main')
+  const [createPrTitle, setCreatePrTitle] = useState('')
+  const [createPrDescription, setCreatePrDescription] = useState('')
+  const [createPrTitleEdited, setCreatePrTitleEdited] = useState(false)
+  const [creatingPr, setCreatingPr] = useState(false)
+  const [prsCollapsed, setPrsCollapsed] = useState(false)
+  const [compareBaseRef, setCompareBaseRef] = useState('origin/main')
+  const [compareFiles, setCompareFiles] = useState<GitFileChange[]>([])
+  const [compareLoading, setCompareLoading] = useState(false)
+  const [compareLoadedBranch, setCompareLoadedBranch] = useState<string | null>(null)
 
   useEffect(() => {
     if (projectPath && !collapsed) fetchGit(projectPath)
@@ -1004,6 +1047,84 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   useEffect(() => {
     if (threadId) fetchModifiedFiles(threadId)
   }, [threadId, fetchModifiedFiles])
+
+  useEffect(() => {
+    if (!gitStatus) return
+    if (!createPrTitleEdited) {
+      setCreatePrTitle(`Merge ${gitStatus.branch} into ${createPrTarget}`)
+    }
+  }, [gitStatus?.branch, createPrTarget, createPrTitleEdited])
+
+  const refreshPullRequests = useCallback(async () => {
+    if (!projectPath || !gitStatus || isNotRepo) return
+    setLoadingPrs(true)
+    setPrError(null)
+    try {
+      let azdoErr: string | null = null
+
+      try {
+        const [prs, current] = await Promise.all([
+          window.api.invoke('azdo:pr:list', projectPath),
+          window.api.invoke('azdo:pr:current', projectPath, gitStatus.branch),
+        ])
+        setOpenPrs(prs)
+        setCurrentPr(current)
+        setPrProvider('azure')
+        return
+      } catch (err) {
+        azdoErr = err instanceof Error ? err.message : 'Azure DevOps PR query failed'
+      }
+
+      try {
+        const [prs, current] = await Promise.all([
+          window.api.invoke('gh:pr:list', projectPath),
+          window.api.invoke('gh:pr:current', projectPath, gitStatus.branch),
+        ])
+        setOpenPrs(prs)
+        setCurrentPr(current)
+        setPrProvider('github')
+        return
+      } catch (err) {
+        const ghErr = err instanceof Error ? err.message : 'GitHub PR query failed'
+        setOpenPrs([])
+        setCurrentPr(null)
+        setPrProvider(null)
+        setPrError(`Failed to load PRs. Azure: ${azdoErr ?? 'unknown'}. GitHub: ${ghErr}`)
+      }
+    } finally {
+      setLoadingPrs(false)
+    }
+  }, [projectPath, gitStatus, isNotRepo])
+
+  const refreshCompareToMain = useCallback(async () => {
+    if (!projectPath || !gitStatus || isNotRepo) return
+    const currentBranch = gitStatus.branch
+    const showLoading = compareLoadedBranch !== currentBranch
+    if (showLoading) setCompareLoading(true)
+    try {
+      const result = await window.api.invoke('git:compareToMain', projectPath) as GitCompareResult
+      setCompareBaseRef(result.baseRef)
+      setCompareFiles(result.files)
+      setCompareLoadedBranch(currentBranch)
+    } catch {
+      // Keep previous results during silent refreshes to avoid UI flashing.
+      if (showLoading) setCompareFiles([])
+    } finally {
+      if (showLoading) setCompareLoading(false)
+    }
+  }, [projectPath, gitStatus, isNotRepo, compareLoadedBranch])
+
+  useEffect(() => {
+    if (projectPath && !collapsed && gitStatus && !isNotRepo) {
+      void refreshPullRequests()
+    }
+  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshPullRequests])
+
+  useEffect(() => {
+    if (projectPath && !collapsed && gitStatus && !isNotRepo) {
+      void refreshCompareToMain()
+    }
+  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshCompareToMain])
 
   const handleSetCommitMsg = useCallback((msg: string) => {
     if (projectPath) setCommitMsg(projectPath, msg)
@@ -1081,6 +1202,11 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
     selectDiff(projectPath, file.path, file.staged)
   }, [projectPath, selectDiff])
 
+  const handleCompareFileClick = useCallback((file: GitFileChange) => {
+    if (!projectPath) return
+    selectCompareDiffToMain(projectPath, file.path)
+  }, [projectPath, selectCompareDiffToMain])
+
   const handleUnstageAll = useCallback(async () => {
     if (!projectPath) return
     try {
@@ -1109,10 +1235,16 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   }, [projectPath, otherUnstagedFiles, stageFilesAction, addToast])
 
   const totalChanges = gitStatus?.files.length ?? 0
+  const otherOpenPrs = currentPr ? openPrs.filter((pr) => pr.id !== currentPr.id) : openPrs
 
   const refreshButton = (
     <button
-      onClick={() => projectPath && fetchGit(projectPath)}
+      onClick={() => {
+        if (!projectPath) return
+        void fetchGit(projectPath)
+        void refreshPullRequests()
+        void refreshCompareToMain()
+      }}
       className="rounded p-1 hover:bg-white/10 transition-colors mr-1"
       style={{ color: 'var(--color-text-muted)' }}
       title="Refresh"
@@ -1123,6 +1255,47 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
       </svg>
     </button>
   )
+
+  async function handleCheckoutPr(prId: number): Promise<void> {
+    if (!projectPath || !prProvider) return
+    setCheckingOutPrId(prId)
+    try {
+      const result = prProvider === 'azure'
+        ? await window.api.invoke('azdo:pr:checkout', projectPath, prId)
+        : await window.api.invoke('gh:pr:checkout', projectPath, prId)
+      await fetchGit(projectPath)
+      await refreshPullRequests()
+      addToast({ type: 'success', message: `Checked out ${result.branch}`, duration: 3000 })
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to checkout PR branch', duration: 0 })
+    } finally {
+      setCheckingOutPrId(null)
+    }
+  }
+
+  async function handleCreatePr(): Promise<void> {
+    if (!projectPath || !createPrTitle.trim() || !createPrTarget.trim() || !prProvider) return
+    setCreatingPr(true)
+    try {
+      const payload = {
+        target: createPrTarget.trim(),
+        title: createPrTitle.trim(),
+        description: createPrDescription.trim() || undefined,
+      }
+      const pr = prProvider === 'azure'
+        ? await window.api.invoke('azdo:pr:create', projectPath, payload)
+        : await window.api.invoke('gh:pr:create', projectPath, payload)
+      addToast({ type: 'success', message: `Created PR #${pr.id}`, duration: 3000 })
+      setShowCreatePr(false)
+      setCreatePrDescription('')
+      setCreatePrTitleEdited(false)
+      await refreshPullRequests()
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to create pull request', duration: 0 })
+    } finally {
+      setCreatingPr(false)
+    }
+  }
 
   return (
     <div className="flex-shrink-0">
@@ -1143,6 +1316,173 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
               currentBranch={gitStatus.branch}
               hasPendingChanges={(gitStatus.files.filter((f) => !f.staged).length) > 0}
             />
+          )}
+
+          {/* Pull requests (Azure DevOps / GitHub) */}
+          {projectPath && gitStatus && !isNotRepo && (
+            <div className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--color-border)' }}>
+              <div className="flex items-center justify-between mb-2">
+                <button
+                  onClick={() => setPrsCollapsed((c) => !c)}
+                  className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-white/10 transition-colors"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title={prsCollapsed ? 'Expand pull requests' : 'Collapse pull requests'}
+                >
+                  <svg
+                    width="8"
+                    height="8"
+                    viewBox="0 0 8 8"
+                    fill="currentColor"
+                    style={{
+                      transform: prsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)',
+                      transition: 'transform 0.15s',
+                      opacity: 0.7,
+                    }}
+                  >
+                    <path d="M0 2l4 4 4-4z" />
+                  </svg>
+                  <span className="text-[11px] font-semibold">
+                    Pull Requests {prProvider ? `(${prProvider === 'azure' ? 'Azure DevOps' : 'GitHub'})` : ''}
+                  </span>
+                </button>
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => void refreshPullRequests()}
+                    disabled={loadingPrs}
+                    className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title="Refresh pull requests"
+                  >
+                    {loadingPrs ? 'Refreshing…' : 'Refresh'}
+                  </button>
+                </div>
+              </div>
+
+              {!prsCollapsed && (prError ? (
+                <p className="text-[11px] leading-relaxed" style={{ color: '#f87171' }}>
+                  {prError}
+                </p>
+              ) : (
+                <>
+                  <div className="mb-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
+                    <p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-text-muted)', opacity: 0.8 }}>
+                      Current PR
+                    </p>
+                    {currentPr ? (
+                      <div className="mt-1">
+                        <p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>
+                          #{currentPr.id} {currentPr.title}
+                        </p>
+                        <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                          {currentPr.sourceBranch} → {currentPr.targetBranch}
+                        </p>
+                      </div>
+                    ) : (
+                      <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        No open PR for <code>{gitStatus.branch}</code>.
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="space-y-1 mb-2">
+                    {otherOpenPrs.length === 0 ? (
+                      <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        No open pull requests.
+                      </p>
+                    ) : (
+                      otherOpenPrs.map((pr) => (
+                        <div
+                          key={pr.id}
+                          className="flex items-center justify-between gap-2 rounded px-2 py-1.5"
+                          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>
+                              #{pr.id} {pr.title}
+                            </p>
+                            <p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>
+                              {pr.sourceBranch} → {pr.targetBranch}
+                            </p>
+                          </div>
+                          <button
+                            onClick={() => void handleCheckoutPr(pr.id)}
+                            disabled={checkingOutPrId === pr.id}
+                            className="rounded px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40"
+                            style={{ background: 'var(--color-claude)', color: '#fff' }}
+                            title={`Checkout PR #${pr.id}`}
+                          >
+                            {checkingOutPrId === pr.id ? 'Checking…' : 'Checkout'}
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {!showCreatePr ? (
+                    <button
+                      onClick={() => {
+                        setCreatePrTitleEdited(false)
+                        setShowCreatePr(true)
+                      }}
+                      disabled={!prProvider}
+                      className="w-full rounded py-1.5 text-xs font-medium"
+                      style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                    >
+                      Create PR
+                    </button>
+                  ) : (
+                    <div className="space-y-1.5">
+                      <input
+                        value={createPrTarget}
+                        onChange={(e) => setCreatePrTarget(e.target.value)}
+                        placeholder="Target branch (e.g. main)"
+                        className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                      />
+                      <input
+                        value={createPrTitle}
+                        onChange={(e) => {
+                          setCreatePrTitle(e.target.value)
+                          setCreatePrTitleEdited(true)
+                        }}
+                        placeholder="PR title"
+                        className="w-full rounded px-2 py-1.5 text-xs outline-none"
+                        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                      />
+                      <textarea
+                        value={createPrDescription}
+                        onChange={(e) => setCreatePrDescription(e.target.value)}
+                        placeholder="Description (optional)"
+                        rows={3}
+                        className="w-full resize-none rounded px-2 py-1.5 text-xs outline-none"
+                        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                      />
+                      <div className="flex gap-1.5">
+                        <button
+                          onClick={() => void handleCreatePr()}
+                          disabled={creatingPr || !createPrTitle.trim() || !createPrTarget.trim()}
+                          className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                          style={{ background: 'var(--color-claude)', color: '#fff' }}
+                        >
+                          {creatingPr ? 'Creating…' : 'Create'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            setShowCreatePr(false)
+                            setCreatePrTitleEdited(false)
+                          }}
+                          disabled={creatingPr}
+                          className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                          style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              ))}
+            </div>
           )}
 
           {/* Commit box — always shown when expanded */}
@@ -1295,7 +1635,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
             <div className="py-1">
               {totalChanges === 0 ? (
                 <p className="px-4 py-4 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
-                  No changes.
+                  No local changes.
                 </p>
               ) : (
                 <>
@@ -1348,6 +1688,28 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                   )}
                 </>
               )}
+
+              <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
+                <div className="px-3 pb-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                  Compare base: <code>{compareBaseRef}</code>
+                </div>
+                {compareLoading ? (
+                  <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
+                    Loading compare…
+                  </p>
+                ) : compareFiles.length === 0 ? (
+                  <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
+                    No changes vs {compareBaseRef}.
+                  </p>
+                ) : (
+                  <FileGroup
+                    label="Compare to Master"
+                    files={compareFiles}
+                    showActions={false}
+                    onFileClick={handleCompareFileClick}
+                  />
+                )}
+              </div>
             </div>
           )}
         </>
@@ -1361,6 +1723,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
 function StatusDot({ status }: { status: CommandStatus }) {
   const color =
     status === 'running' ? '#4ade80'
+    : status === 'stopping' ? '#fb923c'
     : status === 'error' ? '#f87171'
     : 'var(--color-text-muted)'
   return (
@@ -1392,12 +1755,15 @@ function CommandsSection({ threadId }: { threadId: string }) {
     return s.byProject[projectId] ?? EMPTY_COMMANDS
   })
   const statusMap = useCommandStore((s) => s.statusMap)
+  const portsMap = useCommandStore((s) => s.portsMap)
   const fetch = useCommandStore((s) => s.fetch)
   const fetchStatuses = useCommandStore((s) => s.fetchStatuses)
+  const fetchPorts = useCommandStore((s) => s.fetchPorts)
   const start = useCommandStore((s) => s.start)
   const stop = useCommandStore((s) => s.stop)
   const restart = useCommandStore((s) => s.restart)
   const setStatus = useCommandStore((s) => s.setStatus)
+  const setPorts = useCommandStore((s) => s.setPorts)
   const selectInstance = useCommandStore((s) => s.selectInstance)
   const pinInstance = useCommandStore((s) => s.pinInstance)
   const fetchLogs = useCommandStore((s) => s.fetchLogs)
@@ -1411,6 +1777,11 @@ function CommandsSection({ threadId }: { threadId: string }) {
     if (projectId && locationId) fetchStatuses(projectId, locationId)
   }, [projectId, locationId, fetchStatuses])
 
+  useEffect(() => {
+    if (commands.length === 0 || !locationId) return
+    void Promise.all(commands.map((cmd) => fetchPorts(cmd.id, locationId)))
+  }, [commands, locationId, fetchPorts])
+
   // Subscribe to per-instance status events
   useEffect(() => {
     if (commands.length === 0 || !locationId) return
@@ -1422,6 +1793,18 @@ function CommandsSection({ threadId }: { threadId: string }) {
     })
     return () => { for (const unsub of unsubs) unsub() }
   }, [commands, locationId, setStatus])
+
+  // Subscribe to per-instance port updates
+  useEffect(() => {
+    if (commands.length === 0 || !locationId) return
+    const unsubs = commands.map((cmd) => {
+      const key = instKey(cmd.id, locationId)
+      return window.api.on(`command:ports:${key}`, (ports) => {
+        setPorts(key, ports as number[])
+      })
+    })
+    return () => { for (const unsub of unsubs) unsub() }
+  }, [commands, locationId, setPorts])
 
   if (!projectId) return null
 
@@ -1450,7 +1833,9 @@ function CommandsSection({ threadId }: { threadId: string }) {
             {commands.map((cmd) => {
             const key = locationId ? instKey(cmd.id, locationId) : null
             const status: CommandStatus = (key ? statusMap[key] : null) ?? 'idle'
-            const isRunning = status === 'running'
+            const ports = key ? (portsMap[key] ?? []) : []
+            const isActive = status === 'running' || status === 'stopping'
+            const isStopping = status === 'stopping'
             return (
               <li
                 key={cmd.id}
@@ -1476,8 +1861,13 @@ function CommandsSection({ threadId }: { threadId: string }) {
                 <p className="text-[10px] font-mono truncate mb-2" style={{ color: 'var(--color-text-muted)' }}>
                   {cmd.command}
                 </p>
+                {ports.length > 0 && (
+                  <p className="text-[10px] font-mono truncate mb-2" style={{ color: '#4ade80' }}>
+                    ports: {ports.join(', ')}
+                  </p>
+                )}
                 <div className="flex gap-1">
-                  {!isRunning ? (
+                  {!isActive ? (
                     <button
                       onClick={() => {
                         if (!locationId) return
@@ -1504,17 +1894,19 @@ function CommandsSection({ threadId }: { threadId: string }) {
                           selectInstance(key, locationId)
                           fetchLogs(cmd.id, locationId)
                         }}
-                        className="flex-1 rounded py-1 text-xs font-medium transition-colors"
+                        disabled={isStopping}
+                        className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-50"
                         style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)', border: '1px solid rgba(232, 123, 95, 0.3)' }}
                       >
                         Restart
                       </button>
                       <button
                         onClick={() => locationId && stop(cmd.id, locationId)}
-                        className="flex-1 rounded py-1 text-xs font-medium transition-colors"
+                        disabled={isStopping}
+                        className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-50"
                         style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}
                       >
-                        Stop
+                        {isStopping ? 'Stopping…' : 'Stop'}
                       </button>
                     </>
                   )}

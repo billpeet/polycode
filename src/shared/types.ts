@@ -14,11 +14,21 @@ export type ConnectionType = 'local' | 'ssh' | 'wsl'
 export interface RepoLocation {
   id: string
   project_id: string
+  pool_id: string | null
+  checked_out: boolean
   label: string
   connection_type: ConnectionType
   path: string
   ssh?: SshConfig | null
   wsl?: WslConfig | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LocationPool {
+  id: string
+  project_id: string
+  name: string
   created_at: string
   updated_at: string
 }
@@ -209,6 +219,33 @@ export interface GitBranches {
   remote: string[]
 }
 
+export interface GitCompareResult {
+  baseRef: string
+  files: GitFileChange[]
+}
+
+export interface AzureDevOpsPullRequest {
+  id: number
+  title: string
+  status: string
+  sourceBranch: string
+  targetBranch: string
+  authorName: string
+  url: string
+  creationDate: string
+}
+
+export interface GitHubPullRequest {
+  id: number
+  title: string
+  status: string
+  sourceBranch: string
+  targetBranch: string
+  authorName: string
+  url: string
+  creationDate: string
+}
+
 /** Options passed when sending a message to a thread */
 export interface SendOptions {
   planMode?: boolean
@@ -313,7 +350,7 @@ export interface YouTrackIssue {
 
 // ── Project Commands ──────────────────────────────────────────────────────────
 
-export type CommandStatus = 'idle' | 'running' | 'stopped' | 'error'
+export type CommandStatus = 'idle' | 'running' | 'stopping' | 'stopped' | 'error'
 
 export interface ProjectCommand {
   id: string

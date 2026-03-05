@@ -21,6 +21,8 @@ interface CommandStore {
   byProject: Record<string, ProjectCommand[]>
   /** Status keyed by instKey(commandId, locationId) */
   statusMap: Record<string, CommandStatus>
+  /** Listening ports keyed by instKey(commandId, locationId) */
+  portsMap: Record<string, number[]>
   /** Logs keyed by instKey(commandId, locationId) */
   logsByCommand: Record<string, CommandLogLine[]>
   /** Currently viewed instance key per locationId, or null */
@@ -38,6 +40,8 @@ interface CommandStore {
   stop: (commandId: string, locationId: string) => Promise<void>
   restart: (commandId: string, locationId: string) => Promise<void>
   setStatus: (key: string, status: CommandStatus) => void
+  setPorts: (key: string, ports: number[]) => void
+  fetchPorts: (commandId: string, locationId: string) => Promise<void>
   appendLog: (key: string, line: CommandLogLine) => void
   fetchLogs: (commandId: string, locationId: string) => Promise<void>
   selectInstance: (key: string | null, locationId: string) => void
@@ -48,6 +52,7 @@ interface CommandStore {
 export const useCommandStore = create<CommandStore>((set, get) => ({
   byProject: {},
   statusMap: {},
+  portsMap: {},
   logsByCommand: {},
   selectedInstanceByLocation: {},
   pinnedInstancesByLocation: {},
@@ -100,11 +105,15 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     await window.api.invoke('commands:delete', id)
     set((s) => {
       const statusMap = { ...s.statusMap }
+      const portsMap = { ...s.portsMap }
       const logsByCommand = { ...s.logsByCommand }
       // Remove all instance entries for this command
       const prefix = `${id}:`
       for (const key of Object.keys(statusMap)) {
         if (key.startsWith(prefix)) delete statusMap[key]
+      }
+      for (const key of Object.keys(portsMap)) {
+        if (key.startsWith(prefix)) delete portsMap[key]
       }
       for (const key of Object.keys(logsByCommand)) {
         if (key.startsWith(prefix)) delete logsByCommand[key]
@@ -124,6 +133,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
           [projectId]: (s.byProject[projectId] ?? []).filter((c) => c.id !== id),
         },
         statusMap,
+        portsMap,
         logsByCommand,
         selectedInstanceByLocation,
         pinnedInstancesByLocation,
@@ -139,14 +149,14 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   stop: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    set((s) => ({ statusMap: { ...s.statusMap, [key]: 'stopped' } }))
+    set((s) => ({ statusMap: { ...s.statusMap, [key]: 'stopping' } }))
     await window.api.invoke('commands:stop', commandId, locationId)
   },
 
   restart: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
     set((s) => ({
-      statusMap: { ...s.statusMap, [key]: 'running' },
+      statusMap: { ...s.statusMap, [key]: 'stopping' },
       logsByCommand: { ...s.logsByCommand, [key]: [] },
     }))
     await window.api.invoke('commands:restart', commandId, locationId)
@@ -154,6 +164,16 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   setStatus: (key, status) => {
     set((s) => ({ statusMap: { ...s.statusMap, [key]: status } }))
+  },
+
+  setPorts: (key, ports) => {
+    set((s) => ({ portsMap: { ...s.portsMap, [key]: ports } }))
+  },
+
+  fetchPorts: async (commandId, locationId) => {
+    const key = instKey(commandId, locationId)
+    const ports = await window.api.invoke('commands:getPorts', commandId, locationId)
+    set((s) => ({ portsMap: { ...s.portsMap, [key]: ports } }))
   },
 
   appendLog: (key, line) => {

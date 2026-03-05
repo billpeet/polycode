@@ -190,6 +190,8 @@ export default function ThreadHeader({ threadId }: Props) {
   // WSL distro list — fetched when location is local
   const [availableDistros, setAvailableDistros] = useState<string[]>([])
   const isLocalLocation = location?.connection_type === 'local'
+  const isWslSelected = location?.connection_type === 'wsl' || (isLocalLocation && !!thread?.use_wsl)
+  const showCodexWslWarning = thread?.provider === 'codex' && !isWslSelected
 
   useEffect(() => {
     if (!isLocalLocation) return
@@ -447,6 +449,10 @@ export default function ThreadHeader({ threadId }: Props) {
             onChange={(e) => {
               const provider = e.target.value as Provider
               const defaultModel = getDefaultModelForProvider(provider)
+              if (provider === 'codex' && thread && isLocalLocation && !thread.use_wsl) {
+                const distro = thread.wsl_distro ?? availableDistros[0] ?? null
+                if (distro) setWsl(threadId, true, distro)
+              }
               setProviderAndModel(threadId, provider, defaultModel)
             }}
             disabled={status === 'running' || status === 'stopping'}
@@ -466,6 +472,15 @@ export default function ThreadHeader({ threadId }: Props) {
             ))}
           </select>
         </span>
+        {showCodexWslWarning && (
+          <span
+            className="text-xs flex-shrink-0"
+            style={{ color: '#facc15' }}
+            title="Codex is significantly more reliable via WSL on Windows."
+          >
+            Codex + WSL recommended
+          </span>
+        )}
         <select
           value={thread?.model ?? getDefaultModelForProvider((thread?.provider ?? 'claude-code') as Provider)}
           onChange={(e) => setModel(threadId, e.target.value)}

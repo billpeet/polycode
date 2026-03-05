@@ -13,9 +13,15 @@ import {
   archiveProject,
   unarchiveProject,
   listLocations,
+  listLocationPools,
+  createLocationPool,
+  updateLocationPool,
+  deleteLocationPool,
   createLocation,
   updateLocation,
   deleteLocation,
+  checkoutLocation,
+  returnLocationToPool,
   getLocationForThread,
   getLocationByPath,
   listThreads,
@@ -62,7 +68,9 @@ import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/typ
 import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo } from '../git'
+import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
+import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
@@ -191,16 +199,40 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listLocations(projectId)
   })
 
-  ipcMain.handle('locations:create', (_event, projectId: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    return createLocation(projectId, label, connectionType, locationPath, ssh, wsl)
+  ipcMain.handle('locations:create', (_event, projectId: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+    return createLocation(projectId, label, connectionType, locationPath, poolId, ssh, wsl)
   })
 
-  ipcMain.handle('locations:update', (_event, id: string, label: string, connectionType: ConnectionType, locationPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    return updateLocation(id, label, connectionType, locationPath, ssh, wsl)
+  ipcMain.handle('locations:update', (_event, id: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+    return updateLocation(id, label, connectionType, locationPath, poolId, ssh, wsl)
   })
 
   ipcMain.handle('locations:delete', (_event, id: string) => {
     return deleteLocation(id)
+  })
+
+  ipcMain.handle('locations:checkout', (_event, id: string) => {
+    return checkoutLocation(id)
+  })
+
+  ipcMain.handle('locations:returnToPool', (_event, id: string) => {
+    return returnLocationToPool(id)
+  })
+
+  ipcMain.handle('location-pools:list', (_event, projectId: string) => {
+    return listLocationPools(projectId)
+  })
+
+  ipcMain.handle('location-pools:create', (_event, projectId: string, name: string) => {
+    return createLocationPool(projectId, name)
+  })
+
+  ipcMain.handle('location-pools:update', (_event, id: string, name: string) => {
+    return updateLocationPool(id, name)
+  })
+
+  ipcMain.handle('location-pools:delete', (_event, id: string) => {
+    return deleteLocationPool(id)
   })
 
   ipcMain.handle('locations:pathExists', (_event, path: string): boolean => {
@@ -235,7 +267,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       proc.on('close', (code) => {
         if (code === 0) {
           try {
-            const location = createLocation(projectId, label, 'local', clonePath, null, null)
+            const location = createLocation(projectId, label, 'local', clonePath, null, null, null)
             resolve(location)
           } catch (err) {
             reject(err)
@@ -634,6 +666,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getFileDiff(repoPath, filePath, staged, ssh, wsl)
   })
 
+  ipcMain.handle('git:compareToMain', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToMainChanges(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:compareDiffToMain', (_event, repoPath: string, filePath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
+  })
+
   ipcMain.handle('git:branches', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return listBranches(repoPath, ssh, wsl)
@@ -672,6 +714,50 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:isRepo', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return isGitRepo(repoPath, ssh, wsl)
+  })
+
+  // ── Azure DevOps Pull Requests ────────────────────────────────────────────
+
+  ipcMain.handle('azdo:pr:list', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listOpenPullRequests(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('azdo:pr:current', (_event, repoPath: string, branch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)
+  })
+
+  ipcMain.handle('azdo:pr:create', (_event, repoPath: string, payload: { target: string; title: string; description?: string }) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return createPullRequest(repoPath, payload, ssh, wsl)
+  })
+
+  ipcMain.handle('azdo:pr:checkout', (_event, repoPath: string, prId: number) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
+  })
+
+  // ── GitHub Pull Requests ──────────────────────────────────────────────────
+
+  ipcMain.handle('gh:pr:list', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listOpenGitHubPullRequests(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('gh:pr:current', (_event, repoPath: string, branch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCurrentBranchGitHubPullRequest(repoPath, branch, ssh, wsl)
+  })
+
+  ipcMain.handle('gh:pr:create', (_event, repoPath: string, payload: { target: string; title: string; description?: string }) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return createGitHubPullRequest(repoPath, payload, ssh, wsl)
+  })
+
+  ipcMain.handle('gh:pr:checkout', (_event, repoPath: string, prId: number) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────
@@ -771,16 +857,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return deleteCommand(id)
   })
 
-  ipcMain.handle('commands:start', (_event, commandId: string, locationId: string) => {
-    commandManager.start(commandId, locationId)
+  ipcMain.handle('commands:start', async (_event, commandId: string, locationId: string) => {
+    await commandManager.start(commandId, locationId)
   })
 
-  ipcMain.handle('commands:stop', (_event, commandId: string, locationId: string) => {
-    commandManager.stop(commandId, locationId)
+  ipcMain.handle('commands:stop', async (_event, commandId: string, locationId: string) => {
+    await commandManager.stop(commandId, locationId)
   })
 
-  ipcMain.handle('commands:restart', (_event, commandId: string, locationId: string) => {
-    commandManager.restart(commandId, locationId)
+  ipcMain.handle('commands:restart', async (_event, commandId: string, locationId: string) => {
+    await commandManager.restart(commandId, locationId)
   })
 
   ipcMain.handle('commands:getStatus', (_event, commandId: string, locationId: string) => {
@@ -793,6 +879,9 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('commands:getPid', (_event, commandId: string, locationId: string) => {
     return commandManager.getPid(commandId, locationId)
+  })
+  ipcMain.handle('commands:getPorts', (_event, commandId: string, locationId: string) => {
+    return commandManager.getPorts(commandId, locationId)
   })
 
   // ── YouTrack ───────────────────────────────────────────────────────────────

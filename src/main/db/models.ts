@@ -16,6 +16,8 @@ export interface ProjectRow {
 export interface RepoLocationRow {
   id: string
   project_id: string
+  pool_id: string | null
+  checked_out: number
   label: string
   connection_type: string
   path: string
@@ -24,6 +26,14 @@ export interface RepoLocationRow {
   ssh_port: number | null
   ssh_key_path: string | null
   wsl_distro: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface LocationPoolRow {
+  id: string
+  project_id: string
+  name: string
   created_at: string
   updated_at: string
 }
