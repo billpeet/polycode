@@ -1002,6 +1002,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
   const isGeneratingMessage = projectPath ? (generatingMessageByPath[projectPath] ?? false) : false
   const modifiedFiles = useGitStore((s) => s.modifiedFilesByThread[threadId] ?? EMPTY_FILES)
   const fetchGit = useGitStore((s) => s.fetch)
+  const refreshRemoteGit = useGitStore((s) => s.refreshRemote)
   const initRepo = useGitStore((s) => s.initRepo)
   const commitGit = useGitStore((s) => s.commit)
   const setCommitMsg = useGitStore((s) => s.setCommitMessage)
@@ -1241,7 +1242,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
     <button
       onClick={() => {
         if (!projectPath) return
-        void fetchGit(projectPath)
+        void refreshRemoteGit(projectPath)
         void refreshPullRequests()
         void refreshCompareToMain()
       }}
@@ -1341,7 +1342,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                   >
                     <path d="M0 2l4 4 4-4z" />
                   </svg>
-                  <span className="text-[11px] font-semibold">
+                  <span className="text-[11px] font-semibold whitespace-nowrap">
                     Pull Requests {prProvider ? `(${prProvider === 'azure' ? 'Azure DevOps' : 'GitHub'})` : ''}
                   </span>
                 </button>
@@ -1349,7 +1350,7 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                   <button
                     onClick={() => void refreshPullRequests()}
                     disabled={loadingPrs}
-                    className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40"
+                    className="shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40"
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Refresh pull requests"
                   >

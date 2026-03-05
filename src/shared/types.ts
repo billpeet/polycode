@@ -113,6 +113,7 @@ export interface Thread {
   input_tokens: number
   output_tokens: number
   context_window: number
+  unread: boolean
   /** True if at least one message has been sent in this thread */
   has_messages: boolean
   use_wsl: boolean

@@ -287,6 +287,7 @@ function rowToThread(r: ThreadRow): Thread {
     input_tokens: r.input_tokens ?? 0,
     output_tokens: r.output_tokens ?? 0,
     context_window: r.context_window ?? 0,
+    unread: (r.unread ?? 0) === 1,
     has_messages: (r.has_messages ?? 0) === 1,
     use_wsl: r.use_wsl === 1,
     wsl_distro: r.wsl_distro ?? null,
@@ -354,6 +355,7 @@ export function createThread(projectId: string, name: string, locationId: string
     input_tokens: 0,
     output_tokens: 0,
     context_window: 0,
+    unread: 0,
     has_messages: 0,
     use_wsl: 0,
     wsl_distro: null,
@@ -409,6 +411,12 @@ export function updateThreadStatus(id: string, status: string): void {
   getDb()
     .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
     .run(status, new Date().toISOString(), id)
+}
+
+export function updateThreadUnread(id: string, unread: boolean): void {
+  getDb()
+    .prepare('UPDATE threads SET unread = ? WHERE id = ?')
+    .run(unread ? 1 : 0, id)
 }
 
 /** Returns true if any thread is currently running. */
@@ -944,6 +952,7 @@ export function importThread(
     input_tokens: 0,
     output_tokens: 0,
     context_window: 0,
+    unread: 0,
     has_messages: 1,
     use_wsl: 0,
     wsl_distro: null,

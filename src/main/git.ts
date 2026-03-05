@@ -211,6 +211,12 @@ export async function gitPullOrigin(repoPath: string, ssh?: SshConfig | null, ws
   return { pulled: true }
 }
 
+export async function gitFetchRemote(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ fetched: true }> {
+  // Keep this non-interactive so periodic refreshes never block on credentials.
+  await git(repoPath, ['-c', 'credential.interactive=never', 'fetch', '--all', '--prune', '--tags', '--quiet'], ssh, wsl)
+  return { fetched: true }
+}
+
 export async function generateCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   // Get the diff of staged changes
   let diff = ''

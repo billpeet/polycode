@@ -33,6 +33,7 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadStatus,
+  updateThreadUnread,
   threadExists,
   threadHasMessages,
   archiveThread,
@@ -68,7 +69,7 @@ import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/typ
 import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -446,6 +447,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return updateThreadProviderAndModel(id, provider, model)
   })
 
+  ipcMain.handle('threads:setUnread', (_event, threadId: string, unread: boolean) => {
+    return updateThreadUnread(threadId, unread)
+  })
+
   ipcMain.handle('threads:setWsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {
     if (threadHasMessages(threadId)) return // locked after first message
     sessionManager.remove(threadId) // drop existing session so it gets recreated
@@ -659,6 +664,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:pullOrigin', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return gitPullOrigin(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:fetchRemote', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return gitFetchRemote(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:diff', (_event, repoPath: string, filePath: string, staged: boolean) => {

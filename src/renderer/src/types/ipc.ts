@@ -46,6 +46,7 @@ export interface WindowApi {
   invoke(channel: 'threads:unarchive', id: string): Promise<void>
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
   invoke(channel: 'threads:updateProviderAndModel', id: string, provider: string, model: string): Promise<void>
+  invoke(channel: 'threads:setUnread', threadId: string, unread: boolean): Promise<void>
   invoke(channel: 'threads:setWsl', threadId: string, useWsl: boolean, wslDistro: string | null): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
   invoke(channel: 'messages:listBySession', sessionId: string): Promise<Message[]>
@@ -70,6 +71,7 @@ export interface WindowApi {
   invoke(channel: 'git:pushSetUpstream', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:pull', repoPath: string): Promise<void>
   invoke(channel: 'git:pullOrigin', repoPath: string): Promise<void>
+  invoke(channel: 'git:fetchRemote', repoPath: string): Promise<void>
   invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
   invoke(channel: 'git:compareToMain', repoPath: string): Promise<GitCompareResult>
   invoke(channel: 'git:compareDiffToMain', repoPath: string, filePath: string): Promise<string>

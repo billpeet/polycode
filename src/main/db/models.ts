@@ -50,6 +50,7 @@ export interface ThreadRow {
   input_tokens: number
   output_tokens: number
   context_window: number
+  unread: number
   /** Set by queries that include an EXISTS subquery; undefined when row built locally */
   has_messages?: number
   use_wsl: number

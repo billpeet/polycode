@@ -157,6 +157,12 @@ function runMigrations(database: Database.Database): void {
     database.exec('ALTER TABLE threads ADD COLUMN git_branch TEXT')
   }
 
+  // ── Unread flag on threads ────────────────────────────────────────────────
+  const threadColsUnread = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsUnread.some((c) => c.name === 'unread')) {
+    database.exec('ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0')
+  }
+
   // ── Remap stale Codex model IDs to current ones ───────────────────────────
   // Old placeholder models (o4-mini, o3, gpt-4o, gpt-4.1) were never valid
   // Codex CLI models. Migrate any threads still referencing them.

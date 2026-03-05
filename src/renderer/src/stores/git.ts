@@ -11,6 +11,7 @@ interface GitStore {
   generatingMessageByPath: Record<string, boolean>
   pushingByPath: Record<string, boolean>
   pullingByPath: Record<string, boolean>
+  refreshingRemoteByPath: Record<string, boolean>
   branchesByPath: Record<string, GitBranches | null>
   branchLoadingByPath: Record<string, boolean>
   initializingByPath: Record<string, boolean>
@@ -32,6 +33,7 @@ interface GitStore {
   pushSetUpstream: (repoPath: string, branch: string) => Promise<void>
   pull: (repoPath: string) => Promise<void>
   pullOrigin: (repoPath: string) => Promise<void>
+  refreshRemote: (repoPath: string) => Promise<void>
   fetchModifiedFiles: (threadId: string) => Promise<void>
   fetchBranches: (repoPath: string) => Promise<void>
   checkout: (repoPath: string, branch: string) => Promise<void>
@@ -49,6 +51,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   generatingMessageByPath: {},
   pushingByPath: {},
   pullingByPath: {},
+  refreshingRemoteByPath: {},
   branchesByPath: {},
   branchLoadingByPath: {},
   initializingByPath: {},
@@ -194,6 +197,19 @@ export const useGitStore = create<GitStore>((set, get) => ({
       await window.api.invoke('git:pullOrigin', repoPath)
     } finally {
       set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
+      await get().fetch(repoPath)
+    }
+  },
+
+  refreshRemote: async (repoPath) => {
+    if (get().refreshingRemoteByPath[repoPath]) return
+    set((s) => ({ refreshingRemoteByPath: { ...s.refreshingRemoteByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:fetchRemote', repoPath)
+    } catch {
+      // Ignore transient network/auth failures for background refresh.
+    } finally {
+      set((s) => ({ refreshingRemoteByPath: { ...s.refreshingRemoteByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
     }
   },

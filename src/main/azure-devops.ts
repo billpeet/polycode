@@ -346,25 +346,56 @@ export async function checkoutPullRequestBranch(
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const localPrBranch = `pr/${prId}`
 
-  const viewArgs = [
-    'pr', 'view',
-    '--repo', ctx.repo,
-    '--id', String(prId),
-    '--format', 'json',
-  ]
-  if (ctx.project) {
-    viewArgs.splice(4, 0, '--project', ctx.project)
+  const getPrFromCli = async (subcommand: 'view' | 'show'): Promise<AzDevOpsPr | null> => {
+    const args = [
+      'pr', subcommand,
+      '--repo', ctx.repo,
+      '--id', String(prId),
+      '--format', 'json',
+    ]
+    if (ctx.project) {
+      args.splice(4, 0, '--project', ctx.project)
+    }
+    try {
+      const output = await runAzDevOps(repoPath, args, ssh, wsl)
+      const parsed = JSON.parse(output) as AzDevOpsPr
+      return parsed
+    } catch {
+      return null
+    }
   }
 
   let sourceRefName = ''
-  try {
-    const viewOutput = await runAzDevOps(repoPath, viewArgs, ssh, wsl)
-    const raw = JSON.parse(viewOutput) as AzDevOpsPr
-    if (typeof raw.sourceRefName === 'string') {
-      sourceRefName = raw.sourceRefName.trim()
+  const directPr = (await getPrFromCli('view')) ?? (await getPrFromCli('show'))
+  if (typeof directPr?.sourceRefName === 'string') {
+    sourceRefName = directPr.sourceRefName.trim()
+  }
+
+  // Some azdevops CLI versions don't support `pr view/show`.
+  // Fall back to list and locate the requested PR id.
+  if (!sourceRefName) {
+    try {
+      const listArgs = [
+        'pr', 'list',
+        '--repo', ctx.repo,
+        '--status', 'active',
+        '--top', '200',
+        '--format', 'json',
+      ]
+      if (ctx.project) {
+        listArgs.splice(4, 0, '--project', ctx.project)
+      }
+      const listOutput = await runAzDevOps(repoPath, listArgs, ssh, wsl)
+      const prs = JSON.parse(listOutput)
+      if (Array.isArray(prs)) {
+        const matched = prs.find((pr) => Number((pr as AzDevOpsPr).pullRequestId) === prId) as AzDevOpsPr | undefined
+        if (typeof matched?.sourceRefName === 'string') {
+          sourceRefName = matched.sourceRefName.trim()
+        }
+      }
+    } catch {
+      // Fall through to direct ref fetch attempts.
     }
-  } catch {
-    // Fall through to direct ref fetch attempts.
   }
 
   const fetchRefs = [
@@ -377,9 +408,11 @@ export async function checkoutPullRequestBranch(
   const failures: string[] = []
   for (const ref of fetchRefs) {
     try {
+      const sourceBranchName = sourceRefName ? normalizeBranchName(sourceRefName, ctx.remoteName) : ''
+      const checkoutBranch = ref === sourceRefName && sourceBranchName ? sourceBranchName : localPrBranch
       await git(repoPath, ['fetch', ctx.remoteName, ref], ssh, wsl)
-      await git(repoPath, ['checkout', '-B', localPrBranch, 'FETCH_HEAD'], ssh, wsl)
-      return { branch: localPrBranch }
+      await git(repoPath, ['checkout', '-B', checkoutBranch, 'FETCH_HEAD'], ssh, wsl)
+      return { branch: checkoutBranch }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       failures.push(`${ref}: ${message}`)

@@ -29,6 +29,7 @@ export default function App() {
 
   const fetchThreads = useThreadStore((s) => s.fetch)
   const fetchLocations = useLocationStore((s) => s.fetch)
+  const fetchPools = useLocationStore((s) => s.fetchPools)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const selectThread = useThreadStore((s) => s.select)
 
@@ -73,6 +74,7 @@ export default function App() {
       selectProject(project.id)
       expandProject(project.id)
       fetchLocations(project.id)
+      fetchPools(project.id)
 
       fetchThreads(project.id).then(() => {
         if (!savedThreadId) return

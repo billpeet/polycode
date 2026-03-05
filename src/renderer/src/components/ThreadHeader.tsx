@@ -152,6 +152,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const usage = useThreadStore((s) => s.usageByThread[threadId])
 
   const fetchGit = useGitStore((s) => s.fetch)
+  const refreshRemoteGit = useGitStore((s) => s.refreshRemote)
   const gitStatus = useGitStore((s) =>
     locationPath ? (s.statusByPath[locationPath] ?? null) : null
   )
@@ -233,6 +234,15 @@ export default function ThreadHeader({ threadId }: Props) {
     const interval = setInterval(() => fetchGit(lp), 10_000)
     return () => clearInterval(interval)
   }, [locationPath, fetchGit])
+
+  // Periodically fetch from remotes so ahead/behind indicators stay current.
+  useEffect(() => {
+    if (!locationPath) return
+    const lp = locationPath
+    void refreshRemoteGit(lp)
+    const interval = setInterval(() => { void refreshRemoteGit(lp) }, 60_000)
+    return () => clearInterval(interval)
+  }, [locationPath, refreshRemoteGit])
 
   const statusColor =
     status === 'running'

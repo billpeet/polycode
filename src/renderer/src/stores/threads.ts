@@ -15,6 +15,7 @@ interface ThreadStore {
   archivedCountByProject: Record<string, number>
   selectedThreadId: string | null
   statusMap: Record<string, ThreadStatus>
+  unreadByThread: Record<string, boolean>
   showArchived: boolean
   /** draft input text keyed by thread ID */
   draftByThread: Record<string, string>
@@ -37,6 +38,7 @@ interface ThreadStore {
   toggleShowArchived: (projectId: string) => void
   select: (id: string | null) => void
   setStatus: (threadId: string, status: ThreadStatus) => void
+  setUnread: (threadId: string, unread: boolean) => void
   /** Update local name state only (used by IPC title push events where DB is already updated) */
   setName: (threadId: string, name: string) => void
   /** Rename thread (persists to DB and updates local state) */
@@ -66,6 +68,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   archivedCountByProject: {},
   selectedThreadId: null,
   statusMap: {},
+  unreadByThread: {},
   showArchived: false,
   draftByThread: {},
   planModeByThread: {},
@@ -85,6 +88,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       statusMap: {
         ...s.statusMap,
         ...Object.fromEntries(threads.map((t: Thread) => [t.id, t.status]))
+      },
+      unreadByThread: {
+        ...s.unreadByThread,
+        ...Object.fromEntries(threads.map((t: Thread) => [t.id, !!t.unread]))
       },
       usageByThread: {
         ...s.usageByThread,
@@ -129,6 +136,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         [projectId]: [thread, ...(s.byProject[projectId] ?? [])]
       },
       statusMap: { ...s.statusMap, [thread.id]: 'idle' },
+      unreadByThread: { ...s.unreadByThread, [thread.id]: false },
       selectedThreadId: thread.id
     }))
   },
@@ -138,6 +146,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => {
       const updatedStatus = { ...s.statusMap }
       delete updatedStatus[id]
+      const updatedUnread = { ...s.unreadByThread }
+      delete updatedUnread[id]
       const updatedQueue = { ...s.queuedMessageByThread }
       delete updatedQueue[id]
       const updatedPlanMode = { ...s.planModeByThread }
@@ -157,6 +167,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         },
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
         statusMap: updatedStatus,
+        unreadByThread: updatedUnread,
         queuedMessageByThread: updatedQueue,
         planModeByThread: updatedPlanMode,
         runStartedAtByThread: updatedRunStartedAt,
@@ -171,6 +182,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const thread = (s.byProject[projectId] ?? []).find((t) => t.id === id)
       const updatedStatus = { ...s.statusMap }
       delete updatedStatus[id]
+      const updatedUnread = { ...s.unreadByThread }
+      delete updatedUnread[id]
       const updatedQueue = { ...s.queuedMessageByThread }
       delete updatedQueue[id]
       const updatedPlanMode = { ...s.planModeByThread }
@@ -185,6 +198,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           byProject: { ...s.byProject, [projectId]: withoutThread },
           selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
           statusMap: updatedStatus,
+          unreadByThread: updatedUnread,
           queuedMessageByThread: updatedQueue,
           planModeByThread: updatedPlanMode,
           runStartedAtByThread: updatedRunStartedAt,
@@ -203,6 +217,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         archivedCountByProject: { ...s.archivedCountByProject, [projectId]: prevCount + 1 },
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
         statusMap: updatedStatus,
+        unreadByThread: updatedUnread,
         queuedMessageByThread: updatedQueue,
         planModeByThread: updatedPlanMode,
         runStartedAtByThread: updatedRunStartedAt,
@@ -231,7 +246,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
             ? [{ ...thread, archived: false }, ...(s.byProject[projectId] ?? [])]
             : (s.byProject[projectId] ?? [])
         },
-        statusMap: thread ? { ...s.statusMap, [id]: thread.status } : s.statusMap
+        statusMap: thread ? { ...s.statusMap, [id]: thread.status } : s.statusMap,
+        unreadByThread: thread ? { ...s.unreadByThread, [id]: !!thread.unread } : s.unreadByThread
       }
     })
   },
@@ -244,7 +260,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }
   },
 
-  select: (id) => set({ selectedThreadId: id }),
+  select: (id) => {
+    const wasUnread = !!(id && get().unreadByThread[id])
+    set((s) => {
+      if (!id) return { selectedThreadId: null }
+      return {
+        selectedThreadId: id,
+        unreadByThread: { ...s.unreadByThread, [id]: false }
+      }
+    })
+    if (id && wasUnread) {
+      void window.api.invoke('threads:setUnread', id, false)
+    }
+  },
 
   setStatus: (threadId, status) =>
     set((s) => {
@@ -256,6 +284,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
       return { statusMap: { ...s.statusMap, [threadId]: status }, runStartedAtByThread }
     }),
+
+  setUnread: (threadId, unread) => {
+    // Active thread cannot be unread by definition.
+    const selectedThreadId = get().selectedThreadId
+    const nextUnread = selectedThreadId === threadId ? false : unread
+    const current = !!get().unreadByThread[threadId]
+    if (current === nextUnread) return
+    set((s) => ({ unreadByThread: { ...s.unreadByThread, [threadId]: nextUnread } }))
+    void window.api.invoke('threads:setUnread', threadId, nextUnread)
+  },
 
   setName: (threadId, name) =>
     set((s) => {
@@ -389,6 +427,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         [projectId]: [thread, ...(s.byProject[projectId] ?? [])]
       },
       statusMap: { ...s.statusMap, [thread.id]: 'idle' },
+      unreadByThread: { ...s.unreadByThread, [thread.id]: false },
       selectedThreadId: thread.id
     }))
   },

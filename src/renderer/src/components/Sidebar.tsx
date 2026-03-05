@@ -3,7 +3,7 @@ import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { useYouTrackStore } from '../stores/youtrack'
-import { Project, Thread, RepoLocation, LocationPool } from '../types/ipc'
+import { Project, Thread, RepoLocation, LocationPool, ThreadStatus } from '../types/ipc'
 import ProjectDialog from './ProjectDialog'
 import LocationDialog from './LocationDialog'
 import YouTrackSettingsDialog from './YouTrackSettingsDialog'
@@ -44,6 +44,7 @@ export default function Sidebar() {
   const archivedByProject = useThreadStore((s) => s.archivedByProject)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const statusMap = useThreadStore((s) => s.statusMap)
+  const unreadByThread = useThreadStore((s) => s.unreadByThread)
   const showArchived = useThreadStore((s) => s.showArchived)
   const archivedCountByProject = useThreadStore((s) => s.archivedCountByProject)
   const fetchThreads = useThreadStore((s) => s.fetch)
@@ -54,6 +55,7 @@ export default function Sidebar() {
   const toggleShowArchived = useThreadStore((s) => s.toggleShowArchived)
   const selectThread = useThreadStore((s) => s.select)
   const setName = useThreadStore((s) => s.setName)
+  const setUnread = useThreadStore((s) => s.setUnread)
 
   const locationsByProject = useLocationStore((s) => s.byProject)
   const poolsByProject = useLocationStore((s) => s.poolsByProject)
@@ -107,10 +109,16 @@ export default function Sidebar() {
           setStatus(threadId, args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
         })
         // Safety net: reset status to idle on complete if stuck in running/stopping
-        const unsubComplete = window.api.on(`thread:complete:${threadId}`, () => {
+        const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
           const currentStatus = useThreadStore.getState().statusMap[threadId]
+          const completionStatus = args[0] as ThreadStatus | undefined
           if (currentStatus === 'running' || currentStatus === 'stopping') {
-            setStatus(threadId, 'idle')
+            setStatus(threadId, completionStatus ?? 'idle')
+          }
+
+          const selectedId = useThreadStore.getState().selectedThreadId
+          if (selectedId !== threadId) {
+            setUnread(threadId, true)
           }
         })
         subsRef.current.set(threadId, [unsubTitle, unsubStatus, unsubComplete])
@@ -124,7 +132,7 @@ export default function Sidebar() {
         subsRef.current.delete(threadId)
       }
     }
-  }, [byProject, setName, setStatus])
+  }, [byProject, setName, setStatus, setUnread])
 
   // Cleanup on unmount
   useEffect(() => {
@@ -286,8 +294,10 @@ export default function Sidebar() {
 
   function renderThread(thread: Thread, isArchived: boolean, projectId: string, indent = 'pl-10') {
     const status = statusMap[thread.id] ?? 'idle'
+    const isUnread = unreadByThread[thread.id] ?? !!thread.unread
     const statusColor =
-      status === 'running' ? '#4ade80'
+      isUnread ? '#22c55e'
+      : status === 'running' ? '#4ade80'
       : status === 'stopping' ? '#fb923c'
       : status === 'error' ? '#f87171'
       : status === 'stopped' ? '#facc15'
@@ -595,7 +605,13 @@ export default function Sidebar() {
               >
                 <span
                   className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
-                  style={{ background: statusMap[thread.id] === 'running' ? '#4ade80' : statusMap[thread.id] === 'error' ? '#f87171' : 'var(--color-text-muted)' }}
+                  style={{
+                    background:
+                      (unreadByThread[thread.id] ?? !!thread.unread) ? '#22c55e'
+                      : statusMap[thread.id] === 'running' ? '#4ade80'
+                      : statusMap[thread.id] === 'error' ? '#f87171'
+                      : 'var(--color-text-muted)'
+                  }}
                 />
                 <span className="flex flex-col min-w-0">
                   <span className="truncate">{thread.name}</span>
