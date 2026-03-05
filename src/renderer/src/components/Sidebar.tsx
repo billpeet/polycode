@@ -408,12 +408,12 @@ export default function Sidebar() {
               </span>
             )}
             {connectionBadge(loc.connection_type)}
-            {loc.pool_id && (
+            {loc.pool_id && !isCheckedOut && (
               <span
                 className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
-                style={{ background: isCheckedOut ? 'rgba(74, 222, 128, 0.15)' : 'rgba(148, 163, 184, 0.15)', color: isCheckedOut ? '#4ade80' : '#94a3b8' }}
+                style={{ background: 'rgba(148, 163, 184, 0.15)', color: '#94a3b8' }}
               >
-                {isCheckedOut ? 'checked out' : 'available'}
+                available
               </span>
             )}
             {pathMissing && (
@@ -687,23 +687,37 @@ export default function Sidebar() {
                         return (
                           <div key={pool.id}>
                             <div
-                              className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs"
+                              className="flex w-full items-center pl-6 pr-2 pt-1.5 pb-0.5 text-left text-xs"
                               style={{ color: 'var(--color-text-muted)' }}
                             >
-                              <span className="truncate opacity-80">{pool.name}</span>
+                              <span className="truncate font-medium" style={{ color: 'var(--color-text)' }}>
+                                {pool.name}
+                              </span>
                               <span className="ml-2 text-[10px] opacity-50">
                                 {checkedOut.length} checked out
                               </span>
                               {available.length > 0 && (
                                 <button
-                                  onClick={() => togglePoolAvailableExpanded(pool.id)}
+                                  onClick={() => checkoutLocation(available[0].id, project.id)}
                                   className="ml-2 rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                  title="Checkout next available location"
+                                >
+                                  Checkout next
+                                </button>
+                              )}
+                            </div>
+                            {available.length > 0 && (
+                              <div className="flex w-full items-center pl-8 pr-2 pb-1">
+                                <button
+                                  onClick={() => togglePoolAvailableExpanded(pool.id)}
+                                  className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10"
                                   style={{ color: 'var(--color-text-muted)' }}
                                 >
                                   {showAvailable ? `Hide available (${available.length})` : `Show available (${available.length})`}
                                 </button>
-                              )}
-                            </div>
+                              </div>
+                            )}
 
                             {checkedOut.map((loc) => renderLocationSection(project.id, loc, projectThreads, true))}
                             {showAvailable && available.map((loc) => renderLocationSection(project.id, loc, projectThreads, true))}

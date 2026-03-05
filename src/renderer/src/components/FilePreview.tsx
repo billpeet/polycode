@@ -1,6 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react'
 import { useFilesStore } from '../stores/files'
-import { useProjectStore } from '../stores/projects'
 import hljs from 'highlight.js'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -164,22 +163,40 @@ function MarkdownPreview({ content }: { content: string }) {
 interface ParsedDiffLine {
   type: 'context' | 'removed' | 'added' | 'header'
   text: string
+  oldLineNumber: number | null
+  newLineNumber: number | null
 }
 
 function parseUnifiedDiff(raw: string): ParsedDiffLine[] {
   const lines = raw.split('\n')
   const result: ParsedDiffLine[] = []
+  let oldLineNumber = 0
+  let newLineNumber = 0
+
+  const hunkHeaderRegex = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/
+
   for (const line of lines) {
-    if (line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++') || line.startsWith('new file') || line.startsWith('old mode') || line.startsWith('new mode') || line.startsWith('deleted file')) {
-      result.push({ type: 'header', text: line })
+    if (line.startsWith('@@') || line.startsWith('diff ') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++') || line.startsWith('new file') || line.startsWith('old mode') || line.startsWith('new mode') || line.startsWith('deleted file') || line.startsWith('\\ No newline')) {
+      const hunkMatch = line.match(hunkHeaderRegex)
+      if (hunkMatch) {
+        oldLineNumber = Number(hunkMatch[1])
+        newLineNumber = Number(hunkMatch[2])
+      }
+      result.push({ type: 'header', text: line, oldLineNumber: null, newLineNumber: null })
     } else if (line.startsWith('-')) {
-      result.push({ type: 'removed', text: line.slice(1) })
+      result.push({ type: 'removed', text: line.slice(1), oldLineNumber, newLineNumber: null })
+      oldLineNumber += 1
     } else if (line.startsWith('+')) {
-      result.push({ type: 'added', text: line.slice(1) })
+      result.push({ type: 'added', text: line.slice(1), oldLineNumber: null, newLineNumber })
+      newLineNumber += 1
     } else if (line.startsWith(' ')) {
-      result.push({ type: 'context', text: line.slice(1) })
+      result.push({ type: 'context', text: line.slice(1), oldLineNumber, newLineNumber })
+      oldLineNumber += 1
+      newLineNumber += 1
     } else if (line === '') {
-      result.push({ type: 'context', text: '' })
+      result.push({ type: 'context', text: '', oldLineNumber, newLineNumber })
+      oldLineNumber += 1
+      newLineNumber += 1
     }
   }
   return result
@@ -187,9 +204,13 @@ function parseUnifiedDiff(raw: string): ParsedDiffLine[] {
 
 function DiffPreview({ diff }: { diff: string }) {
   const lines = useMemo(() => parseUnifiedDiff(diff), [diff])
+  const visibleLines = useMemo(() => lines.filter((line) => line.type !== 'header'), [lines])
 
-  const removedCount = lines.filter(l => l.type === 'removed').length
-  const addedCount = lines.filter(l => l.type === 'added').length
+  const removedCount = visibleLines.filter(l => l.type === 'removed').length
+  const addedCount = visibleLines.filter(l => l.type === 'added').length
+  const maxOldLine = Math.max(0, ...visibleLines.map((line) => line.oldLineNumber ?? 0))
+  const maxNewLine = Math.max(0, ...visibleLines.map((line) => line.newLineNumber ?? 0))
+  const lineNumberWidth = Math.max(String(Math.max(maxOldLine, maxNewLine)).length, 1)
 
   return (
     <div
@@ -214,11 +235,12 @@ function DiffPreview({ diff }: { diff: string }) {
       )}
       <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
         <colgroup>
-          <col style={{ width: '2rem' }} />
+          <col style={{ width: `${lineNumberWidth + 2}ch` }} />
+          <col style={{ width: '1.6rem' }} />
           <col />
         </colgroup>
         <tbody>
-          {lines.map((line, idx) => {
+          {visibleLines.map((line, idx) => {
             const isRemoved = line.type === 'removed'
             const isAdded = line.type === 'added'
             const isHeader = line.type === 'header'
@@ -252,15 +274,37 @@ function DiffPreview({ diff }: { diff: string }) {
               padding: 0,
               verticalAlign: 'top',
               lineHeight: 1.6,
-              whiteSpace: 'pre',
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              overflowWrap: 'anywhere',
+            }
+
+            const lineNumberCellStyle: CSSProperties = {
+              ...tdBase,
+              textAlign: 'right',
+              paddingRight: '0.5rem',
+              paddingLeft: '0.5rem',
+              userSelect: 'none',
+              color: 'var(--color-text-muted)',
+              opacity: 0.5,
+              whiteSpace: 'nowrap',
+            }
+
+            const formatLineNumber = (): string => {
+              if (isHeader) return ''
+              if (isRemoved) return line.oldLineNumber === null ? '' : String(line.oldLineNumber)
+              return line.newLineNumber === null ? '' : String(line.newLineNumber)
             }
 
             return (
               <tr key={idx} style={{ background: rowBg }}>
+                <td style={lineNumberCellStyle}>
+                  {formatLineNumber()}
+                </td>
                 <td style={{ ...tdBase, textAlign: 'center', background: gutterBg, color: markerColor, fontWeight: 700, fontSize: '0.75rem', userSelect: 'none' }}>
                   {markerText}
                 </td>
-                <td style={{ ...tdBase, color: textColor, paddingLeft: '0.5rem', paddingRight: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                <td style={{ ...tdBase, color: textColor, paddingLeft: '0.5rem', paddingRight: '0.75rem' }}>
                   {isHeader ? line.text : (line.text || ' ')}
                 </td>
               </tr>
@@ -341,10 +385,6 @@ export default function FilePreview() {
   const clearDiff = useFilesStore((s) => s.clearDiff)
   const switchDiffToFile = useFilesStore((s) => s.switchDiffToFile)
 
-  const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const projectPath = projects.find(p => p.id === selectedProjectId)?.path
-
   const { width, handleMouseDown } = useResize()
 
   // Diff view takes priority
@@ -382,14 +422,14 @@ export default function FilePreview() {
           >
             Diff
           </span>
-          {diffView && projectPath && (
+          {diffView && (
             <button
-              onClick={() => switchDiffToFile(projectPath)}
-              className="text-[10px] px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors"
-              style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}
+              onClick={switchDiffToFile}
+              className="text-[10px] px-1.5 py-0.5 rounded transition-colors underline underline-offset-2 hover:opacity-90"
+              style={{ color: 'var(--color-text)' }}
               title="View full file"
             >
-              View File
+              View file
             </button>
           )}
           <button

@@ -198,10 +198,15 @@ function rowToLocationPool(row: LocationPoolRow): LocationPool {
 }
 
 export function listLocationPools(projectId: string): LocationPool[] {
-  const rows = getDb()
-    .prepare('SELECT * FROM location_pools WHERE project_id = ? ORDER BY created_at ASC')
-    .all(projectId) as LocationPoolRow[]
-  return rows.map(rowToLocationPool)
+  try {
+    const rows = getDb()
+      .prepare('SELECT * FROM location_pools WHERE project_id = ? ORDER BY created_at ASC')
+      .all(projectId) as LocationPoolRow[]
+    return rows.map(rowToLocationPool)
+  } catch {
+    // Defensive fallback for older DBs before migration is applied.
+    return []
+  }
 }
 
 export function createLocationPool(projectId: string, name: string): LocationPool {

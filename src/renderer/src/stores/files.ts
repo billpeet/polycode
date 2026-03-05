@@ -7,6 +7,7 @@ interface FileContent {
 }
 
 interface DiffView {
+  repoPath: string
   filePath: string
   diff: string
   staged: boolean
@@ -37,7 +38,7 @@ interface FilesStore {
   selectDiff: (repoPath: string, filePath: string, staged: boolean) => Promise<void>
   selectCompareDiffToMain: (repoPath: string, filePath: string) => Promise<void>
   clearDiff: () => void
-  switchDiffToFile: (repoPath: string) => void
+  switchDiffToFile: () => void
 }
 
 export const useFilesStore = create<FilesStore>((set, get) => ({
@@ -145,7 +146,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
     try {
       const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
-      set({ diffView: { filePath, diff, staged }, loadingDiff: false })
+      set({ diffView: { repoPath, filePath, diff, staged }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }
@@ -155,7 +156,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
     try {
       const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
-      set({ diffView: { filePath, diff, staged: false }, loadingDiff: false })
+      set({ diffView: { repoPath, filePath, diff, staged: false }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }
@@ -165,10 +166,10 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     set({ diffView: null })
   },
 
-  switchDiffToFile: (repoPath: string) => {
+  switchDiffToFile: () => {
     const { diffView, selectFile } = get()
     if (!diffView) return
-    const fullPath = repoPath + '/' + diffView.filePath
+    const fullPath = diffView.repoPath + '/' + diffView.filePath
     set({ diffView: null })
     selectFile(fullPath)
   },

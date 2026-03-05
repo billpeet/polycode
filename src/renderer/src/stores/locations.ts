@@ -28,10 +28,16 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   fetchPools: async (projectId) => {
-    const pools = await window.api.invoke('location-pools:list', projectId)
-    set((s) => ({
-      poolsByProject: { ...s.poolsByProject, [projectId]: pools }
-    }))
+    try {
+      const pools = await window.api.invoke('location-pools:list', projectId)
+      set((s) => ({
+        poolsByProject: { ...s.poolsByProject, [projectId]: pools }
+      }))
+    } catch {
+      set((s) => ({
+        poolsByProject: { ...s.poolsByProject, [projectId]: [] }
+      }))
+    }
   },
 
   createPool: async (projectId, name) => {
