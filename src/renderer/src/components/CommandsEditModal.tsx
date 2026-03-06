@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 interface Props {
   projectId: string
@@ -42,6 +43,7 @@ async function detectPackageManager(rootPath: string): Promise<PackageManager> {
 const EMPTY_LOCATIONS: import('../types/ipc').RepoLocation[] = []
 
 export default function CommandsEditModal({ projectId, onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const project = useProjectStore((s) => s.projects.find((p) => p.id === projectId) ?? null)
   const commands = useCommandStore((s) => s.byProject[projectId] ?? EMPTY_COMMANDS)
   const fetch = useCommandStore((s) => s.fetch)
@@ -133,7 +135,8 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.6)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className="relative flex flex-col rounded-xl shadow-2xl"

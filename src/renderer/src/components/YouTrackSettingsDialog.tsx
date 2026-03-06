@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useYouTrackStore } from '../stores/youtrack'
 import { YouTrackServer } from '../types/ipc'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 interface Props {
   onClose: () => void
@@ -15,6 +16,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { name: '', url: '', token: '' }
 
 export default function YouTrackSettingsDialog({ onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const servers = useYouTrackStore((s) => s.servers)
   const createServer = useYouTrackStore((s) => s.create)
   const updateServer = useYouTrackStore((s) => s.update)
@@ -101,7 +103,8 @@ export default function YouTrackSettingsDialog({ onClose }: Props) {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className="relative flex w-[480px] max-h-[80vh] flex-col rounded-xl shadow-2xl"

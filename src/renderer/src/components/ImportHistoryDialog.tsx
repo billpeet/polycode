@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { ClaudeProject, ClaudeSession } from '../types/ipc'
 import { useThreadStore } from '../stores/threads'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 interface Props {
   projectId: string
@@ -30,6 +31,7 @@ function normalizePath(p: string): string {
 }
 
 export default function ImportHistoryDialog({ projectId, locationId, locationPath, onClose, onImported }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const [sessions, setSessions] = useState<ClaudeSession[]>([])
   const [loading, setLoading] = useState(true)
   const [importing, setImporting] = useState(false)
@@ -90,7 +92,8 @@ export default function ImportHistoryDialog({ projectId, locationId, locationPat
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className="w-[500px] max-h-[70vh] rounded-lg shadow-2xl flex flex-col"

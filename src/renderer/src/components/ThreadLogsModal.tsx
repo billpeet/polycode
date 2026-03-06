@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { ThreadLogEntry } from '../types/ipc'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 const TYPE_COLORS: Record<string, string> = {
   message_sent: '#63b3ed',
@@ -115,6 +116,7 @@ interface Props {
 }
 
 export default function ThreadLogsModal({ threadId, onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const [entries, setEntries] = useState<ThreadLogEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState('')
@@ -158,7 +160,8 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
         alignItems: 'center',
         justifyContent: 'center',
       }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         style={{

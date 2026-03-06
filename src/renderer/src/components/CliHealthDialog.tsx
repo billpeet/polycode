@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useLocationStore } from '../stores/locations'
 import { useProjectStore } from '../stores/projects'
 import { Provider, PROVIDERS, SshConfig, WslConfig, CliHealthResult, CliUpdateResult } from '../types/ipc'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 interface EnvironmentOption {
   label: string
@@ -38,6 +39,7 @@ interface Props {
 }
 
 export default function CliHealthDialog({ onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const byProject = useLocationStore((s) => s.byProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const projects = useProjectStore((s) => s.projects)
@@ -221,7 +223,8 @@ export default function CliHealthDialog({ onClose }: Props) {
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className="w-[480px] rounded-lg p-6 shadow-2xl"

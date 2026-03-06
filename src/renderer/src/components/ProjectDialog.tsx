@@ -3,6 +3,7 @@ import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
 import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
 import { Project, RepoLocation, ConnectionType, SshConfig, WslConfig, LocationPool } from '../types/ipc'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 const EMPTY: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -555,6 +556,7 @@ function LocationFormSection({ projectId, location, pools, gitUrl, onSaved, onCa
 }
 
 export default function ProjectDialog({ mode, project, onClose, onCreated }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const [name, setName] = useState(project?.name ?? '')
   const [gitUrl, setGitUrl] = useState(project?.git_url ?? '')
   const [error, setError] = useState('')
@@ -672,7 +674,8 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className={`${isEdit ? 'w-[520px]' : 'w-96'} max-h-[85vh] overflow-y-auto rounded-lg p-6 shadow-2xl`}

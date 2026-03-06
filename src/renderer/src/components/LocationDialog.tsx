@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useLocationStore } from '../stores/locations'
 import { RepoLocation, SshConfig, WslConfig, ConnectionType } from '../types/ipc'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 interface Props {
   mode: 'create' | 'edit'
@@ -10,6 +11,7 @@ interface Props {
 }
 
 export default function LocationDialog({ mode, projectId, location, onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const [label, setLabel] = useState(location?.label ?? '')
   const [path, setPath] = useState(location?.path ?? '')
   const [error, setError] = useState('')
@@ -189,7 +191,8 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className="w-96 rounded-lg p-6 shadow-2xl"

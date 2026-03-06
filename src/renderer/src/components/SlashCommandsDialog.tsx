@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useSlashCommandStore } from '../stores/slashCommands'
 import { SlashCommand } from '../types/ipc'
+import { useBackdropClose } from '../hooks/useBackdropClose'
 
 interface Props {
   projectId: string | null
@@ -18,6 +19,7 @@ interface FormState {
 const EMPTY_FORM: FormState = { name: '', description: '', prompt: '', scope: 'project' }
 
 export default function SlashCommandsDialog({ projectId, projectName, onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
   const fetch = useSlashCommandStore((s) => s.fetch)
   const create = useSlashCommandStore((s) => s.create)
   const update = useSlashCommandStore((s) => s.update)
@@ -104,7 +106,8 @@ export default function SlashCommandsDialog({ projectId, projectName, onClose }:
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
       style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={onClose}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
     >
       <div
         className="flex w-[560px] max-h-[80vh] flex-col rounded-xl shadow-2xl"
