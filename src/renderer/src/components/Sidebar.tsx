@@ -252,6 +252,31 @@ export default function Sidebar() {
 
   async function handleArchiveThread(thread: Thread, projectId: string): Promise<void> {
     await archiveThread(thread.id, projectId)
+
+    const latestThread = (useThreadStore.getState().byProject[projectId] ?? [])
+      .slice()
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0]
+
+    if (latestThread) {
+      selectThread(latestThread.id)
+      return
+    }
+
+    const loadedLocations = locationsByProject[projectId] ?? []
+    const loadedActiveLocations = loadedLocations.filter((loc) => !loc.pool_id || loc.checked_out)
+    let locationId = loadedActiveLocations[0]?.id ?? null
+
+    if (!locationId) {
+      const fetchedLocations = await window.api.invoke('locations:list', projectId) as RepoLocation[]
+      const fetchedActiveLocations = fetchedLocations.filter((loc) => !loc.pool_id || loc.checked_out)
+      locationId = fetchedActiveLocations[0]?.id ?? null
+    }
+
+    if (locationId) {
+      await createThread(projectId, 'New thread', locationId)
+    } else {
+      selectThread(null)
+    }
   }
 
   async function handleUnarchiveThread(thread: Thread, projectId: string): Promise<void> {

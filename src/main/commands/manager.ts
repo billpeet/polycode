@@ -7,6 +7,7 @@ import { getCommandById, listCommands, getLocationById } from '../db/queries'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from '../driver/runner'
 
 const LOG_RING_BUFFER_SIZE = 1000
+const LOG_FLUSH_INTERVAL_MS = 33
 const PORT_POLL_INTERVAL_MS = 2000
 const COMMAND_TIMEOUT_MS = 4000
 const STOP_GRACE_TIMEOUT_MS = 4000
@@ -23,6 +24,9 @@ interface RunningCommand {
   portPollTimer: ReturnType<typeof setInterval> | null
   portPollInFlight: boolean
   logs: CommandLogLine[]
+  nextLogId: number
+  pendingLogs: CommandLogLine[]
+  logFlushTimer: ReturnType<typeof setTimeout> | null
 }
 
 /** Returns the map key for a (commandId, locationId) pair. */
@@ -209,6 +213,9 @@ class CommandManager {
       portPollTimer: null,
       portPollInFlight: false,
       logs: [],
+      nextLogId: 1,
+      pendingLogs: [],
+      logFlushTimer: null,
     }
     this.running.set(key, entry)
     this.pushStatus(commandId, locationId, 'running')
@@ -278,6 +285,7 @@ class CommandManager {
 
     const pushLog = (text: string, stream: 'stdout' | 'stderr'): void => {
       const line: CommandLogLine = {
+        id: entry.nextLogId++,
         commandId,
         text,
         stream,
@@ -287,7 +295,8 @@ class CommandManager {
       if (entry.logs.length > LOG_RING_BUFFER_SIZE) {
         entry.logs.shift()
       }
-      this.window?.webContents.send(`command:log:${key}`, line)
+      entry.pendingLogs.push(line)
+      this.scheduleLogFlush(key, entry)
     }
 
     const makeLineBuffer = (stream: 'stdout' | 'stderr') => {
@@ -309,6 +318,7 @@ class CommandManager {
       const current = this.running.get(key)
       if (!current || current.process !== proc) return
       this.stopPortPolling(current)
+      this.flushPendingLogs(key, current)
       const status: CommandStatus =
         current.status === 'stopping'
           ? 'stopped'
@@ -322,6 +332,7 @@ class CommandManager {
       if (!current || current.process !== proc) return
       this.stopPortPolling(current)
       pushLog(`Error: ${err.message}`, 'stderr')
+      this.flushPendingLogs(key, current)
       current.status = 'error'
       this.pushStatus(commandId, locationId, 'error')
     })
@@ -399,6 +410,26 @@ class CommandManager {
   private pushStatus(commandId: string, locationId: string, status: CommandStatus): void {
     const key = instKey(commandId, locationId)
     this.window?.webContents.send(`command:status:${key}`, status)
+  }
+
+  private flushPendingLogs(key: string, entry: RunningCommand): void {
+    if (entry.logFlushTimer) {
+      clearTimeout(entry.logFlushTimer)
+      entry.logFlushTimer = null
+    }
+    if (entry.pendingLogs.length === 0) return
+    const batch = entry.pendingLogs
+    entry.pendingLogs = []
+    this.window?.webContents.send(`command:log:${key}`, batch)
+  }
+
+  private scheduleLogFlush(key: string, entry: RunningCommand): void {
+    if (entry.logFlushTimer) return
+    entry.logFlushTimer = setTimeout(() => {
+      const current = this.running.get(key)
+      if (current !== entry) return
+      this.flushPendingLogs(key, entry)
+    }, LOG_FLUSH_INTERVAL_MS)
   }
 
   private pushPorts(commandId: string, locationId: string, ports: number[]): void {

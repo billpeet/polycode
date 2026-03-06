@@ -5,6 +5,16 @@ export const EMPTY_COMMANDS: ProjectCommand[] = []
 export const EMPTY_LOGS: CommandLogLine[] = []
 
 const LOG_RING_BUFFER_SIZE = 1000
+const LOG_FLUSH_INTERVAL_MS = 50
+
+function sameNumberArray(a: number[] | undefined, b: number[]): boolean {
+  if (!a) return false
+  if (a.length !== b.length) return false
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
 
 /** Stable key for a running (commandId, locationId) instance. */
 export function instKey(commandId: string, locationId: string): string {
@@ -48,6 +58,9 @@ interface CommandStore {
   pinInstance: (key: string, locationId: string) => void
   unpinInstance: (key: string, locationId: string) => void
 }
+
+const pendingLogsByKey = new Map<string, CommandLogLine[]>()
+let logFlushTimer: ReturnType<typeof setTimeout> | null = null
 
 export const useCommandStore = create<CommandStore>((set, get) => ({
   byProject: {},
@@ -155,6 +168,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   restart: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
+    pendingLogsByKey.delete(key)
     set((s) => ({
       statusMap: { ...s.statusMap, [key]: 'stopping' },
       logsByCommand: { ...s.logsByCommand, [key]: [] },
@@ -163,11 +177,17 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   setStatus: (key, status) => {
-    set((s) => ({ statusMap: { ...s.statusMap, [key]: status } }))
+    set((s) => {
+      if (s.statusMap[key] === status) return s
+      return { statusMap: { ...s.statusMap, [key]: status } }
+    })
   },
 
   setPorts: (key, ports) => {
-    set((s) => ({ portsMap: { ...s.portsMap, [key]: ports } }))
+    set((s) => {
+      if (sameNumberArray(s.portsMap[key], ports)) return s
+      return { portsMap: { ...s.portsMap, [key]: ports } }
+    })
   },
 
   fetchPorts: async (commandId, locationId) => {
@@ -177,18 +197,46 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   appendLog: (key, line) => {
-    set((s) => {
-      const existing = s.logsByCommand[key] ?? []
-      const updated = [...existing, line]
-      if (updated.length > LOG_RING_BUFFER_SIZE) updated.shift()
-      return { logsByCommand: { ...s.logsByCommand, [key]: updated } }
-    })
+    const pending = pendingLogsByKey.get(key) ?? []
+    pending.push(line)
+    pendingLogsByKey.set(key, pending)
+
+    if (!logFlushTimer) {
+      logFlushTimer = setTimeout(() => {
+        logFlushTimer = null
+        if (pendingLogsByKey.size === 0) return
+        set((s) => {
+          let nextLogsByCommand: Record<string, CommandLogLine[]> | null = null
+          for (const [pendingKey, lines] of pendingLogsByKey.entries()) {
+            if (lines.length === 0) continue
+            const existing = s.logsByCommand[pendingKey] ?? EMPTY_LOGS
+            const merged = existing.length === 0 ? lines : existing.concat(lines)
+            const trimmed =
+              merged.length > LOG_RING_BUFFER_SIZE
+                ? merged.slice(merged.length - LOG_RING_BUFFER_SIZE)
+                : merged
+            if (!nextLogsByCommand) nextLogsByCommand = { ...s.logsByCommand }
+            nextLogsByCommand[pendingKey] = trimmed
+          }
+          pendingLogsByKey.clear()
+          if (!nextLogsByCommand) return s
+          return { logsByCommand: nextLogsByCommand }
+        })
+      }, LOG_FLUSH_INTERVAL_MS)
+    }
   },
 
   fetchLogs: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
     const logs = await window.api.invoke('commands:getLogs', commandId, locationId)
-    set((s) => ({ logsByCommand: { ...s.logsByCommand, [key]: logs } }))
+    const pending = pendingLogsByKey.get(key) ?? EMPTY_LOGS
+    if (pending.length > 0) pendingLogsByKey.delete(key)
+    const merged = pending.length > 0 ? logs.concat(pending) : logs
+    const trimmed =
+      merged.length > LOG_RING_BUFFER_SIZE
+        ? merged.slice(merged.length - LOG_RING_BUFFER_SIZE)
+        : merged
+    set((s) => ({ logsByCommand: { ...s.logsByCommand, [key]: trimmed } }))
   },
 
   selectInstance: (key, locationId) => {

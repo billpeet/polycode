@@ -5,6 +5,7 @@ import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
 import { Project, RepoLocation, ConnectionType, SshConfig, WslConfig, LocationPool } from '../types/ipc'
 
 const EMPTY: RepoLocation[] = []
+const EMPTY_POOLS: LocationPool[] = []
 
 type LocationFormState = { mode: 'none' } | { mode: 'create' } | { mode: 'edit'; location: RepoLocation }
 
@@ -563,7 +564,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const updateProject = useProjectStore((s) => s.update)
 
   const locations = useLocationStore((s) => project ? (s.byProject[project.id] ?? EMPTY) : EMPTY)
-  const pools = useLocationStore((s) => project ? (s.poolsByProject[project.id] ?? []) : [])
+  const pools = useLocationStore((s) => project ? (s.poolsByProject[project.id] ?? EMPTY_POOLS) : EMPTY_POOLS)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const fetchPools = useLocationStore((s) => s.fetchPools)
   const removeLocation = useLocationStore((s) => s.remove)

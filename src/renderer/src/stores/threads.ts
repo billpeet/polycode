@@ -276,8 +276,13 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   setStatus: (threadId, status) =>
     set((s) => {
+      const currentStatus = s.statusMap[threadId]
+      const hasRunStart = !!s.runStartedAtByThread[threadId]
+      const nextHasRunStart = status === 'running'
+      if (currentStatus === status && hasRunStart === nextHasRunStart) return s
+
       const runStartedAtByThread = { ...s.runStartedAtByThread }
-      if (status === 'running') {
+      if (nextHasRunStart) {
         if (!runStartedAtByThread[threadId]) runStartedAtByThread[threadId] = Date.now()
       } else {
         delete runStartedAtByThread[threadId]
@@ -297,11 +302,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   setName: (threadId, name) =>
     set((s) => {
-      const updated = { ...s.byProject }
-      for (const pid of Object.keys(updated)) {
-        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, name } : t))
+      let changed = false
+      const updated: Record<string, Thread[]> = {}
+      for (const pid of Object.keys(s.byProject)) {
+        const nextThreads = s.byProject[pid].map((t) => {
+          if (t.id !== threadId || t.name === name) return t
+          changed = true
+          return { ...t, name }
+        })
+        updated[pid] = nextThreads
       }
-      return { byProject: updated }
+      return changed ? { byProject: updated } : s
     }),
 
   rename: async (threadId, name) => {
@@ -448,5 +459,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }),
 
   setPid: (threadId, pid) =>
-    set((s) => ({ pidByThread: { ...s.pidByThread, [threadId]: pid } })),
+    set((s) => {
+      if ((s.pidByThread[threadId] ?? null) === pid) return s
+      return { pidByThread: { ...s.pidByThread, [threadId]: pid } }
+    }),
 }))

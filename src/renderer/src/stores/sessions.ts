@@ -29,12 +29,16 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   },
 
   setActiveSession: (threadId, sessionId) => {
-    set((s) => ({
-      activeSessionByThread: { ...s.activeSessionByThread, [threadId]: sessionId }
-    }))
+    set((s) => {
+      if (s.activeSessionByThread[threadId] === sessionId) return s
+      return {
+        activeSessionByThread: { ...s.activeSessionByThread, [threadId]: sessionId }
+      }
+    })
   },
 
   switchSession: async (threadId, sessionId) => {
+    if (get().activeSessionByThread[threadId] === sessionId) return
     await window.api.invoke('sessions:switch', threadId, sessionId)
     set((s) => ({
       activeSessionByThread: { ...s.activeSessionByThread, [threadId]: sessionId }

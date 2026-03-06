@@ -4,8 +4,13 @@ export default function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false)
 
   useEffect(() => {
-    window.api.invoke('window:is-maximized').then(setIsMaximized)
-    return window.api.on('window:maximized-changed', (maximized) => setIsMaximized(maximized as boolean))
+    window.api.invoke('window:is-maximized').then((maximized) => {
+      setIsMaximized((prev) => (prev === maximized ? prev : maximized))
+    })
+    return window.api.on('window:maximized-changed', (maximized) => {
+      const next = maximized as boolean
+      setIsMaximized((prev) => (prev === next ? prev : next))
+    })
   }, [])
 
   function minimize() {

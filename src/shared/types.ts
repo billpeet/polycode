@@ -53,6 +53,7 @@ export const ANTHROPIC_MODELS = [
 export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
 
 export const OPENAI_MODELS = [
+  { id: 'gpt-5.4', label: 'GPT-5.4' },
   { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
   { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
@@ -156,6 +157,7 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-5': 200_000,
   'claude-sonnet-4-5': 200_000,
   'claude-haiku-4-5': 200_000,
+  'gpt-5.4': 200_000,
   'gpt-5.3-codex': 200_000,
   'gpt-5.3-codex-spark': 200_000,
   'gpt-5.2-codex': 200_000,
@@ -367,6 +369,7 @@ export interface ProjectCommand {
 }
 
 export interface CommandLogLine {
+  id: number
   commandId: string
   text: string
   stream: 'stdout' | 'stderr'

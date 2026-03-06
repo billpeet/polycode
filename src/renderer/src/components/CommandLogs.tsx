@@ -1,4 +1,4 @@
-import { Fragment, useState, useEffect, useRef, useCallback } from 'react'
+import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useCommandStore, EMPTY_LOGS, parseInstKey } from '../stores/commands'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
@@ -6,6 +6,7 @@ import { useLocationStore } from '../stores/locations'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 
 const EMPTY_PINNED: string[] = []
+const EMPTY_PORTS: number[] = []
 
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
@@ -70,6 +71,35 @@ function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '')
 }
 
+const strippedCache = new WeakMap<CommandLogLine, string>()
+const searchableCache = new WeakMap<CommandLogLine, string>()
+const lineKeyCache = new WeakMap<CommandLogLine, string>()
+let nextLineKey = 1
+
+function getStrippedText(line: CommandLogLine): string {
+  const cached = strippedCache.get(line)
+  if (cached !== undefined) return cached
+  const stripped = stripAnsi(line.text)
+  strippedCache.set(line, stripped)
+  return stripped
+}
+
+function getSearchableText(line: CommandLogLine): string {
+  const cached = searchableCache.get(line)
+  if (cached !== undefined) return cached
+  const searchable = getStrippedText(line).toLowerCase()
+  searchableCache.set(line, searchable)
+  return searchable
+}
+
+function getLineKey(line: CommandLogLine): string {
+  const cached = lineKeyCache.get(line)
+  if (cached !== undefined) return cached
+  const key = `${line.id}:${nextLineKey++}`
+  lineKeyCache.set(line, key)
+  return key
+}
+
 // ─── Status dot ───────────────────────────────────────────────────────────────
 
 function StatusDot({ status }: { status: CommandStatus }) {
@@ -111,7 +141,7 @@ function CommandLogPanel({
 
   const logs = useCommandStore((s) => s.logsByCommand[instanceKey] ?? EMPTY_LOGS)
   const status = useCommandStore((s) => s.statusMap[instanceKey] ?? 'idle')
-  const ports = useCommandStore((s) => s.portsMap[instanceKey] ?? [])
+  const ports = useCommandStore((s) => s.portsMap[instanceKey] ?? EMPTY_PORTS)
   const appendLog = useCommandStore((s) => s.appendLog)
   const setPorts = useCommandStore((s) => s.setPorts)
   const fetchPorts = useCommandStore((s) => s.fetchPorts)
@@ -123,9 +153,12 @@ function CommandLogPanel({
   const [searchOpen, setSearchOpen] = useState(false)
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  const filteredLogs = searchQuery
-    ? logs.filter((line) => stripAnsi(line.text).toLowerCase().includes(searchQuery.toLowerCase()))
-    : logs
+  const searchNeedle = searchQuery.trim().toLowerCase()
+  const filteredLogs = useMemo(() => {
+    if (!searchNeedle) return logs
+    return logs.filter((line) => getSearchableText(line).includes(searchNeedle))
+  }, [logs, searchNeedle])
+  const lastLogId = logs.length > 0 ? logs[logs.length - 1].id : 0
 
   const toggleSearch = useCallback(() => {
     setSearchOpen((prev) => {
@@ -178,11 +211,15 @@ function CommandLogPanel({
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [userScrolled, setUserScrolled] = useState(false)
+  const userScrolledRef = useRef(false)
   const isScrolledToBottom = useRef(true)
 
   const scrollToBottom = useCallback(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'instant' })
-    setUserScrolled(false)
+    if (userScrolledRef.current) {
+      userScrolledRef.current = false
+      setUserScrolled(false)
+    }
     isScrolledToBottom.current = true
   }, [])
 
@@ -190,13 +227,21 @@ function CommandLogPanel({
     const el = containerRef.current
     if (!el) return
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150
+    const nextUserScrolled = !atBottom
     isScrolledToBottom.current = atBottom
-    setUserScrolled(!atBottom)
+    if (userScrolledRef.current !== nextUserScrolled) {
+      userScrolledRef.current = nextUserScrolled
+      setUserScrolled(nextUserScrolled)
+    }
   }, [])
 
   useEffect(() => {
-    const unsub = window.api.on(`command:log:${instanceKey}`, (line) => {
-      appendLog(instanceKey, line as CommandLogLine)
+    const unsub = window.api.on(`command:log:${instanceKey}`, (payload) => {
+      if (Array.isArray(payload)) {
+        for (const line of payload as CommandLogLine[]) appendLog(instanceKey, line)
+        return
+      }
+      appendLog(instanceKey, payload as CommandLogLine)
     })
     return unsub
   }, [instanceKey, appendLog])
@@ -209,12 +254,13 @@ function CommandLogPanel({
   }, [instanceKey, setPorts])
 
   useEffect(() => {
-    if (!userScrolled && !searchQuery) {
+    if (!userScrolledRef.current && !searchQuery) {
       scrollToBottom()
     }
-  }, [logs.length, userScrolled, searchQuery, scrollToBottom])
+  }, [lastLogId, searchQuery, scrollToBottom])
 
   useEffect(() => {
+    userScrolledRef.current = false
     setUserScrolled(false)
     isScrolledToBottom.current = true
   }, [instanceKey])
@@ -426,16 +472,16 @@ function CommandLogPanel({
               No matches.
             </p>
           ) : (
-            filteredLogs.map((line, idx) => (
+            filteredLogs.map((line) => (
               <div
-                key={idx}
+                key={getLineKey(line)}
                 style={{
                   color: line.stream === 'stderr' ? '#f87171' : 'var(--color-text-muted)',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-all',
                 }}
               >
-                {stripAnsi(line.text)}
+                {getStrippedText(line)}
               </div>
             ))
           )}
