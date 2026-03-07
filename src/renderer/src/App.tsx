@@ -7,6 +7,7 @@ import FilePreview from './components/FilePreview'
 import CommandLogs from './components/CommandLogs'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
+import { SidebarProvider } from './components/ui/sidebar-context'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useLocationStore } from './stores/locations'
@@ -155,6 +156,7 @@ export default function App() {
         Something went wrong. Please restart Polycode.
       </div>
     }>
+      <SidebarProvider>
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
         <TitleBar />
         <div className="flex flex-1 overflow-hidden">
@@ -189,6 +191,7 @@ export default function App() {
         </div>
       </div>
       <ToastStack />
+      </SidebarProvider>
     </ErrorBoundary>
   )
 }

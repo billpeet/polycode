@@ -9,6 +9,9 @@ import LocationDialog from './LocationDialog'
 import YouTrackSettingsDialog from './YouTrackSettingsDialog'
 import SlashCommandsDialog from './SlashCommandsDialog'
 import CliHealthDialog from './CliHealthDialog'
+import { useSidebar } from './ui/sidebar-context'
+import { Tooltip } from './ui/tooltip'
+import { PanelLeft, Plus, Activity, Slash, Settings, ChevronDown, ChevronRight, Archive, Pencil, X, ArchiveRestore } from 'lucide-react'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -29,6 +32,8 @@ function relativeTime(iso: string): string {
 }
 
 export default function Sidebar() {
+  const { isCollapsed, toggle } = useSidebar()
+
   const projects = useProjectStore((s) => s.projects)
   const archivedProjects = useProjectStore((s) => s.archivedProjects)
   const projectsLoading = useProjectStore((s) => s.loading)
@@ -74,23 +79,16 @@ export default function Sidebar() {
   const [projectDialog, setProjectDialog] = useState<{ mode: 'create' } | { mode: 'edit'; project: Project } | null>(null)
   const [locationDialog, setLocationDialog] = useState<{ mode: 'create'; projectId: string } | { mode: 'edit'; projectId: string; location: RepoLocation } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<{ type: 'project' | 'thread'; id: string; name: string; projectId: string } | null>(null)
-/** Track collapsed locations (all expanded by default) */
   const [collapsedLocationIds, setCollapsedLocationIds] = useState<Set<string>>(new Set())
-  /** Whether the archived projects section is expanded */
   const [archivedSectionExpanded, setArchivedSectionExpanded] = useState(false)
-  /** Git branch name per location id */
   const [branchByLocation, setBranchByLocation] = useState<Record<string, string>>({})
-  /** Tracks which pool's available locations are expanded */
   const [expandedAvailablePools, setExpandedAvailablePools] = useState<Set<string>>(new Set())
-  /** Whether each local location's path exists on disk (undefined = not yet checked) */
   const [pathExistsByLocation, setPathExistsByLocation] = useState<Record<string, boolean>>({})
 
   const setStatus = useThreadStore((s) => s.setStatus)
 
-  // Track IPC subscriptions for all known threads (title + status)
   const subsRef = useRef<Map<string, Array<() => void>>>(new Map())
 
-  // Subscribe to title and status updates for all threads in byProject
   useEffect(() => {
     const allThreadIds = new Set<string>()
     for (const threads of Object.values(byProject)) {
@@ -99,7 +97,6 @@ export default function Sidebar() {
       }
     }
 
-    // Subscribe to new threads
     for (const threadId of allThreadIds) {
       if (!subsRef.current.has(threadId)) {
         const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
@@ -108,7 +105,6 @@ export default function Sidebar() {
         const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
           setStatus(threadId, args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
         })
-        // Safety net: reset status to idle on complete if stuck in running/stopping
         const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
           const currentStatus = useThreadStore.getState().statusMap[threadId]
           const completionStatus = args[0] as ThreadStatus | undefined
@@ -125,7 +121,6 @@ export default function Sidebar() {
       }
     }
 
-    // Unsubscribe from removed threads
     for (const [threadId, unsubs] of subsRef.current) {
       if (!allThreadIds.has(threadId)) {
         unsubs.forEach((fn) => fn())
@@ -134,7 +129,6 @@ export default function Sidebar() {
     }
   }, [byProject, setName, setStatus, setUnread])
 
-  // Cleanup on unmount
   useEffect(() => {
     return () => {
       for (const unsubs of subsRef.current.values()) {
@@ -144,12 +138,10 @@ export default function Sidebar() {
     }
   }, [])
 
-  // Fetch YouTrack servers on mount
   useEffect(() => {
     fetchYouTrackServers()
   }, [fetchYouTrackServers])
 
-  // Fetch git branch for each location in expanded projects
   useEffect(() => {
     let cancelled = false
 
@@ -198,7 +190,6 @@ export default function Sidebar() {
     }
   }, [expandedProjectIds, locationsByProject])
 
-  // Check whether local location paths exist on disk
   useEffect(() => {
     for (const projectId of expandedProjectIds) {
       const locations = locationsByProject[projectId] ?? []
@@ -216,11 +207,9 @@ export default function Sidebar() {
 
   function handleToggleProject(id: string): void {
     toggleExpanded(id)
-    // Also select this project when expanding (so new thread button works)
     if (!expandedProjectIds.has(id)) {
       selectProject(id)
     }
-    // Fetch threads and locations if not already loaded
     if (!byProject[id]) fetchThreads(id)
     if (!locationsByProject[id]) fetchLocations(id)
     if (!poolsByProject[id]) fetchPools(id)
@@ -317,28 +306,32 @@ export default function Sidebar() {
     )
   }
 
-  function renderThread(thread: Thread, isArchived: boolean, projectId: string, indent = 'pl-10') {
+  function getStatusColor(thread: Thread): string {
     const status = statusMap[thread.id] ?? 'idle'
     const isUnread = unreadByThread[thread.id] ?? !!thread.unread
-    const statusColor =
-      isUnread ? '#22c55e'
-      : status === 'running' ? '#4ade80'
-      : status === 'stopping' ? '#fb923c'
-      : status === 'error' ? '#f87171'
-      : status === 'stopped' ? '#facc15'
-      : 'var(--color-text-muted)'
+    if (isUnread) return '#22c55e'
+    if (status === 'running') return '#4ade80'
+    if (status === 'stopping') return '#fb923c'
+    if (status === 'error') return '#f87171'
+    if (status === 'stopped') return '#facc15'
+    return 'var(--color-text-muted)'
+  }
+
+  function renderThread(thread: Thread, isArchived: boolean, projectId: string, indent = 'pl-10') {
+    const status = statusMap[thread.id] ?? 'idle'
+    const isSelected = selectedThreadId === thread.id
 
     return (
       <div
         key={thread.id}
-        className="group relative"
+        className="group/thread relative"
         style={{ opacity: isArchived ? 0.6 : 1 }}
       >
         <button
           onClick={() => selectThread(thread.id)}
-          className={`flex w-full items-center ${indent} pr-2 py-1.5 text-left text-xs transition-colors min-w-0`}
+          className={`flex w-full items-center ${indent} pr-2 py-1 text-left text-xs transition-colors min-w-0`}
           style={{
-            background: selectedThreadId === thread.id ? 'var(--color-border)' : 'transparent',
+            background: isSelected ? 'var(--color-border)' : 'transparent',
             color: 'var(--color-text-muted)'
           }}
         >
@@ -350,40 +343,40 @@ export default function Sidebar() {
           ) : (
             <span
               className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
-              style={{ background: isArchived ? 'var(--color-text-muted)' : statusColor }}
+              style={{ background: isArchived ? 'var(--color-text-muted)' : getStatusColor(thread) }}
             />
           )}
-          <span className="flex flex-col min-w-0">
-            <span className="truncate">{thread.name}</span>
-            <span
-              className="text-[10px] leading-tight"
-              style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}
-            >
-              {relativeTime(thread.updated_at)}
-            </span>
-            {(() => {
-              const currentBranch = thread.location_id ? branchByLocation[thread.location_id] : undefined
-              if (thread.git_branch && currentBranch && thread.git_branch !== currentBranch) {
-                return (
-                  <span
-                    className="text-[10px] leading-tight truncate"
-                    style={{ color: '#f59e0b' }}
-                    title={`Started on branch '${thread.git_branch}', current branch is '${currentBranch}'`}
-                  >
-                    ⎇ {thread.git_branch}
-                  </span>
-                )
-              }
-              return null
-            })()}
-          </span>
+          <span className="truncate min-w-0">{thread.name}</span>
         </button>
 
-        {/* Thread actions — absolutely positioned, overlay on hover */}
+        {/* Git branch mismatch warning */}
+        {(() => {
+          const currentBranch = thread.location_id ? branchByLocation[thread.location_id] : undefined
+          if (thread.git_branch && currentBranch && thread.git_branch !== currentBranch) {
+            return (
+              <div
+                className={`${indent} pr-2 text-[10px] leading-tight truncate -mt-0.5 pb-0.5`}
+                style={{ color: '#f59e0b' }}
+                title={`Started on branch '${thread.git_branch}', current branch is '${currentBranch}'`}
+              >
+                ⎇ {thread.git_branch}
+              </div>
+            )
+          }
+          return null
+        })()}
+
+        {/* Hover overlay: time label + archive action */}
         <div
-          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center opacity-0 group-hover:opacity-100 transition-opacity"
-          style={{ background: selectedThreadId === thread.id ? 'var(--color-border)' : 'var(--color-surface)' }}
+          className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover/thread:opacity-100 transition-opacity"
+          style={{ background: isSelected ? 'var(--color-border)' : 'var(--color-surface)' }}
         >
+          <span
+            className="px-1 text-[10px]"
+            style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}
+          >
+            {relativeTime(thread.updated_at)}
+          </span>
           {isArchived ? (
             <button
               onClick={() => handleUnarchiveThread(thread, projectId)}
@@ -391,12 +384,7 @@ export default function Sidebar() {
               style={{ color: 'var(--color-text-muted)' }}
               title="Unarchive thread"
             >
-              {/* Unarchive: box with up arrow */}
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1" y="7" width="14" height="8" rx="1" />
-                <path d="M1 7l2-4h10l2 4" />
-                <path d="M8 11V4M5.5 6.5L8 4l2.5 2.5" />
-              </svg>
+              <ArchiveRestore size={13} />
             </button>
           ) : (
             <button
@@ -405,12 +393,7 @@ export default function Sidebar() {
               style={{ color: 'var(--color-text-muted)' }}
               title="Archive thread"
             >
-              {/* Archive: box with down arrow */}
-              <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <rect x="1" y="7" width="14" height="8" rx="1" />
-                <path d="M1 7l2-4h10l2 4" />
-                <path d="M8 9v6M5.5 12.5L8 15l2.5-2.5" />
-              </svg>
+              <Archive size={13} />
             </button>
           )}
         </div>
@@ -429,13 +412,14 @@ export default function Sidebar() {
         <div className="group relative">
           <button
             onClick={() => toggleLocationCollapsed(loc.id)}
-            className="flex w-full items-center pl-6 pr-2 py-1 text-left text-xs transition-colors min-w-0"
+            className="flex w-full items-center pl-6 pr-2 py-0.5 text-left text-xs transition-colors min-w-0"
             style={{ color: pathMissing ? '#f87171' : 'var(--color-text-muted)' }}
             title={pathMissing ? `Directory not found: ${loc.path}` : undefined}
           >
-            <span className="mr-1 text-[9px] flex-shrink-0 opacity-50" style={{ width: '8px' }}>
-              {isLocationExpanded ? '▾' : '▸'}
-            </span>
+            {isLocationExpanded
+              ? <ChevronDown size={10} className="mr-1 flex-shrink-0 opacity-50" />
+              : <ChevronRight size={10} className="mr-1 flex-shrink-0 opacity-50" />
+            }
             <span className="truncate opacity-70">{loc.label}</span>
             {branchByLocation[loc.id] && (
               <span className="ml-1 flex-shrink-0 opacity-50 text-[9px]">
@@ -526,29 +510,207 @@ export default function Sidebar() {
     )
   }
 
+  // ── Collapsed sidebar ──────────────────────────────────────────────────
+
+  if (isCollapsed) {
+    // Collect running threads across all projects for status dots
+    const runningProjects = projects.filter((p) => {
+      const threads = byProject[p.id] ?? []
+      return threads.some((t) => statusMap[t.id] === 'running' || statusMap[t.id] === 'stopping')
+    })
+
+    return (
+      <aside
+        className="flex flex-col items-center border-r overflow-hidden flex-shrink-0 sidebar-transition"
+        style={{
+          width: '48px',
+          background: 'var(--color-surface)',
+          borderColor: 'var(--color-border)',
+        }}
+      >
+        {/* Toggle button */}
+        <div className="flex items-center justify-center py-3 w-full flex-shrink-0 border-b" style={{ borderColor: 'var(--color-border)' }}>
+          <button
+            onClick={toggle}
+            className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Expand sidebar"
+          >
+            <PanelLeft size={16} />
+          </button>
+        </div>
+
+        {/* Collapsed project icons */}
+        <div className="flex-1 overflow-y-auto w-full py-1">
+          {projects.map((project) => {
+            const isActive = selectedProjectId === project.id
+            const hasRunning = runningProjects.includes(project)
+            const initial = project.name.charAt(0).toUpperCase()
+
+            return (
+              <Tooltip key={project.id} content={project.name}>
+                <button
+                  onClick={() => handleToggleProject(project.id)}
+                  className="relative flex items-center justify-center w-full py-2 transition-colors"
+                  style={{
+                    background: isActive ? 'var(--color-surface-2)' : 'transparent',
+                    color: isActive ? 'var(--color-text)' : 'var(--color-text-muted)',
+                  }}
+                >
+                  <span className="text-xs font-semibold">{initial}</span>
+                  {hasRunning && (
+                    <span
+                      className="absolute top-1.5 right-2.5 h-1.5 w-1.5 rounded-full"
+                      style={{ background: '#4ade80' }}
+                    />
+                  )}
+                </button>
+              </Tooltip>
+            )
+          })}
+        </div>
+
+        {/* Bottom actions */}
+        <div className="flex flex-col items-center gap-1 py-2 border-t flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
+          <Tooltip content="New project">
+            <button
+              onClick={() => setProjectDialog({ mode: 'create' })}
+              className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              <Plus size={16} />
+            </button>
+          </Tooltip>
+        </div>
+
+        {/* Dialogs (shared) */}
+        {renderDialogs()}
+      </aside>
+    )
+  }
+
+  // ── Expanded sidebar ───────────────────────────────────────────────────
+
+  function renderDialogs() {
+    return (
+      <>
+        {projectDialog && (
+          <ProjectDialog
+            mode={projectDialog.mode}
+            project={projectDialog.mode === 'edit' ? projectDialog.project : undefined}
+            onClose={() => setProjectDialog(null)}
+          />
+        )}
+
+        {locationDialog && (
+          <LocationDialog
+            mode={locationDialog.mode}
+            projectId={locationDialog.projectId}
+            location={locationDialog.mode === 'edit' ? locationDialog.location : undefined}
+            onClose={() => {
+              setLocationDialog(null)
+              if (locationDialog.projectId) fetchLocations(locationDialog.projectId)
+            }}
+          />
+        )}
+
+        {confirmDelete && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center"
+            style={{ background: 'rgba(0,0,0,0.7)' }}
+            onClick={() => setConfirmDelete(null)}
+          >
+            <div
+              className="w-80 rounded-lg p-5 shadow-2xl"
+              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <p className="text-sm mb-1" style={{ color: 'var(--color-text)' }}>
+                Delete {confirmDelete.type}?
+              </p>
+              <p className="text-xs mb-4" style={{ color: 'var(--color-text-muted)' }}>
+                <span className="font-mono" style={{ color: 'var(--color-text)' }}>{confirmDelete.name}</span>
+                {confirmDelete.type === 'project' && ' and all its threads will be permanently deleted.'}
+                {confirmDelete.type === 'thread' && ' and all its messages will be permanently deleted.'}
+              </p>
+              <div className="flex justify-end gap-2">
+                <button
+                  onClick={() => setConfirmDelete(null)}
+                  className="rounded px-3 py-1.5 text-xs"
+                  style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() =>
+                    confirmDelete.type === 'project'
+                      ? handleDeleteProject(confirmDelete.id)
+                      : handleDeleteThread(confirmDelete.id, confirmDelete.projectId)
+                  }
+                  className="rounded px-3 py-1.5 text-xs font-medium"
+                  style={{ background: '#dc2626', color: '#fff' }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {youtrackDialogOpen && (
+          <YouTrackSettingsDialog onClose={() => setYoutrackDialogOpen(false)} />
+        )}
+
+        {slashCommandsDialogOpen && (
+          <SlashCommandsDialog
+            projectId={selectedProjectId ?? null}
+            projectName={projects.find((p) => p.id === selectedProjectId)?.name}
+            onClose={() => setSlashCommandsDialogOpen(false)}
+          />
+        )}
+
+        {cliHealthDialogOpen && (
+          <CliHealthDialog onClose={() => setCliHealthDialogOpen(false)} />
+        )}
+      </>
+    )
+  }
+
   return (
     <aside
-      className="flex w-60 flex-shrink-0 flex-col border-r overflow-hidden"
-      style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
+      className="flex flex-col border-r overflow-hidden flex-shrink-0 sidebar-transition"
+      style={{
+        width: '240px',
+        background: 'var(--color-surface)',
+        borderColor: 'var(--color-border)',
+      }}
     >
       {/* Header */}
       <div
-        className="flex items-center justify-between px-4 py-3 border-b flex-shrink-0"
+        className="flex items-center justify-between px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: 'var(--color-border)' }}
       >
-        <span className="font-semibold text-sm" style={{ color: 'var(--color-claude)' }}>
-          PolyCode
-        </span>
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggle}
+            className="flex items-center justify-center rounded p-1 opacity-60 hover:opacity-100 transition-opacity"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Collapse sidebar"
+          >
+            <PanelLeft size={16} />
+          </button>
+          <span className="font-semibold text-sm" style={{ color: 'var(--color-claude)' }}>
+            PolyCode
+          </span>
+        </div>
+        <div className="flex items-center gap-0.5">
           <button
             onClick={() => setCliHealthDialogOpen(true)}
             className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
             title="CLI health &amp; updates"
             style={{ color: 'var(--color-text-muted)' }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
-            </svg>
+            <Activity size={14} />
           </button>
           <button
             onClick={() => setSlashCommandsDialogOpen(true)}
@@ -556,9 +718,7 @@ export default function Sidebar() {
             title="Slash commands"
             style={{ color: 'var(--color-text-muted)' }}
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="16" y1="4" x2="8" y2="20" />
-            </svg>
+            <Slash size={14} />
           </button>
           <button
             onClick={() => setYoutrackDialogOpen(true)}
@@ -573,17 +733,17 @@ export default function Sidebar() {
           </button>
           <button
             onClick={() => setProjectDialog({ mode: 'create' })}
-            className="text-xs px-2 py-1 rounded opacity-70 hover:opacity-100 transition-opacity"
-            style={{ background: 'var(--color-surface-2)', color: 'var(--color-text)' }}
+            className="flex items-center justify-center rounded p-1.5 opacity-60 hover:opacity-100 transition-opacity"
+            style={{ color: 'var(--color-text-muted)' }}
             title="New project"
           >
-            + Project
+            <Plus size={14} />
           </button>
         </div>
       </div>
 
       {/* Search bar */}
-      <div className="px-3 py-2 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
+      <div className="px-3 py-1.5 border-b flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
         <input
           type="text"
           value={searchQuery}
@@ -619,10 +779,10 @@ export default function Sidebar() {
             )
           }
           return results.map(({ thread, projectName, projectId }) => (
-            <div key={thread.id} className="group relative">
+            <div key={thread.id} className="group/thread relative">
               <button
                 onClick={() => selectThread(thread.id)}
-                className="flex w-full items-center pl-4 pr-2 py-1.5 text-left text-xs transition-colors min-w-0"
+                className="flex w-full items-center pl-4 pr-2 py-1 text-left text-xs transition-colors min-w-0"
                 style={{
                   background: selectedThreadId === thread.id ? 'var(--color-border)' : 'transparent',
                   color: 'var(--color-text-muted)',
@@ -638,9 +798,11 @@ export default function Sidebar() {
                       : 'var(--color-text-muted)'
                   }}
                 />
-                <span className="flex flex-col min-w-0">
-                  <span className="truncate">{thread.name}</span>
-                  <span className="text-[10px] leading-tight opacity-50">{projectName}</span>
+                <span className="truncate flex-1 min-w-0">{thread.name}</span>
+                <span
+                  className="ml-1 flex-shrink-0 text-[10px] opacity-0 group-hover/thread:opacity-50 transition-opacity"
+                >
+                  {projectName}
                 </span>
               </button>
             </div>
@@ -660,29 +822,29 @@ export default function Sidebar() {
               <div className="group relative">
                 <button
                   onClick={() => handleToggleProject(project.id)}
-                  className="flex w-full items-center px-4 py-2 text-left text-sm transition-colors min-w-0"
+                  className="flex w-full items-center px-3 py-1.5 text-left text-sm transition-colors min-w-0"
                   style={{
                     background: isExpanded ? 'var(--color-surface-2)' : 'transparent',
                     color: 'var(--color-text)'
                   }}
                 >
-                  <span className="mr-1.5 text-[10px] flex-shrink-0 opacity-50" style={{ width: '10px' }}>
-                    {isExpanded ? '▾' : '▸'}
-                  </span>
+                  {isExpanded
+                    ? <ChevronDown size={12} className="mr-1.5 flex-shrink-0 opacity-50" />
+                    : <ChevronRight size={12} className="mr-1.5 flex-shrink-0 opacity-50" />
+                  }
                   <span className="truncate">{project.name}</span>
                 </button>
-                {/* Project actions — absolutely positioned, overlay on hover */}
                 <div
                   className="absolute right-1 top-1/2 -translate-y-1/2 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity"
                   style={{ background: isExpanded ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
                 >
                   <button
                     onClick={() => setProjectDialog({ mode: 'edit', project })}
-                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    className="rounded p-1 hover:bg-white/10 transition-colors"
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Edit project"
                   >
-                    ✎
+                    <Pencil size={11} />
                   </button>
                   <button
                     onClick={() => handleArchiveProject(project.id)}
@@ -690,19 +852,15 @@ export default function Sidebar() {
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Archive project"
                   >
-                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="1" y="7" width="14" height="8" rx="1" />
-                      <path d="M1 7l2-4h10l2 4" />
-                      <path d="M8 9v6M5.5 12.5L8 15l2.5-2.5" />
-                    </svg>
+                    <Archive size={11} />
                   </button>
                   <button
                     onClick={() => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id })}
-                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    className="rounded p-1 hover:bg-white/10 transition-colors"
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Delete project"
                   >
-                    ✕
+                    <X size={11} />
                   </button>
                 </div>
               </div>
@@ -799,7 +957,11 @@ export default function Sidebar() {
                       className="flex w-full items-center pl-6 pr-4 py-1 text-left text-[10px] opacity-40 hover:opacity-70 transition-opacity"
                       style={{ color: 'var(--color-text-muted)' }}
                     >
-                      {showArchived ? `▾ Hide archived` : `▸ Archived (${projectArchivedCount})`}
+                      {showArchived ? (
+                        <><ChevronDown size={9} className="mr-1" /> Hide archived</>
+                      ) : (
+                        <><ChevronRight size={9} className="mr-1" /> Archived ({projectArchivedCount})</>
+                      )}
                     </button>
                   )}
 
@@ -822,7 +984,7 @@ export default function Sidebar() {
           <p className="px-4 py-6 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>
             No projects yet.
             <br />
-            Click &quot;+ Project&quot; to add one.
+            Click <Plus size={10} className="inline" /> to add one.
           </p>
         )}
 
@@ -831,22 +993,23 @@ export default function Sidebar() {
           <div className="border-t mt-1" style={{ borderColor: 'var(--color-border)' }}>
             <button
               onClick={() => setArchivedSectionExpanded((v) => !v)}
-              className="flex w-full items-center px-4 py-2 text-left text-xs transition-opacity opacity-40 hover:opacity-70"
+              className="flex w-full items-center px-3 py-1.5 text-left text-xs transition-opacity opacity-40 hover:opacity-70"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              <span className="mr-1.5 text-[10px] flex-shrink-0" style={{ width: '10px' }}>
-                {archivedSectionExpanded ? '▾' : '▸'}
-              </span>
+              {archivedSectionExpanded
+                ? <ChevronDown size={10} className="mr-1.5 flex-shrink-0" />
+                : <ChevronRight size={10} className="mr-1.5 flex-shrink-0" />
+              }
               Archived ({archivedProjects.length})
             </button>
 
             {archivedSectionExpanded && archivedProjects.map((project) => (
               <div key={project.id} className="group relative">
                 <div
-                  className="flex w-full items-center px-4 py-2 text-sm min-w-0 opacity-40"
+                  className="flex w-full items-center px-3 py-1.5 text-sm min-w-0 opacity-40"
                   style={{ color: 'var(--color-text)' }}
                 >
-                  <span className="mr-1.5 flex-shrink-0 opacity-50" style={{ width: '10px' }} />
+                  <span className="mr-1.5 flex-shrink-0 opacity-50" style={{ width: '12px' }} />
                   <span className="truncate">{project.name}</span>
                 </div>
                 <div
@@ -859,19 +1022,15 @@ export default function Sidebar() {
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Unarchive project"
                   >
-                    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="1" y="7" width="14" height="8" rx="1" />
-                      <path d="M1 7l2-4h10l2 4" />
-                      <path d="M8 11V4M5.5 6.5L8 4l2.5 2.5" />
-                    </svg>
+                    <ArchiveRestore size={11} />
                   </button>
                   <button
                     onClick={() => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id })}
-                    className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
+                    className="rounded p-1 hover:bg-white/10 transition-colors"
                     style={{ color: 'var(--color-text-muted)' }}
                     title="Delete project"
                   >
-                    ✕
+                    <X size={11} />
                   </button>
                 </div>
               </div>
@@ -880,91 +1039,7 @@ export default function Sidebar() {
         )}
       </div>
 
-      {/* Project create/edit dialog */}
-      {projectDialog && (
-        <ProjectDialog
-          mode={projectDialog.mode}
-          project={projectDialog.mode === 'edit' ? projectDialog.project : undefined}
-          onClose={() => setProjectDialog(null)}
-        />
-      )}
-
-      {/* Location create/edit dialog */}
-      {locationDialog && (
-        <LocationDialog
-          mode={locationDialog.mode}
-          projectId={locationDialog.projectId}
-          location={locationDialog.mode === 'edit' ? locationDialog.location : undefined}
-          onClose={() => {
-            setLocationDialog(null)
-            // Refresh locations after create/edit
-            if (locationDialog.projectId) fetchLocations(locationDialog.projectId)
-          }}
-        />
-      )}
-
-      {/* Delete confirmation */}
-      {confirmDelete && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center"
-          style={{ background: 'rgba(0,0,0,0.7)' }}
-          onClick={() => setConfirmDelete(null)}
-        >
-          <div
-            className="w-80 rounded-lg p-5 shadow-2xl"
-            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <p className="text-sm mb-1" style={{ color: 'var(--color-text)' }}>
-              Delete {confirmDelete.type}?
-            </p>
-            <p className="text-xs mb-4" style={{ color: 'var(--color-text-muted)' }}>
-              <span className="font-mono" style={{ color: 'var(--color-text)' }}>{confirmDelete.name}</span>
-              {confirmDelete.type === 'project' && ' and all its threads will be permanently deleted.'}
-              {confirmDelete.type === 'thread' && ' and all its messages will be permanently deleted.'}
-            </p>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setConfirmDelete(null)}
-                className="rounded px-3 py-1.5 text-xs"
-                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() =>
-                  confirmDelete.type === 'project'
-                    ? handleDeleteProject(confirmDelete.id)
-                    : handleDeleteThread(confirmDelete.id, confirmDelete.projectId)
-                }
-                className="rounded px-3 py-1.5 text-xs font-medium"
-                style={{ background: '#dc2626', color: '#fff' }}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* YouTrack settings dialog */}
-      {youtrackDialogOpen && (
-        <YouTrackSettingsDialog onClose={() => setYoutrackDialogOpen(false)} />
-      )}
-
-      {/* Slash commands dialog */}
-      {slashCommandsDialogOpen && (
-        <SlashCommandsDialog
-          projectId={selectedProjectId ?? null}
-          projectName={projects.find((p) => p.id === selectedProjectId)?.name}
-          onClose={() => setSlashCommandsDialogOpen(false)}
-        />
-      )}
-
-      {/* CLI health dialog */}
-      {cliHealthDialogOpen && (
-        <CliHealthDialog onClose={() => setCliHealthDialogOpen(false)} />
-      )}
+      {renderDialogs()}
     </aside>
   )
 }
