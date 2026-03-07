@@ -15,9 +15,6 @@ import {
   Thread,
   RepoLocation,
   SlashCommand,
-  PROVIDERS,
-  getModelsForProvider,
-  getDefaultModelForProvider,
   Provider,
 } from '../types/ipc'
 import FileMentionPopup from './FileMentionPopup'
@@ -28,167 +25,12 @@ import { useYouTrackStore } from '../stores/youtrack'
 import { useSlashCommandStore } from '../stores/slashCommands'
 import { useCliHealthStore } from '../stores/cliHealth'
 import QueuedMessageBanner from './QueuedMessageBanner'
+import ComposerToolbar from './input-bar/ComposerToolbar'
+import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PlanBanner, QuestionBanner } from './input-bar/Banners'
+import { PaperclipIcon, QueueIcon, SendIcon, StopIcon } from './input-bar/icons'
 
 interface Props {
   threadId: string
-}
-
-function SendIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M22 2L11 13" />
-      <path d="M22 2L15 22L11 13L2 9L22 2Z" />
-    </svg>
-  )
-}
-
-function StopIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="currentColor"
-    >
-      <rect x="4" y="4" width="16" height="16" rx="2" />
-    </svg>
-  )
-}
-
-function PlanIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M9 11L12 14L22 4" />
-      <path d="M21 12V19C21 20.1 20.1 21 19 21H5C3.9 21 3 20.1 3 19V5C3 3.9 3.9 3 5 3H16" />
-    </svg>
-  )
-}
-
-function QuestionIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="14"
-      height="14"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <circle cx="12" cy="12" r="10" />
-      <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
-      <line x1="12" y1="17" x2="12.01" y2="17" />
-    </svg>
-  )
-}
-
-function PaperclipIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="18"
-      height="18"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-    </svg>
-  )
-}
-
-function QueueIcon({ className }: { className?: string }) {
-  return (
-    <svg
-      className={className}
-      width="16"
-      height="16"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <line x1="8" y1="6" x2="21" y2="6" />
-      <line x1="8" y1="12" x2="21" y2="12" />
-      <line x1="8" y1="18" x2="21" y2="18" />
-      <line x1="3" y1="6" x2="3.01" y2="6" />
-      <line x1="3" y1="12" x2="3.01" y2="12" />
-      <line x1="3" y1="18" x2="3.01" y2="18" />
-    </svg>
-  )
-}
-
-function CliHealthIndicator({ threadId }: { threadId: string }) {
-  const health = useCliHealthStore((s) => s.healthByThread[threadId])
-
-  if (!health || health.status === 'idle') return null
-
-  if (health.status === 'checking') {
-    return (
-      <span
-        title="Checking CLI availability…"
-        style={{ color: 'var(--color-text-muted)', lineHeight: 1 }}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
-          <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" />
-        </svg>
-      </span>
-    )
-  }
-
-  if (health.status === 'ok') {
-    return (
-      <span
-        title={`CLI available${health.result?.currentVersion ? ` (v${health.result.currentVersion})` : ''}`}
-        style={{ color: '#4ade80', lineHeight: 1 }}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="2,8 6,12 14,4" />
-        </svg>
-      </span>
-    )
-  }
-
-  // unavailable or error
-  const msg = health.status === 'unavailable'
-    ? 'CLI not found — install it or update the path'
-    : `CLI check failed: ${health.error ?? 'unknown error'}`
-  return (
-    <span title={msg} style={{ color: '#f87171', lineHeight: 1 }}>
-      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
-        <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z" />
-      </svg>
-    </span>
-  )
 }
 
 const EMPTY_THREADS: Thread[] = []
@@ -212,12 +54,6 @@ interface SlashState {
 
 /** Matches YouTrack issue ID patterns like JS-, JS-123, MYPROJ-42 (all uppercase project code) */
 const YOUTRACK_QUERY_REGEX = /^[A-Z][A-Z0-9]*(-[0-9]*)?$/
-
-function formatElapsed(seconds: number): string {
-  const m = Math.floor(seconds / 60)
-  const s = seconds % 60
-  return `${m}:${String(s).padStart(2, '0')}`
-}
 
 export default function InputBar({ threadId }: Props) {
   const [isFocused, setIsFocused] = useState(false)
@@ -792,249 +628,40 @@ export default function InputBar({ threadId }: Props) {
         }}
       />
 
-      {/* Missing location path banner */}
       {locationPathMissing && location && (
-        <div
-          className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
-          style={{
-            background: 'rgba(248, 113, 113, 0.1)',
-            border: '1px solid rgba(248, 113, 113, 0.3)',
-            color: '#f87171',
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <span>
-            Directory not found: <span className="font-mono">{location.path}</span>
-            {' '}— update the location or restore the directory.
-          </span>
-        </div>
+        <MissingLocationBanner location={location} />
       )}
 
-      {/* CLI unavailable banner */}
       {cliUnavailable && (
-        <div
-          className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
-          style={{
-            background: 'rgba(248, 113, 113, 0.1)',
-            border: '1px solid rgba(248, 113, 113, 0.3)',
-            color: '#f87171',
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          <span>
-            {cliHealth?.status === 'error'
-              ? `CLI health check failed: ${cliHealth.error ?? 'unknown error'}`
-              : `CLI not found for this provider — install it or switch to a different provider.`}
-          </span>
-        </div>
+        <CliUnavailableBanner status={cliHealth?.status === 'error' ? 'error' : 'unavailable'} error={cliHealth?.error ?? undefined} />
       )}
 
-      {/* Error banner */}
       {status === 'error' && (
-        <div
-          className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
-          style={{
-            background: 'rgba(248, 113, 113, 0.1)',
-            border: '1px solid rgba(248, 113, 113, 0.3)',
-            color: '#f87171',
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="12" cy="12" r="10" />
-            <line x1="12" y1="8" x2="12" y2="12" />
-            <line x1="12" y1="16" x2="12.01" y2="16" />
-          </svg>
-          Session error. Try sending a new message to restart.
-        </div>
+        <ErrorBanner />
       )}
 
-      {/* Plan approval banner */}
       {isPlanPending && (
-        <div
-          className="mb-3 flex items-center justify-between rounded-xl px-4 py-3"
-          style={{
-            background: 'linear-gradient(135deg, rgba(232, 123, 95, 0.15) 0%, rgba(232, 123, 95, 0.08) 100%)',
-            border: '1px solid rgba(232, 123, 95, 0.3)',
+        <PlanBanner
+          threadId={threadId}
+          onReject={rejectPlan}
+          onApprove={approvePlan}
+          onNewContext={(id) => {
+            window.api.invoke('threads:executePlanInNewContext', id)
           }}
-        >
-          <div className="flex items-center gap-3">
-            <div
-              className="flex h-8 w-8 items-center justify-center rounded-lg"
-              style={{ background: 'rgba(232, 123, 95, 0.2)' }}
-            >
-              <PlanIcon className="text-[var(--color-claude)]" />
-            </div>
-            <div>
-              <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-                Plan ready for review
-              </div>
-              <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                Review the plan above, then approve or reject
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => rejectPlan(threadId)}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:opacity-80"
-              style={{
-                background: 'transparent',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text-muted)',
-              }}
-            >
-              Reject
-            </button>
-            <button
-              onClick={() => {
-                window.api.invoke('threads:executePlanInNewContext', threadId)
-              }}
-              className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:scale-105"
-              style={{
-                background: 'transparent',
-                border: '1px solid var(--color-claude)',
-                color: 'var(--color-claude)',
-              }}
-              title="Execute in a fresh Claude session, keeping this planning session as a tab"
-            >
-              New Context
-            </button>
-            <button
-              onClick={() => approvePlan(threadId)}
-              className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
-              style={{
-                background: 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)',
-                color: '#fff',
-                boxShadow: '0 2px 8px rgba(232, 123, 95, 0.3)',
-              }}
-            >
-              Approve & Execute
-            </button>
-          </div>
-        </div>
+        />
       )}
 
-      {/* Question banner */}
       {isQuestionPending && questions.length > 0 && (
-        <div
-          className="mb-3 rounded-xl px-4 py-3"
-          style={{
-            background: 'linear-gradient(135deg, rgba(99, 179, 237, 0.15) 0%, rgba(99, 179, 237, 0.08) 100%)',
-            border: '1px solid rgba(99, 179, 237, 0.3)',
-          }}
-        >
-          <div className="mb-3 flex items-center gap-3">
-            <div
-              className="flex h-8 w-8 items-center justify-center rounded-lg"
-              style={{ background: 'rgba(99, 179, 237, 0.2)' }}
-            >
-              <QuestionIcon className="text-blue-400" />
-            </div>
-            <div>
-              <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-                Claude needs your input
-              </div>
-              <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                Select an option or add a comment — all fields are optional
-              </div>
-            </div>
-          </div>
-
-          {questions.map((q, qIndex) => (
-            <div key={qIndex} className="mt-3">
-              <div className="mb-2 flex items-center gap-2">
-                <span
-                  className="rounded px-1.5 py-0.5 text-xs font-medium"
-                  style={{ background: 'rgba(99, 179, 237, 0.2)', color: '#63b3ed' }}
-                >
-                  {q.header}
-                </span>
-                <span className="text-sm" style={{ color: 'var(--color-text)' }}>
-                  {q.question}
-                </span>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {q.options.map((opt, optIndex) => {
-                  const isSelected = selectedAnswers[q.question] === opt.label
-                  return (
-                    <button
-                      key={optIndex}
-                      onClick={() =>
-                        setSelectedAnswers((prev) => ({
-                          ...prev,
-                          [q.question]: prev[q.question] === opt.label ? '' : opt.label,
-                        }))
-                      }
-                      className="rounded-lg px-3 py-2 text-left transition-all"
-                      style={{
-                        background: isSelected ? 'rgba(99, 179, 237, 0.2)' : 'var(--color-surface)',
-                        border: `1px solid ${isSelected ? 'rgba(99, 179, 237, 0.5)' : 'var(--color-border)'}`,
-                      }}
-                    >
-                      <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-                        {opt.label}
-                      </div>
-                      <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                        {opt.description}
-                      </div>
-                    </button>
-                  )
-                })}
-              </div>
-              <input
-                type="text"
-                value={questionComments[q.question] ?? ''}
-                onChange={(e) =>
-                  setQuestionComments((prev) => ({ ...prev, [q.question]: e.target.value }))
-                }
-                placeholder="Add a comment for this question... (optional)"
-                className="mt-2 w-full rounded-lg px-3 py-1.5 text-xs outline-none"
-                style={{
-                  background: 'var(--color-surface)',
-                  border: '1px solid var(--color-border)',
-                  color: 'var(--color-text)',
-                }}
-              />
-            </div>
-          ))}
-
-          <div className="mt-3">
-            <textarea
-              value={generalComment}
-              onChange={(e) => setGeneralComment(e.target.value)}
-              placeholder="General comments or clarifications... (optional)"
-              rows={2}
-              className="w-full resize-none rounded-lg px-3 py-2 text-xs outline-none"
-              style={{
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-                color: 'var(--color-text)',
-              }}
-            />
-          </div>
-
-          <div className="mt-3 flex justify-end">
-            <button
-              onClick={() => answerQuestion(threadId, selectedAnswers, questionComments, generalComment)}
-              className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
-              style={{
-                background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
-                color: '#fff',
-                boxShadow: '0 2px 8px rgba(99, 179, 237, 0.3)',
-              }}
-            >
-              Submit Answer{questions.length > 1 ? 's' : ''}
-            </button>
-          </div>
-        </div>
+        <QuestionBanner
+          questions={questions}
+          selectedAnswers={selectedAnswers}
+          questionComments={questionComments}
+          generalComment={generalComment}
+          setSelectedAnswers={setSelectedAnswers}
+          setQuestionComments={setQuestionComments}
+          setGeneralComment={setGeneralComment}
+          onSubmit={() => answerQuestion(threadId, selectedAnswers, questionComments, generalComment)}
+        />
       )}
 
       {/* Queued message banner */}
@@ -1063,155 +690,20 @@ export default function InputBar({ threadId }: Props) {
           </div>
         )}
 
-        {/* Top row: Plan toggle + provider/model/WSL selectors */}
-        <div
-          className="flex items-center gap-2 px-3 pt-2"
-          style={{ borderBottom: '1px solid var(--color-border)' }}
-        >
-          <button
-            onClick={() => setPlanMode(threadId, !planMode)}
-            disabled={isProcessing}
-            title={planMode ? 'Plan mode: ON — Claude will create a plan before executing' : 'Plan mode: OFF — Claude will execute directly'}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
-            style={{
-              background: planMode ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
-              color: planMode ? 'var(--color-claude)' : 'var(--color-text-muted)',
-              border: `1px solid ${planMode ? 'rgba(232, 123, 95, 0.3)' : 'transparent'}`,
-            }}
-          >
-            <PlanIcon />
-            Plan
-          </button>
-          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>
-            |
-          </span>
-          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
-            Shift+Enter for newline
-          </span>
-
-          {/* Spacer to push selectors right */}
-          <span className="flex-1" />
-
-          {/* WSL toggle for local locations */}
-          {isLocalLocation && currentThread && availableDistros.length > 0 && (
-            <span className="flex items-center gap-1 flex-shrink-0 mb-2">
-              <label
-                className="flex items-center gap-1 text-xs cursor-pointer select-none"
-                style={{
-                  color: currentThread.use_wsl ? '#fbbf24' : 'var(--color-text-muted)',
-                  opacity: currentThread.has_messages ? 0.4 : 1,
-                }}
-                title={currentThread.has_messages ? 'WSL setting is locked after first message' : 'Run CLI via WSL'}
-              >
-                <input
-                  type="checkbox"
-                  checked={currentThread.use_wsl}
-                  disabled={currentThread.has_messages}
-                  onChange={(e) => {
-                    const checked = e.target.checked
-                    const distro = checked ? (currentThread.wsl_distro ?? availableDistros[0] ?? null) : null
-                    setWsl(threadId, checked, distro)
-                  }}
-                  className="accent-yellow-400"
-                  style={{ width: 12, height: 12 }}
-                />
-                WSL
-              </label>
-              {currentThread.use_wsl && (
-                <select
-                  value={currentThread.wsl_distro ?? ''}
-                  onChange={(e) => setWsl(threadId, true, e.target.value || null)}
-                  disabled={currentThread.has_messages}
-                  className="text-xs bg-transparent border rounded px-1 py-0.5 outline-none cursor-pointer"
-                  style={{
-                    color: '#fbbf24',
-                    borderColor: 'rgba(251, 191, 36, 0.3)',
-                    background: 'var(--color-surface)',
-                    opacity: currentThread.has_messages ? 0.4 : 1,
-                  }}
-                >
-                  {availableDistros.map((d) => (
-                    <option key={d} value={d} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-                      {d}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </span>
-          )}
-
-          {/* Provider + health indicator */}
-          <span className="flex items-center gap-1 flex-shrink-0 mb-2">
-            <CliHealthIndicator threadId={threadId} />
-            <select
-              value={currentThread?.provider ?? 'claude-code'}
-              onChange={(e) => {
-                const provider = e.target.value as Provider
-                const defaultModel = getDefaultModelForProvider(provider)
-                if (provider === 'codex' && currentThread && isLocalLocation && !currentThread.use_wsl) {
-                  const distro = currentThread.wsl_distro ?? availableDistros[0] ?? null
-                  if (distro) setWsl(threadId, true, distro)
-                }
-                setProviderAndModel(threadId, provider, defaultModel)
-              }}
-              disabled={isProcessing}
-              className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
-              style={{
-                color: 'var(--color-text-muted)',
-                borderColor: 'var(--color-border)',
-                background: 'var(--color-surface)',
-                opacity: isProcessing ? 0.4 : 1,
-              }}
-              title="Select provider"
-            >
-              {PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-                  {p.label}
-                </option>
-              ))}
-            </select>
-          </span>
-          {showCodexWslWarning && (
-            <span
-              className="text-xs flex-shrink-0 mb-2"
-              style={{ color: '#facc15' }}
-              title="Codex is significantly more reliable via WSL on Windows."
-            >
-              Codex + WSL recommended
-            </span>
-          )}
-          <select
-            value={currentThread?.model ?? getDefaultModelForProvider((currentThread?.provider ?? 'claude-code') as Provider)}
-            onChange={(e) => setModel(threadId, e.target.value)}
-            disabled={isProcessing}
-            className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
-            style={{
-              color: 'var(--color-text-muted)',
-              borderColor: 'var(--color-border)',
-              background: 'var(--color-surface)',
-              opacity: isProcessing ? 0.4 : 1,
-            }}
-            title="Select model"
-          >
-            {getModelsForProvider((currentThread?.provider ?? 'claude-code') as Provider).map((m) => (
-              <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-
-          {isProcessing && (
-            <>
-              <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
-              <span
-                className="mb-2 font-mono text-xs tabular-nums"
-                style={{ color: 'var(--color-claude)' }}
-              >
-                {formatElapsed(elapsedSeconds)}
-              </span>
-            </>
-          )}
-        </div>
+        <ComposerToolbar
+          threadId={threadId}
+          planMode={planMode}
+          setPlanMode={setPlanMode}
+          isProcessing={isProcessing}
+          isLocalLocation={isLocalLocation}
+          currentThread={currentThread}
+          availableDistros={availableDistros}
+          setWsl={setWsl}
+          setProviderAndModel={setProviderAndModel}
+          setModel={setModel}
+          showCodexWslWarning={showCodexWslWarning}
+          elapsedSeconds={elapsedSeconds}
+        />
 
         {/* Textarea row */}
         <div className="flex items-end gap-2 px-3 py-3">

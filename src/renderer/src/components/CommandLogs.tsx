@@ -1,4 +1,8 @@
-import { Fragment, useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { Fragment, useState, useEffect, useRef, useCallback } from 'react'
+import { Terminal as XTerm } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import { SearchAddon } from '@xterm/addon-search'
+import '@xterm/xterm/css/xterm.css'
 import { useCommandStore, EMPTY_LOGS, parseInstKey } from '../stores/commands'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
@@ -65,41 +69,6 @@ function useResize(defaultWidth = 400) {
   return { width, handleMouseDown }
 }
 
-// Strip ANSI escape codes
-const ANSI_RE = /\x1B\[[0-9;]*[A-Za-z]/g
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, '')
-}
-
-const strippedCache = new WeakMap<CommandLogLine, string>()
-const searchableCache = new WeakMap<CommandLogLine, string>()
-const lineKeyCache = new WeakMap<CommandLogLine, string>()
-let nextLineKey = 1
-
-function getStrippedText(line: CommandLogLine): string {
-  const cached = strippedCache.get(line)
-  if (cached !== undefined) return cached
-  const stripped = stripAnsi(line.text)
-  strippedCache.set(line, stripped)
-  return stripped
-}
-
-function getSearchableText(line: CommandLogLine): string {
-  const cached = searchableCache.get(line)
-  if (cached !== undefined) return cached
-  const searchable = getStrippedText(line).toLowerCase()
-  searchableCache.set(line, searchable)
-  return searchable
-}
-
-function getLineKey(line: CommandLogLine): string {
-  const cached = lineKeyCache.get(line)
-  if (cached !== undefined) return cached
-  const key = `${line.id}:${nextLineKey++}`
-  lineKeyCache.set(line, key)
-  return key
-}
-
 // ─── Status dot ───────────────────────────────────────────────────────────────
 
 function StatusDot({ status }: { status: CommandStatus }) {
@@ -122,6 +91,19 @@ function StatusDot({ status }: { status: CommandStatus }) {
   )
 }
 
+// ─── Write log lines to xterm ─────────────────────────────────────────────────
+
+function writeLogLinesToXterm(term: XTerm, lines: CommandLogLine[]) {
+  for (const line of lines) {
+    if (line.stream === 'stderr') {
+      // Wrap stderr lines in red if they don't already contain ANSI color codes
+      term.write(`\x1b[31m${line.text}\x1b[0m\r\n`)
+    } else {
+      term.write(`${line.text}\r\n`)
+    }
+  }
+}
+
 // ─── Single command log panel ─────────────────────────────────────────────────
 
 function CommandLogPanel({
@@ -139,30 +121,30 @@ function CommandLogPanel({
 }) {
   const { commandId, locationId } = parseInstKey(instanceKey)
 
-  const logs = useCommandStore((s) => s.logsByCommand[instanceKey] ?? EMPTY_LOGS)
   const status = useCommandStore((s) => s.statusMap[instanceKey] ?? 'idle')
   const ports = useCommandStore((s) => s.portsMap[instanceKey] ?? EMPTY_PORTS)
-  const appendLog = useCommandStore((s) => s.appendLog)
   const setPorts = useCommandStore((s) => s.setPorts)
   const fetchPorts = useCommandStore((s) => s.fetchPorts)
   const start = useCommandStore((s) => s.start)
   const stop = useCommandStore((s) => s.stop)
   const restart = useCommandStore((s) => s.restart)
 
-  const [searchQuery, setSearchQuery] = useState('')
   const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
   const searchInputRef = useRef<HTMLInputElement>(null)
 
-  const searchNeedle = searchQuery.trim().toLowerCase()
-  const filteredLogs = useMemo(() => {
-    if (!searchNeedle) return logs
-    return logs.filter((line) => getSearchableText(line).includes(searchNeedle))
-  }, [logs, searchNeedle])
-  const lastLogId = logs.length > 0 ? logs[logs.length - 1].id : 0
+  const containerRef = useRef<HTMLDivElement>(null)
+  const xtermRef = useRef<XTerm | null>(null)
+  const fitAddonRef = useRef<FitAddon | null>(null)
+  const searchAddonRef = useRef<SearchAddon | null>(null)
+  const initializedRef = useRef(false)
 
   const toggleSearch = useCallback(() => {
     setSearchOpen((prev) => {
-      if (prev) setSearchQuery('')
+      if (prev) {
+        setSearchQuery('')
+        searchAddonRef.current?.clearDecorations()
+      }
       return !prev
     })
   }, [])
@@ -172,6 +154,16 @@ function CommandLogPanel({
       searchInputRef.current?.focus()
     }
   }, [searchOpen])
+
+  // Drive search addon from query
+  useEffect(() => {
+    if (!searchAddonRef.current) return
+    if (searchQuery.trim()) {
+      searchAddonRef.current.findNext(searchQuery, { incremental: true })
+    } else {
+      searchAddonRef.current.clearDecorations()
+    }
+  }, [searchQuery])
 
   const command = useCommandStore((s) => {
     for (const cmds of Object.values(s.byProject)) {
@@ -196,56 +188,109 @@ function CommandLogPanel({
   const currentLocationId = currentThread?.location_id ?? null
   const commandProject = command ? (projects.find((p) => p.id === command.project_id) ?? null) : null
   const isDifferentProject = command !== null && currentProjectId !== null && command.project_id !== currentProjectId
-  // Different location: instance is running in a different location than the current thread
   const isDifferentLocation = (
     !isDifferentProject &&
     currentLocationId !== null &&
     locationId !== currentLocationId
   )
   const isContextMismatch = isDifferentProject || isDifferentLocation
-  // Label for the location this instance is running in
   const commandLocationLabel = command
     ? ((locationsByProject[command.project_id] ?? []).find((l) => l.id === locationId)?.label ?? null)
     : null
 
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const [userScrolled, setUserScrolled] = useState(false)
-  const userScrolledRef = useRef(false)
-  const isScrolledToBottom = useRef(true)
+  // Mount xterm
+  useEffect(() => {
+    if (!containerRef.current) return
 
-  const scrollToBottom = useCallback(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'instant' })
-    if (userScrolledRef.current) {
-      userScrolledRef.current = false
-      setUserScrolled(false)
+    const term = new XTerm({
+      cursorBlink: false,
+      cursorStyle: 'bar',
+      cursorInactiveStyle: 'none',
+      disableStdin: true,
+      fontSize: 12,
+      lineHeight: 1.35,
+      scrollback: 5000,
+      fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
+      theme: {
+        background: '#0f0f0f',
+        foreground: '#a1a1aa',
+        cursor: 'transparent',
+        selectionBackground: 'rgba(180, 203, 255, 0.25)',
+        black: '#1e1e1e',
+        red: '#f87171',
+        green: '#4ade80',
+        yellow: '#facc15',
+        blue: '#60a5fa',
+        magenta: '#c084fc',
+        cyan: '#22d3ee',
+        white: '#d4d4d4',
+        brightBlack: '#6b7280',
+        brightRed: '#fca5a5',
+        brightGreen: '#86efac',
+        brightYellow: '#fde68a',
+        brightBlue: '#93c5fd',
+        brightMagenta: '#d8b4fe',
+        brightCyan: '#67e8f9',
+        brightWhite: '#f9fafb',
+      },
+    })
+
+    const fitAddon = new FitAddon()
+    const searchAddon = new SearchAddon()
+    term.loadAddon(fitAddon)
+    term.loadAddon(searchAddon)
+    term.open(containerRef.current)
+
+    xtermRef.current = term
+    fitAddonRef.current = fitAddon
+    searchAddonRef.current = searchAddon
+    initializedRef.current = false
+
+    requestAnimationFrame(() => {
+      try { fitAddon.fit() } catch { /* ignore */ }
+    })
+
+    // Load existing logs from backend
+    window.api.invoke('commands:getLogs', commandId, locationId).then((logs: CommandLogLine[]) => {
+      if (logs.length > 0) {
+        writeLogLinesToXterm(term, logs)
+      }
+      initializedRef.current = true
+    })
+
+    return () => {
+      xtermRef.current = null
+      fitAddonRef.current = null
+      searchAddonRef.current = null
+      initializedRef.current = false
+      term.dispose()
     }
-    isScrolledToBottom.current = true
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [instanceKey])
 
-  const handleScroll = useCallback(() => {
-    const el = containerRef.current
-    if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 150
-    const nextUserScrolled = !atBottom
-    isScrolledToBottom.current = atBottom
-    if (userScrolledRef.current !== nextUserScrolled) {
-      userScrolledRef.current = nextUserScrolled
-      setUserScrolled(nextUserScrolled)
-    }
-  }, [])
-
+  // Subscribe to streaming log events
   useEffect(() => {
     const unsub = window.api.on(`command:log:${instanceKey}`, (payload) => {
-      if (Array.isArray(payload)) {
-        for (const line of payload as CommandLogLine[]) appendLog(instanceKey, line)
-        return
-      }
-      appendLog(instanceKey, payload as CommandLogLine)
+      const term = xtermRef.current
+      if (!term) return
+      const lines: CommandLogLine[] = Array.isArray(payload)
+        ? payload as CommandLogLine[]
+        : [payload as CommandLogLine]
+      writeLogLinesToXterm(term, lines)
     })
     return unsub
-  }, [instanceKey, appendLog])
+  }, [instanceKey])
 
+  // Clear terminal on restart (status transitions to 'running' after 'stopping')
+  const prevStatusRef = useRef(status)
+  useEffect(() => {
+    if (prevStatusRef.current === 'stopping' && status === 'running') {
+      xtermRef.current?.reset()
+    }
+    prevStatusRef.current = status
+  }, [status])
+
+  // Subscribe to port events
   useEffect(() => {
     const unsub = window.api.on(`command:ports:${instanceKey}`, (nextPorts) => {
       setPorts(instanceKey, nextPorts as number[])
@@ -253,17 +298,22 @@ function CommandLogPanel({
     return unsub
   }, [instanceKey, setPorts])
 
+  // Resize observer for xterm fit
   useEffect(() => {
-    if (!userScrolledRef.current && !searchQuery) {
-      scrollToBottom()
+    if (!containerRef.current) return
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const observer = new ResizeObserver(() => {
+      clearTimeout(timer)
+      timer = setTimeout(() => {
+        try { fitAddonRef.current?.fit() } catch { /* ignore */ }
+      }, 30)
+    })
+    observer.observe(containerRef.current)
+    return () => {
+      clearTimeout(timer)
+      observer.disconnect()
     }
-  }, [lastLogId, searchQuery, scrollToBottom])
-
-  useEffect(() => {
-    userScrolledRef.current = false
-    setUserScrolled(false)
-    isScrolledToBottom.current = true
-  }, [instanceKey])
+  }, [])
 
   const [pid, setPid] = useState<number | null>(null)
 
@@ -396,8 +446,17 @@ function CommandLogPanel({
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              onKeyDown={(e) => e.key === 'Escape' && toggleSearch()}
-              placeholder="Filter logs…"
+              onKeyDown={(e) => {
+                if (e.key === 'Escape') toggleSearch()
+                if (e.key === 'Enter') {
+                  if (e.shiftKey) {
+                    searchAddonRef.current?.findPrevious(searchQuery)
+                  } else {
+                    searchAddonRef.current?.findNext(searchQuery)
+                  }
+                }
+              }}
+              placeholder="Search logs…"
               className="flex-1 rounded px-2 py-0.5 text-xs outline-none"
               style={{
                 background: 'rgba(255,255,255,0.07)',
@@ -405,11 +464,26 @@ function CommandLogPanel({
                 color: 'var(--color-text)',
               }}
             />
-            {searchQuery && (
-              <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>
-                {filteredLogs.length}/{logs.length}
-              </span>
-            )}
+            <button
+              onClick={() => searchAddonRef.current?.findPrevious(searchQuery)}
+              className="rounded p-0.5 hover:bg-white/10 transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Previous (Shift+Enter)"
+            >
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                <path fillRule="evenodd" d="M7.646 4.646a.5.5 0 0 1 .708 0l6 6a.5.5 0 0 1-.708.708L8 5.707l-5.646 5.647a.5.5 0 0 1-.708-.708z"/>
+              </svg>
+            </button>
+            <button
+              onClick={() => searchAddonRef.current?.findNext(searchQuery)}
+              className="rounded p-0.5 hover:bg-white/10 transition-colors"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Next (Enter)"
+            >
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+                <path fillRule="evenodd" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708"/>
+              </svg>
+            </button>
           </div>
         )}
         {commandProject && (
@@ -449,54 +523,12 @@ function CommandLogPanel({
         )}
       </div>
 
-      {/* Log body */}
-      <div style={{ position: 'relative', flex: 1, minHeight: 0 }}>
-        <div
-          ref={containerRef}
-          onScroll={handleScroll}
-          className="overflow-y-auto px-3 py-2"
-          style={{
-            position: 'absolute',
-            inset: 0,
-            fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
-            fontSize: '0.72rem',
-            lineHeight: 1.6,
-          }}
-        >
-          {logs.length === 0 ? (
-            <p className="text-xs py-4 text-center" style={{ color: 'var(--color-text-muted)' }}>
-              No output yet.
-            </p>
-          ) : filteredLogs.length === 0 ? (
-            <p className="text-xs py-4 text-center" style={{ color: 'var(--color-text-muted)' }}>
-              No matches.
-            </p>
-          ) : (
-            filteredLogs.map((line) => (
-              <div
-                key={getLineKey(line)}
-                style={{
-                  color: line.stream === 'stderr' ? '#f87171' : 'var(--color-text-muted)',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-all',
-                }}
-              >
-                {getStrippedText(line)}
-              </div>
-            ))
-          )}
-          <div ref={bottomRef} />
-        </div>
-        {userScrolled && (
-          <button
-            onClick={scrollToBottom}
-            className="absolute bottom-3 right-3 rounded-full px-3 py-1 text-xs font-medium shadow-lg transition-opacity hover:opacity-90"
-            style={{ background: 'var(--color-claude)', color: '#fff', zIndex: 10 }}
-          >
-            ↓ Latest
-          </button>
-        )}
-      </div>
+      {/* xterm container */}
+      <div
+        ref={containerRef}
+        className="flex-1"
+        style={{ overflow: 'hidden', padding: '4px 0 4px 4px', background: '#0f0f0f', minHeight: 0 }}
+      />
     </div>
   )
 }
@@ -522,7 +554,7 @@ export default function CommandLogs() {
   const pinInstance = useCommandStore((s) => s.pinInstance)
   const unpinInstance = useCommandStore((s) => s.unpinInstance)
   const selectInstance = useCommandStore((s) => s.selectInstance)
-  const { width, handleMouseDown } = useResize(440)
+  const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
 
   // Show selected panel only if it isn't already pinned
   const showSelected = selectedInstance !== null && !pinnedInstances.includes(selectedInstance)

@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import { PendingAttachment } from '../types/ipc'
 
 interface Props {
@@ -29,10 +30,11 @@ function PdfIcon({ className }: { className?: string }) {
   )
 }
 
-function FileIcon({ className }: { className?: string }) {
+function FileIcon({ className, style }: { className?: string; style?: CSSProperties }) {
   return (
     <svg
       className={className}
+      style={style}
       width="24"
       height="24"
       viewBox="0 0 24 24"

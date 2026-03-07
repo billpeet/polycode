@@ -8,14 +8,16 @@ interface TooltipProps {
 
 export function Tooltip({ content, side = 'right', children }: TooltipProps) {
   const [show, setShow] = useState(false)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout>>()
+  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   function onEnter() {
     timeoutRef.current = setTimeout(() => setShow(true), 400)
   }
 
   function onLeave() {
-    clearTimeout(timeoutRef.current)
+    if (timeoutRef.current !== null) {
+      clearTimeout(timeoutRef.current)
+    }
     setShow(false)
   }
 
