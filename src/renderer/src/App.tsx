@@ -119,7 +119,7 @@ export default function App() {
     return window.api.on('app:update-downloaded', () => {
       useToastStore.getState().add({
         type: 'info',
-        message: 'Update ready — restart Polycode to install.',
+        message: 'Update ready — restart PolyCode to install.',
         duration: 0,
         actionLabel: 'Restart now',
         onAction: async () => {
@@ -153,7 +153,7 @@ export default function App() {
   return (
     <ErrorBoundary fallback={
       <div className="flex h-full w-full items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-        Something went wrong. Please restart Polycode.
+        Something went wrong. Please restart PolyCode.
       </div>
     }>
       <SidebarProvider>

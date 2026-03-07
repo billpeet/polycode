@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# Polycode Electron — Claude Notes
+# PolyCode Electron — Claude Notes
 
 ## Commands
 
@@ -17,7 +17,7 @@ There are no test or lint scripts configured.
 
 ## Architecture
 
-Polycode is an Electron desktop app that provides a UI for orchestrating Claude Code CLI sessions. It has three layers:
+PolyCode is an Electron desktop app that provides a UI for orchestrating Claude Code CLI sessions. It has three layers:
 
 **Main Process** (`src/main/`) — Node.js, runs Claude CLI subprocesses, owns the SQLite DB.
 **Renderer Process** (`src/renderer/src/`) — React + Zustand, all UI.

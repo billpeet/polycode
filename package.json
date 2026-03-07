@@ -55,7 +55,7 @@
   },
   "build": {
     "appId": "com.polycode.app",
-    "productName": "Polycode",
+    "productName": "PolyCode",
     "copyright": "Copyright © 2026 billpeet",
     "npmRebuild": false,
     "asar": true,

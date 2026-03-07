@@ -1,4 +1,4 @@
-# Polycode
+# PolyCode
 
 A desktop app for orchestrating multiple AI coding agent sessions (Claude Code, Codex, OpenCode) across projects, with git integration, markdown rendering, and SQLite persistence.
 
@@ -45,7 +45,7 @@ The production instance stores its database in `%APPDATA%/polycode-electron-prod
 
 ## Architecture
 
-Polycode has three layers:
+PolyCode has three layers:
 
 | Layer | Location | Description |
 |---|---|---|

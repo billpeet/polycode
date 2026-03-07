@@ -151,11 +151,11 @@ app.whenReady().then(() => {
   }
 
   tray = new Tray(join(__dirname, '../../resources/icon.ico'))
-  tray.setToolTip('Polycode')
+  tray.setToolTip('PolyCode')
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show Polycode',
+      label: 'Show PolyCode',
       click: () => {
         win.show()
         win.focus()
