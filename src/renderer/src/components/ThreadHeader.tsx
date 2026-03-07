@@ -3,63 +3,15 @@ import { useRateLimitStore, RateLimitEntry } from '../stores/rateLimits'
 import { useThreadStore } from '../stores/threads'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
-import { useTodoStore, Todo } from '../stores/todos'
-import { useUiStore } from '../stores/ui'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
-import { useCliHealthStore } from '../stores/cliHealth'
-import { PROVIDERS, getModelsForProvider, getDefaultModelForProvider, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, Provider, RepoLocation } from '../types/ipc'
+import { useTerminalStore } from '../stores/terminal'
+import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, RepoLocation } from '../types/ipc'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
 
-const EMPTY_TODOS: Todo[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
-
-function CliHealthIndicator({ threadId }: { threadId: string }) {
-  const health = useCliHealthStore((s) => s.healthByThread[threadId])
-
-  if (!health || health.status === 'idle') return null
-
-  if (health.status === 'checking') {
-    return (
-      <span
-        title="Checking CLI availability…"
-        style={{ color: 'var(--color-text-muted)', lineHeight: 1 }}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
-          <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" />
-        </svg>
-      </span>
-    )
-  }
-
-  if (health.status === 'ok') {
-    return (
-      <span
-        title={`CLI available${health.result?.currentVersion ? ` (v${health.result.currentVersion})` : ''}`}
-        style={{ color: '#4ade80', lineHeight: 1 }}
-      >
-        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="2,8 6,12 14,4" />
-        </svg>
-      </span>
-    )
-  }
-
-  // unavailable or error
-  const msg = health.status === 'unavailable'
-    ? 'CLI not found — install it or update the path'
-    : `CLI check failed: ${health.error ?? 'unknown error'}`
-  return (
-    <span title={msg} style={{ color: '#f87171', lineHeight: 1 }}>
-      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
-        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
-        <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z" />
-      </svg>
-    </span>
-  )
-}
 
 // ─── Rate limit helpers ───────────────────────────────────────────────────────
 
@@ -126,10 +78,6 @@ export default function ThreadHeader({ threadId }: Props) {
   const statusMap = useThreadStore((s) => s.statusMap)
   const pidByThread = useThreadStore((s) => s.pidByThread)
   const rename = useThreadStore((s) => s.rename)
-  const setModel = useThreadStore((s) => s.setModel)
-  const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
-  const setWsl = useThreadStore((s) => s.setWsl)
-
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
 
   const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
@@ -142,14 +90,9 @@ export default function ThreadHeader({ threadId }: Props) {
   const location = thread?.location_id ? projectLocations.find((l) => l.id === thread.location_id) : null
   const locationPath = location?.path ?? null
 
-  const todos = useTodoStore((s) => s.todosByThread[threadId] ?? EMPTY_TODOS)
-  const todoTotal = todos.length
-  const todoCompleted = todos.filter((t) => t.status === 'completed').length
-  const hasInProgress = todos.some((t) => t.status === 'in_progress')
-  const isPanelOpen = useUiStore((s) => s.todoPanelOpenByThread[threadId] ?? false)
-  const togglePanel = useUiStore((s) => s.toggleTodoPanel)
 
   const usage = useThreadStore((s) => s.usageByThread[threadId])
+  const isTerminalOpen = useTerminalStore((s) => s.visibleByThread[threadId] ?? false)
 
   const fetchGit = useGitStore((s) => s.fetch)
   const refreshRemoteGit = useGitStore((s) => s.refreshRemote)
@@ -187,38 +130,6 @@ export default function ThreadHeader({ threadId }: Props) {
   const [importDialogOpen, setImportDialogOpen] = useState(false)
   const [logsOpen, setLogsOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
-
-  // WSL distro list — fetched when location is local
-  const [availableDistros, setAvailableDistros] = useState<string[]>([])
-  const isLocalLocation = location?.connection_type === 'local'
-  const isWslSelected = location?.connection_type === 'wsl' || (isLocalLocation && !!thread?.use_wsl)
-  const showCodexWslWarning = thread?.provider === 'codex' && !isWslSelected
-
-  useEffect(() => {
-    if (!isLocalLocation) return
-    window.api.invoke('wsl:list-distros').then(setAvailableDistros)
-  }, [isLocalLocation])
-
-  // Run a CLI health check whenever the effective provider/connection configuration changes
-  const checkCliHealth = useCliHealthStore((s) => s.check)
-  const clearCliHealth = useCliHealthStore((s) => s.clear)
-  useEffect(() => {
-    if (!thread || !location) {
-      clearCliHealth(threadId)
-      return
-    }
-    const provider = (thread.provider ?? 'claude-code') as Provider
-    const connectionType = location.connection_type
-    // For local+WSL, use wsl connection type so the check runs via WSL
-    const effectiveConnectionType = (connectionType === 'local' && thread.use_wsl) ? 'wsl' : connectionType
-    const wslConfig = connectionType === 'wsl'
-      ? (location.wsl ?? null)
-      : (connectionType === 'local' && thread.use_wsl && thread.wsl_distro)
-        ? { distro: thread.wsl_distro }
-        : null
-    checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [thread?.provider, thread?.use_wsl, thread?.wsl_distro, location?.connection_type, location?.id, threadId])
 
   useEffect(() => {
     if (editing && inputRef.current) {
@@ -400,116 +311,28 @@ export default function ThreadHeader({ threadId }: Props) {
                 <path d="M9 12h3" />
               </svg>
             </button>
-          </span>
-        )}
-
-        {/* WSL toggle for local locations */}
-        {isLocalLocation && thread && availableDistros.length > 0 && (
-          <span className="flex items-center gap-1 flex-shrink-0">
-            <label
-              className="flex items-center gap-1 text-xs cursor-pointer select-none"
-              style={{
-                color: thread.use_wsl ? '#fbbf24' : 'var(--color-text-muted)',
-                opacity: thread.has_messages ? 0.4 : 1,
+            <button
+              onClick={() => {
+                if (thread) useTerminalStore.getState().toggleVisible(thread.id)
               }}
-              title={thread.has_messages ? 'WSL setting is locked after first message' : 'Run CLI via WSL'}
+              className="rounded p-0.5 hover:opacity-70 transition-opacity"
+              style={{
+                color: isTerminalOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                lineHeight: 1,
+              }}
+              title="Toggle integrated terminal (Ctrl+`)"
             >
-              <input
-                type="checkbox"
-                checked={thread.use_wsl}
-                disabled={thread.has_messages}
-                onChange={(e) => {
-                  const checked = e.target.checked
-                  const distro = checked ? (thread.wsl_distro ?? availableDistros[0] ?? null) : null
-                  setWsl(threadId, checked, distro)
-                }}
-                className="accent-yellow-400"
-                style={{ width: 12, height: 12 }}
-              />
-              WSL
-            </label>
-            {thread.use_wsl && (
-              <select
-                value={thread.wsl_distro ?? ''}
-                onChange={(e) => setWsl(threadId, true, e.target.value || null)}
-                disabled={thread.has_messages}
-                className="text-xs bg-transparent border rounded px-1 py-0.5 outline-none cursor-pointer"
-                style={{
-                  color: '#fbbf24',
-                  borderColor: 'rgba(251, 191, 36, 0.3)',
-                  background: 'var(--color-surface)',
-                  opacity: thread.has_messages ? 0.4 : 1,
-                }}
-              >
-                {availableDistros.map((d) => (
-                  <option key={d} value={d} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-                    {d}
-                  </option>
-                ))}
-              </select>
-            )}
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
+                <path d="M6.646 4.646a.5.5 0 0 1 .708 0l2.5 2.5a.5.5 0 0 1 0 .708l-2.5 2.5a.5.5 0 0 1-.708-.708L8.793 7.5 6.646 5.354a.5.5 0 0 1 0-.708z" />
+                <path fillRule="evenodd" d="M1 4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V4zm2-1a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1V4a1 1 0 0 0-1-1H3z" />
+                <path d="M10 10.5a.5.5 0 0 1 .5-.5h1a.5.5 0 0 1 0 1h-1a.5.5 0 0 1-.5-.5z" />
+              </svg>
+            </button>
           </span>
         )}
-
-        {/* Provider + health indicator */}
-        <span className="flex items-center gap-1 flex-shrink-0">
-          <CliHealthIndicator threadId={threadId} />
-          <select
-            value={thread?.provider ?? 'claude-code'}
-            onChange={(e) => {
-              const provider = e.target.value as Provider
-              const defaultModel = getDefaultModelForProvider(provider)
-              if (provider === 'codex' && thread && isLocalLocation && !thread.use_wsl) {
-                const distro = thread.wsl_distro ?? availableDistros[0] ?? null
-                if (distro) setWsl(threadId, true, distro)
-              }
-              setProviderAndModel(threadId, provider, defaultModel)
-            }}
-            disabled={status === 'running' || status === 'stopping'}
-            className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
-            style={{
-              color: 'var(--color-text-muted)',
-              borderColor: 'var(--color-border)',
-              background: 'var(--color-surface)',
-              opacity: status === 'running' || status === 'stopping' ? 0.4 : 1,
-            }}
-            title="Select provider"
-          >
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-        </span>
-        {showCodexWslWarning && (
-          <span
-            className="text-xs flex-shrink-0"
-            style={{ color: '#facc15' }}
-            title="Codex is significantly more reliable via WSL on Windows."
-          >
-            Codex + WSL recommended
-          </span>
-        )}
-        <select
-          value={thread?.model ?? getDefaultModelForProvider((thread?.provider ?? 'claude-code') as Provider)}
-          onChange={(e) => setModel(threadId, e.target.value)}
-          disabled={status === 'running' || status === 'stopping'}
-          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
-          style={{
-            color: 'var(--color-text-muted)',
-            borderColor: 'var(--color-border)',
-            background: 'var(--color-surface)',
-            opacity: status === 'running' || status === 'stopping' ? 0.4 : 1,
-          }}
-          title="Select model"
-        >
-          {getModelsForProvider((thread?.provider ?? 'claude-code') as Provider).map((m) => (
-            <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {m.label}
-            </option>
-          ))}
-        </select>
 
         {/* Token usage + context window */}
         {usage && (() => {
@@ -682,48 +505,6 @@ export default function ThreadHeader({ threadId }: Props) {
             <path d="M2 4h12M2 8h8M2 12h5" />
           </svg>
           Logs
-        </button>
-        <button
-          onClick={() => togglePanel(threadId)}
-          className="flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors"
-          style={{
-            color: isPanelOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
-            background: isPanelOpen ? 'rgba(232, 123, 95, 0.1)' : 'transparent',
-            border: '1px solid',
-            borderColor: isPanelOpen ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)',
-          }}
-          title={isPanelOpen ? 'Hide panel' : 'Show panel'}
-        >
-          <svg
-            width="12"
-            height="12"
-            viewBox="0 0 12 12"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.5"
-            strokeLinecap="round"
-          >
-            <line x1="2" y1="3" x2="10" y2="3" />
-            <line x1="2" y1="6" x2="10" y2="6" />
-            <line x1="2" y1="9" x2="10" y2="9" />
-          </svg>
-          <span>Panel</span>
-          {todoTotal > 0 && (
-            <span
-              style={{
-                fontSize: '0.6rem',
-                fontWeight: 600,
-                padding: '1px 5px',
-                borderRadius: 999,
-                background: hasInProgress
-                  ? 'rgba(232, 123, 95, 0.2)'
-                  : 'rgba(74, 222, 128, 0.12)',
-                color: hasInProgress ? 'var(--color-claude)' : '#4ade80',
-              }}
-            >
-              {todoCompleted}/{todoTotal}
-            </span>
-          )}
         </button>
       </div>
 

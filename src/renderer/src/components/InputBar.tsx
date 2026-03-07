@@ -15,6 +15,10 @@ import {
   Thread,
   RepoLocation,
   SlashCommand,
+  PROVIDERS,
+  getModelsForProvider,
+  getDefaultModelForProvider,
+  Provider,
 } from '../types/ipc'
 import FileMentionPopup from './FileMentionPopup'
 import YouTrackMentionPopup from './YouTrackMentionPopup'
@@ -142,6 +146,51 @@ function QueueIcon({ className }: { className?: string }) {
   )
 }
 
+function CliHealthIndicator({ threadId }: { threadId: string }) {
+  const health = useCliHealthStore((s) => s.healthByThread[threadId])
+
+  if (!health || health.status === 'idle') return null
+
+  if (health.status === 'checking') {
+    return (
+      <span
+        title="Checking CLI availability…"
+        style={{ color: 'var(--color-text-muted)', lineHeight: 1 }}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin">
+          <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" />
+        </svg>
+      </span>
+    )
+  }
+
+  if (health.status === 'ok') {
+    return (
+      <span
+        title={`CLI available${health.result?.currentVersion ? ` (v${health.result.currentVersion})` : ''}`}
+        style={{ color: '#4ade80', lineHeight: 1 }}
+      >
+        <svg width="10" height="10" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="2,8 6,12 14,4" />
+        </svg>
+      </span>
+    )
+  }
+
+  // unavailable or error
+  const msg = health.status === 'unavailable'
+    ? 'CLI not found — install it or update the path'
+    : `CLI check failed: ${health.error ?? 'unknown error'}`
+  return (
+    <span title={msg} style={{ color: '#f87171', lineHeight: 1 }}>
+      <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14zm0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16z" />
+        <path d="M7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zM7.1 4.995a.905.905 0 1 1 1.8 0l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995z" />
+      </svg>
+    </span>
+  )
+}
+
 const EMPTY_THREADS: Thread[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_SLASH_COMMANDS: SlashCommand[] = []
@@ -234,6 +283,41 @@ export default function InputBar({ threadId }: Props) {
 
   const cliHealth = useCliHealthStore((s) => s.healthByThread[threadId])
   const cliUnavailable = cliHealth?.status === 'unavailable' || cliHealth?.status === 'error'
+
+  // Provider / model / WSL selectors (moved from ThreadHeader)
+  const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
+  const setModel = useThreadStore((s) => s.setModel)
+  const setWsl = useThreadStore((s) => s.setWsl)
+
+  const [availableDistros, setAvailableDistros] = useState<string[]>([])
+  const isLocalLocation = location?.connection_type === 'local'
+  const isWslSelected = location?.connection_type === 'wsl' || (isLocalLocation && !!currentThread?.use_wsl)
+  const showCodexWslWarning = currentThread?.provider === 'codex' && !isWslSelected
+
+  useEffect(() => {
+    if (!isLocalLocation) return
+    window.api.invoke('wsl:list-distros').then(setAvailableDistros)
+  }, [isLocalLocation])
+
+  // Run a CLI health check whenever the effective provider/connection configuration changes
+  const checkCliHealth = useCliHealthStore((s) => s.check)
+  const clearCliHealth = useCliHealthStore((s) => s.clear)
+  useEffect(() => {
+    if (!currentThread || !location) {
+      clearCliHealth(threadId)
+      return
+    }
+    const provider = (currentThread.provider ?? 'claude-code') as Provider
+    const connectionType = location.connection_type
+    const effectiveConnectionType = (connectionType === 'local' && currentThread.use_wsl) ? 'wsl' : connectionType
+    const wslConfig = connectionType === 'wsl'
+      ? (location.wsl ?? null)
+      : (connectionType === 'local' && currentThread.use_wsl && currentThread.wsl_distro)
+        ? { distro: currentThread.wsl_distro }
+        : null
+    checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentThread?.provider, currentThread?.use_wsl, currentThread?.wsl_distro, location?.connection_type, location?.id, threadId])
 
   const youtrackServers = useYouTrackStore((s) => s.servers)
   const slashCommandsByScope = useSlashCommandStore((s) => s.commandsByScope)
@@ -979,7 +1063,7 @@ export default function InputBar({ threadId }: Props) {
           </div>
         )}
 
-        {/* Top row: Plan toggle */}
+        {/* Top row: Plan toggle + provider/model/WSL selectors */}
         <div
           className="flex items-center gap-2 px-3 pt-2"
           style={{ borderBottom: '1px solid var(--color-border)' }}
@@ -1004,11 +1088,123 @@ export default function InputBar({ threadId }: Props) {
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
             Shift+Enter for newline
           </span>
+
+          {/* Spacer to push selectors right */}
+          <span className="flex-1" />
+
+          {/* WSL toggle for local locations */}
+          {isLocalLocation && currentThread && availableDistros.length > 0 && (
+            <span className="flex items-center gap-1 flex-shrink-0 mb-2">
+              <label
+                className="flex items-center gap-1 text-xs cursor-pointer select-none"
+                style={{
+                  color: currentThread.use_wsl ? '#fbbf24' : 'var(--color-text-muted)',
+                  opacity: currentThread.has_messages ? 0.4 : 1,
+                }}
+                title={currentThread.has_messages ? 'WSL setting is locked after first message' : 'Run CLI via WSL'}
+              >
+                <input
+                  type="checkbox"
+                  checked={currentThread.use_wsl}
+                  disabled={currentThread.has_messages}
+                  onChange={(e) => {
+                    const checked = e.target.checked
+                    const distro = checked ? (currentThread.wsl_distro ?? availableDistros[0] ?? null) : null
+                    setWsl(threadId, checked, distro)
+                  }}
+                  className="accent-yellow-400"
+                  style={{ width: 12, height: 12 }}
+                />
+                WSL
+              </label>
+              {currentThread.use_wsl && (
+                <select
+                  value={currentThread.wsl_distro ?? ''}
+                  onChange={(e) => setWsl(threadId, true, e.target.value || null)}
+                  disabled={currentThread.has_messages}
+                  className="text-xs bg-transparent border rounded px-1 py-0.5 outline-none cursor-pointer"
+                  style={{
+                    color: '#fbbf24',
+                    borderColor: 'rgba(251, 191, 36, 0.3)',
+                    background: 'var(--color-surface)',
+                    opacity: currentThread.has_messages ? 0.4 : 1,
+                  }}
+                >
+                  {availableDistros.map((d) => (
+                    <option key={d} value={d} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </span>
+          )}
+
+          {/* Provider + health indicator */}
+          <span className="flex items-center gap-1 flex-shrink-0 mb-2">
+            <CliHealthIndicator threadId={threadId} />
+            <select
+              value={currentThread?.provider ?? 'claude-code'}
+              onChange={(e) => {
+                const provider = e.target.value as Provider
+                const defaultModel = getDefaultModelForProvider(provider)
+                if (provider === 'codex' && currentThread && isLocalLocation && !currentThread.use_wsl) {
+                  const distro = currentThread.wsl_distro ?? availableDistros[0] ?? null
+                  if (distro) setWsl(threadId, true, distro)
+                }
+                setProviderAndModel(threadId, provider, defaultModel)
+              }}
+              disabled={isProcessing}
+              className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
+              style={{
+                color: 'var(--color-text-muted)',
+                borderColor: 'var(--color-border)',
+                background: 'var(--color-surface)',
+                opacity: isProcessing ? 0.4 : 1,
+              }}
+              title="Select provider"
+            >
+              {PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+                  {p.label}
+                </option>
+              ))}
+            </select>
+          </span>
+          {showCodexWslWarning && (
+            <span
+              className="text-xs flex-shrink-0 mb-2"
+              style={{ color: '#facc15' }}
+              title="Codex is significantly more reliable via WSL on Windows."
+            >
+              Codex + WSL recommended
+            </span>
+          )}
+          <select
+            value={currentThread?.model ?? getDefaultModelForProvider((currentThread?.provider ?? 'claude-code') as Provider)}
+            onChange={(e) => setModel(threadId, e.target.value)}
+            disabled={isProcessing}
+            className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
+            style={{
+              color: 'var(--color-text-muted)',
+              borderColor: 'var(--color-border)',
+              background: 'var(--color-surface)',
+              opacity: isProcessing ? 0.4 : 1,
+            }}
+            title="Select model"
+          >
+            {getModelsForProvider((currentThread?.provider ?? 'claude-code') as Provider).map((m) => (
+              <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+                {m.label}
+              </option>
+            ))}
+          </select>
+
           {isProcessing && (
             <>
-              <span className="mb-2 ml-auto text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+              <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
               <span
-                className="mb-2 ml-1 font-mono text-xs tabular-nums"
+                className="mb-2 font-mono text-xs tabular-nums"
                 style={{ color: 'var(--color-claude)' }}
               >
                 {formatElapsed(elapsedSeconds)}

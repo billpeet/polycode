@@ -19,15 +19,19 @@
     "@anthropic-ai/claude-agent-sdk": "^0.2.50",
     "@sentry/electron": "^7.8.0",
     "@sentry/react": "^10.40.0",
+    "@tanstack/react-virtual": "^3.13.21",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "better-sqlite3": "^11.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "dompurify": "^3.3.1",
     "electron-updater": "^6.3.9",
     "fuse.js": "^7.1.0",
-    "highlight.js": "^11.11.1",
     "lucide-react": "^0.577.0",
     "marked": "^15.0.12",
+    "node-pty": "^1.1.0",
+    "shiki": "^4.0.1",
     "tailwind-merge": "^3.5.0",
     "uuid": "^11.1.0",
     "zustand": "^5.0.11"
@@ -61,6 +65,7 @@
     "asar": true,
     "asarUnpack": [
       "node_modules/better-sqlite3/**",
+      "node_modules/node-pty/**",
       "**/*.node"
     ],
     "files": [

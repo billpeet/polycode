@@ -1,8 +1,9 @@
-import { useState, useEffect, useRef, useMemo, useCallback, type CSSProperties } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef, type CSSProperties } from 'react'
 import { useFilesStore } from '../stores/files'
-import hljs from 'highlight.js'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
+import { getHighlighter, onReady } from '../lib/shiki'
+import type { ThemedToken } from 'shiki'
 
 function getLanguageFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase()
@@ -63,8 +64,21 @@ function basename(filePath: string): string {
 }
 
 function CodePreview({ content, language }: { content: string; language: string }) {
-  const lines = content.split('\n')
-  const lineNumberWidth = String(lines.length).length
+  const [shikiReady, setShikiReady] = useState(!!getHighlighter())
+  useEffect(() => onReady(() => setShikiReady(true)), [])
+
+  const tokenLines = useMemo(() => {
+    const hl = getHighlighter()
+    if (!hl || !shikiReady) return null
+    const loaded = hl.getLoadedLanguages()
+    const lang = loaded.includes(language) ? language : 'text'
+    const { tokens } = hl.codeToTokens(content, { lang, theme: 'github-dark' })
+    return tokens
+  }, [content, language, shikiReady])
+
+  const plainLines = useMemo(() => content.split('\n'), [content])
+  const lineCount = tokenLines ? tokenLines.length : plainLines.length
+  const lineNumberWidth = String(lineCount).length
 
   return (
     <div
@@ -77,8 +91,14 @@ function CodePreview({ content, language }: { content: string; language: string 
     >
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <tbody>
-          {lines.map((line, i) => (
-            <LineRow key={i} lineNumber={i + 1} line={line} language={language} lineNumberWidth={lineNumberWidth} />
+          {(tokenLines ?? plainLines).map((line, i) => (
+            <LineRow
+              key={i}
+              lineNumber={i + 1}
+              tokens={tokenLines ? (line as ThemedToken[]) : null}
+              plainText={tokenLines ? null : (line as string)}
+              lineNumberWidth={lineNumberWidth}
+            />
           ))}
         </tbody>
       </table>
@@ -88,23 +108,15 @@ function CodePreview({ content, language }: { content: string; language: string 
 
 function LineRow({
   lineNumber,
-  line,
-  language,
+  tokens,
+  plainText,
   lineNumberWidth,
 }: {
   lineNumber: number
-  line: string
-  language: string
+  tokens: ThemedToken[] | null
+  plainText: string | null
   lineNumberWidth: number
 }) {
-  const codeRef = useRef<HTMLElement>(null)
-
-  useEffect(() => {
-    if (codeRef.current && line) {
-      codeRef.current.innerHTML = hljs.highlight(line, { language }).value
-    }
-  }, [line, language])
-
   return (
     <tr style={{ background: 'transparent' }}>
       <td
@@ -128,8 +140,12 @@ function LineRow({
           background: 'transparent',
         }}
       >
-        <code ref={codeRef} className={`hljs language-${language}`} style={{ background: 'transparent' }}>
-          {line || '\n'}
+        <code style={{ background: 'transparent' }}>
+          {tokens
+            ? tokens.map((token, j) => (
+                <span key={j} style={{ color: token.color }}>{token.content}</span>
+              ))
+            : (plainText || '\n')}
         </code>
       </td>
     </tr>

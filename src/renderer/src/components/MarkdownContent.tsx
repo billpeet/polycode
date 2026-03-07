@@ -1,8 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
-import hljs from 'highlight.js'
-import 'highlight.js/styles/github-dark.css'
+import { getHighlighter, onReady } from '../lib/shiki'
 
 // Configure marked with syntax highlighting and copy-button chrome
 marked.setOptions({
@@ -16,11 +15,29 @@ function escapeAttr(str: string): string {
     .replace(/'/g, '&#39;')
 }
 
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+}
+
 const renderer = new marked.Renderer()
 renderer.code = function ({ text, lang }) {
-  const language = lang && hljs.getLanguage(lang) ? lang : 'plaintext'
-  const highlighted = hljs.highlight(text, { language }).value
-  const langLabel = language === 'plaintext' ? '' : language
+  const hl = getHighlighter()
+  let codeHtml: string
+  let language: string
+
+  if (hl) {
+    const loaded = hl.getLoadedLanguages()
+    language = lang && loaded.includes(lang) ? lang : 'text'
+    codeHtml = hl.codeToHtml(text, { lang: language, theme: 'github-dark' })
+  } else {
+    language = lang || 'plaintext'
+    codeHtml = `<pre><code>${escapeHtml(text)}</code></pre>`
+  }
+
+  const langLabel = language === 'text' || language === 'plaintext' ? '' : language
   const encodedCode = escapeAttr(text)
   return `<div class="code-block-wrapper">
   <div class="code-block-header">
@@ -29,7 +46,7 @@ renderer.code = function ({ text, lang }) {
       <span class="btn-label">copy</span>
     </button>
   </div>
-  <pre><code class="hljs language-${language}">${highlighted}</code></pre>
+  ${codeHtml}
 </div>`
 }
 
@@ -48,12 +65,15 @@ interface Props {
 
 export default function MarkdownContent({ content }: Props) {
   const ref = useRef<HTMLDivElement>(null)
+  const [shikiReady, setShikiReady] = useState(!!getHighlighter())
+
+  useEffect(() => onReady(() => setShikiReady(true)), [])
 
   useEffect(() => {
     if (!ref.current) return
     const raw = marked.parse(content) as string
     const clean = DOMPurify.sanitize(raw, {
-      ADD_ATTR: ['data-code'],
+      ADD_ATTR: ['data-code', 'style', 'tabindex'],
       ADD_TAGS: ['button']
     })
     ref.current.innerHTML = clean
@@ -80,7 +100,7 @@ export default function MarkdownContent({ content }: Props) {
 
     container.addEventListener('click', handleClick)
     return () => container.removeEventListener('click', handleClick)
-  }, [content])
+  }, [content, shikiReady])
 
   return (
     <div

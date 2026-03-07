@@ -5,6 +5,7 @@ import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
 import FilePreview from './components/FilePreview'
 import CommandLogs from './components/CommandLogs'
+import TerminalPane from './components/Terminal'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
 import { SidebarProvider } from './components/ui/sidebar-context'
@@ -15,6 +16,7 @@ import { useUiStore } from './stores/ui'
 import { useFilesStore } from './stores/files'
 import { useToastStore } from './stores/toast'
 import { useCommandStore } from './stores/commands'
+import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
@@ -56,6 +58,10 @@ export default function App() {
   )
   const hasPinnedCommands = useCommandStore((s) =>
     currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
+  )
+
+  const isTerminalOpen = useTerminalStore((s) =>
+    selectedThreadId ? (s.visibleByThread[selectedThreadId] ?? false) : false
   )
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
@@ -107,6 +113,10 @@ export default function App() {
       } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault()
         window.dispatchEvent(new CustomEvent('focus-input'))
+      } else if (e.key === '`') {
+        e.preventDefault()
+        const tid = useThreadStore.getState().selectedThreadId
+        if (tid) useTerminalStore.getState().toggleVisible(tid)
       }
     }
 
@@ -169,9 +179,11 @@ export default function App() {
                 </div>
                 {(selectedFilePath || diffView || loadingDiff)
                   ? <FilePreview />
-                  : (selectedInstance || hasPinnedCommands)
-                    ? <CommandLogs />
-                    : null
+                  : isTerminalOpen
+                    ? <TerminalPane threadId={selectedThreadId} />
+                    : (selectedInstance || hasPinnedCommands)
+                      ? <CommandLogs />
+                      : null
                 }
                 {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
               </>

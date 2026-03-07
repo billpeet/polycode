@@ -134,6 +134,8 @@ export interface WindowApi {
   invoke(channel: 'slash-commands:delete', id: string): Promise<void>
   invoke(channel: 'cli:health', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliHealthResult>
   invoke(channel: 'cli:update', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliUpdateResult>
+  invoke(channel: 'terminal:spawn', threadId: string, cols: number, rows: number): Promise<string>
+  invoke(channel: 'terminal:kill', terminalId: string): Promise<void>
   invoke(channel: 'settings:get', key: string): Promise<string | null>
   invoke(channel: 'settings:set', key: string, value: string): Promise<void>
   // Fallback for dynamic channels
