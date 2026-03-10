@@ -15,8 +15,11 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { name: '', url: '', token: '' }
 
-export default function YouTrackSettingsDialog({ onClose }: Props) {
-  const backdropClose = useBackdropClose(onClose)
+interface PanelProps {
+  hideHeader?: boolean
+}
+
+export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
   const servers = useYouTrackStore((s) => s.servers)
   const createServer = useYouTrackStore((s) => s.create)
   const updateServer = useYouTrackStore((s) => s.update)
@@ -100,39 +103,17 @@ export default function YouTrackSettingsDialog({ onClose }: Props) {
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={backdropClose.onClick}
-      onPointerDown={backdropClose.onPointerDown}
-    >
-      <div
-        className="relative flex w-[480px] max-h-[80vh] flex-col rounded-xl shadow-2xl"
-        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid var(--color-border)' }}
-        >
-          <div className="flex items-center gap-2">
-            <YouTrackIcon />
-            <span className="font-semibold" style={{ color: 'var(--color-text)' }}>
-              YouTrack Servers
-            </span>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-xs opacity-60 hover:opacity-100 transition-opacity"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            ✕
-          </button>
+    <div className="flex flex-col h-full">
+      {!hideHeader && (
+        <div className="flex items-center gap-2 mb-4">
+          <YouTrackIcon />
+          <span className="font-semibold" style={{ color: 'var(--color-text)' }}>
+            YouTrack Servers
+          </span>
         </div>
+      )}
 
-        {/* Content */}
-        <div className="flex-1 overflow-y-auto p-5 space-y-4">
+      <div className="flex-1 overflow-y-auto space-y-4">
           {/* Existing servers */}
           {servers.length > 0 && (
             <div className="space-y-2">
@@ -308,39 +289,60 @@ export default function YouTrackSettingsDialog({ onClose }: Props) {
           )}
         </div>
 
-        {/* Delete confirmation */}
-        {confirmDeleteId && (
+      {/* Delete confirmation */}
+      {confirmDeleteId && (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center"
+          style={{ background: 'rgba(0,0,0,0.6)' }}
+          onClick={() => setConfirmDeleteId(null)}
+        >
           <div
-            className="absolute inset-0 flex items-center justify-center rounded-xl"
-            style={{ background: 'rgba(0,0,0,0.6)' }}
+            className="w-72 rounded-lg p-5 shadow-2xl"
+            style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <div
-              className="w-72 rounded-lg p-5 shadow-2xl"
-              style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
-            >
-              <p className="text-sm mb-1" style={{ color: 'var(--color-text)' }}>Delete server?</p>
-              <p className="text-xs mb-4" style={{ color: 'var(--color-text-muted)' }}>
-                This will remove the YouTrack server configuration.
-              </p>
-              <div className="flex justify-end gap-2">
-                <button
-                  onClick={() => setConfirmDeleteId(null)}
-                  className="rounded px-3 py-1.5 text-xs"
-                  style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={() => handleDelete(confirmDeleteId)}
-                  className="rounded px-3 py-1.5 text-xs font-medium"
-                  style={{ background: '#dc2626', color: '#fff' }}
-                >
-                  Delete
-                </button>
-              </div>
+            <p className="text-sm mb-1" style={{ color: 'var(--color-text)' }}>Delete server?</p>
+            <p className="text-xs mb-4" style={{ color: 'var(--color-text-muted)' }}>
+              This will remove the YouTrack server configuration.
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="rounded px-3 py-1.5 text-xs"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(confirmDeleteId)}
+                className="rounded px-3 py-1.5 text-xs font-medium"
+                style={{ background: '#dc2626', color: '#fff' }}
+              >
+                Delete
+              </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export default function YouTrackSettingsDialog({ onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
+    >
+      <div
+        className="relative flex w-[480px] max-h-[80vh] flex-col rounded-xl p-5 shadow-2xl"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <YouTrackSettingsPanel />
       </div>
     </div>
   )

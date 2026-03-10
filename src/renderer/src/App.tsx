@@ -5,8 +5,10 @@ import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
 import FilePreview from './components/FilePreview'
 import CommandLogs from './components/CommandLogs'
+import TerminalPane from './components/Terminal'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
+import { SidebarProvider } from './components/ui/sidebar-context'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useLocationStore } from './stores/locations'
@@ -14,6 +16,7 @@ import { useUiStore } from './stores/ui'
 import { useFilesStore } from './stores/files'
 import { useToastStore } from './stores/toast'
 import { useCommandStore } from './stores/commands'
+import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
@@ -55,6 +58,10 @@ export default function App() {
   )
   const hasPinnedCommands = useCommandStore((s) =>
     currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
+  )
+
+  const isTerminalOpen = useTerminalStore((s) =>
+    selectedThreadId ? (s.visibleByThread[selectedThreadId] ?? false) : false
   )
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
@@ -106,6 +113,10 @@ export default function App() {
       } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault()
         window.dispatchEvent(new CustomEvent('focus-input'))
+      } else if (e.key === '`') {
+        e.preventDefault()
+        const tid = useThreadStore.getState().selectedThreadId
+        if (tid) useTerminalStore.getState().toggleVisible(tid)
       }
     }
 
@@ -118,7 +129,7 @@ export default function App() {
     return window.api.on('app:update-downloaded', () => {
       useToastStore.getState().add({
         type: 'info',
-        message: 'Update ready — restart Polycode to install.',
+        message: 'Update ready — restart PolyCode to install.',
         duration: 0,
         actionLabel: 'Restart now',
         onAction: async () => {
@@ -152,9 +163,10 @@ export default function App() {
   return (
     <ErrorBoundary fallback={
       <div className="flex h-full w-full items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-        Something went wrong. Please restart Polycode.
+        Something went wrong. Please restart PolyCode.
       </div>
     }>
+      <SidebarProvider>
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
         <TitleBar />
         <div className="flex flex-1 overflow-hidden">
@@ -167,9 +179,11 @@ export default function App() {
                 </div>
                 {(selectedFilePath || diffView || loadingDiff)
                   ? <FilePreview />
-                  : (selectedInstance || hasPinnedCommands)
-                    ? <CommandLogs />
-                    : null
+                  : isTerminalOpen
+                    ? <TerminalPane threadId={selectedThreadId} />
+                    : (selectedInstance || hasPinnedCommands)
+                      ? <CommandLogs />
+                      : null
                 }
                 {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
               </>
@@ -189,6 +203,7 @@ export default function App() {
         </div>
       </div>
       <ToastStack />
+      </SidebarProvider>
     </ErrorBoundary>
   )
 }

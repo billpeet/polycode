@@ -34,12 +34,11 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   'opencode': 'OpenCode',
 }
 
-interface Props {
-  onClose: () => void
+interface PanelProps {
+  hideHeader?: boolean
 }
 
-export default function CliHealthDialog({ onClose }: Props) {
-  const backdropClose = useBackdropClose(onClose)
+export function CliHealthPanel({ hideHeader }: PanelProps) {
   const byProject = useLocationStore((s) => s.byProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const projects = useProjectStore((s) => s.projects)
@@ -220,31 +219,16 @@ export default function CliHealthDialog({ onClose }: Props) {
   const isChecking = Object.values(statuses).some((s) => s.loading)
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={backdropClose.onClick}
-      onPointerDown={backdropClose.onPointerDown}
-    >
-      <div
-        className="w-[480px] rounded-lg p-6 shadow-2xl"
-        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
+    <div className="flex flex-col h-full">
+      {!hideHeader && (
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-base font-semibold" style={{ color: 'var(--color-text)' }}>
             CLI Health
           </h2>
-          <button
-            onClick={onClose}
-            className="text-xs opacity-50 hover:opacity-100 transition-opacity"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            ✕
-          </button>
         </div>
+      )}
 
+      <div className="flex-1 overflow-y-auto space-y-4">
         {/* Environment selector */}
         {environmentOptions.length > 1 && (
           <div className="mb-4">
@@ -353,32 +337,46 @@ export default function CliHealthDialog({ onClose }: Props) {
           })}
         </div>
 
-        {/* Footer */}
-        <div className="flex justify-between items-center mt-4 pt-3" style={{ borderTop: '1px solid var(--color-border)' }}>
-          <button
-            onClick={checkAll}
-            disabled={isChecking}
-            className="rounded px-3 py-1.5 text-xs transition-colors disabled:opacity-40"
-            style={{
-              background: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-text)',
-            }}
-          >
-            {isChecking ? 'Checking…' : 'Check again'}
-          </button>
-          <button
-            onClick={onClose}
-            className="rounded px-4 py-1.5 text-xs"
-            style={{
-              background: 'var(--color-surface)',
-              border: '1px solid var(--color-border)',
-              color: 'var(--color-text)',
-            }}
-          >
-            Close
-          </button>
-        </div>
+      </div>
+
+      {/* Footer */}
+      <div className="flex justify-between items-center mt-4 pt-3 flex-shrink-0" style={{ borderTop: '1px solid var(--color-border)' }}>
+        <button
+          onClick={checkAll}
+          disabled={isChecking}
+          className="rounded px-3 py-1.5 text-xs transition-colors disabled:opacity-40"
+          style={{
+            background: 'var(--color-surface)',
+            border: '1px solid var(--color-border)',
+            color: 'var(--color-text)',
+          }}
+        >
+          {isChecking ? 'Checking…' : 'Check again'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+interface Props {
+  onClose: () => void
+}
+
+export default function CliHealthDialog({ onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
+    >
+      <div
+        className="w-[480px] max-h-[80vh] rounded-lg p-6 shadow-2xl"
+        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <CliHealthPanel />
       </div>
     </div>
   )

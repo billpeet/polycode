@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import MessageBubble from './MessageBubble'
 import ToolCallGroupBlock from './ToolCallGroupBlock'
 import { Message } from '../types/ipc'
+import { estimateEntryHeight } from '../lib/messageHeight'
 
 interface Props {
   threadId: string
@@ -12,6 +14,8 @@ interface Props {
 
 const EMPTY: Message[] = []
 const GROUP_THRESHOLD = 3
+const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8
+const AUTO_SCROLL_THRESHOLD_PX = 64
 
 function safeParseJson(str: string | null): Record<string, unknown> | null {
   if (!str) return null
@@ -147,68 +151,176 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   return grouped
 }
 
+function renderEntry(entry: MessageEntry | MessageGroup) {
+  return entry.kind === 'group' ? (
+    <ToolCallGroupBlock group={entry} />
+  ) : (
+    <MessageBubble entry={entry} />
+  )
+}
+
 export default function MessageStream({ threadId, sessionId }: Props) {
   // Use session-based messages when sessionId is provided, otherwise fall back to thread-based
   const sessionMessages = useMessageStore((s) => sessionId ? s.messagesBySession[sessionId] : undefined)
   const threadMessages = useMessageStore((s) => s.messagesByThread[threadId])
   const messages = sessionMessages ?? threadMessages ?? EMPTY
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
-  const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
-  const [userScrolled, setUserScrolled] = useState(false)
-  const isScrolledToBottom = useRef(true)
+  const shouldFollowBottom = useRef(true)
+  const [showLatestButton, setShowLatestButton] = useState(false)
+  const [containerWidth, setContainerWidth] = useState<number | null>(null)
 
   const entries = useMemo(() => pairMessages(messages), [messages])
+  const isStreaming = status === 'running'
 
-  const scrollToBottom = useCallback((smooth = true) => {
-    bottomRef.current?.scrollIntoView({ behavior: smooth ? 'smooth' : 'instant' })
-    setUserScrolled(false)
-    isScrolledToBottom.current = true
+  // Compute how many rows to virtualize (all except the tail + current streaming turn)
+  const virtualizedRowCount = useMemo(() => {
+    const tailStart = Math.max(entries.length - ALWAYS_UNVIRTUALIZED_TAIL_ROWS, 0)
+
+    if (!isStreaming) return tailStart
+
+    // During streaming, also keep the current turn unvirtualized.
+    // Walk backwards from the tail to find the user message that started this turn.
+    let turnStart = tailStart
+    for (let idx = tailStart - 1; idx >= 0; idx--) {
+      const e = entries[idx]
+      if (e.kind === 'single' && e.message.role === 'user') {
+        turnStart = idx
+        break
+      }
+      if (e.kind === 'single' && e.message.role === 'assistant') {
+        // Hit a previous assistant message boundary — stop
+        break
+      }
+    }
+    return Math.min(turnStart, tailStart)
+  }, [entries, isStreaming])
+
+  const nonVirtualizedEntries = entries.slice(virtualizedRowCount)
+
+  // Track container width for height estimation
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const ro = new ResizeObserver((obs) => {
+      const width = obs[0]?.contentRect.width ?? null
+      setContainerWidth(width)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
   }, [])
+
+  const rowVirtualizer = useVirtualizer({
+    count: virtualizedRowCount,
+    getScrollElement: () => containerRef.current,
+    getItemKey: (index: number) => entries[index]?.key ?? index,
+    estimateSize: (index: number) => {
+      const entry = entries[index]
+      if (!entry) return 96
+      return estimateEntryHeight(entry, containerWidth)
+    },
+    overscan: 5,
+  })
+
+  // Prevent scroll adjustment when near bottom (avoids jumps during streaming)
+  useEffect(() => {
+    rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = (_item, _delta, instance) => {
+      const viewportHeight = instance.scrollRect?.height ?? 0
+      const scrollOffset = instance.scrollOffset ?? 0
+      const remainingDistance = instance.getTotalSize() - (scrollOffset + viewportHeight)
+      return remainingDistance > AUTO_SCROLL_THRESHOLD_PX
+    }
+    return () => {
+      rowVirtualizer.shouldAdjustScrollPositionOnItemSizeChange = undefined
+    }
+  }, [rowVirtualizer])
+
+  // Re-measure when container width changes
+  useEffect(() => {
+    if (containerWidth != null) {
+      rowVirtualizer.measure()
+    }
+  }, [containerWidth, rowVirtualizer])
+
+  // Reset to "follow bottom" when thread changes
+  useEffect(() => {
+    shouldFollowBottom.current = true
+    setShowLatestButton(false)
+  }, [threadId])
+
+  // After every render, if following bottom, pin scroll there.
+  // useLayoutEffect runs synchronously after DOM mutations, so even as the
+  // virtualizer re-measures items across multiple frames, each render cycle
+  // will chase the correct scrollHeight.
+  useLayoutEffect(() => {
+    if (!shouldFollowBottom.current) return
+    const el = containerRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+  })
 
   function handleScroll(): void {
     const el = containerRef.current
     if (!el) return
-    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 40
-    isScrolledToBottom.current = atBottom
-    setUserScrolled(!atBottom)
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < AUTO_SCROLL_THRESHOLD_PX
+    shouldFollowBottom.current = atBottom
+    setShowLatestButton(!atBottom)
   }
 
-  useEffect(() => {
-    if (!userScrolled) {
-      scrollToBottom(messages.length <= 1)
-    }
-  }, [messages.length, userScrolled, scrollToBottom])
+  const scrollToBottom = useCallback(() => {
+    shouldFollowBottom.current = true
+    setShowLatestButton(false)
+    const el = containerRef.current
+    if (el) el.scrollTop = el.scrollHeight
+  }, [])
 
-  useEffect(() => {
-    setUserScrolled(false)
-    scrollToBottom(false)
-  }, [threadId, scrollToBottom])
-
-  const isAwaitingResponse = status === 'running'
+  const virtualRows = rowVirtualizer.getVirtualItems()
 
   return (
     <div className="relative flex-1 overflow-hidden" style={{ background: 'var(--color-bg)' }}>
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="h-full overflow-y-auto px-4 py-4 space-y-2"
+        className="h-full overflow-y-auto px-4 py-4"
       >
         {messages.length === 0 && (
           <p className="text-center text-xs pt-8" style={{ color: 'var(--color-text-muted)' }}>
             No messages yet. Send a message to get started.
           </p>
         )}
-        {entries.map((entry) =>
-          entry.kind === 'group' ? (
-            <ToolCallGroupBlock key={entry.key} group={entry} />
-          ) : (
-            <MessageBubble key={entry.key} entry={entry} />
-          )
+
+        {/* Virtualized rows (historical messages) */}
+        {virtualizedRowCount > 0 && (
+          <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+            {virtualRows.map((virtualRow) => {
+              const entry = entries[virtualRow.index]
+              if (!entry) return null
+              return (
+                <div
+                  key={`v:${entry.key}`}
+                  data-index={virtualRow.index}
+                  ref={rowVirtualizer.measureElement}
+                  className="absolute left-0 top-0 w-full pb-2"
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {renderEntry(entry)}
+                </div>
+              )
+            })}
+          </div>
         )}
 
+        {/* Non-virtualized tail (recent messages + current turn) */}
+        <div className="space-y-2">
+          {nonVirtualizedEntries.map((entry) => (
+            <div key={entry.key}>
+              {renderEntry(entry)}
+            </div>
+          ))}
+        </div>
+
         {/* Streaming indicator */}
-        {isAwaitingResponse && (
+        {isStreaming && (
           <div className="flex items-center gap-2 py-1 pl-1">
             <span className="flex gap-1">
               <span className="streaming-dot" style={{ animationDelay: '0ms' }} />
@@ -218,12 +330,11 @@ export default function MessageStream({ threadId, sessionId }: Props) {
           </div>
         )}
 
-        <div ref={bottomRef} />
       </div>
 
-      {userScrolled && (
+      {showLatestButton && (
         <button
-          onClick={() => scrollToBottom(true)}
+          onClick={scrollToBottom}
           className="absolute bottom-4 right-4 rounded-full px-3 py-1.5 text-xs font-medium shadow-lg transition-opacity hover:opacity-90"
           style={{ background: 'var(--color-claude)', color: '#fff' }}
         >

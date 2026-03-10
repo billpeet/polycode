@@ -18,8 +18,13 @@ interface FormState {
 
 const EMPTY_FORM: FormState = { name: '', description: '', prompt: '', scope: 'project' }
 
-export default function SlashCommandsDialog({ projectId, projectName, onClose }: Props) {
-  const backdropClose = useBackdropClose(onClose)
+interface PanelProps {
+  projectId: string | null
+  projectName?: string
+  hideHeader?: boolean
+}
+
+export function SlashCommandsPanel({ projectId, projectName, hideHeader }: PanelProps) {
   const fetch = useSlashCommandStore((s) => s.fetch)
   const create = useSlashCommandStore((s) => s.create)
   const update = useSlashCommandStore((s) => s.update)
@@ -103,41 +108,19 @@ export default function SlashCommandsDialog({ projectId, projectName, onClose }:
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.7)' }}
-      onClick={backdropClose.onClick}
-      onPointerDown={backdropClose.onPointerDown}
-    >
-      <div
-        className="flex w-[560px] max-h-[80vh] flex-col rounded-xl shadow-2xl"
-        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 flex-shrink-0"
-          style={{ borderBottom: '1px solid var(--color-border)' }}
-        >
-          <div>
-            <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
-              Slash Commands
-            </h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
-              Reusable prompts triggered by <code className="font-mono">/name</code> in the input
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="rounded p-1 text-xs hover:bg-white/10 transition-colors"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            ✕
-          </button>
+    <div className="flex flex-col h-full">
+      {!hideHeader && (
+        <div className="mb-4">
+          <h2 className="text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
+            Slash Commands
+          </h2>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--color-text-muted)' }}>
+            Reusable prompts triggered by <code className="font-mono">/name</code> in the input
+          </p>
         </div>
+      )}
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto px-5 py-4 space-y-5">
+      <div className="flex-1 overflow-y-auto space-y-5">
           {/* Add/Edit form */}
           {showForm ? (
             <div
@@ -326,7 +309,6 @@ export default function SlashCommandsDialog({ projectId, projectName, onClose }:
             </p>
           )}
         </div>
-      </div>
 
       {/* Delete confirmation */}
       {confirmDeleteId && (
@@ -366,6 +348,26 @@ export default function SlashCommandsDialog({ projectId, projectName, onClose }:
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+export default function SlashCommandsDialog({ projectId, projectName, onClose }: Props) {
+  const backdropClose = useBackdropClose(onClose)
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center"
+      style={{ background: 'rgba(0,0,0,0.7)' }}
+      onClick={backdropClose.onClick}
+      onPointerDown={backdropClose.onPointerDown}
+    >
+      <div
+        className="flex w-[560px] max-h-[80vh] flex-col rounded-xl p-5 shadow-2xl"
+        style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <SlashCommandsPanel projectId={projectId} projectName={projectName} />
+      </div>
     </div>
   )
 }

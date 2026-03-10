@@ -45,6 +45,11 @@ body,
   border-radius: 3px;
 }
 
+/* Sidebar transition */
+.sidebar-transition {
+  transition: width 200ms ease-in-out;
+}
+
 /* Streaming dots indicator */
 @keyframes streaming-bounce {
   0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }

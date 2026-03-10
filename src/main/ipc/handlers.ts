@@ -69,7 +69,8 @@ import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/typ
 import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo } from '../git'
+import { ptyManager } from '../terminal/manager'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -161,6 +162,7 @@ function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: WslConfig
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   commandManager.init(window)
+  ptyManager.init(window)
 
   // ── Projects ──────────────────────────────────────────────────────────────
 
@@ -726,16 +728,31 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return isGitRepo(repoPath, ssh, wsl)
   })
 
-  // ── Azure DevOps Pull Requests ────────────────────────────────────────────
-
-  ipcMain.handle('azdo:pr:list', (_event, repoPath: string) => {
+  ipcMain.handle('git:hostingProvider', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return listOpenPullRequests(repoPath, ssh, wsl)
+    return detectGitHostingProvider(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('azdo:pr:current', (_event, repoPath: string, branch: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)
+  // ── Azure DevOps Pull Requests ────────────────────────────────────────────
+
+  ipcMain.handle('azdo:pr:list', async (_event, repoPath: string) => {
+    try {
+      const { ssh, wsl } = getConfigForPath(repoPath)
+      return await listOpenPullRequests(repoPath, ssh, wsl)
+    } catch (err) {
+      if (err instanceof Error && /No Azure DevOps remote found/i.test(err.message)) return []
+      throw err
+    }
+  })
+
+  ipcMain.handle('azdo:pr:current', async (_event, repoPath: string, branch: string) => {
+    try {
+      const { ssh, wsl } = getConfigForPath(repoPath)
+      return await getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)
+    } catch (err) {
+      if (err instanceof Error && /No Azure DevOps remote found/i.test(err.message)) return null
+      throw err
+    }
   })
 
   ipcMain.handle('azdo:pr:create', (_event, repoPath: string, payload: { target: string; title: string; description?: string }) => {
@@ -750,14 +767,24 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── GitHub Pull Requests ──────────────────────────────────────────────────
 
-  ipcMain.handle('gh:pr:list', (_event, repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return listOpenGitHubPullRequests(repoPath, ssh, wsl)
+  ipcMain.handle('gh:pr:list', async (_event, repoPath: string) => {
+    try {
+      const { ssh, wsl } = getConfigForPath(repoPath)
+      return await listOpenGitHubPullRequests(repoPath, ssh, wsl)
+    } catch (err) {
+      if (err instanceof Error && /No GitHub remote found/i.test(err.message)) return []
+      throw err
+    }
   })
 
-  ipcMain.handle('gh:pr:current', (_event, repoPath: string, branch: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCurrentBranchGitHubPullRequest(repoPath, branch, ssh, wsl)
+  ipcMain.handle('gh:pr:current', async (_event, repoPath: string, branch: string) => {
+    try {
+      const { ssh, wsl } = getConfigForPath(repoPath)
+      return await getCurrentBranchGitHubPullRequest(repoPath, branch, ssh, wsl)
+    } catch (err) {
+      if (err instanceof Error && /No GitHub remote found/i.test(err.message)) return null
+      throw err
+    }
   })
 
   ipcMain.handle('gh:pr:create', (_event, repoPath: string, payload: { target: string; title: string; description?: string }) => {
@@ -1033,6 +1060,34 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     wsl?: WslConfig | null,
   ) => {
     return updateCli(provider, connectionType, ssh, wsl)
+  })
+
+  // ── Terminal (PTY) ──────────────────────────────────────────────────────────
+
+  ipcMain.handle('terminal:spawn', (_event, threadId: string, cols: number, rows: number) => {
+    const location = getLocationForThread(threadId)
+    if (!location) throw new Error('No location associated with this thread')
+
+    const terminalId = `term-${threadId}-${Date.now()}`
+    const connectionType = location.connection_type
+    const cwd = getEffectiveWorkingDir(threadId) || location.path
+    const ssh = getSshConfigForThread(threadId)
+    const wsl = getWslConfigForThread(threadId)
+
+    ptyManager.spawn(terminalId, threadId, cwd, connectionType, cols, rows, ssh, wsl)
+    return terminalId
+  })
+
+  ipcMain.on('terminal:write', (_event, terminalId: string, data: string) => {
+    ptyManager.write(terminalId, data)
+  })
+
+  ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
+    ptyManager.resize(terminalId, cols, rows)
+  })
+
+  ipcMain.handle('terminal:kill', (_event, terminalId: string) => {
+    ptyManager.kill(terminalId)
   })
 }
 

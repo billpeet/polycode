@@ -49,7 +49,7 @@ export default function TitleBar() {
           pointerEvents: 'none',
         }}
       >
-        Polycode
+        PolyCode
       </span>
 
       <div style={{ flex: 1 }} />

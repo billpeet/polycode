@@ -83,6 +83,7 @@ export interface WindowApi {
   invoke(channel: 'git:deleteBranches', repoPath: string, branches: string[]): Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }>
   invoke(channel: 'git:init', repoPath: string): Promise<void>
   invoke(channel: 'git:isRepo', repoPath: string): Promise<boolean>
+  invoke(channel: 'git:hostingProvider', repoPath: string): Promise<'azure' | 'github' | null>
   invoke(channel: 'azdo:pr:list', repoPath: string): Promise<AzureDevOpsPullRequest[]>
   invoke(channel: 'azdo:pr:current', repoPath: string, branch: string): Promise<AzureDevOpsPullRequest | null>
   invoke(channel: 'azdo:pr:create', repoPath: string, payload: { target: string; title: string; description?: string }): Promise<AzureDevOpsPullRequest>
@@ -134,6 +135,8 @@ export interface WindowApi {
   invoke(channel: 'slash-commands:delete', id: string): Promise<void>
   invoke(channel: 'cli:health', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliHealthResult>
   invoke(channel: 'cli:update', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliUpdateResult>
+  invoke(channel: 'terminal:spawn', threadId: string, cols: number, rows: number): Promise<string>
+  invoke(channel: 'terminal:kill', terminalId: string): Promise<void>
   invoke(channel: 'settings:get', key: string): Promise<string | null>
   invoke(channel: 'settings:set', key: string, value: string): Promise<void>
   // Fallback for dynamic channels

@@ -7,6 +7,7 @@ import { initDb, closeDb } from './db/index'
 import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
+import { ptyManager } from './terminal/manager'
 import { SENTRY_DSN } from '../shared/sentry.config'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
@@ -151,11 +152,11 @@ app.whenReady().then(() => {
   }
 
   tray = new Tray(join(__dirname, '../../resources/icon.ico'))
-  tray.setToolTip('Polycode')
+  tray.setToolTip('PolyCode')
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Show Polycode',
+      label: 'Show PolyCode',
       click: () => {
         win.show()
         win.focus()
@@ -206,6 +207,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  ptyManager.killAll()
   cleanupAllAttachments()
   closeDb()
 })
