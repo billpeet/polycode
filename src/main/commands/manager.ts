@@ -4,7 +4,7 @@ import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand, ConnectionType } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
-import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from '../driver/runner'
+import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 
 const LOG_RING_BUFFER_SIZE = 1000
 const LOG_FLUSH_INTERVAL_MS = 33
@@ -257,6 +257,7 @@ class CommandManager {
       proc = spawn(psExe, ['-NonInteractive', '-Command', cmdDef.command], {
         shell: false,
         cwd,
+        env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } else {
@@ -269,6 +270,7 @@ class CommandManager {
         proc = spawn(cmdExe, ['/d', '/s', '/c', cmdDef.command], {
           shell: false,
           cwd,
+          env: augmentWindowsPath(),
           stdio: ['ignore', 'pipe', 'pipe'],
         })
       } else {

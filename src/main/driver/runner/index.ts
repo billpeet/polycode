@@ -11,4 +11,4 @@ export function createRunner(opts: Pick<DriverOptions, 'ssh' | 'wsl'>): Runner {
 }
 
 export type { Runner, SpawnCommand } from './types'
-export { shellEscape, winQuote, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, FIX_HOME, RESOLVE_CODEX_BIN, RESOLVE_CODEX_BIN_SOFT } from './utils'
+export { shellEscape, winQuote, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, FIX_HOME, RESOLVE_CODEX_BIN, RESOLVE_CODEX_BIN_SOFT, augmentWindowsPath } from './utils'

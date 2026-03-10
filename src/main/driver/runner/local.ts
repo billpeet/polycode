@@ -3,7 +3,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { Runner, SpawnCommand } from './types'
-import { winQuote } from './utils'
+import { winQuote, augmentWindowsPath } from './utils'
 
 export class LocalRunner implements Runner {
   readonly type = 'local' as const
@@ -11,6 +11,7 @@ export class LocalRunner implements Runner {
   spawn(cmd: SpawnCommand): ChildProcess {
     const { binary, args, workDir, stdinContent } = cmd
     const isWindows = process.platform === 'win32'
+    const env = isWindows ? augmentWindowsPath() : undefined
 
     if (!workDir || !existsSync(workDir)) {
       throw new Error(`Working directory does not exist: "${workDir}"`)
@@ -31,6 +32,7 @@ export class LocalRunner implements Runner {
         console.log('[LocalRunner] Spawning (UNC/batch):', batchPath)
         const proc = spawn('cmd', ['/c', batchPath], {
           shell: false,
+          env,
           stdio: ['pipe', 'pipe', 'pipe'],
         })
         proc.on('close', () => { try { unlinkSync(batchPath) } catch { /* ignore */ } })
@@ -47,6 +49,7 @@ export class LocalRunner implements Runner {
         console.log('[LocalRunner] Spawning (Windows/shell):', cmdStr)
         const proc = spawn(cmdStr, [], {
           cwd: workDir,
+          env,
           shell: true,
           stdio: ['pipe', 'pipe', 'pipe'],
         })

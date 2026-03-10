@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult } from '../../shared/types'
-import { shellEscape, LOAD_NODE_MANAGERS, buildSshBaseArgs } from '../driver/runner'
+import { shellEscape, LOAD_NODE_MANAGERS, buildSshBaseArgs, augmentWindowsPath } from '../driver/runner'
 
 interface SpawnResult {
   output: string
@@ -10,13 +10,14 @@ interface SpawnResult {
 function runProcess(
   cmd: string,
   args: string[],
-  opts: { shell?: boolean; timeout?: number } = {}
+  opts: { shell?: boolean; timeout?: number; env?: NodeJS.ProcessEnv } = {}
 ): Promise<SpawnResult> {
   return new Promise((resolve) => {
     let output = ''
     const timeout = opts.timeout ?? 15000
 
     const proc = spawn(cmd, args, {
+      env: opts.env,
       shell: opts.shell ?? false,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
@@ -113,6 +114,7 @@ async function runVersionCheck(
 
   // Local
   return runProcess(info.cmd, ['--version'], {
+    env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
     shell: process.platform === 'win32',
     timeout: 10000,
   })
@@ -149,11 +151,13 @@ async function runUpdate(
   if (info.updateCmd) {
     const [cmd, ...args] = info.updateCmd
     return runProcess(cmd, args, {
+      env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
       shell: process.platform === 'win32',
       timeout: 120000,
     })
   }
   return runProcess('npm', ['install', '-g', info.updatePkg!], {
+    env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
     shell: process.platform === 'win32',
     timeout: 120000,
   })

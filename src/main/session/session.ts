@@ -6,7 +6,7 @@ import { OpenCodeDriver } from '../driver/opencode'
 import { CLIDriver } from '../driver/types'
 import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
-import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from '../driver/runner'
+import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 import {
   updateThreadStatus,
   updateThreadName,
@@ -387,6 +387,7 @@ export class Session {
       return spawn(cmdExe, ['/d', '/s', '/c', command], {
         shell: false,
         cwd: workDir,
+        env: augmentWindowsPath(),
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     }

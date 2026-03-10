@@ -1,3 +1,5 @@
+import { existsSync } from 'fs'
+import path from 'path'
 import { SshConfig } from '../../../shared/types'
 
 /** Escape a string for use inside single quotes in a POSIX shell. */
@@ -14,6 +16,59 @@ export function shellEscape(s: string): string {
 export function winQuote(s: string): string {
   if (!/[ \t"&|<>^]/.test(s)) return s
   return '"' + s.replace(/"/g, '\\"') + '"'
+}
+
+function getWindowsPathKey(env: NodeJS.ProcessEnv): 'PATH' | 'Path' {
+  return typeof env.Path === 'string' ? 'Path' : 'PATH'
+}
+
+/**
+ * Build a Windows child-process env with common user install dirs prepended to PATH.
+ * This makes Electron-launched subprocesses reliably find tools like bun/claude/npm
+ * even when the parent process inherited an incomplete PATH.
+ */
+export function augmentWindowsPath(env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  if (process.platform !== 'win32') return env
+
+  const pathKey = getWindowsPathKey(env)
+  const currentPath = env[pathKey] ?? env.PATH ?? env.Path ?? ''
+  const userProfile = env.USERPROFILE
+  const appData = env.APPDATA
+  const localAppData = env.LOCALAPPDATA
+  const programFiles = env.ProgramFiles
+
+  const candidateDirs = [
+    userProfile ? path.join(userProfile, '.bun', 'bin') : null,
+    userProfile ? path.join(userProfile, '.local', 'bin') : null,
+    userProfile ? path.join(userProfile, 'scoop', 'shims') : null,
+    appData ? path.join(appData, 'npm') : null,
+    localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
+    programFiles ? path.join(programFiles, 'nodejs') : null,
+  ]
+
+  const seen = new Set<string>()
+  const parts: string[] = []
+  for (const dir of candidateDirs) {
+    if (!dir || !existsSync(dir)) continue
+    const key = dir.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    parts.push(dir)
+  }
+  for (const dir of currentPath.split(path.delimiter)) {
+    if (!dir) continue
+    const key = dir.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    parts.push(dir)
+  }
+
+  const nextPath = parts.join(path.delimiter)
+  return {
+    ...env,
+    PATH: nextPath,
+    Path: nextPath,
+  }
 }
 
 /**

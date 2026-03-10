@@ -24,6 +24,23 @@ type PullRequestItem = {
   creationDate: string
 }
 
+function PullRequestLink({ pr }: { pr: PullRequestItem }) {
+  if (!pr.url) return null
+
+  return (
+    <a
+      href={pr.url}
+      target="_blank"
+      rel="noreferrer"
+      className="text-[10px] underline underline-offset-2 hover:opacity-80 transition-opacity"
+      style={{ color: 'var(--color-text-muted)' }}
+      title={`View PR #${pr.id} online`}
+    >
+      View online
+    </a>
+  )
+}
+
 function SparkleIcon() {
   return (
     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1377,6 +1394,9 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                         <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
                           {currentPr.sourceBranch} → {currentPr.targetBranch}
                         </p>
+                        <div className="mt-1">
+                          <PullRequestLink pr={currentPr} />
+                        </div>
                       </div>
                     ) : (
                       <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>
@@ -1404,6 +1424,9 @@ function GitSection({ threadId, collapsed, onToggle }: { threadId: string; colla
                             <p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>
                               {pr.sourceBranch} → {pr.targetBranch}
                             </p>
+                            <div className="mt-1">
+                              <PullRequestLink pr={pr} />
+                            </div>
                           </div>
                           <button
                             onClick={() => void handleCheckoutPr(pr.id)}

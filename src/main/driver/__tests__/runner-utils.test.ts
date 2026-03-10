@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'bun:test'
-import { shellEscape, winQuote, cdTarget, buildSshBaseArgs } from '../runner/utils'
+import { shellEscape, winQuote, cdTarget, buildSshBaseArgs, augmentWindowsPath } from '../runner/utils'
 import type { SshConfig } from '../../../shared/types'
 
 // ── shellEscape ───────────────────────────────────────────────────────────────
@@ -164,5 +164,24 @@ describe('buildSshBaseArgs', () => {
     if (process.platform !== 'win32') return
     const args = buildSshBaseArgs(baseConfig)
     expect(args.join(' ')).not.toContain('ControlMaster')
+  })
+})
+
+// ── augmentWindowsPath ────────────────────────────────────────────────────────
+
+describe('augmentWindowsPath', () => {
+  it('returns the original env on non-win32', () => {
+    if (process.platform === 'win32') return
+    const env = { PATH: '/usr/bin:/bin' }
+    expect(augmentWindowsPath(env)).toBe(env)
+  })
+
+  it('preserves the existing PATH entries', () => {
+    if (process.platform !== 'win32') return
+    const env = { Path: 'C:\\Windows\\System32;C:\\Tools' }
+    const next = augmentWindowsPath(env)
+    expect(next.Path).toContain('C:\\Windows\\System32')
+    expect(next.Path).toContain('C:\\Tools')
+    expect(next.PATH).toBe(next.Path)
   })
 })
