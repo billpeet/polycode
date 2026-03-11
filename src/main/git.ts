@@ -609,6 +609,29 @@ export async function isGitRepo(repoPath: string, ssh?: SshConfig | null, wsl?: 
   }
 }
 
+export async function getDefaultBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  // Try symbolic-ref for origin/HEAD first (fast, no network)
+  try {
+    const ref = (await git(repoPath, ['symbolic-ref', 'refs/remotes/origin/HEAD'], ssh, wsl)).trim()
+    const branch = ref.replace(/^refs\/remotes\/origin\//, '')
+    if (branch && branch !== ref) return branch
+  } catch {
+    // not set
+  }
+
+  // Fall back to common names
+  for (const candidate of ['main', 'master', 'develop', 'dev']) {
+    try {
+      await git(repoPath, ['rev-parse', '--verify', `origin/${candidate}`], ssh, wsl)
+      return candidate
+    } catch {
+      // not found
+    }
+  }
+
+  return 'main'
+}
+
 export async function mergeBranch(repoPath: string, source: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ conflicts: string[] }> {
   try {
     await git(repoPath, ['merge', source], ssh, wsl)

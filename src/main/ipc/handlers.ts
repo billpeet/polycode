@@ -70,7 +70,7 @@ import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -731,6 +731,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:hostingProvider', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return detectGitHostingProvider(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:defaultBranch', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getDefaultBranch(repoPath, ssh, wsl)
   })
 
   // ── Azure DevOps Pull Requests ────────────────────────────────────────────

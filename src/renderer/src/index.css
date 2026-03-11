@@ -126,6 +126,7 @@ body,
 
 .prose-content p {
   margin: 0;
+  white-space: pre-line;
 }
 
 .prose-content ul,
@@ -144,6 +145,7 @@ body,
 
 .prose-content li {
   margin: 0.2em 0;
+  white-space: pre-line;
 }
 
 .prose-content ul li::marker {
@@ -160,6 +162,7 @@ body,
   padding: 0.25em 0.75em;
   font-style: italic;
   color: var(--color-text-muted);
+  white-space: pre-line;
 }
 
 .prose-content :not(pre) > code {

@@ -10,6 +10,7 @@ interface AzureRepoContext {
   remoteName: string
   project: string | null
   repo: string
+  remoteUrl: string
 }
 
 interface AzDevOpsPr {
@@ -53,15 +54,36 @@ function toHeadRef(branch: string, remoteName: string): string {
   return `refs/heads/${normalized}`
 }
 
-function mapPr(pr: AzDevOpsPr): AzureDevOpsPullRequest {
+function buildWebUrl(remoteUrl: string, prId: number): string {
+  const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
+
+  // SSH: git@ssh.dev.azure.com:v3/org/project/repo
+  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (sshMatch) return `https://dev.azure.com/${sshMatch[1]}/${sshMatch[2]}/_git/${sshMatch[3]}/pullrequest/${prId}`
+
+  // SSH: ssh://git@ssh.dev.azure.com/v3/org/project/repo
+  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (sshUrlMatch) return `https://dev.azure.com/${sshUrlMatch[1]}/${sshUrlMatch[2]}/_git/${sshUrlMatch[3]}/pullrequest/${prId}`
+
+  // SSH: git@vs-ssh.visualstudio.com:v3/org/project/repo
+  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (vsSshMatch) return `https://${vsSshMatch[1]}.visualstudio.com/${vsSshMatch[2]}/_git/${vsSshMatch[3]}/pullrequest/${prId}`
+
+  // HTTPS: just append /pullrequest/<id> to the repo URL
+  return `${normalized}/pullrequest/${prId}`
+}
+
+function mapPr(pr: AzDevOpsPr, remoteUrl?: string): AzureDevOpsPullRequest {
+  const id = pr.pullRequestId ?? 0
+  const url = remoteUrl && id ? buildWebUrl(remoteUrl, id) : (pr.url ?? '')
   return {
-    id: pr.pullRequestId ?? 0,
+    id,
     title: pr.title ?? '(untitled)',
     status: pr.status ?? 'unknown',
     sourceBranch: shortRef(pr.sourceRefName),
     targetBranch: shortRef(pr.targetRefName),
     authorName: pr.createdBy?.displayName ?? 'Unknown',
-    url: pr.url ?? '',
+    url,
     creationDate: pr.creationDate ?? '',
   }
 }
@@ -238,6 +260,7 @@ async function resolveRepoContext(repoPath: string, ssh?: SshConfig | null, wsl?
     const context = parseAzureRemote(remoteUrl)
     if (context) {
       context.remoteName = remoteName
+      context.remoteUrl = remoteUrl
       return context
     }
   }
@@ -273,7 +296,7 @@ export async function listOpenPullRequests(
   if (!Array.isArray(raw)) return []
 
   return raw
-    .map((pr) => mapPr(pr as AzDevOpsPr))
+    .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
     .filter((pr) => pr.id > 0)
 }
 
@@ -298,8 +321,11 @@ export async function createPullRequest(
   if (!sourceBranch || sourceBranch === 'HEAD') {
     throw new Error('Cannot create pull request from detached HEAD')
   }
-  const source = toHeadRef(sourceBranch, ctx.remoteName)
-  const target = toHeadRef(payload.target, ctx.remoteName)
+  const source = normalizeBranchName(sourceBranch, ctx.remoteName)
+  const target = normalizeBranchName(payload.target, ctx.remoteName)
+
+  if (!source) throw new Error('Could not determine source branch name')
+  if (!target) throw new Error('Could not determine target branch name')
 
   const args: string[] = [
     'pr', 'create',
@@ -326,7 +352,7 @@ export async function createPullRequest(
     throw new Error('Failed to parse create PR response from azdevops CLI')
   }
 
-  const pr = mapPr(raw as AzDevOpsPr)
+  const pr = mapPr(raw as AzDevOpsPr, ctx.remoteUrl)
   if (!pr.id) {
     throw new Error('Azure DevOps did not return a valid pull request')
   }
@@ -412,6 +438,14 @@ export async function checkoutPullRequestBranch(
       const checkoutBranch = ref === sourceRefName && sourceBranchName ? sourceBranchName : localPrBranch
       await git(repoPath, ['fetch', ctx.remoteName, ref], ssh, wsl)
       await git(repoPath, ['checkout', '-B', checkoutBranch, 'FETCH_HEAD'], ssh, wsl)
+      // Set up remote tracking so the branch stays linked to origin
+      if (ref === sourceRefName && sourceBranchName) {
+        try {
+          await git(repoPath, ['branch', `--set-upstream-to=${ctx.remoteName}/${sourceBranchName}`, checkoutBranch], ssh, wsl)
+        } catch {
+          // Non-fatal: tracking setup may fail if remote ref isn't cached locally
+        }
+      }
       return { branch: checkoutBranch }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)

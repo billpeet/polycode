@@ -4,6 +4,12 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminal'
 
+function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+  if (event.altKey) return false
+  if (!event.ctrlKey && !event.metaKey) return false
+  return event.key === 'c' || event.key === 'C'
+}
+
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
@@ -118,6 +124,11 @@ export default function TerminalPane({ threadId }: Props) {
     const fitAddon = new FitAddon()
     term.loadAddon(fitAddon)
     term.open(containerRef.current)
+    term.attachCustomKeyEventHandler((event) => {
+      if (!isTerminalCopyShortcut(event) || !term.hasSelection()) return true
+      void navigator.clipboard.writeText(term.getSelection())
+      return false
+    })
 
     // Delay fit to after layout settles
     requestAnimationFrame(() => {

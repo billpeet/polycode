@@ -77,7 +77,7 @@ export default function ThreadRow({
 
       <div
         className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/thread:opacity-100"
-        style={{ background: isSelected ? 'var(--color-border)' : 'var(--color-surface)' }}
+        style={{ background: isSelected ? 'color-mix(in srgb, var(--color-border) 80%, transparent)' : 'color-mix(in srgb, var(--color-surface) 80%, transparent)' }}
       >
         <span
           className="px-1 text-[10px]"

@@ -22,6 +22,12 @@ import { useYouTrackStore } from './stores/youtrack'
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName.toLowerCase()
+  return tag === 'input' || tag === 'textarea' || target.isContentEditable
+}
+
 export default function App() {
   const fetchProjects = useProjectStore((s) => s.fetch)
   const projects = useProjectStore((s) => s.projects)
@@ -94,11 +100,24 @@ export default function App() {
 
   // Keyboard shortcuts
   useEffect(() => {
-    function handler(e: KeyboardEvent): void {
-      if (!e.ctrlKey) return
+    async function handler(e: KeyboardEvent): Promise<void> {
+      const hasPrimaryModifier = e.ctrlKey || e.metaKey
+      if (!hasPrimaryModifier) return
 
-      const tag = (e.target as HTMLElement)?.tagName?.toLowerCase()
-      const isInputField = tag === 'input' || tag === 'textarea'
+      const isInputField = isEditableTarget(e.target)
+      const isCopyShortcut = (e.key === 'c' || e.key === 'C') && !e.altKey
+      if (isCopyShortcut && !isInputField) {
+        const selectionText = window.getSelection?.()?.toString() ?? ''
+        if (selectionText) {
+          e.preventDefault()
+          try {
+            await navigator.clipboard.writeText(selectionText)
+          } catch {
+            // Fall through to the platform handler if clipboard access is denied.
+          }
+        }
+        return
+      }
 
       if (e.key === 't' || e.key === 'T') {
         if (isInputField) return

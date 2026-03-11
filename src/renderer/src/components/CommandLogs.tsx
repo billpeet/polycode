@@ -12,6 +12,12 @@ import { CommandLogLine, CommandStatus } from '../types/ipc'
 const EMPTY_PINNED: string[] = []
 const EMPTY_PORTS: number[] = []
 
+function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
+  if (event.altKey) return false
+  if (!event.ctrlKey && !event.metaKey) return false
+  return event.key === 'c' || event.key === 'C'
+}
+
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
@@ -240,6 +246,11 @@ function CommandLogPanel({
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.open(containerRef.current)
+    term.attachCustomKeyEventHandler((event) => {
+      if (!isTerminalCopyShortcut(event) || !term.hasSelection()) return true
+      void navigator.clipboard.writeText(term.getSelection())
+      return false
+    })
 
     xtermRef.current = term
     fitAddonRef.current = fitAddon
