@@ -120,6 +120,15 @@ export default function Sidebar() {
     fetchYouTrackServers()
   }, [fetchYouTrackServers])
 
+  // Refresh thread list when a webhook creates a thread in this project
+  useEffect(() => {
+    const unsub = window.api.on('webhook:thread-created', (...args) => {
+      const { projectId } = args[0] as { projectId: string; threadId: string }
+      fetchThreads(projectId)
+    })
+    return unsub
+  }, [fetchThreads])
+
   useEffect(() => {
     let cancelled = false
 

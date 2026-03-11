@@ -244,6 +244,34 @@ export function returnLocationToPool(id: string): void {
     .run(new Date().toISOString(), id)
 }
 
+export function getProjectByName(name: string): Project | null {
+  const row = getDb()
+    .prepare('SELECT * FROM projects WHERE name = ? AND archived_at IS NULL')
+    .get(name) as ProjectRow | undefined
+  return row ? rowToProject(row) : null
+}
+
+export function getLocationByLabel(projectId: string, label: string): RepoLocation | null {
+  const row = getDb()
+    .prepare('SELECT * FROM repo_locations WHERE project_id = ? AND label = ?')
+    .get(projectId, label) as RepoLocationRow | undefined
+  return row ? rowToLocation(row) : null
+}
+
+export function getPoolByName(projectId: string, name: string): LocationPool | null {
+  const row = getDb()
+    .prepare('SELECT * FROM location_pools WHERE project_id = ? AND name = ?')
+    .get(projectId, name) as LocationPoolRow | undefined
+  return row ? rowToLocationPool(row) : null
+}
+
+export function getNextAvailablePoolLocation(poolId: string): RepoLocation | null {
+  const row = getDb()
+    .prepare('SELECT * FROM repo_locations WHERE pool_id = ? AND checked_out = 0 ORDER BY created_at ASC LIMIT 1')
+    .get(poolId) as RepoLocationRow | undefined
+  return row ? rowToLocation(row) : null
+}
+
 /** Find a location whose path matches (prefix match for file lookups). */
 export function getLocationByPath(path: string): RepoLocation | null {
   // Exact match first

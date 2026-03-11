@@ -9,6 +9,8 @@ import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
 import { SENTRY_DSN } from '../shared/sentry.config'
+import { startWebhookServer, stopWebhookServer } from './webhook/server'
+import { getSetting } from './db/queries'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
@@ -140,6 +142,12 @@ app.whenReady().then(() => {
   const win = createWindow()
   registerIpcHandlers(win)
 
+  startWebhookServer({
+    enabled: getSetting('webhook:enabled') === 'true',
+    port: parseInt(getSetting('webhook:port') ?? '3284', 10),
+    token: getSetting('webhook:token') ?? '',
+  }, win)
+
   if (!isDev) {
     autoUpdater.on('error', (err) => {
       Sentry.captureException(err)
@@ -207,6 +215,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  stopWebhookServer()
   ptyManager.killAll()
   cleanupAllAttachments()
   closeDb()

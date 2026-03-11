@@ -3,13 +3,15 @@ import { useBackdropClose } from '../hooks/useBackdropClose'
 import { CliHealthPanel } from './CliHealthDialog'
 import { SlashCommandsPanel } from './SlashCommandsDialog'
 import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
+import { WebhookPanel } from './WebhookPanel'
 
-type Tab = 'health' | 'slash' | 'youtrack'
+type Tab = 'health' | 'slash' | 'youtrack' | 'webhook'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'health', label: 'Health Checks' },
   { id: 'slash', label: 'Slash Commands' },
   { id: 'youtrack', label: 'YouTrack' },
+  { id: 'webhook', label: 'Webhook' },
 ]
 
 interface Props {
@@ -80,6 +82,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
               <SlashCommandsPanel projectId={projectId} projectName={projectName} hideHeader />
             )}
             {activeTab === 'youtrack' && <YouTrackSettingsPanel hideHeader />}
+            {activeTab === 'webhook' && <WebhookPanel hideHeader />}
           </div>
         </div>
       </div>

@@ -84,6 +84,7 @@ import {
   getFileInfo,
 } from '../attachments'
 import { getThreadLogs } from '../thread-logger'
+import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 
 /** Get SSH config from the thread's linked repo location. */
 function getSshConfigForThread(threadId: string): SshConfig | null {
@@ -1093,6 +1094,23 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('terminal:kill', (_event, terminalId: string) => {
     ptyManager.kill(terminalId)
+  })
+
+  // ── Webhook ─────────────────────────────────────────────────────────────────
+
+  ipcMain.handle('webhook:getConfig', () => {
+    return {
+      enabled: getSetting('webhook:enabled') === 'true',
+      port: parseInt(getSetting('webhook:port') ?? '3284', 10),
+      token: getSetting('webhook:token') ?? '',
+    } satisfies WebhookConfig
+  })
+
+  ipcMain.handle('webhook:setConfig', (_event, config: WebhookConfig) => {
+    setSetting('webhook:enabled', config.enabled ? 'true' : 'false')
+    setSetting('webhook:port', String(config.port))
+    setSetting('webhook:token', config.token)
+    restartWebhookServer(config, window)
   })
 }
 

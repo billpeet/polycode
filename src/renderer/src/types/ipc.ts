@@ -140,6 +140,8 @@ export interface WindowApi {
   invoke(channel: 'terminal:kill', terminalId: string): Promise<void>
   invoke(channel: 'settings:get', key: string): Promise<string | null>
   invoke(channel: 'settings:set', key: string, value: string): Promise<void>
+  invoke(channel: 'webhook:getConfig'): Promise<{ enabled: boolean; port: number; token: string }>
+  invoke(channel: 'webhook:setConfig', config: { enabled: boolean; port: number; token: string }): Promise<void>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 
