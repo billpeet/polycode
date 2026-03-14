@@ -45,6 +45,7 @@ interface ThreadStore {
   rename: (threadId: string, name: string) => Promise<void>
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
+  setYolo: (threadId: string, yoloMode: boolean) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
@@ -124,10 +125,20 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     // Carry over per-thread WSL override for this location to new threads.
     if (
       sourceThread &&
-      (thread.use_wsl !== sourceThread.use_wsl || thread.wsl_distro !== sourceThread.wsl_distro)
+      (
+        thread.use_wsl !== sourceThread.use_wsl ||
+        thread.wsl_distro !== sourceThread.wsl_distro ||
+        thread.yolo_mode !== sourceThread.yolo_mode
+      )
     ) {
       await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
-      thread = { ...thread, use_wsl: sourceThread.use_wsl, wsl_distro: sourceThread.wsl_distro }
+      await window.api.invoke('threads:setYolo', thread.id, sourceThread.yolo_mode)
+      thread = {
+        ...thread,
+        use_wsl: sourceThread.use_wsl,
+        wsl_distro: sourceThread.wsl_distro,
+        yolo_mode: sourceThread.yolo_mode,
+      }
     }
 
     set((s) => ({
@@ -355,6 +366,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       for (const pid of Object.keys(updated)) {
         updated[pid] = updated[pid].map((t) =>
           t.id === threadId ? { ...t, use_wsl: useWsl, wsl_distro: wslDistro } : t
+        )
+      }
+      return { byProject: updated }
+    })
+  },
+
+  setYolo: async (threadId, yoloMode) => {
+    await window.api.invoke('threads:setYolo', threadId, yoloMode)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) =>
+          t.id === threadId ? { ...t, yolo_mode: yoloMode } : t
         )
       }
       return { byProject: updated }

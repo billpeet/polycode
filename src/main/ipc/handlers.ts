@@ -32,6 +32,7 @@ import {
   updateThreadName,
   updateThreadModel,
   updateThreadProviderAndModel,
+  updateThreadYoloMode,
   updateThreadStatus,
   updateThreadUnread,
   threadExists,
@@ -452,6 +453,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('threads:setUnread', (_event, threadId: string, unread: boolean) => {
     return updateThreadUnread(threadId, unread)
+  })
+
+  ipcMain.handle('threads:setYolo', (_event, threadId: string, yoloMode: boolean) => {
+    sessionManager.remove(threadId)
+    return updateThreadYoloMode(threadId, yoloMode)
   })
 
   ipcMain.handle('threads:setWsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {

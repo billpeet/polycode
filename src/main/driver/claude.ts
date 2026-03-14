@@ -23,6 +23,7 @@ export class ClaudeDriver extends BaseDriver {
 
   protected buildCommand(content: string, runnerType: 'local' | 'wsl' | 'ssh', options?: MessageOptions): SpawnCommand {
     const planMode = options?.planMode ?? false
+    const yoloMode = options?.yoloMode ?? this.options.yoloMode ?? false
 
     const args = [
       '--output-format', 'stream-json',
@@ -34,7 +35,7 @@ export class ClaudeDriver extends BaseDriver {
     // Normal mode bypasses permissions but still allows Claude to enter plan mode
     if (planMode) {
       args.push('--permission-mode', 'plan')
-    } else {
+    } else if (yoloMode) {
       args.push('--dangerously-skip-permissions')
     }
     if (this.options.model) {

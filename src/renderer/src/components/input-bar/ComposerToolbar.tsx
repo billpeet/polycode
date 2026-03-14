@@ -1,6 +1,6 @@
 import { Thread, PROVIDERS, Provider, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
-import { PlanIcon, formatElapsed } from './icons'
+import { PlanIcon, YoloIcon, formatElapsed } from './icons'
 
 interface ComposerToolbarProps {
   threadId: string
@@ -10,6 +10,7 @@ interface ComposerToolbarProps {
   isLocalLocation: boolean | undefined
   currentThread: Thread | undefined
   availableDistros: string[]
+  setYolo: (threadId: string, yoloMode: boolean) => void
   setWsl: (threadId: string, useWsl: boolean, distro: string | null) => void
   setProviderAndModel: (threadId: string, provider: Provider, model: string) => void
   setModel: (threadId: string, model: string) => void
@@ -25,12 +26,15 @@ export default function ComposerToolbar({
   isLocalLocation,
   currentThread,
   availableDistros,
+  setYolo,
   setWsl,
   setProviderAndModel,
   setModel,
   showCodexWslWarning,
   elapsedSeconds,
 }: ComposerToolbarProps) {
+  const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
+
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
       <button
@@ -48,6 +52,27 @@ export default function ComposerToolbar({
         Plan
       </button>
       <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+      {supportsYolo && currentThread && (
+        <>
+          <button
+            onClick={() => setYolo(threadId, !currentThread.yolo_mode)}
+            disabled={isProcessing}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
+            title={currentThread.provider === 'codex'
+              ? 'Codex Yolo: bypass approvals and sandbox'
+              : 'Claude Yolo: skip permissions prompts'}
+            style={{
+              background: currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
+              color: currentThread.yolo_mode ? '#f97316' : 'var(--color-text-muted)',
+              border: `1px solid ${currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.3)' : 'transparent'}`,
+            }}
+          >
+            <YoloIcon />
+            Yolo
+          </button>
+          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+        </>
+      )}
       <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
         Shift+Enter for newline
       </span>

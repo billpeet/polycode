@@ -13,6 +13,7 @@ import {
   insertMessage,
   getThreadModel,
   getThreadProvider,
+  getThreadYoloMode,
   getOrCreateActiveSession,
   createSession,
   listSessions,
@@ -60,6 +61,7 @@ export class Session {
       workingDir: this.workingDir,
       threadId: this.threadId,
       model,
+      yoloMode: getThreadYoloMode(this.threadId),
       initialSessionId: externalSessionId,
       onSessionId: (sid: string) => updateSessionClaudeId(sessionId, sid),
       ssh: this.sshConfig,
@@ -195,7 +197,7 @@ export class Session {
         content,
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        { planMode: options?.planMode }
+        { planMode: options?.planMode, yoloMode: getThreadYoloMode(this.threadId) }
       )
     }
 

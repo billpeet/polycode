@@ -47,6 +47,7 @@ export interface WindowApi {
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
   invoke(channel: 'threads:updateProviderAndModel', id: string, provider: string, model: string): Promise<void>
   invoke(channel: 'threads:setUnread', threadId: string, unread: boolean): Promise<void>
+  invoke(channel: 'threads:setYolo', threadId: string, yoloMode: boolean): Promise<void>
   invoke(channel: 'threads:setWsl', threadId: string, useWsl: boolean, wslDistro: string | null): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
   invoke(channel: 'messages:listBySession', sessionId: string): Promise<Message[]>

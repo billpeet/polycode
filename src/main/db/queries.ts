@@ -317,6 +317,7 @@ function rowToThread(r: ThreadRow): Thread {
     context_window: r.context_window ?? 0,
     unread: (r.unread ?? 0) === 1,
     has_messages: (r.has_messages ?? 0) === 1,
+    yolo_mode: (r.yolo_mode ?? 0) === 1,
     use_wsl: r.use_wsl === 1,
     wsl_distro: r.wsl_distro ?? null,
     git_branch: r.git_branch ?? null,
@@ -385,6 +386,7 @@ export function createThread(projectId: string, name: string, locationId: string
     context_window: 0,
     unread: 0,
     has_messages: 0,
+    yolo_mode: 0,
     use_wsl: 0,
     wsl_distro: null,
     git_branch: gitBranch,
@@ -393,7 +395,7 @@ export function createThread(projectId: string, name: string, locationId: string
   }
   getDb()
     .prepare(
-      'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, yolo_mode, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       thread.id,
@@ -403,6 +405,7 @@ export function createThread(projectId: string, name: string, locationId: string
       thread.provider,
       thread.model,
       thread.status,
+      thread.yolo_mode,
       thread.git_branch,
       thread.created_at,
       thread.updated_at
@@ -422,6 +425,12 @@ export function updateThreadProviderAndModel(id: string, provider: string, model
   getDb()
     .prepare('UPDATE threads SET provider = ?, model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
     .run(provider, model, now, now, id)
+}
+
+export function updateThreadYoloMode(id: string, yoloMode: boolean): void {
+  getDb()
+    .prepare('UPDATE threads SET yolo_mode = ?, updated_at = ? WHERE id = ?')
+    .run(yoloMode ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function deleteThread(id: string): void {
@@ -467,6 +476,13 @@ export function getThreadWsl(id: string): { use_wsl: boolean; wsl_distro: string
     .prepare('SELECT use_wsl, wsl_distro FROM threads WHERE id = ?')
     .get(id) as { use_wsl: number; wsl_distro: string | null } | undefined
   return { use_wsl: (row?.use_wsl ?? 0) === 1, wsl_distro: row?.wsl_distro ?? null }
+}
+
+export function getThreadYoloMode(id: string): boolean {
+  const row = getDb()
+    .prepare('SELECT yolo_mode FROM threads WHERE id = ?')
+    .get(id) as { yolo_mode: number } | undefined
+  return (row?.yolo_mode ?? 0) === 1
 }
 
 /** Sets git_branch only if it hasn't been set yet. Returns true if it was updated. */
@@ -982,8 +998,10 @@ export function importThread(
     context_window: 0,
     unread: 0,
     has_messages: 1,
+    yolo_mode: 0,
     use_wsl: 0,
     wsl_distro: null,
+    git_branch: null,
     created_at: now,
     updated_at: now
   }

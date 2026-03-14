@@ -123,6 +123,7 @@ export default function InputBar({ threadId }: Props) {
   // Provider / model / WSL selectors (moved from ThreadHeader)
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
   const setModel = useThreadStore((s) => s.setModel)
+  const setYolo = useThreadStore((s) => s.setYolo)
   const setWsl = useThreadStore((s) => s.setWsl)
 
   const [availableDistros, setAvailableDistros] = useState<string[]>([])
@@ -698,6 +699,7 @@ export default function InputBar({ threadId }: Props) {
           isLocalLocation={isLocalLocation}
           currentThread={currentThread}
           availableDistros={availableDistros}
+          setYolo={setYolo}
           setWsl={setWsl}
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}
@@ -705,7 +707,7 @@ export default function InputBar({ threadId }: Props) {
           elapsedSeconds={elapsedSeconds}
         />
 
-        {/* Attachments above textarea */}
+        {/* Attachment previews above textarea */}
         {attachments.length > 0 && (
           <div className="px-3 pt-3">
             <AttachmentPreview
@@ -730,34 +732,31 @@ export default function InputBar({ threadId }: Props) {
             <PaperclipIcon />
           </button>
 
-          {/* Textarea */}
-          <div className="flex flex-1 items-end">
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              onInput={handleInput}
-              onPaste={handlePaste}
-              onFocus={() => setIsFocused(true)}
-              onBlur={() => setIsFocused(false)}
-              rows={1}
-              placeholder={
-                cliUnavailable
-                  ? 'CLI not available — input disabled'
-                  : isProcessing
-                    ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
-                    : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
-              }
-              disabled={isPlanPending || isQuestionPending || cliUnavailable}
-              className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
-              style={{
-                color: 'var(--color-text)',
-                maxHeight: '200px',
-                minHeight: '24px',
-              }}
-            />
-          </div>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onInput={handleInput}
+            onPaste={handlePaste}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            rows={1}
+            placeholder={
+              cliUnavailable
+                ? 'CLI not available — input disabled'
+                : isProcessing
+                  ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
+                  : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
+            }
+            disabled={isPlanPending || isQuestionPending || cliUnavailable}
+            className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
+            style={{
+              color: 'var(--color-text)',
+              maxHeight: '200px',
+              minHeight: '24px',
+            }}
+          />
 
           {/* Send / Queue / Stop buttons */}
           {isProcessing ? (
