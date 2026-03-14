@@ -1,6 +1,53 @@
-import { spawn } from 'child_process'
+import { spawn, execFileSync } from 'child_process'
+import * as fs from 'node:fs'
+import * as path from 'node:path'
 import { WslConfig, FileEntry, SearchableFile } from '../shared/types'
-import { shellEscape, cdTarget } from './driver/runner'
+import { cdTarget } from './driver/runner'
+
+// Cache resolved WSL home directories per distro
+const wslHomeCache = new Map<string, string>()
+
+/**
+ * Resolve the home directory for a WSL distribution.
+ * Queries the passwd database inside WSL and caches the result.
+ */
+function getWslHome(wsl: WslConfig): string {
+  const cached = wslHomeCache.get(wsl.distro)
+  if (cached) return cached
+
+  try {
+    // Use getent to read the passwd database directly — avoids the Windows HOME
+    // env var that WSL inherits, which would resolve ~ to the wrong directory.
+    const home = execFileSync('wsl', ['-d', wsl.distro, '-e', 'bash', '-c',
+      'getent passwd $(whoami) | cut -d: -f6'], {
+      encoding: 'utf8', timeout: 5000,
+    }).trim()
+    if (home) {
+      wslHomeCache.set(wsl.distro, home)
+      return home
+    }
+  } catch { /* fall through */ }
+
+  // Fallback: can't resolve ~, return /root as best guess
+  const fallback = '/root'
+  wslHomeCache.set(wsl.distro, fallback)
+  return fallback
+}
+
+/**
+ * Convert a WSL Linux path to a Windows UNC path via \\wsl.localhost.
+ * Handles tilde (~) expansion by resolving the WSL user's home directory.
+ * Uses forward slashes which Node.js on Windows handles correctly for UNC paths.
+ * e.g. /home/user/project → //wsl.localhost/Ubuntu/home/user/project
+ */
+function wslToUncPath(wsl: WslConfig, linuxPath: string): string {
+  let resolved = linuxPath
+  if (resolved.startsWith('~/') || resolved === '~') {
+    const home = getWslHome(wsl)
+    resolved = resolved === '~' ? home : home + resolved.slice(1)
+  }
+  return `//wsl.localhost/${wsl.distro}${resolved}`
+}
 
 /**
  * Execute a command inside a WSL distribution.
@@ -50,66 +97,54 @@ const IGNORED_DIRS = new Set([
 
 /**
  * List directory entries inside a WSL distribution.
+ * Accesses the WSL filesystem via \\wsl.localhost UNC path.
  * Returns the same shape as the local `listDirectory`.
  */
-export async function wslListDirectory(wsl: WslConfig, dirPath: string): Promise<FileEntry[]> {
-  const target = cdTarget(dirPath)
-  const cmd = `find ${target} -maxdepth 1 -mindepth 1 \\( -name '.*' ! -name '.env' \\) -prune -o -printf '%y\\t%f\\n' 2>/dev/null`
-
-  let output: string
+export function wslListDirectory(wsl: WslConfig, dirPath: string): FileEntry[] {
+  const uncPath = wslToUncPath(wsl, dirPath)
   try {
-    output = await wslExec(wsl, dirPath, cmd)
+    const entries = fs.readdirSync(uncPath, { withFileTypes: true })
+    const result: FileEntry[] = []
+
+    for (const entry of entries) {
+      if (entry.name.startsWith('.') && entry.name !== '.env') continue
+      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue
+
+      const entryPath = dirPath.endsWith('/') ? dirPath + entry.name : dirPath + '/' + entry.name
+      result.push({ name: entry.name, path: entryPath, isDirectory: entry.isDirectory() })
+    }
+
+    return result.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
   } catch {
     return []
   }
-
-  if (!output) return []
-
-  const entries: FileEntry[] = []
-  for (const line of output.split('\n')) {
-    if (!line) continue
-    const tab = line.indexOf('\t')
-    if (tab === -1) continue
-    const type = line.slice(0, tab)
-    const name = line.slice(tab + 1).replace(/\r$/, '')
-    if (!name) continue
-
-    const isDirectory = type === 'd'
-    if (isDirectory && IGNORED_DIRS.has(name)) continue
-
-    const entryPath = dirPath.endsWith('/') ? dirPath + name : dirPath + '/' + name
-
-    entries.push({ name, path: entryPath, isDirectory })
-  }
-
-  return entries.sort((a, b) => {
-    if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
-    return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
-  })
 }
 
 /**
  * Read file content from inside a WSL distribution.
+ * Accesses the WSL filesystem via \\wsl.localhost UNC path.
  * Returns null if the file can't be read.
  */
-export async function wslReadFileContent(
+export function wslReadFileContent(
   wsl: WslConfig,
   filePath: string
-): Promise<{ content: string; truncated: boolean } | null> {
+): { content: string; truncated: boolean } | null {
   const MAX_FILE_SIZE = 1048576 // 1MB
-  const target = cdTarget(filePath)
+  const uncPath = wslToUncPath(wsl, filePath)
 
   try {
-    const sizeStr = await wslExec(wsl, '/', `wc -c < ${target}`)
-    const size = parseInt(sizeStr.trim(), 10) || 0
-
-    if (size > MAX_FILE_SIZE) {
-      const content = await wslExec(wsl, '/', `head -c ${MAX_FILE_SIZE} ${target}`)
-      return { content, truncated: true }
+    const stats = fs.statSync(uncPath)
+    if (stats.size > MAX_FILE_SIZE) {
+      const fd = fs.openSync(uncPath, 'r')
+      const buffer = Buffer.alloc(MAX_FILE_SIZE)
+      fs.readSync(fd, buffer, 0, MAX_FILE_SIZE, 0)
+      fs.closeSync(fd)
+      return { content: buffer.toString('utf8'), truncated: true }
     }
-
-    const content = await wslExec(wsl, '/', `cat ${target}`)
-    return { content, truncated: false }
+    return { content: fs.readFileSync(uncPath, 'utf8'), truncated: false }
   } catch {
     return null
   }
@@ -117,42 +152,49 @@ export async function wslReadFileContent(
 
 /**
  * List all files recursively inside a WSL distribution for fuzzy search.
+ * Accesses the WSL filesystem via \\wsl.localhost UNC path.
  */
-export async function wslListAllFiles(wsl: WslConfig, rootPath: string): Promise<SearchableFile[]> {
+export function wslListAllFiles(wsl: WslConfig, rootPath: string): SearchableFile[] {
   const MAX_SEARCH_FILES = 5000
-  const target = cdTarget(rootPath)
-
-  const excludes = Array.from(IGNORED_DIRS)
-    .map(d => `-name ${shellEscape(d)} -prune`)
-    .join(' -o ')
-
-  // -printf '%y\t%p\n' outputs type char ('f' or 'd') then tab then full path
-  const cmd = `find ${target} -mindepth 1 \\( ${excludes} \\) -prune -o \\( \\( -type f -o -type d \\) ! -name '.*' -printf '%y\\t%p\\n' \\) 2>/dev/null | head -n ${MAX_SEARCH_FILES}`
-
-  let output: string
-  try {
-    output = await wslExec(wsl, '/', cmd)
-  } catch {
-    return []
-  }
-
-  if (!output) return []
-
-  const normalizedRoot = rootPath.endsWith('/') ? rootPath : rootPath + '/'
-
+  const uncRoot = wslToUncPath(wsl, rootPath)
   const results: SearchableFile[] = []
-  for (const line of output.split('\n')) {
-    if (!line) continue
-    const tabIdx = line.indexOf('\t')
-    if (tabIdx === -1) continue
-    const type = line[0]
-    const fullPath = line.slice(tabIdx + 1)
-    const relativePath = fullPath.startsWith(normalizedRoot)
-      ? fullPath.slice(normalizedRoot.length)
-      : fullPath
-    const name = relativePath.split('/').pop() ?? relativePath
-    results.push({ path: fullPath, relativePath, name, isDirectory: type === 'd' })
+
+  function walk(uncDir: string, linuxDir: string): void {
+    if (results.length >= MAX_SEARCH_FILES) return
+
+    try {
+      const entries = fs.readdirSync(uncDir, { withFileTypes: true })
+
+      for (const entry of entries) {
+        if (results.length >= MAX_SEARCH_FILES) break
+        if (entry.name.startsWith('.') && !entry.name.startsWith('.env')) continue
+
+        const entryLinuxPath = linuxDir.endsWith('/') ? linuxDir + entry.name : linuxDir + '/' + entry.name
+        const entryUncPath = path.join(uncDir, entry.name)
+
+        if (entry.isDirectory()) {
+          if (IGNORED_DIRS.has(entry.name)) continue
+          const relativePath = entryLinuxPath.startsWith(rootPath + '/')
+            ? entryLinuxPath.slice(rootPath.length + 1)
+            : entryLinuxPath.startsWith(rootPath)
+              ? entryLinuxPath.slice(rootPath.length)
+              : entryLinuxPath
+          results.push({ path: entryLinuxPath, relativePath, name: entry.name, isDirectory: true })
+          walk(entryUncPath, entryLinuxPath)
+        } else {
+          const relativePath = entryLinuxPath.startsWith(rootPath + '/')
+            ? entryLinuxPath.slice(rootPath.length + 1)
+            : entryLinuxPath.startsWith(rootPath)
+              ? entryLinuxPath.slice(rootPath.length)
+              : entryLinuxPath
+          results.push({ path: entryLinuxPath, relativePath, name: entry.name })
+        }
+      }
+    } catch {
+      // Permission denied or other error - skip this directory
+    }
   }
 
+  walk(uncRoot, rootPath)
   return results
 }

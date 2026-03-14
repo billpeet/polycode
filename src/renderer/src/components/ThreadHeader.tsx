@@ -74,21 +74,32 @@ interface Props {
 }
 
 export default function ThreadHeader({ threadId }: Props) {
-  const byProject = useThreadStore((s) => s.byProject)
-  const statusMap = useThreadStore((s) => s.statusMap)
-  const pidByThread = useThreadStore((s) => s.pidByThread)
-  const rename = useThreadStore((s) => s.rename)
   const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-
-  const threads = selectedProjectId ? (byProject[selectedProjectId] ?? []) : []
-  const thread = threads.find((t) => t.id === threadId)
-  const status = statusMap[threadId] ?? 'idle'
-  const pid = pidByThread[threadId] ?? null
+  const thread = useThreadStore((s) => {
+    if (!selectedProjectId) return undefined
+    const threads = s.byProject[selectedProjectId]
+    return threads?.find((t) => t.id === threadId)
+  })
+  const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
+  const pid = useThreadStore((s) => s.pidByThread[threadId] ?? null)
+  const rename = useThreadStore((s) => s.rename)
 
   // Look up location for this thread
-  const projectLocations = useLocationStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
-  const location = thread?.location_id ? projectLocations.find((l) => l.id === thread.location_id) : null
+  const locationId = thread?.location_id ?? null
+  const location = useLocationStore((s) => {
+    if (!selectedProjectId || !locationId) return null
+    const locations = s.byProject[selectedProjectId]
+    return locations?.find((l) => l.id === locationId) ?? null
+  })
   const locationPath = location?.path ?? null
+
+  // Ensure locations are fetched for the current project
+  const fetchLocations = useLocationStore((s) => s.fetch)
+  useEffect(() => {
+    if (selectedProjectId && locationId && !location) {
+      fetchLocations(selectedProjectId)
+    }
+  }, [selectedProjectId, locationId, location, fetchLocations])
 
 
   const usage = useThreadStore((s) => s.usageByThread[threadId])

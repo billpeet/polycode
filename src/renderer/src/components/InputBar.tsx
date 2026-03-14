@@ -705,6 +705,18 @@ export default function InputBar({ threadId }: Props) {
           elapsedSeconds={elapsedSeconds}
         />
 
+        {/* Attachments above textarea */}
+        {attachments.length > 0 && (
+          <div className="px-3 pt-3">
+            <AttachmentPreview
+              attachments={attachments}
+              onRemove={removeAttachment}
+              disabled={isProcessing}
+              inline
+            />
+          </div>
+        )}
+
         {/* Textarea row */}
         <div className="flex items-end gap-2 px-3 py-3">
           {/* Paperclip button */}
@@ -718,15 +730,8 @@ export default function InputBar({ threadId }: Props) {
             <PaperclipIcon />
           </button>
 
-          {/* Inline attachment chips + textarea */}
-          <div className="flex flex-1 flex-wrap items-end gap-1.5">
-            <AttachmentPreview
-              attachments={attachments}
-              onRemove={removeAttachment}
-              disabled={isProcessing}
-              inline
-            />
-
+          {/* Textarea */}
+          <div className="flex flex-1 items-end">
             <textarea
               ref={textareaRef}
               value={value}
