@@ -20,61 +20,6 @@ function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
 
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
-function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
-  return (
-    <div
-      onMouseDown={onMouseDown}
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        bottom: 0,
-        width: 4,
-        cursor: 'col-resize',
-        zIndex: 10,
-      }}
-    />
-  )
-}
-
-function useResize(defaultWidth = 400) {
-  const [width, setWidth] = useState(defaultWidth)
-  const isDragging = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    isDragging.current = true
-    startX.current = e.clientX
-    startWidth.current = width
-    document.body.style.cursor = 'col-resize'
-    e.preventDefault()
-  }, [width])
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!isDragging.current) return
-      const delta = startX.current - e.clientX
-      const newWidth = Math.max(200, Math.min(startWidth.current + delta, window.innerWidth * 0.6))
-      setWidth(newWidth)
-    }
-    function onMouseUp() {
-      if (isDragging.current) {
-        isDragging.current = false
-        document.body.style.cursor = ''
-      }
-    }
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [])
-
-  return { width, handleMouseDown }
-}
-
 // ─── Status dot ───────────────────────────────────────────────────────────────
 
 function StatusDot({ status }: { status: CommandStatus }) {
@@ -546,7 +491,7 @@ function CommandLogPanel({
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function CommandLogs() {
+export default function CommandLogsContent() {
   const currentLocationId = useThreadStore((s) => {
     if (!s.selectedThreadId) return null
     for (const threads of Object.values(s.byProject)) {
@@ -565,7 +510,6 @@ export default function CommandLogs() {
   const pinInstance = useCommandStore((s) => s.pinInstance)
   const unpinInstance = useCommandStore((s) => s.unpinInstance)
   const selectInstance = useCommandStore((s) => s.selectInstance)
-  const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
 
   // Show selected panel only if it isn't already pinned
   const showSelected = selectedInstance !== null && !pinnedInstances.includes(selectedInstance)
@@ -578,19 +522,7 @@ export default function CommandLogs() {
   if (panels.length === 0) return null
 
   return (
-    <div
-      className="flex flex-col h-full border-l"
-      style={{
-        position: 'relative',
-        background: 'var(--color-surface)',
-        borderColor: 'var(--color-border)',
-        minWidth: 200,
-        width,
-        flexShrink: 0,
-      }}
-    >
-      <ResizeHandle onMouseDown={handleMouseDown} />
-
+    <>
       {panels.map(({ key, isPinned }, idx) => (
         <Fragment key={key}>
           {idx > 0 && (
@@ -609,6 +541,6 @@ export default function CommandLogs() {
           />
         </Fragment>
       ))}
-    </div>
+    </>
   )
 }

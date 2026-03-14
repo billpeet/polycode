@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useFilesStore } from '../stores/files'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -43,7 +43,8 @@ function getLanguageFromPath(filePath: string): string {
     toml: 'toml',
     xml: 'xml',
     svg: 'xml',
-    vue: 'xml',
+    vue: 'vue',
+    svelte: 'svelte',
     md: 'markdown',
     mdx: 'markdown',
     graphql: 'graphql',
@@ -359,173 +360,92 @@ function DiffPreview({ diff, filePath }: { diff: string; filePath?: string }) {
   )
 }
 
-// ─── Resize handle ────────────────────────────────────────────────────────────
+// ─── DiffPane (inner content, no outer wrapper) ───────────────────────────────
 
-function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
-  return (
-    <div
-      onMouseDown={onMouseDown}
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        bottom: 0,
-        width: 4,
-        cursor: 'col-resize',
-        zIndex: 10,
-      }}
-    />
-  )
-}
-
-function useResize(defaultWidth = 400) {
-  const [width, setWidth] = useState(defaultWidth)
-  const isDragging = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    isDragging.current = true
-    startX.current = e.clientX
-    startWidth.current = width
-    document.body.style.cursor = 'col-resize'
-    e.preventDefault()
-  }, [width])
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!isDragging.current) return
-      const delta = startX.current - e.clientX
-      const newWidth = Math.max(200, Math.min(startWidth.current + delta, window.innerWidth * 0.6))
-      setWidth(newWidth)
-    }
-    function onMouseUp() {
-      if (isDragging.current) {
-        isDragging.current = false
-        document.body.style.cursor = ''
-      }
-    }
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [])
-
-  return { width, handleMouseDown }
-}
-
-// ─── Main component ───────────────────────────────────────────────────────────
-
-export default function FilePreview() {
-  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
-  const fileContent = useFilesStore((s) => s.fileContent)
-  const loadingContent = useFilesStore((s) => s.loadingContent)
-  const clearSelection = useFilesStore((s) => s.clearSelection)
+export function DiffPane() {
   const diffView = useFilesStore((s) => s.diffView)
   const loadingDiff = useFilesStore((s) => s.loadingDiff)
   const clearDiff = useFilesStore((s) => s.clearDiff)
   const switchDiffToFile = useFilesStore((s) => s.switchDiffToFile)
 
-  const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
+  const fileName = diffView ? basename(diffView.filePath) : '...'
 
-  // Diff view takes priority
-  if (diffView || loadingDiff) {
-    const fileName = diffView ? basename(diffView.filePath) : '...'
-
-    return (
+  return (
+    <>
+      {/* Header */}
       <div
-        className="flex flex-col h-full border-l"
-        style={{
-          position: 'relative',
-          background: 'var(--color-surface)',
-          borderColor: 'var(--color-border)',
-          minWidth: 200,
-          width,
-          flexShrink: 0,
-        }}
+        className="flex items-center gap-2 px-3 py-2 border-b flex-shrink-0"
+        style={{ borderColor: 'var(--color-border)' }}
       >
-        <ResizeHandle onMouseDown={handleMouseDown} />
-        {/* Header */}
-        <div
-          className="flex items-center gap-2 px-3 py-2 border-b flex-shrink-0"
-          style={{ borderColor: 'var(--color-border)' }}
+        <span
+          className="text-xs font-medium truncate flex-1"
+          style={{ color: 'var(--color-text)' }}
+          title={diffView?.filePath}
         >
-          <span
-            className="text-xs font-medium truncate flex-1"
-            style={{ color: 'var(--color-text)' }}
-            title={diffView?.filePath}
-          >
-            {fileName}
-          </span>
-          <span
-            className="text-[10px] px-1.5 py-0.5 rounded uppercase"
-            style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)' }}
-          >
-            Diff
-          </span>
-          {diffView && (
-            <button
-              onClick={switchDiffToFile}
-              className="text-[10px] px-1.5 py-0.5 rounded transition-colors underline underline-offset-2 hover:opacity-90"
-              style={{ color: 'var(--color-text)' }}
-              title="View full file"
-            >
-              View file
-            </button>
-          )}
+          {fileName}
+        </span>
+        <span
+          className="text-[10px] px-1.5 py-0.5 rounded uppercase"
+          style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)' }}
+        >
+          Diff
+        </span>
+        {diffView && (
           <button
-            onClick={clearDiff}
-            className="rounded p-1 hover:bg-white/10 transition-colors"
-            style={{ color: 'var(--color-text-muted)' }}
-            title="Close diff"
+            onClick={switchDiffToFile}
+            className="text-[10px] px-1.5 py-0.5 rounded transition-colors underline underline-offset-2 hover:opacity-90"
+            style={{ color: 'var(--color-text)' }}
+            title="View full file"
           >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
-              <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
-            </svg>
+            View file
           </button>
-        </div>
-
-        {/* Content */}
-        <div className="flex-1 overflow-hidden">
-          {loadingDiff ? (
-            <div className="flex items-center justify-center h-full">
-              <span className="streaming-dot" style={{ width: 8, height: 8, background: 'var(--color-text-muted)' }} />
-            </div>
-          ) : diffView && diffView.diff ? (
-            <DiffPreview diff={diffView.diff} filePath={diffView.filePath} />
-          ) : (
-            <div className="flex items-center justify-center h-full text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              No changes
-            </div>
-          )}
-        </div>
+        )}
+        <button
+          onClick={clearDiff}
+          className="rounded p-1 hover:bg-white/10 transition-colors"
+          style={{ color: 'var(--color-text-muted)' }}
+          title="Close diff"
+        >
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M4.646 4.646a.5.5 0 0 1 .708 0L8 7.293l2.646-2.647a.5.5 0 0 1 .708.708L8.707 8l2.647 2.646a.5.5 0 0 1-.708.708L8 8.707l-2.646 2.647a.5.5 0 0 1-.708-.708L7.293 8 4.646 5.354a.5.5 0 0 1 0-.708z"/>
+          </svg>
+        </button>
       </div>
-    )
-  }
 
-  if (!selectedFilePath) {
-    return null
-  }
+      {/* Content */}
+      <div className="flex-1 overflow-hidden">
+        {loadingDiff ? (
+          <div className="flex items-center justify-center h-full">
+            <span className="streaming-dot" style={{ width: 8, height: 8, background: 'var(--color-text-muted)' }} />
+          </div>
+        ) : diffView && diffView.diff ? (
+          <DiffPreview diff={diffView.diff} filePath={diffView.filePath} />
+        ) : (
+          <div className="flex items-center justify-center h-full text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            No changes
+          </div>
+        )}
+      </div>
+    </>
+  )
+}
+
+// ─── FilePane (inner content, no outer wrapper) ───────────────────────────────
+
+export function FilePane() {
+  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
+  const fileContent = useFilesStore((s) => s.fileContent)
+  const loadingContent = useFilesStore((s) => s.loadingContent)
+  const clearSelection = useFilesStore((s) => s.clearSelection)
+
+  if (!selectedFilePath) return null
 
   const language = getLanguageFromPath(selectedFilePath)
   const showMarkdown = isMarkdown(selectedFilePath)
   const fileName = basename(selectedFilePath)
 
   return (
-    <div
-      className="flex flex-col h-full border-l"
-      style={{
-        position: 'relative',
-        background: 'var(--color-surface)',
-        borderColor: 'var(--color-border)',
-        minWidth: 200,
-        width,
-        flexShrink: 0,
-      }}
-    >
-      <ResizeHandle onMouseDown={handleMouseDown} />
+    <>
       {/* Header */}
       <div
         className="flex items-center gap-2 px-3 py-2 border-b flex-shrink-0"
@@ -582,6 +502,6 @@ export default function FilePreview() {
           <CodePreview content={fileContent.content} language={language} />
         )}
       </div>
-    </div>
+    </>
   )
 }

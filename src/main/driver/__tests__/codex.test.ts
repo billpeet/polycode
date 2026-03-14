@@ -34,6 +34,11 @@ describe('buildCodexArgs', () => {
     expect(args).toEqual(['exec', '--json', '--full-auto', 'hello world'])
   })
 
+  it('new conversation: yolo mode uses dangerous bypass flag', () => {
+    const args = buildCodexArgs(null, undefined, 'hello world', true)
+    expect(args).toEqual(['exec', '--json', '--dangerously-bypass-approvals-and-sandbox', 'hello world'])
+  })
+
   it('new conversation: model flag before prompt', () => {
     const args = buildCodexArgs(null, 'gpt-5.3-codex', 'hello world')
     expect(args).toEqual(['exec', '--json', '--full-auto', '-c', 'model=gpt-5.3-codex', 'hello world'])
@@ -43,6 +48,14 @@ describe('buildCodexArgs', () => {
     const args = buildCodexArgs('session-123', 'gpt-5.3-codex', 'continue')
     expect(args).toEqual([
       'exec', '--json', 'resume', '--full-auto', '-c', 'model=gpt-5.3-codex',
+      'session-123', 'continue',
+    ])
+  })
+
+  it('resume: yolo mode uses dangerous bypass flag before session_id + prompt', () => {
+    const args = buildCodexArgs('session-123', 'gpt-5.3-codex', 'continue', true)
+    expect(args).toEqual([
+      'exec', '--json', 'resume', '--dangerously-bypass-approvals-and-sandbox', '-c', 'model=gpt-5.3-codex',
       'session-123', 'continue',
     ])
   })

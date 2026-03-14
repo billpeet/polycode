@@ -2,6 +2,7 @@ import { OutputEvent, SshConfig, WslConfig } from '../../shared/types'
 
 export interface MessageOptions {
   planMode?: boolean
+  yoloMode?: boolean
 }
 
 export interface CLIDriver {
@@ -24,6 +25,7 @@ export interface DriverOptions {
   workingDir: string
   threadId: string
   model?: string
+  yoloMode?: boolean
   initialSessionId?: string | null
   onSessionId?: (sessionId: string) => void
   ssh?: SshConfig | null

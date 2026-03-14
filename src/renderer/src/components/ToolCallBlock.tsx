@@ -9,6 +9,10 @@ interface Props {
   resultMetadata: Record<string, unknown> | null
 }
 
+// eslint-disable-next-line no-control-regex
+const ANSI_RE = /\x1b\[[0-9;]*[a-zA-Z]/g
+function stripAnsi(s: string): string { return s.replace(ANSI_RE, '') }
+
 function prettyJson(value: unknown): string {
   if (typeof value === 'string') {
     try {
@@ -81,13 +85,14 @@ function getInputSummary(toolName: string, input: unknown): string | null {
 const CLAUDE_LINE_RE = /^ *(\d+)→(.*)$/
 
 function BodyContent({ text }: { text: string }) {
+  const clean = useMemo(() => stripAnsi(text), [text])
   const parsed = useMemo(() => {
-    const lines = text.split('\n')
+    const lines = clean.split('\n')
     const matches = lines.map((l) => CLAUDE_LINE_RE.exec(l))
     const matchCount = matches.filter(Boolean).length
     if (matchCount < 3 || matchCount < lines.filter((l) => l.trim()).length * 0.8) return null
     return matches.map((m, i) => m ? { num: m[1], code: m[2] } : { num: '', code: lines[i] })
-  }, [text])
+  }, [clean])
 
   const preStyle: CSSProperties = {
     fontFamily: 'var(--font-mono)',
@@ -102,7 +107,7 @@ function BodyContent({ text }: { text: string }) {
   if (!parsed) {
     return (
       <pre style={{ ...preStyle, color: 'var(--color-text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>
-        {text}
+        {clean}
       </pre>
     )
   }

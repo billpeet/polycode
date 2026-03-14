@@ -146,6 +146,9 @@ function runMigrations(database: Database.Database): void {
 
   // ── Per-thread WSL override ───────────────────────────────────────────────
   const threadColsWsl = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsWsl.some((c) => c.name === 'yolo_mode')) {
+    database.exec('ALTER TABLE threads ADD COLUMN yolo_mode INTEGER NOT NULL DEFAULT 0')
+  }
   if (!threadColsWsl.some((c) => c.name === 'use_wsl')) {
     database.exec('ALTER TABLE threads ADD COLUMN use_wsl INTEGER NOT NULL DEFAULT 0')
     database.exec('ALTER TABLE threads ADD COLUMN wsl_distro TEXT')

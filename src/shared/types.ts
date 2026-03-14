@@ -117,6 +117,7 @@ export interface Thread {
   unread: boolean
   /** True if at least one message has been sent in this thread */
   has_messages: boolean
+  yolo_mode: boolean
   use_wsl: boolean
   wsl_distro: string | null
   /** Branch that was active when this thread was created */

@@ -12,7 +12,7 @@ createHighlighter({
     'c', 'cpp', 'csharp', 'php', 'swift',
     'kotlin', 'scala', 'bash', 'powershell',
     'sql', 'yaml', 'toml', 'xml', 'markdown',
-    'graphql', 'dockerfile', 'makefile', 'cmake',
+    'graphql', 'dockerfile', 'makefile', 'cmake', 'svelte',
   ],
 }).then((h) => {
   highlighter = h
