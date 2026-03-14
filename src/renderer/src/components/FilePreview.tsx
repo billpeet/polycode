@@ -153,25 +153,191 @@ function LineRow({
   )
 }
 
+interface TocEntry {
+  level: number
+  text: string
+  id: string
+}
+
+function extractToc(content: string): TocEntry[] {
+  const entries: TocEntry[] = []
+  const lines = content.split('\n')
+  let inCodeBlock = false
+  for (const line of lines) {
+    if (line.trimStart().startsWith('```')) {
+      inCodeBlock = !inCodeBlock
+      continue
+    }
+    if (inCodeBlock) continue
+    const match = line.match(/^(#{1,6})\s+(.+)$/)
+    if (match) {
+      const text = match[2].replace(/[*_`~\[\]]/g, '').trim()
+      const id = text.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+      entries.push({ level: match[1].length, text, id })
+    }
+  }
+  return entries
+}
+
+interface TocNode {
+  entry: TocEntry
+  children: TocNode[]
+}
+
+function buildTocTree(entries: TocEntry[]): TocNode[] {
+  const roots: TocNode[] = []
+  const stack: TocNode[] = []
+
+  for (const entry of entries) {
+    const node: TocNode = { entry, children: [] }
+    // Pop stack until we find a parent with a lower level
+    while (stack.length > 0 && stack[stack.length - 1].entry.level >= entry.level) {
+      stack.pop()
+    }
+    if (stack.length === 0) {
+      roots.push(node)
+    } else {
+      stack[stack.length - 1].children.push(node)
+    }
+    stack.push(node)
+  }
+  return roots
+}
+
+function TocNode({ node, depth, onNavigate }: { node: TocNode; depth: number; onNavigate: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(true)
+  const hasChildren = node.children.length > 0
+
+  return (
+    <div>
+      <div className="flex items-center" style={{ paddingLeft: `${depth * 12}px` }}>
+        {hasChildren ? (
+          <button
+            onClick={() => setExpanded(!expanded)}
+            className="flex-shrink-0 p-0.5 rounded hover:bg-white/10 transition-colors"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            <svg
+              width="8"
+              height="8"
+              viewBox="0 0 16 16"
+              fill="currentColor"
+              style={{
+                transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)',
+                transition: 'transform 0.15s ease',
+              }}
+            >
+              <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </button>
+        ) : (
+          <span style={{ width: 12 }} />
+        )}
+        <button
+          onClick={() => onNavigate(node.entry.id)}
+          className="text-left text-xs py-0.5 pl-1 hover:underline truncate"
+          style={{ color: 'var(--color-text-muted)' }}
+          title={node.entry.text}
+        >
+          {node.entry.text}
+        </button>
+      </div>
+      {hasChildren && expanded && (
+        <div>
+          {node.children.map((child, i) => (
+            <TocNode key={i} node={child} depth={depth + 1} onNavigate={onNavigate} />
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function TocSection({ entries, onNavigate }: { entries: TocEntry[]; onNavigate: (id: string) => void }) {
+  const [open, setOpen] = useState(false)
+  if (entries.length === 0) return null
+
+  const tree = useMemo(() => buildTocTree(entries), [entries])
+
+  return (
+    <div
+      className="border-b"
+      style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface-2)' }}
+    >
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1.5 w-full px-4 py-2 text-xs font-medium hover:opacity-80 transition-opacity"
+        style={{ color: 'var(--color-text-muted)' }}
+      >
+        <svg
+          width="10"
+          height="10"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          style={{
+            transform: open ? 'rotate(90deg)' : 'rotate(0deg)',
+            transition: 'transform 0.15s ease',
+          }}
+        >
+          <path d="M6 4l4 4-4 4" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        Table of Contents
+        <span style={{ opacity: 0.5 }}>({entries.length})</span>
+      </button>
+      {open && (
+        <nav className="px-4 pb-2 overflow-auto" style={{ maxHeight: '40vh' }}>
+          {tree.map((node, i) => (
+            <TocNode key={i} node={node} depth={0} onNavigate={onNavigate} />
+          ))}
+        </nav>
+      )}
+    </div>
+  )
+}
+
 function MarkdownPreview({ content }: { content: string }) {
   const ref = useRef<HTMLDivElement>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const tocEntries = useMemo(() => extractToc(content), [content])
 
   useEffect(() => {
     if (!ref.current) return
     const raw = marked.parse(content) as string
     const clean = DOMPurify.sanitize(raw)
     ref.current.innerHTML = clean
+
+    // Add IDs to headings for TOC navigation
+    const headings = ref.current.querySelectorAll('h1, h2, h3, h4, h5, h6')
+    headings.forEach((el) => {
+      const text = (el.textContent ?? '').trim()
+      const id = text.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
+      el.id = id
+    })
   }, [content])
+
+  const handleNavigate = useCallback((id: string) => {
+    if (!ref.current) return
+    const target = ref.current.querySelector(`#${CSS.escape(id)}`)
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [])
 
   return (
     <div
-      ref={ref}
-      className="prose-content p-4 overflow-auto"
+      ref={containerRef}
+      className="flex flex-col"
       style={{
         background: 'var(--color-surface)',
         height: '100%',
       }}
-    />
+    >
+      <TocSection entries={tocEntries} onNavigate={handleNavigate} />
+      <div
+        ref={ref}
+        className="prose-content p-4 overflow-auto flex-1"
+      />
+    </div>
   )
 }
 

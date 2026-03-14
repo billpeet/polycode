@@ -104,11 +104,31 @@ export default function ThreadView({ threadId }: Props) {
         appendEvent(threadId, event)
       }
 
-      // Intercept TodoWrite tool calls and update the todo store
-      if (event.type === 'tool_call' && event.metadata?.name === 'TodoWrite') {
-        const input = event.metadata.input as { todos?: Todo[] } | undefined
-        if (Array.isArray(input?.todos)) {
-          useTodoStore.getState().setTodos(threadId, input.todos as Todo[])
+      // Intercept TodoWrite/todo_list tool calls and update the todo store
+      if (event.type === 'tool_call') {
+        if (event.metadata?.name === 'TodoWrite') {
+          const input = event.metadata.input as { todos?: Todo[] } | undefined
+          if (Array.isArray(input?.todos)) {
+            useTodoStore.getState().setTodos(threadId, input.todos as Todo[])
+          }
+        } else if (event.content === 'todo_list') {
+          const items = event.metadata?.items as { text: string; completed: boolean }[] | undefined
+          if (Array.isArray(items)) {
+            useTodoStore.getState().setTodos(
+              threadId,
+              items.map((item) => ({ content: item.text, activeForm: '', status: item.completed ? 'completed' : 'pending' }))
+            )
+          }
+        }
+      }
+      // Codex todo_list result carries the final completed states
+      if (event.type === 'tool_result') {
+        const items = event.metadata?.items as { text: string; completed: boolean }[] | undefined
+        if (Array.isArray(items) && items.length > 0 && typeof items[0].text === 'string') {
+          useTodoStore.getState().setTodos(
+            threadId,
+            items.map((item) => ({ content: item.text, activeForm: '', status: item.completed ? 'completed' : 'pending' }))
+          )
         }
       }
 
@@ -155,16 +175,20 @@ export default function ThreadView({ threadId }: Props) {
       // thread:status event hasn't been processed yet)
       setStatus(threadId, completionStatus)
 
-      // Clear todos on completion — Claude Code often leaves stale todo lists hanging
-      useTodoStore.getState().clearTodos(threadId)
-
-      // Re-fetch messages after completion to replace optimistic entries with persisted ones
-      const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
-      if (currentActiveSession) {
-        useMessageStore.getState().fetchBySession(currentActiveSession)
-      } else {
-        fetchMessages(threadId)
-      }
+      // Re-fetch messages after completion to replace optimistic entries with
+      // persisted ones, then rebuild todo state from that canonical history.
+      void (async () => {
+        const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
+        if (currentActiveSession) {
+          await useMessageStore.getState().fetchBySession(currentActiveSession)
+          const msgs = useMessageStore.getState().messagesBySession[currentActiveSession] ?? []
+          useTodoStore.getState().syncFromMessages(threadId, msgs)
+        } else {
+          await fetchMessages(threadId)
+          const msgs = useMessageStore.getState().messagesByThread[threadId] ?? []
+          useTodoStore.getState().syncFromMessages(threadId, msgs)
+        }
+      })()
 
       // Re-fetch sessions in case a new one was created
       fetchSessions(threadId)

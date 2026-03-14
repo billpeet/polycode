@@ -131,11 +131,7 @@ function FileTreeItem({
 
           {/* File/folder icon */}
           <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>
-            {isLoading ? (
-              <span className="streaming-dot" style={{ width: 6, height: 6, background: 'var(--color-text-muted)' }} />
-            ) : (
-              getFileIcon(entry.name, entry.isDirectory)
-            )}
+            {getFileIcon(entry.name, entry.isDirectory)}
           </span>
 
           {/* Name */}
@@ -167,7 +163,7 @@ function FileTreeItem({
       </div>
 
       {/* Children */}
-      {entry.isDirectory && isExpanded && !isLoading && children.length > 0 && (
+      {entry.isDirectory && isExpanded && children.length > 0 && (
         <div>
           {children.map((child) => (
             <FileTreeItem key={child.path} entry={child} depth={depth + 1} threadId={threadId} projectPath={projectPath} />
@@ -400,20 +396,20 @@ export default function FileTree({ threadId }: { threadId: string }) {
           disabled={isLoading}
         >
           <svg
-            width="12"
-            height="12"
-            viewBox="0 0 16 16"
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
             fill="none"
             stroke="currentColor"
-            strokeWidth="2"
+            strokeWidth="2.5"
             strokeLinecap="round"
             strokeLinejoin="round"
             style={{
               animation: isLoading ? 'spin 1s linear infinite' : 'none',
             }}
           >
-            <path d="M13.5 2.5A7 7 0 1 0 14 8" />
-            <polyline points="14 2 14 6 10 6" />
+            <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+            <polyline points="3 3 3 8 8 8" />
           </svg>
         </button>
       </div>
