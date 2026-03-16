@@ -547,6 +547,25 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
+  ipcMain.handle('threads:getPendingPermissions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    return session?.getPendingPermissions() ?? []
+  })
+
+  ipcMain.handle('threads:approvePermissions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.approvePermissions()
+    }
+  })
+
+  ipcMain.handle('threads:denyPermissions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.denyPermissions()
+    }
+  })
+
   ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string) => {
     if (!threadExists(threadId)) return
     const effectiveDir = getEffectiveWorkingDir(threadId)

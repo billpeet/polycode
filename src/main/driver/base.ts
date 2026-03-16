@@ -91,6 +91,16 @@ export abstract class BaseDriver implements CLIDriver {
     })
   }
 
+  /** Write a line to the running process's stdin (for interactive protocols). */
+  protected writeToStdin(line: string): void {
+    if (this.process?.stdin?.writable) {
+      this.process.stdin.write(line + '\n')
+    }
+  }
+
+  /** Send a control_response to the process. Default no-op — override in drivers that support it. */
+  sendControlResponse(_requestId: string, _behavior: 'allow' | 'deny', _message?: string): void {}
+
   stop(): void {
     if (this.process) {
       this.process.kill('SIGTERM')

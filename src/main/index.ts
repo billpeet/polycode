@@ -149,6 +149,7 @@ app.whenReady().then(() => {
   }, win)
 
   if (!isDev) {
+    autoUpdater.allowPrerelease = true
     autoUpdater.on('error', (err) => {
       Sentry.captureException(err)
       console.error('Auto-updater error:', err.message)

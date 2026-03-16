@@ -9,7 +9,7 @@ export class LocalRunner implements Runner {
   readonly type = 'local' as const
 
   spawn(cmd: SpawnCommand): ChildProcess {
-    const { binary, args, workDir, stdinContent } = cmd
+    const { binary, args, workDir, stdinContent, keepStdinOpen } = cmd
     const isWindows = process.platform === 'win32'
     const env = isWindows ? augmentWindowsPath() : undefined
 
@@ -39,7 +39,7 @@ export class LocalRunner implements Runner {
         if (stdinContent !== undefined) {
           proc.stdin?.write(stdinContent)
         }
-        proc.stdin?.end()
+        if (!keepStdinOpen) proc.stdin?.end()
         return proc
       } else {
         // npm .cmd wrappers require shell:true on Windows. Build the command
@@ -56,20 +56,20 @@ export class LocalRunner implements Runner {
         if (stdinContent !== undefined) {
           proc.stdin?.write(stdinContent)
         }
-        proc.stdin?.end()
+        if (!keepStdinOpen) proc.stdin?.end()
         return proc
       }
     } else {
       // POSIX
-      if (stdinContent !== undefined) {
+      if (stdinContent !== undefined || keepStdinOpen) {
         console.log('[LocalRunner] Spawning (POSIX/stdin):', binary, args.join(' '))
         const proc = spawn(binary, args, {
           cwd: workDir,
           shell: false,
           stdio: ['pipe', 'pipe', 'pipe'],
         })
-        proc.stdin?.write(stdinContent)
-        proc.stdin?.end()
+        if (stdinContent !== undefined) proc.stdin?.write(stdinContent)
+        if (!keepStdinOpen) proc.stdin?.end()
         return proc
       } else {
         console.log('[LocalRunner] Spawning (POSIX):', binary, args.join(' '))

@@ -1,6 +1,7 @@
 import { Message } from '../types/ipc'
 import { useState, useMemo, type CSSProperties } from 'react'
 import EditDiffView from './EditDiffView'
+import MarkdownContent from './MarkdownContent'
 
 interface Props {
   message: Message
@@ -31,8 +32,8 @@ function getInputSummary(toolName: string, input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
   const inp = input as Record<string, unknown>
 
-  // Task (subagent): show the description
-  if (toolName === 'Task' && typeof inp.description === 'string') {
+  // Task/Agent (subagent): show the description
+  if ((toolName === 'Task' || toolName === 'Agent') && typeof inp.description === 'string') {
     return inp.description
   }
 
@@ -146,8 +147,8 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
     wordBreak: 'break-all',
   }
 
-  // Task (subagent): show prompt as readable text
-  if (toolName === 'Task' && inp && typeof inp.prompt === 'string') {
+  // Task/Agent (subagent): show prompt as readable text
+  if ((toolName === 'Task' || toolName === 'Agent') && inp && typeof inp.prompt === 'string') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
         {typeof inp.subagent_type === 'string' && (
@@ -160,9 +161,9 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
         )}
         <div>
           <div style={labelStyle}>Prompt</div>
-          <pre style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word', margin: 0, maxHeight: 400, overflowY: 'auto', background: 'transparent', lineHeight: 1.6 }}>
-            {inp.prompt}
-          </pre>
+          <div style={{ maxHeight: 400, overflowY: 'auto' }}>
+            <MarkdownContent content={inp.prompt as string} />
+          </div>
         </div>
       </div>
     )
@@ -253,9 +254,9 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
 
   const toolName = (metadata?.name as string) ?? message.content
   const input = metadata?.input as Record<string, unknown> | undefined
-  // For Task tool calls with a subagent_type, display the subagent type as the name
+  // For Task/Agent tool calls with a subagent_type, display the subagent type as the name
   const displayName =
-    toolName === 'Task' && typeof input?.subagent_type === 'string'
+    (toolName === 'Task' || toolName === 'Agent') && typeof input?.subagent_type === 'string'
       ? input.subagent_type
       : toolName
   const inputSummary = getInputSummary(toolName, metadata?.input)

@@ -4,13 +4,66 @@ on:
   push:
     tags:
       - 'v*'
+  schedule:
+    # Every night at 2:00 AM UTC
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Force nightly build even if no new commits'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write   # needed to create releases and upload assets
+  contents: write
 
 jobs:
+  check-changes:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      should_build: ${{ steps.check.outputs.should_build }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check for commits since last release
+        id: check
+        run: |
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+            echo "Forced build requested"
+            exit 0
+          fi
+
+          # Find the latest release tag
+          LATEST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "")
+          if [ -z "$LATEST_TAG" ]; then
+            # Also check for nightly tags
+            LATEST_TAG=$(git describe --tags --abbrev=0 --match 'nightly-*' 2>/dev/null || echo "")
+          fi
+
+          if [ -z "$LATEST_TAG" ]; then
+            echo "No previous release found, building"
+            echo "should_build=true" >> "$GITHUB_OUTPUT"
+          else
+            COMMITS=$(git rev-list "${LATEST_TAG}..HEAD" --count)
+            echo "Commits since ${LATEST_TAG}: ${COMMITS}"
+            if [ "$COMMITS" -gt 0 ]; then
+              echo "should_build=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "should_build=false" >> "$GITHUB_OUTPUT"
+              echo "No new commits, skipping build"
+            fi
+          fi
+
   build-windows:
     runs-on: windows-latest
+    needs: [check-changes]
+    if: |
+      always() &&
+      (needs.check-changes.result == 'skipped' || needs.check-changes.outputs.should_build == 'true')
     steps:
       - uses: actions/checkout@v4
 
@@ -22,8 +75,29 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Sync package.json version to git tag
-        run: node -e "const p=require('./package.json');p.version='${{ github.ref_name }}'.replace(/^v/,'');require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+      - name: Determine version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            # Tagged release: use the tag version
+            VERSION="${{ github.ref_name }}"
+            VERSION="${VERSION#v}"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "is_nightly=false" >> "$GITHUB_OUTPUT"
+            echo "Tagged release: $VERSION"
+          else
+            # Nightly: use package.json version + nightly suffix
+            BASE=$(node -p "require('./package.json').version")
+            DATE=$(date -u +%Y%m%d)
+            VERSION="${BASE}-nightly.${DATE}"
+            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+            echo "is_nightly=true" >> "$GITHUB_OUTPUT"
+            echo "Nightly build: $VERSION"
+          fi
+
+      - name: Set package.json version
+        run: node -e "const p=require('./package.json');p.version='${{ steps.version.outputs.version }}';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
 
       - name: Install dependencies
         run: bun install
@@ -35,4 +109,21 @@ jobs:
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_IDENTITY_AUTO_DISCOVERY: false   # skip Windows code-signing
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Mark nightly as pre-release
+        if: steps.version.outputs.is_nightly == 'true'
+        shell: bash
+        run: |
+          # electron-builder creates a release from the version tag;
+          # mark it as a pre-release so it's visually distinct on GitHub
+          gh release edit "v${{ steps.version.outputs.version }}" --prerelease || true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Tag nightly for change detection
+        if: steps.version.outputs.is_nightly == 'true'
+        shell: bash
+        run: |
+          git tag -f "nightly-latest"
+          git push -f origin "nightly-latest" || true

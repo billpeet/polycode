@@ -55,20 +55,21 @@ export default function ComposerToolbar({
       {supportsYolo && currentThread && (
         <>
           <button
-            onClick={() => setYolo(threadId, !currentThread.yolo_mode)}
-            disabled={isProcessing}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
-            title={currentThread.provider === 'codex'
-              ? 'Codex Yolo: bypass approvals and sandbox'
-              : 'Claude Yolo: skip permissions prompts'}
+            onClick={() => currentThread.provider !== 'claude-code' && setYolo(threadId, !currentThread.yolo_mode)}
+            disabled={isProcessing || currentThread.provider === 'claude-code'}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-60 mb-2"
+            title={currentThread.provider === 'claude-code'
+              ? 'Yolo always on for Claude Code — CLI permission approval is not yet supported (control_request protocol bug)'
+              : 'Codex Yolo: bypass approvals and sandbox'}
             style={{
-              background: currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
-              color: currentThread.yolo_mode ? '#f97316' : 'var(--color-text-muted)',
-              border: `1px solid ${currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.3)' : 'transparent'}`,
+              background: (currentThread.yolo_mode || currentThread.provider === 'claude-code') ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
+              color: (currentThread.yolo_mode || currentThread.provider === 'claude-code') ? '#f97316' : 'var(--color-text-muted)',
+              border: `1px solid ${(currentThread.yolo_mode || currentThread.provider === 'claude-code') ? 'rgba(249, 115, 22, 0.3)' : 'transparent'}`,
+              cursor: currentThread.provider === 'claude-code' ? 'default' : 'pointer',
             }}
           >
             <YoloIcon />
-            Yolo
+            Yolo{currentThread.provider === 'claude-code' && ' (forced)'}
           </button>
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>

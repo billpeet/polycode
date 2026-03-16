@@ -8,9 +8,12 @@ export interface SpawnCommand {
   workDir: string
   /** Shell preamble prepended in WSL/SSH (node manager loading, binary resolution, etc.) */
   preamble?: string
-  /** If set, written to stdin then stdin is closed. The prompt is passed this way when
+  /** If set, written to stdin. The prompt is passed this way when
    *  argv-based escaping is unreliable (Claude on Windows/WSL, OpenCode always). */
   stdinContent?: string
+  /** If true, stdin is NOT closed after writing stdinContent — kept open for
+   *  interactive protocol messages (e.g. Claude Code permission control_response). */
+  keepStdinOpen?: boolean
 }
 
 export interface Runner {
