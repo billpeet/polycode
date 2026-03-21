@@ -89,6 +89,16 @@ body,
   animation: spin 0.8s linear infinite;
 }
 
+/* Flashing pulse for unread (recently completed) thread dots */
+@keyframes unread-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(1.4); }
+}
+
+.status-unread {
+  animation: unread-pulse 1.5s ease-in-out infinite;
+}
+
 /* Diff line entrance */
 @keyframes diff-line-in {
   from { opacity: 0; }

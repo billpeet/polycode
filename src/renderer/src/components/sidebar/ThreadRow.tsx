@@ -52,7 +52,7 @@ export default function ThreadRow({
           />
         ) : (
           <span
-            className="mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0"
+            className={`mr-2 h-1.5 w-1.5 rounded-full flex-shrink-0${!isArchived && (unreadByThread[thread.id] ?? !!thread.unread) ? ' status-unread' : ''}`}
             style={{ background: isArchived ? 'var(--color-text-muted)' : getThreadStatusColor(thread, statusMap, unreadByThread) }}
           />
         )}

@@ -194,7 +194,7 @@ export default function ExpandedSidebar({
                 }}
               >
                 <span
-                  className="mr-2 h-1.5 w-1.5 flex-shrink-0 rounded-full"
+                  className={`mr-2 h-1.5 w-1.5 flex-shrink-0 rounded-full${(unreadByThread[thread.id] ?? !!thread.unread) ? ' status-unread' : ''}`}
                   style={{
                     background:
                       (unreadByThread[thread.id] ?? !!thread.unread) ? '#22c55e'
@@ -218,6 +218,8 @@ export default function ExpandedSidebar({
           const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
           const pools = poolsByProject[project.id] ?? EMPTY_POOLS
           const runningThreads = projectThreads.filter((thread) => statusMap[thread.id] === 'running' || statusMap[thread.id] === 'stopping')
+          const unreadThreads = projectThreads.filter((thread) => (unreadByThread[thread.id] ?? !!thread.unread) && statusMap[thread.id] !== 'running' && statusMap[thread.id] !== 'stopping')
+          const unreadCount = unreadThreads.length
 
           return (
             <div key={project.id}>
@@ -235,6 +237,14 @@ export default function ExpandedSidebar({
                     : <ChevronRight size={12} className="mr-1.5 flex-shrink-0 opacity-50" />
                   }
                   <span className="truncate">{project.name}</span>
+                  {unreadCount > 0 && (
+                    <span
+                      className="ml-1.5 flex-shrink-0 rounded-full px-1.5 py-0 text-[10px] font-semibold leading-[16px]"
+                      style={{ background: '#22c55e', color: '#000' }}
+                    >
+                      {unreadCount}
+                    </span>
+                  )}
                 </button>
                 <div
                   className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
@@ -267,9 +277,25 @@ export default function ExpandedSidebar({
                 </div>
               </div>
 
-              {!isExpanded && runningThreads.length > 0 && (
+              {!isExpanded && (runningThreads.length > 0 || unreadThreads.length > 0) && (
                 <div>
                   {runningThreads.map((thread) => (
+                    <ThreadRow
+                      key={thread.id}
+                      thread={thread}
+                      isArchived={false}
+                      projectId={project.id}
+                      indent="pl-8"
+                      selectedThreadId={selectedThreadId}
+                      statusMap={statusMap}
+                      unreadByThread={unreadByThread}
+                      branchByLocation={branchByLocation}
+                      onSelectThread={onSelectThread}
+                      onArchiveThread={onArchiveThread}
+                      onUnarchiveThread={onUnarchiveThread}
+                    />
+                  ))}
+                  {unreadThreads.map((thread) => (
                     <ThreadRow
                       key={thread.id}
                       thread={thread}
