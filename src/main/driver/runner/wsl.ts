@@ -9,7 +9,7 @@ export class WslRunner implements Runner {
   constructor(private readonly wsl: WslConfig) {}
 
   spawn(cmd: SpawnCommand): ChildProcess {
-    const { binary, args, workDir, preamble, stdinContent } = cmd
+    const { binary, args, workDir, preamble, stdinContent, keepStdinOpen } = cmd
 
     // Use bash -ilc (interactive + login) so that .bashrc is sourced in full.
     // Without -i, bash skips .bashrc due to the `case $- in *i*)` guard, and
@@ -31,7 +31,7 @@ export class WslRunner implements Runner {
     if (stdinContent !== undefined) {
       proc.stdin?.write(stdinContent)
     }
-    proc.stdin?.end()
+    if (!keepStdinOpen) proc.stdin?.end()
 
     return proc
   }

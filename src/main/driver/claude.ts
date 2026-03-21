@@ -23,6 +23,7 @@ export class ClaudeDriver extends BaseDriver {
 
   protected buildCommand(content: string, runnerType: 'local' | 'wsl' | 'ssh', options?: MessageOptions): SpawnCommand {
     const planMode = options?.planMode ?? false
+    const yoloMode = options?.yoloMode ?? this.options.yoloMode ?? false
 
     const args = [
       '--output-format', 'stream-json',
@@ -30,12 +31,16 @@ export class ClaudeDriver extends BaseDriver {
       '--print',
     ]
 
-    // Plan mode uses --permission-mode plan (no bypass)
-    // Normal mode bypasses permissions but still allows Claude to enter plan mode
+    // Plan mode uses --permission-mode plan (no bypass, no interactive approval).
+    // Yolo mode bypasses all permission checks.
+    // Default mode: use stream-json input so Claude Code can emit control_request
+    // events on stdout and we can send control_response approvals on stdin.
     if (planMode) {
       args.push('--permission-mode', 'plan')
-    } else {
+    } else if (yoloMode) {
       args.push('--dangerously-skip-permissions')
+    } else {
+      args.push('--input-format', 'stream-json')
     }
     if (this.options.model) {
       args.push('--model', this.options.model)
@@ -44,19 +49,27 @@ export class ClaudeDriver extends BaseDriver {
       args.push('--resume', this.sessionId)
     }
 
-    // For WSL and Windows local, pass prompt via stdin to avoid escaping issues:
-    // - WSL: wsl.exe receives a Windows command-line string; newlines and quotes
-    //   in the prompt break the inner bash command.
-    // - Windows local: cmd.exe via shell:true mangles double quotes and special chars.
+    // Whether to use stdin for the prompt:
+    // - WSL / Windows local: always (argv escaping is unreliable)
+    // - stream-json input mode: always (prompt must be a JSON user message on stdin)
+    // - POSIX local in yolo/plan mode: pass as argv arg
     const isWindows = process.platform === 'win32'
-    const useStdin = runnerType === 'wsl' || (runnerType === 'local' && isWindows)
+    const streamJsonInput = !planMode && !yoloMode
+    const useStdin = runnerType === 'wsl' || (runnerType === 'local' && isWindows) || streamJsonInput
 
     if (useStdin) {
+      // In stream-json input mode, the prompt must be a JSON user message.
+      // In plain stdin mode (yolo/plan on Windows/WSL), pass raw text.
+      const stdinContent = streamJsonInput
+        ? JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n'
+        : content
       return {
         binary: 'claude',
-        args,  // no prompt in args — content goes via stdin
+        args,
         workDir: this.options.workingDir,
-        stdinContent: content,
+        stdinContent,
+        // Keep stdin open in stream-json mode so we can write control_response later
+        keepStdinOpen: streamJsonInput,
       }
     } else {
       return {
@@ -178,6 +191,10 @@ export class ClaudeDriver extends BaseDriver {
           this.sessionId = sid
           this.options.onSessionId?.(sid)
         }
+        // In --input-format stream-json mode stdin is kept open so we can
+        // (in principle) send follow-up messages.  Close it now so the process
+        // knows the conversation is over and exits naturally.
+        this.process?.stdin?.end()
 
         if (subtype === 'error') {
           events.push({
@@ -222,10 +239,77 @@ export class ClaudeDriver extends BaseDriver {
         break
       }
 
+      // ── control_request (DISABLED — CLI bug, tracked in open issues) ──────────
+      //
+      // Claude Code CLI is designed to emit a `control_request` event when a tool
+      // requires user approval, then pause and wait for a `control_response` on
+      // stdin.  This would allow true mid-stream permission interception.
+      //
+      // Confirmed protocol shape (from Agent SDK source + anthropics/claude-code#34046):
+      //
+      //   RECEIVE from CLI stdout:
+      //   {
+      //     "type": "control_request",
+      //     "request_id": "<uuid>",
+      //     "request": {
+      //       "subtype": "can_use_tool",
+      //       "tool_name": "Write",
+      //       "tool_use_id": "toolu_...",
+      //       "input": { "file_path": "...", ... }
+      //     }
+      //   }
+      //
+      //   SEND to CLI stdin (via sendControlResponse / writeToStdin):
+      //   {
+      //     "type": "control_response",
+      //     "response": {
+      //       "subtype": "success",
+      //       "request_id": "<same uuid>",
+      //       "response": { "behavior": "allow" }          // or "deny"
+      //     }
+      //   }
+      //
+      // As of CLI v2.1.74+ the event is NOT emitted even with --permission-prompt-tool stdio.
+      // The infrastructure is already in place (keepStdinOpen, writeToStdin, sendControlResponse).
+      // To re-enable when the bug is fixed, uncomment the block below and add
+      // 'permission_request' back to OutputEventType in shared/types.ts.
+      //
+      // case 'control_request': {
+      //   const request = data.request as Record<string, unknown> | undefined
+      //   const requestId = data.request_id as string | undefined
+      //   if (request?.subtype === 'can_use_tool' && requestId) {
+      //     const toolName = (request.tool_name as string) || 'Unknown tool'
+      //     const toolInput = (request.input as Record<string, unknown>) || {}
+      //     const toolUseId = (request.tool_use_id as string) || ''
+      //     events.push({
+      //       type: 'permission_request',
+      //       content: toolName,
+      //       metadata: { type: 'permission_request', requestId, toolName, toolInput, toolUseId }
+      //     })
+      //   }
+      //   break
+      // }
+
       default:
         break
     }
 
     return events
   }
+
+  // When the control_request bug is fixed, re-enable this override:
+  // override sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
+  //   const response = {
+  //     type: 'control_response',
+  //     response: {
+  //       subtype: 'success',
+  //       request_id: requestId,
+  //       response: behavior === 'allow'
+  //         ? { behavior: 'allow' }
+  //         : { behavior: 'deny', message: message ?? 'User denied permission' },
+  //     },
+  //   }
+  //   this.writeToStdin(JSON.stringify(response))
+  // }
+
 }

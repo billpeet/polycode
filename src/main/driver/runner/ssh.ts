@@ -9,7 +9,7 @@ export class SshRunner implements Runner {
   constructor(private readonly ssh: SshConfig) {}
 
   spawn(cmd: SpawnCommand): ChildProcess {
-    const { binary, args, workDir, preamble, stdinContent } = cmd
+    const { binary, args, workDir, preamble, stdinContent, keepStdinOpen } = cmd
 
     // .bashrc guards against non-interactive shells (`case $- in *i*)`)
     // so PATH additions users put there never load in `bash -lc`.
@@ -37,9 +37,7 @@ export class SshRunner implements Runner {
     if (stdinContent !== undefined) {
       proc.stdin?.write(stdinContent)
     }
-    // Close stdin — signals EOF to SSH so it doesn't hang waiting for
-    // interactive input (passwords, key passphrases, etc.)
-    proc.stdin?.end()
+    if (!keepStdinOpen) proc.stdin?.end()
 
     return proc
   }

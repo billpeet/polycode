@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useCommandStore } from '../../stores/commands'
+import { EMPTY_COMMANDS, useCommandStore } from '../../stores/commands'
 import { LocationPool, Project, RepoLocation } from '../../types/ipc'
 import LocationFormSection from './LocationFormSection'
 import { connectionBadge, LocationFormState } from './types'
@@ -146,7 +146,7 @@ export function LocationsSection({
 }
 
 export function CommandsSection({ project }: { project: Project }) {
-  const commands = useCommandStore((s) => s.byProject[project.id] ?? [])
+  const commands = useCommandStore((s) => s.byProject[project.id] ?? EMPTY_COMMANDS)
   const updateCommand = useCommandStore((s) => s.update)
   const removeCommand = useCommandStore((s) => s.remove)
   const createCommand = useCommandStore((s) => s.create)

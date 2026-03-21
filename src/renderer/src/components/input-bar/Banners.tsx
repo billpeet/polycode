@@ -1,5 +1,5 @@
 import type { Dispatch, SetStateAction } from 'react'
-import { Question, RepoLocation } from '../../types/ipc'
+import { Question, PermissionRequest, RepoLocation } from '../../types/ipc'
 import { PlanIcon, QuestionIcon } from './icons'
 
 export function MissingLocationBanner({ location }: { location: RepoLocation }) {
@@ -251,6 +251,78 @@ export function QuestionBanner({
           }}
         >
           Submit Answer{questions.length > 1 ? 's' : ''}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export function PermissionBanner({
+  threadId,
+  permissions,
+  onApprove,
+  onDeny,
+}: {
+  threadId: string
+  permissions: PermissionRequest[]
+  onApprove: (threadId: string) => void
+  onDeny: (threadId: string) => void
+}) {
+  return (
+    <div
+      className="mb-3 rounded-xl px-4 py-3"
+      style={{
+        background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(251, 191, 36, 0.08) 100%)',
+        border: '1px solid rgba(251, 191, 36, 0.3)',
+      }}
+    >
+      <div className="mb-3 flex items-center gap-3">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'rgba(251, 191, 36, 0.2)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+        </div>
+        <div>
+          <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+            Permission required
+          </div>
+          <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            Claude needs approval to perform {permissions.length === 1 ? 'this action' : 'these actions'}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-3 flex flex-col gap-1.5">
+        {permissions.map((p, i) => (
+          <div
+            key={i}
+            className="rounded-lg px-3 py-2 text-xs font-mono"
+            style={{ background: 'rgba(251, 191, 36, 0.1)', color: 'var(--color-text)', border: '1px solid rgba(251, 191, 36, 0.2)' }}
+          >
+            {p.description}
+          </div>
+        ))}
+      </div>
+
+      <div className="flex items-center justify-end gap-2">
+        <button
+          onClick={() => onDeny(threadId)}
+          className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:opacity-80"
+          style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
+        >
+          Deny
+        </button>
+        <button
+          onClick={() => onApprove(threadId)}
+          className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
+          style={{
+            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
+            color: '#1a1a1a',
+            boxShadow: '0 2px 8px rgba(251, 191, 36, 0.3)',
+          }}
+        >
+          Approve & Retry
         </button>
       </div>
     </div>

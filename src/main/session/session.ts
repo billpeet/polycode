@@ -4,7 +4,7 @@ import { ClaudeDriver } from '../driver/claude'
 import { CodexDriver } from '../driver/codex'
 import { OpenCodeDriver } from '../driver/opencode'
 import { CLIDriver } from '../driver/types'
-import { OutputEvent, ThreadStatus, SendOptions, Question, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
+import { OutputEvent, ThreadStatus, SendOptions, Question, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 import {
@@ -13,6 +13,7 @@ import {
   insertMessage,
   getThreadModel,
   getThreadProvider,
+  getThreadYoloMode,
   getOrCreateActiveSession,
   createSession,
   listSessions,
@@ -37,6 +38,9 @@ export class Session {
   private pendingPlanContent: string | null = null
   private questionPending = false
   private pendingQuestions: Question[] = []
+  private permissionPending = false
+  private pendingPermissions: PermissionRequest[] = []
+  private recentToolCalls = new Map<string, { name: string; input: Record<string, unknown> }>()
   private stopped = false
   private shellProcess: ChildProcess | null = null
 
@@ -60,6 +64,7 @@ export class Session {
       workingDir: this.workingDir,
       threadId: this.threadId,
       model,
+      yoloMode: getThreadYoloMode(this.threadId),
       initialSessionId: externalSessionId,
       onSessionId: (sid: string) => updateSessionClaudeId(sessionId, sid),
       ssh: this.sshConfig,
@@ -163,6 +168,9 @@ export class Session {
     this.pendingPlanContent = null
     this.questionPending = false
     this.pendingQuestions = []
+    this.permissionPending = false
+    this.pendingPermissions = []
+    this.recentToolCalls.clear()
 
     logThreadEvent(this.threadId, {
       ts: new Date().toISOString(),
@@ -195,7 +203,10 @@ export class Session {
         content,
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        { planMode: options?.planMode }
+        // Claude Code CLI permission approval (control_request protocol) is currently broken —
+        // the CLI never emits control_request events so tools silently fail without yolo.
+        // Force yolo for claude-code until Anthropic fixes it. See claude.ts for the disabled code.
+        { planMode: options?.planMode, yoloMode: getThreadProvider(this.threadId) === 'claude-code' ? true : getThreadYoloMode(this.threadId) }
       )
     }
 
@@ -503,6 +514,41 @@ export class Session {
     this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
+  /** Get pending permission requests */
+  getPendingPermissions(): PermissionRequest[] {
+    return this.pendingPermissions
+  }
+
+  /** Approve all pending permissions and retry with yolo mode. */
+  approvePermissions(): void {
+    if (!this.permissionPending || !this.activeSessionId) return
+
+    const driver = this.drivers.get(this.activeSessionId)
+    if (!driver) return
+
+    this.permissionPending = false
+    this.pendingPermissions = []
+    this.recentToolCalls.clear()
+    this.setStatus('running')
+
+    driver.sendMessage(
+      'The required permissions have been approved. Please retry your previous action.',
+      (event: OutputEvent) => this.handleEvent(event),
+      (error?: Error) => this.handleDone(error),
+      { yoloMode: true }
+    )
+    this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
+  }
+
+  /** Deny pending permissions and return to idle. */
+  denyPermissions(): void {
+    if (!this.permissionPending) return
+    this.permissionPending = false
+    this.pendingPermissions = []
+    this.recentToolCalls.clear()
+    this.setStatus('idle')
+  }
+
   private handleEvent(event: OutputEvent): void {
     // Drop all events after stop is requested — the process is winding down
     // and we don't want orphaned output appearing in the UI or DB.
@@ -518,8 +564,9 @@ export class Session {
     // Include sessionId in all events sent to renderer
     const eventWithSession: OutputEvent = { ...event, sessionId: this.activeSessionId ?? undefined }
 
-    // Don't send question events to renderer — they're handled via UI state, not message stream
-    if (event.type !== 'question') {
+    // Don't send question/permission_request events to renderer message stream —
+    // they're handled via UI state (status + banner), not as message bubbles
+    if (event.type !== 'question' && event.type !== 'permission_request') {
       this.window.webContents.send(`thread:output:${this.threadId}`, eventWithSession)
     }
 
@@ -530,16 +577,45 @@ export class Session {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
         break
-      case 'tool_call':
+      case 'tool_call': {
         if (this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
+        // Track tool calls by ID so we can match permission errors to them
+        const toolId = event.metadata?.id as string | undefined
+        if (toolId) {
+          this.recentToolCalls.set(toolId, {
+            name: event.content,
+            input: (event.metadata?.input as Record<string, unknown>) ?? {},
+          })
+        }
         break
-      case 'tool_result':
+      }
+      case 'tool_result': {
         if (this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
+        // Fallback: detect permission errors from error tool_results (non-stream-json mode or
+        // older Claude CLI versions that don't emit control_request events).
+        const isError = event.metadata?.is_error === true
+        const isPermissionError = isError && /requested permissions|you haven't granted/i.test(event.content)
+        if (isPermissionError) {
+          const toolUseId = (event.metadata?.tool_use_id as string) ?? ''
+          const toolCall = toolUseId ? this.recentToolCalls.get(toolUseId) : undefined
+          const toolName = toolCall?.name ?? 'Unknown tool'
+          const toolInput = toolCall?.input ?? {}
+          const description = buildPermissionDescription(toolName, toolInput)
+          // No requestId — this is the legacy detection path (process already exited)
+          this.pendingPermissions.push({ toolName, toolInput, toolUseId, description })
+          this.permissionPending = true
+        }
         break
+      }
+      // 'permission_request' events (from CLI control_request) are disabled pending
+      // CLI bug fix — see commented-out block in claude.ts parseEvent().
+      // When re-enabled, handle here: set status to 'permission_pending' immediately
+      // (mid-stream, process still alive) then call driver.sendControlResponse() on approval.
+
       case 'thinking':
         if (this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
@@ -618,6 +694,9 @@ export class Session {
     } else if (this.questionPending) {
       // Question asked — waiting for user answer
       finalStatus = 'question_pending'
+    } else if (this.permissionPending) {
+      // Claude requested permissions — waiting for user approval
+      finalStatus = 'permission_pending'
     } else {
       // Response complete — idle and ready for next message
       finalStatus = 'idle'
@@ -658,6 +737,22 @@ export class Session {
       .catch((err) => {
         console.error('[auto-title]', err.message)
       })
+  }
+}
+
+function buildPermissionDescription(toolName: string, toolInput: Record<string, unknown>): string {
+  switch (toolName) {
+    case 'Write':
+      return `Write to \`${toolInput.file_path ?? 'file'}\``
+    case 'Edit':
+    case 'MultiEdit':
+      return `Edit \`${toolInput.file_path ?? 'file'}\``
+    case 'Bash':
+      return `Run command: \`${String(toolInput.command ?? '').slice(0, 120)}\``
+    case 'Read':
+      return `Read \`${toolInput.file_path ?? 'file'}\``
+    default:
+      return toolName
   }
 }
 

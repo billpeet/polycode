@@ -2,6 +2,7 @@ import { OutputEvent, SshConfig, WslConfig } from '../../shared/types'
 
 export interface MessageOptions {
   planMode?: boolean
+  yoloMode?: boolean
 }
 
 export interface CLIDriver {
@@ -18,12 +19,16 @@ export interface CLIDriver {
   isRunning(): boolean
   /** Returns the OS PID of the running process, or null if not running */
   getPid(): number | null
+  /** Send a control_response to the running process (for interactive permission approval).
+   *  Default no-op for drivers that don't support this protocol. */
+  sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void
 }
 
 export interface DriverOptions {
   workingDir: string
   threadId: string
   model?: string
+  yoloMode?: boolean
   initialSessionId?: string | null
   onSessionId?: (sessionId: string) => void
   ssh?: SshConfig | null

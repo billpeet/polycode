@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question, TokenUsage } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question, PermissionRequest, TokenUsage } from '../types/ipc'
 
 export interface QueuedMessage {
   content: string
@@ -45,6 +45,7 @@ interface ThreadStore {
   rename: (threadId: string, name: string) => Promise<void>
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
+  setYolo: (threadId: string, yoloMode: boolean) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
@@ -53,6 +54,9 @@ interface ThreadStore {
   rejectPlan: (threadId: string) => Promise<void>
   getQuestions: (threadId: string) => Promise<Question[]>
   answerQuestion: (threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string) => Promise<void>
+  getPermissions: (threadId: string) => Promise<PermissionRequest[]>
+  approvePermissions: (threadId: string) => Promise<void>
+  denyPermissions: (threadId: string) => Promise<void>
   setDraft: (threadId: string, draft: string) => void
   setPlanMode: (threadId: string, planMode: boolean) => void
   queueMessage: (threadId: string, content: string, planMode: boolean) => void
@@ -124,10 +128,20 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     // Carry over per-thread WSL override for this location to new threads.
     if (
       sourceThread &&
-      (thread.use_wsl !== sourceThread.use_wsl || thread.wsl_distro !== sourceThread.wsl_distro)
+      (
+        thread.use_wsl !== sourceThread.use_wsl ||
+        thread.wsl_distro !== sourceThread.wsl_distro ||
+        thread.yolo_mode !== sourceThread.yolo_mode
+      )
     ) {
       await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
-      thread = { ...thread, use_wsl: sourceThread.use_wsl, wsl_distro: sourceThread.wsl_distro }
+      await window.api.invoke('threads:setYolo', thread.id, sourceThread.yolo_mode)
+      thread = {
+        ...thread,
+        use_wsl: sourceThread.use_wsl,
+        wsl_distro: sourceThread.wsl_distro,
+        yolo_mode: sourceThread.yolo_mode,
+      }
     }
 
     set((s) => ({
@@ -361,6 +375,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
   },
 
+  setYolo: async (threadId, yoloMode) => {
+    await window.api.invoke('threads:setYolo', threadId, yoloMode)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) =>
+          t.id === threadId ? { ...t, yolo_mode: yoloMode } : t
+        )
+      }
+      return { byProject: updated }
+    })
+  },
+
   start: async (threadId) => {
     await window.api.invoke('threads:start', threadId)
   },
@@ -410,6 +437,25 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
     }))
     await window.api.invoke('threads:answerQuestion', threadId, answers, questionComments, generalComment)
+  },
+
+  getPermissions: async (threadId) => {
+    return window.api.invoke('threads:getPendingPermissions', threadId)
+  },
+
+  approvePermissions: async (threadId) => {
+    set((s) => ({
+      statusMap: { ...s.statusMap, [threadId]: 'running' },
+      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+    }))
+    await window.api.invoke('threads:approvePermissions', threadId)
+  },
+
+  denyPermissions: async (threadId) => {
+    set((s) => ({
+      statusMap: { ...s.statusMap, [threadId]: 'idle' },
+    }))
+    await window.api.invoke('threads:denyPermissions', threadId)
   },
 
   setDraft: (threadId, draft) =>

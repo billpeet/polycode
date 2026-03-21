@@ -3,9 +3,7 @@ import { ErrorBoundary } from '@sentry/react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
-import FilePreview from './components/FilePreview'
-import CommandLogs from './components/CommandLogs'
-import TerminalPane from './components/Terminal'
+import SecondPanel from './components/SecondPanel'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
 import { SidebarProvider } from './components/ui/sidebar-context'
@@ -13,9 +11,7 @@ import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useLocationStore } from './stores/locations'
 import { useUiStore } from './stores/ui'
-import { useFilesStore } from './stores/files'
 import { useToastStore } from './stores/toast'
-import { useCommandStore } from './stores/commands'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 
@@ -46,55 +42,7 @@ export default function App() {
     selectedThreadId ? (s.todoPanelOpenByThread[selectedThreadId] ?? true) : false
   )
 
-  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
-  const diffView = useFilesStore((s) => s.diffView)
-  const loadingDiff = useFilesStore((s) => s.loadingDiff)
-
-  const currentLocationId = useThreadStore((s) => {
-    if (!s.selectedThreadId) return null
-    for (const threads of Object.values(s.byProject)) {
-      const t = threads.find((t) => t.id === s.selectedThreadId)
-      if (t) return t.location_id ?? null
-    }
-    return null
-  })
-
-  const selectedInstance = useCommandStore((s) =>
-    currentLocationId ? (s.selectedInstanceByLocation[currentLocationId] ?? null) : null
-  )
-  const hasPinnedCommands = useCommandStore((s) =>
-    currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
-  )
-
-  const activeAuxTab = useUiStore((s) =>
-    currentLocationId ? (s.locationAuxTabByLocation[currentLocationId] ?? null) : null
-  )
-  const isTerminalOpen = useTerminalStore((s) =>
-    currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
-  )
-
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
-
-  const hasFilePreview = !!(selectedFilePath || diffView || loadingDiff)
-  const hasCommandLogs = !!(selectedInstance || hasPinnedCommands)
-
-  function renderAuxPane() {
-    if (!selectedThreadId) return null
-
-    if (activeAuxTab === 'terminal' && isTerminalOpen && currentLocationId) {
-      return <TerminalPane threadId={selectedThreadId} locationId={currentLocationId} />
-    }
-    if (activeAuxTab === 'file' && hasFilePreview) {
-      return <FilePreview />
-    }
-    if (activeAuxTab === 'command' && hasCommandLogs) {
-      return <CommandLogs />
-    }
-    if (hasFilePreview) return <FilePreview />
-    if (isTerminalOpen && currentLocationId) return <TerminalPane threadId={selectedThreadId} locationId={currentLocationId} />
-    if (hasCommandLogs) return <CommandLogs />
-    return null
-  }
 
   // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
@@ -226,7 +174,7 @@ export default function App() {
                 <div className="flex flex-1 flex-col overflow-hidden">
                   <ThreadView threadId={selectedThreadId} />
                 </div>
-                {renderAuxPane()}
+                <SecondPanel threadId={selectedThreadId} />
                 {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
               </>
             ) : (

@@ -7,6 +7,7 @@ import { useToastStore } from '../stores/toast'
 import { useSessionStore } from '../stores/sessions'
 import {
   Question,
+  PermissionRequest,
   SearchableFile,
   PendingAttachment,
   SUPPORTED_ATTACHMENT_TYPES,
@@ -26,7 +27,7 @@ import { useSlashCommandStore } from '../stores/slashCommands'
 import { useCliHealthStore } from '../stores/cliHealth'
 import QueuedMessageBanner from './QueuedMessageBanner'
 import ComposerToolbar from './input-bar/ComposerToolbar'
-import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PlanBanner, QuestionBanner } from './input-bar/Banners'
+import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PermissionBanner, PlanBanner, QuestionBanner } from './input-bar/Banners'
 import { PaperclipIcon, QueueIcon, SendIcon, StopIcon } from './input-bar/icons'
 
 interface Props {
@@ -62,6 +63,7 @@ export default function InputBar({ threadId }: Props) {
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({})
   const [questionComments, setQuestionComments] = useState<Record<string, string>>({})
   const [generalComment, setGeneralComment] = useState('')
+  const [permissions, setPermissions] = useState<PermissionRequest[]>([])
   const [mention, setMention] = useState<MentionState>({
     active: false,
     startIndex: -1,
@@ -86,6 +88,9 @@ export default function InputBar({ threadId }: Props) {
   const rejectPlan = useThreadStore((s) => s.rejectPlan)
   const getQuestions = useThreadStore((s) => s.getQuestions)
   const answerQuestion = useThreadStore((s) => s.answerQuestion)
+  const getPermissions = useThreadStore((s) => s.getPermissions)
+  const approvePermissions = useThreadStore((s) => s.approvePermissions)
+  const denyPermissions = useThreadStore((s) => s.denyPermissions)
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const value = useThreadStore((s) => s.draftByThread[threadId] ?? '')
   const setDraft = useThreadStore((s) => s.setDraft)
@@ -123,6 +128,7 @@ export default function InputBar({ threadId }: Props) {
   // Provider / model / WSL selectors (moved from ThreadHeader)
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
   const setModel = useThreadStore((s) => s.setModel)
+  const setYolo = useThreadStore((s) => s.setYolo)
   const setWsl = useThreadStore((s) => s.setWsl)
 
   const [availableDistros, setAvailableDistros] = useState<string[]>([])
@@ -165,9 +171,10 @@ export default function InputBar({ threadId }: Props) {
   const isStopping = status === 'stopping'
   const isPlanPending = status === 'plan_pending'
   const isQuestionPending = status === 'question_pending'
+  const isPermissionPending = status === 'permission_pending'
   const hasContent = value.trim().length > 0 || attachments.length > 0
   // Can send when idle and has content, location path exists, and CLI is available
-  const canSend = !isProcessing && !isPlanPending && !isQuestionPending && hasContent && !locationPathMissing && !cliUnavailable
+  const canSend = !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
   // Can queue only when actively running (not while stopping) and no existing queue
   const canQueue = status === 'running' && !queuedMessage && hasContent && !locationPathMissing && !cliUnavailable
 
@@ -202,6 +209,15 @@ export default function InputBar({ threadId }: Props) {
       setGeneralComment('')
     }
   }, [isQuestionPending, threadId, getQuestions])
+
+  // Fetch permissions when status changes to permission_pending
+  useEffect(() => {
+    if (isPermissionPending) {
+      getPermissions(threadId).then(setPermissions)
+    } else {
+      setPermissions([])
+    }
+  }, [isPermissionPending, threadId, getPermissions])
 
   useEffect(() => {
     function onFocusInput(): void {
@@ -651,6 +667,15 @@ export default function InputBar({ threadId }: Props) {
         />
       )}
 
+      {isPermissionPending && permissions.length > 0 && (
+        <PermissionBanner
+          threadId={threadId}
+          permissions={permissions}
+          onApprove={approvePermissions}
+          onDeny={denyPermissions}
+        />
+      )}
+
       {isQuestionPending && questions.length > 0 && (
         <QuestionBanner
           questions={questions}
@@ -698,6 +723,7 @@ export default function InputBar({ threadId }: Props) {
           isLocalLocation={isLocalLocation}
           currentThread={currentThread}
           availableDistros={availableDistros}
+          setYolo={setYolo}
           setWsl={setWsl}
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}
@@ -705,7 +731,7 @@ export default function InputBar({ threadId }: Props) {
           elapsedSeconds={elapsedSeconds}
         />
 
-        {/* Attachments above textarea */}
+        {/* Attachment previews above textarea */}
         {attachments.length > 0 && (
           <div className="px-3 pt-3">
             <AttachmentPreview
@@ -730,34 +756,31 @@ export default function InputBar({ threadId }: Props) {
             <PaperclipIcon />
           </button>
 
-          {/* Textarea */}
-          <div className="flex flex-1 items-end">
-            <textarea
-              ref={textareaRef}
-              value={value}
-              onChange={handleChange}
-              onKeyDown={handleKeyDown}
-              onInput={handleInput}
-              onPaste={handlePaste}
-              onFocus={() => setIsFocused(true)}
-              onBlur={() => setIsFocused(false)}
-              rows={1}
-              placeholder={
-                cliUnavailable
-                  ? 'CLI not available — input disabled'
-                  : isProcessing
-                    ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
-                    : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
-              }
-              disabled={isPlanPending || isQuestionPending || cliUnavailable}
-              className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
-              style={{
-                color: 'var(--color-text)',
-                maxHeight: '200px',
-                minHeight: '24px',
-              }}
-            />
-          </div>
+          <textarea
+            ref={textareaRef}
+            value={value}
+            onChange={handleChange}
+            onKeyDown={handleKeyDown}
+            onInput={handleInput}
+            onPaste={handlePaste}
+            onFocus={() => setIsFocused(true)}
+            onBlur={() => setIsFocused(false)}
+            rows={1}
+            placeholder={
+              cliUnavailable
+                ? 'CLI not available — input disabled'
+                : isProcessing
+                  ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
+                  : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
+            }
+            disabled={isPlanPending || isQuestionPending || isPermissionPending || cliUnavailable}
+            className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
+            style={{
+              color: 'var(--color-text)',
+              maxHeight: '200px',
+              minHeight: '24px',
+            }}
+          />
 
           {/* Send / Queue / Stop buttons */}
           {isProcessing ? (

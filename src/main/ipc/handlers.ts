@@ -32,6 +32,7 @@ import {
   updateThreadName,
   updateThreadModel,
   updateThreadProviderAndModel,
+  updateThreadYoloMode,
   updateThreadStatus,
   updateThreadUnread,
   threadExists,
@@ -454,6 +455,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return updateThreadUnread(threadId, unread)
   })
 
+  ipcMain.handle('threads:setYolo', (_event, threadId: string, yoloMode: boolean) => {
+    sessionManager.remove(threadId)
+    return updateThreadYoloMode(threadId, yoloMode)
+  })
+
   ipcMain.handle('threads:setWsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {
     if (threadHasMessages(threadId)) return // locked after first message
     sessionManager.remove(threadId) // drop existing session so it gets recreated
@@ -538,6 +544,25 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const session = sessionManager.get(threadId)
     if (session) {
       session.answerQuestion(answers, questionComments, generalComment)
+    }
+  })
+
+  ipcMain.handle('threads:getPendingPermissions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    return session?.getPendingPermissions() ?? []
+  })
+
+  ipcMain.handle('threads:approvePermissions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.approvePermissions()
+    }
+  })
+
+  ipcMain.handle('threads:denyPermissions', (_event, threadId: string) => {
+    const session = sessionManager.get(threadId)
+    if (session) {
+      session.denyPermissions()
     }
   })
 

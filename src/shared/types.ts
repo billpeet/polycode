@@ -117,6 +117,7 @@ export interface Thread {
   unread: boolean
   /** True if at least one message has been sent in this thread */
   has_messages: boolean
+  yolo_mode: boolean
   use_wsl: boolean
   wsl_distro: string | null
   /** Branch that was active when this thread was created */
@@ -197,7 +198,15 @@ export interface OutputEvent {
   sessionId?: string
 }
 
-export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending'
+export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending' | 'permission_pending'
+
+/** A tool action that Claude requested but needs permission to execute */
+export interface PermissionRequest {
+  toolName: string
+  toolInput: Record<string, unknown>
+  toolUseId: string
+  description: string
+}
 
 export interface GitFileChange {
   status: 'M' | 'A' | 'D' | 'R' | 'U' | '?'

@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -39,6 +39,9 @@ export interface WindowApi {
   invoke(channel: 'threads:rejectPlan', threadId: string): Promise<void>
   invoke(channel: 'threads:getQuestions', threadId: string): Promise<Question[]>
   invoke(channel: 'threads:answerQuestion', threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string): Promise<void>
+  invoke(channel: 'threads:getPendingPermissions', threadId: string): Promise<PermissionRequest[]>
+  invoke(channel: 'threads:approvePermissions', threadId: string): Promise<void>
+  invoke(channel: 'threads:denyPermissions', threadId: string): Promise<void>
   invoke(channel: 'threads:updateName', id: string, name: string): Promise<void>
   invoke(channel: 'threads:archivedCount', projectId: string): Promise<number>
   invoke(channel: 'threads:listArchived', projectId: string): Promise<Thread[]>
@@ -47,6 +50,7 @@ export interface WindowApi {
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
   invoke(channel: 'threads:updateProviderAndModel', id: string, provider: string, model: string): Promise<void>
   invoke(channel: 'threads:setUnread', threadId: string, unread: boolean): Promise<void>
+  invoke(channel: 'threads:setYolo', threadId: string, yoloMode: boolean): Promise<void>
   invoke(channel: 'threads:setWsl', threadId: string, useWsl: boolean, wslDistro: string | null): Promise<void>
   invoke(channel: 'messages:list', threadId: string): Promise<Message[]>
   invoke(channel: 'messages:listBySession', sessionId: string): Promise<Message[]>

@@ -1,10 +1,8 @@
-import { useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminal'
-
-const DEFAULT_WIDTH = 500
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   if (event.altKey) return false
@@ -12,79 +10,22 @@ function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   return event.key === 'c' || event.key === 'C'
 }
 
-function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
-  return (
-    <div
-      onMouseDown={onMouseDown}
-      style={{
-        position: 'absolute',
-        left: 0,
-        top: 0,
-        bottom: 0,
-        width: 4,
-        cursor: 'col-resize',
-        zIndex: 10,
-      }}
-    />
-  )
-}
-
-function useResize(threadId: string, width: number, setWidth: (threadId: string, width: number) => void) {
-  const isDragging = useRef(false)
-  const startX = useRef(0)
-  const startWidth = useRef(0)
-
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    isDragging.current = true
-    startX.current = e.clientX
-    startWidth.current = width
-    document.body.style.cursor = 'col-resize'
-    e.preventDefault()
-  }, [width])
-
-  useEffect(() => {
-    function onMouseMove(e: MouseEvent) {
-      if (!isDragging.current) return
-      const delta = startX.current - e.clientX
-      const nextWidth = Math.max(200, Math.min(startWidth.current + delta, window.innerWidth * 0.6))
-      setWidth(threadId, nextWidth)
-    }
-
-    function onMouseUp() {
-      if (!isDragging.current) return
-      isDragging.current = false
-      document.body.style.cursor = ''
-    }
-
-    document.addEventListener('mousemove', onMouseMove)
-    document.addEventListener('mouseup', onMouseUp)
-    return () => {
-      document.removeEventListener('mousemove', onMouseMove)
-      document.removeEventListener('mouseup', onMouseUp)
-    }
-  }, [setWidth, threadId])
-
-  return { handleMouseDown }
-}
+// ─── Terminal content (inner, no outer wrapper) ───────────────────────────────
 
 interface Props {
   threadId: string
   locationId: string
 }
 
-export default function TerminalPane({ threadId, locationId }: Props) {
+export default function TerminalContent({ threadId, locationId }: Props) {
   const ensure = useTerminalStore((s) => s.ensure)
   const kill = useTerminalStore((s) => s.kill)
-  const width = useTerminalStore((s) => s.widthByLocation[locationId] ?? DEFAULT_WIDTH)
-  const setWidth = useTerminalStore((s) => s.setWidth)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
   const fitAddonRef = useRef<FitAddon | null>(null)
   const terminalIdRef = useRef<string | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
-
-  const { handleMouseDown } = useResize(locationId, width, setWidth)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -206,36 +147,9 @@ export default function TerminalPane({ threadId, locationId }: Props) {
     }
   }, [])
 
-  useEffect(() => {
-    if (!fitAddonRef.current || !xtermRef.current || !terminalIdRef.current) return
-    const timer = setTimeout(() => {
-      try {
-        fitAddonRef.current.fit()
-        if (xtermRef.current && terminalIdRef.current) {
-          const { cols, rows } = xtermRef.current
-          window.api.send('terminal:resize', terminalIdRef.current, cols, rows)
-        }
-      } catch {
-        // Ignore.
-      }
-    }, 30)
-    return () => clearTimeout(timer)
-  }, [width])
-
   return (
-    <div
-      className="flex flex-col h-full border-l"
-      style={{
-        position: 'relative',
-        background: '#0f0f0f',
-        borderColor: 'var(--color-border)',
-        minWidth: 200,
-        width,
-        flexShrink: 0,
-      }}
-    >
-      <ResizeHandle onMouseDown={handleMouseDown} />
-
+    <>
+      {/* Header */}
       <div
         className="flex items-center gap-2 px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: 'var(--color-border)' }}
@@ -264,6 +178,6 @@ export default function TerminalPane({ threadId, locationId }: Props) {
         className="flex-1"
         style={{ overflow: 'hidden', padding: '4px 0 4px 4px' }}
       />
-    </div>
+    </>
   )
 }

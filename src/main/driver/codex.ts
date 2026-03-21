@@ -82,11 +82,12 @@ export { winQuote } from './runner/utils'
 export function buildCodexArgs(
   codexThreadId: string | null,
   model: string | undefined,
-  content: string
+  content: string,
+  yoloMode = false
 ): string[] {
   const args: string[] = ['exec', '--json']
   if (codexThreadId) args.push('resume')
-  args.push('--full-auto')
+  args.push(yoloMode ? '--dangerously-bypass-approvals-and-sandbox' : '--full-auto')
   if (model) args.push('-c', `model=${model}`)
   if (codexThreadId) args.push(codexThreadId)
   args.push(content)
@@ -132,9 +133,14 @@ export class CodexDriver extends BaseDriver {
   protected buildCommand(
     content: string,
     runnerType: 'local' | 'wsl' | 'ssh',
-    _options?: MessageOptions  // plan mode is Claude-specific; ignored for Codex
+    options?: MessageOptions
   ): SpawnCommand {
-    const args = buildCodexArgs(this.codexThreadId, this.options.model, content)
+    const args = buildCodexArgs(
+      this.codexThreadId,
+      this.options.model,
+      content,
+      options?.yoloMode ?? this.options.yoloMode ?? false
+    )
 
     // The runners (WslRunner, SshRunner) inject RESOLVE_CODEX_BIN via preamble,
     // ensuring codex is on PATH for all connection types.

@@ -44,6 +44,24 @@ export function PlanIcon({ className }: { className?: string }) {
   )
 }
 
+export function YoloIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 3C9 6 8 8.5 8 11a4 4 0 0 0 8 0c0-1.5-.5-3-2-5 3 1 5 4.3 5 7.5A7 7 0 1 1 5 13c0-2.6 1.2-5 3.5-7" />
+    </svg>
+  )
+}
+
 export function QuestionIcon({ className }: { className?: string }) {
   return (
     <svg
@@ -78,6 +96,25 @@ export function PaperclipIcon({ className }: { className?: string }) {
       strokeLinejoin="round"
     >
       <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+    </svg>
+  )
+}
+
+export function PermissionIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
     </svg>
   )
 }
