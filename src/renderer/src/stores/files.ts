@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { FileEntry } from '../types/ipc'
+import { useThreadStore } from './threads'
+import { useUiStore } from './ui'
 
 interface FileContent {
   content: string
@@ -119,6 +121,12 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       return
     }
     set({ selectedFilePath: filePath, fileContent: null })
+    const thread = Object.values(useThreadStore.getState().byProject)
+      .flat()
+      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
+    if (thread?.location_id) {
+      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
+    }
     get().fetchFileContent(filePath)
   },
 
@@ -144,6 +152,12 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
 
   selectDiff: async (repoPath: string, filePath: string, staged: boolean) => {
     set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
+    const thread = Object.values(useThreadStore.getState().byProject)
+      .flat()
+      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
+    if (thread?.location_id) {
+      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
+    }
     try {
       const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
       set({ diffView: { repoPath, filePath, diff, staged }, loadingDiff: false })
@@ -154,6 +168,12 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
 
   selectCompareDiffToMain: async (repoPath, filePath) => {
     set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
+    const thread = Object.values(useThreadStore.getState().byProject)
+      .flat()
+      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
+    if (thread?.location_id) {
+      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
+    }
     try {
       const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
       set({ diffView: { repoPath, filePath, diff, staged: false }, loadingDiff: false })

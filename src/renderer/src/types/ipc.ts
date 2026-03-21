@@ -112,6 +112,7 @@ export interface WindowApi {
   invoke(channel: 'window:maximize'): Promise<void>
   invoke(channel: 'window:close'): Promise<void>
   invoke(channel: 'window:is-maximized'): Promise<boolean>
+  invoke(channel: 'app:getVersion'): Promise<string>
   invoke(channel: 'app:install-update'): Promise<void>
   invoke(channel: 'commands:list', projectId: string): Promise<ProjectCommand[]>
   invoke(channel: 'commands:create', projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null): Promise<ProjectCommand>
@@ -138,6 +139,7 @@ export interface WindowApi {
   invoke(channel: 'cli:update', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliUpdateResult>
   invoke(channel: 'terminal:spawn', threadId: string, cols: number, rows: number): Promise<string>
   invoke(channel: 'terminal:kill', terminalId: string): Promise<void>
+  invoke(channel: 'terminal:getBuffer', terminalId: string): Promise<string>
   invoke(channel: 'settings:get', key: string): Promise<string | null>
   invoke(channel: 'settings:set', key: string, value: string): Promise<void>
   invoke(channel: 'webhook:getConfig'): Promise<{ enabled: boolean; port: number; token: string }>

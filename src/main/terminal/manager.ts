@@ -6,14 +6,17 @@ import { buildSshBaseArgs } from '../driver/runner/utils'
 interface PtyInstance {
   terminalId: string
   threadId: string
-  process: pty.IPty
+  process: pty.IPty | null
   cols: number
   rows: number
+  buffer: string
+  exited: boolean
 }
 
 class PtyManager {
   private instances = new Map<string, PtyInstance>()
   private window: BrowserWindow | null = null
+  private static readonly MAX_BUFFER_CHARS = 200_000
 
   init(win: BrowserWindow): void {
     this.window = win
@@ -77,28 +80,37 @@ class PtyManager {
       process: proc,
       cols,
       rows,
+      buffer: '',
+      exited: false,
     }
     this.instances.set(terminalId, instance)
 
     proc.onData((data) => {
+      instance.buffer = this.appendToBuffer(instance.buffer, data)
       this.window?.webContents.send(`terminal:data:${terminalId}`, data)
     })
 
     proc.onExit(({ exitCode, signal }) => {
+      const exitText = '\r\n\x1b[90m[Process exited]\x1b[0m\r\n'
+      instance.buffer = this.appendToBuffer(instance.buffer, exitText)
+      instance.process = null
+      instance.exited = true
+      this.window?.webContents.send(`terminal:data:${terminalId}`, exitText)
       this.window?.webContents.send(`terminal:exit:${terminalId}`, { exitCode, signal })
-      this.instances.delete(terminalId)
     })
 
     console.log(`[PtyManager] Spawned terminal ${terminalId} (${connectionType}, pid=${proc.pid})`)
   }
 
   write(terminalId: string, data: string): void {
-    this.instances.get(terminalId)?.process.write(data)
+    const inst = this.instances.get(terminalId)
+    if (!inst?.process || inst.exited) return
+    inst.process.write(data)
   }
 
   resize(terminalId: string, cols: number, rows: number): void {
     const inst = this.instances.get(terminalId)
-    if (!inst) return
+    if (!inst?.process || inst.exited) return
     try {
       inst.process.resize(cols, rows)
       inst.cols = cols
@@ -108,11 +120,17 @@ class PtyManager {
     }
   }
 
+  getBuffer(terminalId: string): string {
+    return this.instances.get(terminalId)?.buffer ?? ''
+  }
+
   kill(terminalId: string): void {
     const inst = this.instances.get(terminalId)
     if (!inst) return
     try {
-      inst.process.kill()
+      if (inst.process && !inst.exited) {
+        inst.process.kill()
+      }
     } catch {
       // Already exited
     }
@@ -132,6 +150,12 @@ class PtyManager {
     for (const id of [...this.instances.keys()]) {
       this.kill(id)
     }
+  }
+
+  private appendToBuffer(buffer: string, chunk: string): string {
+    const next = buffer + chunk
+    if (next.length <= PtyManager.MAX_BUFFER_CHARS) return next
+    return next.slice(next.length - PtyManager.MAX_BUFFER_CHARS)
   }
 }
 

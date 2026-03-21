@@ -103,7 +103,7 @@ export default function ThreadHeader({ threadId }: Props) {
 
 
   const usage = useThreadStore((s) => s.usageByThread[threadId])
-  const isTerminalOpen = useTerminalStore((s) => s.visibleByThread[threadId] ?? false)
+  const isTerminalOpen = useTerminalStore((s) => locationId ? (s.visibleByLocation[locationId] ?? false) : false)
 
   const fetchGit = useGitStore((s) => s.fetch)
   const refreshRemoteGit = useGitStore((s) => s.refreshRemote)
@@ -324,7 +324,7 @@ export default function ThreadHeader({ threadId }: Props) {
             </button>
             <button
               onClick={() => {
-                if (thread) useTerminalStore.getState().toggleVisible(thread.id)
+                if (locationId) useTerminalStore.getState().toggleVisible(locationId)
               }}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{

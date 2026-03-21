@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 
 export type RightPanelTab = 'tasks' | 'files' | 'commands'
+export type LocationAuxTab = 'file' | 'command' | 'terminal' | null
 
 interface UiStore {
   todoPanelOpenByThread: Record<string, boolean>
@@ -11,6 +12,10 @@ interface UiStore {
   // Right panel tab state
   rightPanelTab: RightPanelTab
   setRightPanelTab: (tab: RightPanelTab) => void
+
+  locationAuxTabByLocation: Record<string, Exclude<LocationAuxTab, null>>
+  setLocationAuxTab: (locationId: string, tab: Exclude<LocationAuxTab, null>) => void
+  clearLocationAuxTab: (locationId: string) => void
 }
 
 export const useUiStore = create<UiStore>((set, get) => ({
@@ -33,4 +38,16 @@ export const useUiStore = create<UiStore>((set, get) => ({
   // Right panel tab
   rightPanelTab: 'tasks',
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
+
+  locationAuxTabByLocation: {},
+  setLocationAuxTab: (locationId, tab) =>
+    set((s) => ({
+      locationAuxTabByLocation: { ...s.locationAuxTabByLocation, [locationId]: tab },
+    })),
+  clearLocationAuxTab: (locationId) =>
+    set((s) => {
+      const next = { ...s.locationAuxTabByLocation }
+      delete next[locationId]
+      return { locationAuxTabByLocation: next }
+    }),
 }))

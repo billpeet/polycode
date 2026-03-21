@@ -2,7 +2,7 @@ import { spawn } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
-import { ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
+import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import {
   listProjects,
@@ -1040,6 +1040,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   window.on('maximize',   () => window.webContents.send('window:maximized-changed', true))
   window.on('unmaximize', () => window.webContents.send('window:maximized-changed', false))
 
+  // ── App info ──────────────────────────────────────────────────────────────
+
+  ipcMain.handle('app:getVersion', () => {
+    const version = app.getVersion()
+    const packaged = app.isPackaged
+    const isDev = !packaged && process.env.NODE_ENV !== 'production'
+    if (isDev) return 'Local Dev'
+    return `v${version}`
+  })
+
   // ── Auto-updater ───────────────────────────────────────────────────────────
 
   ipcMain.handle('app:install-update', () => {
@@ -1094,6 +1104,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('terminal:kill', (_event, terminalId: string) => {
     ptyManager.kill(terminalId)
+  })
+
+  ipcMain.handle('terminal:getBuffer', (_event, terminalId: string) => {
+    return ptyManager.getBuffer(terminalId)
   })
 
   // ── Webhook ─────────────────────────────────────────────────────────────────

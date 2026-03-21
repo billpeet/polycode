@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { ProjectCommand, CommandStatus, CommandLogLine } from '../types/ipc'
+import { useUiStore } from './ui'
 
 export const EMPTY_COMMANDS: ProjectCommand[] = []
 export const EMPTY_LOGS: CommandLogLine[] = []
@@ -240,12 +241,16 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   selectInstance: (key, locationId) => {
+    if (key) {
+      useUiStore.getState().setLocationAuxTab(locationId, 'command')
+    }
     set((s) => ({
       selectedInstanceByLocation: { ...s.selectedInstanceByLocation, [locationId]: key },
     }))
   },
 
   pinInstance: (key, locationId) => {
+    useUiStore.getState().setLocationAuxTab(locationId, 'command')
     set((s) => {
       const existing = s.pinnedInstancesByLocation[locationId] ?? []
       if (existing.includes(key)) return s

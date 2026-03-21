@@ -1,16 +1,16 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminal'
+
+const DEFAULT_WIDTH = 500
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   if (event.altKey) return false
   if (!event.ctrlKey && !event.metaKey) return false
   return event.key === 'c' || event.key === 'C'
 }
-
-// ─── Resize handle ────────────────────────────────────────────────────────────
 
 function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => void }) {
   return (
@@ -29,8 +29,7 @@ function ResizeHandle({ onMouseDown }: { onMouseDown: (e: React.MouseEvent) => v
   )
 }
 
-function useResize(defaultWidth = 500) {
-  const [width, setWidth] = useState(defaultWidth)
+function useResize(threadId: string, width: number, setWidth: (threadId: string, width: number) => void) {
   const isDragging = useRef(false)
   const startX = useRef(0)
   const startWidth = useRef(0)
@@ -47,35 +46,37 @@ function useResize(defaultWidth = 500) {
     function onMouseMove(e: MouseEvent) {
       if (!isDragging.current) return
       const delta = startX.current - e.clientX
-      const newWidth = Math.max(200, Math.min(startWidth.current + delta, window.innerWidth * 0.6))
-      setWidth(newWidth)
+      const nextWidth = Math.max(200, Math.min(startWidth.current + delta, window.innerWidth * 0.6))
+      setWidth(threadId, nextWidth)
     }
+
     function onMouseUp() {
-      if (isDragging.current) {
-        isDragging.current = false
-        document.body.style.cursor = ''
-      }
+      if (!isDragging.current) return
+      isDragging.current = false
+      document.body.style.cursor = ''
     }
+
     document.addEventListener('mousemove', onMouseMove)
     document.addEventListener('mouseup', onMouseUp)
     return () => {
       document.removeEventListener('mousemove', onMouseMove)
       document.removeEventListener('mouseup', onMouseUp)
     }
-  }, [])
+  }, [setWidth, threadId])
 
-  return { width, handleMouseDown }
+  return { handleMouseDown }
 }
-
-// ─── Terminal pane ────────────────────────────────────────────────────────────
 
 interface Props {
   threadId: string
+  locationId: string
 }
 
-export default function TerminalPane({ threadId }: Props) {
-  const spawn = useTerminalStore((s) => s.spawn)
+export default function TerminalPane({ threadId, locationId }: Props) {
+  const ensure = useTerminalStore((s) => s.ensure)
   const kill = useTerminalStore((s) => s.kill)
+  const width = useTerminalStore((s) => s.widthByLocation[locationId] ?? DEFAULT_WIDTH)
+  const setWidth = useTerminalStore((s) => s.setWidth)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
@@ -83,9 +84,8 @@ export default function TerminalPane({ threadId }: Props) {
   const terminalIdRef = useRef<string | null>(null)
   const cleanupRef = useRef<(() => void) | null>(null)
 
-  const { width, handleMouseDown } = useResize(500)
+  const { handleMouseDown } = useResize(locationId, width, setWidth)
 
-  // Mount xterm + spawn PTY
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -130,44 +130,42 @@ export default function TerminalPane({ threadId }: Props) {
       return false
     })
 
-    // Delay fit to after layout settles
+    xtermRef.current = term
+    fitAddonRef.current = fitAddon
+
     requestAnimationFrame(() => {
-      if (disposed) return
-      fitAddon.fit()
+      void (async () => {
+        if (disposed) return
+        fitAddon.fit()
 
-      const { cols, rows } = term
-      xtermRef.current = term
-      fitAddonRef.current = fitAddon
+        const { cols, rows } = term
+        const terminalId = await ensure(threadId, locationId, cols, rows)
+        if (disposed) return
 
-      spawn(threadId, cols, rows).then((newTerminalId) => {
-        if (disposed) {
-          // Component unmounted before spawn returned
-          window.api.invoke('terminal:kill', newTerminalId).catch(() => {})
-          return
+        terminalIdRef.current = terminalId
+
+        const buffer = await window.api.invoke('terminal:getBuffer', terminalId) as string
+        if (disposed) return
+        if (buffer) {
+          term.write(buffer)
         }
 
-        terminalIdRef.current = newTerminalId
-
-        const unsubData = window.api.on(`terminal:data:${newTerminalId}`, (data) => {
+        const unsubData = window.api.on(`terminal:data:${terminalId}`, (data) => {
           term.write(data as string)
         })
 
-        const unsubExit = window.api.on(`terminal:exit:${newTerminalId}`, () => {
-          term.write('\r\n\x1b[90m[Process exited]\x1b[0m\r\n')
-        })
-
         const inputDisposable = term.onData((data) => {
-          window.api.send('terminal:write', newTerminalId, data)
+          if (!terminalIdRef.current) return
+          window.api.send('terminal:write', terminalIdRef.current, data)
         })
 
         cleanupRef.current = () => {
           unsubData()
-          unsubExit()
           inputDisposable.dispose()
         }
-      }).catch((err) => {
+      })().catch((err) => {
         if (!disposed) {
-          term.write(`\x1b[31mFailed to spawn terminal: ${err instanceof Error ? err.message : String(err)}\x1b[0m\r\n`)
+          term.write(`\x1b[31mFailed to open terminal: ${err instanceof Error ? err.message : String(err)}\x1b[0m\r\n`)
         }
       })
     })
@@ -176,16 +174,13 @@ export default function TerminalPane({ threadId }: Props) {
       disposed = true
       cleanupRef.current?.()
       cleanupRef.current = null
-      term.dispose()
-      xtermRef.current = null
-      fitAddonRef.current = null
       terminalIdRef.current = null
-      kill(threadId)
+      fitAddonRef.current = null
+      xtermRef.current = null
+      term.dispose()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId])
+  }, [ensure, locationId])
 
-  // Resize handling: observe container and debounce fit + PTY resize
   useEffect(() => {
     if (!containerRef.current) return
 
@@ -199,7 +194,7 @@ export default function TerminalPane({ threadId }: Props) {
           const { cols, rows } = xtermRef.current
           window.api.send('terminal:resize', terminalIdRef.current, cols, rows)
         } catch {
-          // Ignore errors during resize
+          // Ignore errors during resize.
         }
       }, 30)
     })
@@ -211,18 +206,17 @@ export default function TerminalPane({ threadId }: Props) {
     }
   }, [])
 
-  // Re-fit when panel width changes
   useEffect(() => {
     if (!fitAddonRef.current || !xtermRef.current || !terminalIdRef.current) return
     const timer = setTimeout(() => {
       try {
-        fitAddonRef.current?.fit()
+        fitAddonRef.current.fit()
         if (xtermRef.current && terminalIdRef.current) {
           const { cols, rows } = xtermRef.current
           window.api.send('terminal:resize', terminalIdRef.current, cols, rows)
         }
       } catch {
-        // Ignore
+        // Ignore.
       }
     }, 30)
     return () => clearTimeout(timer)
@@ -242,7 +236,6 @@ export default function TerminalPane({ threadId }: Props) {
     >
       <ResizeHandle onMouseDown={handleMouseDown} />
 
-      {/* Header */}
       <div
         className="flex items-center gap-2 px-3 py-2 border-b flex-shrink-0"
         style={{ borderColor: 'var(--color-border)' }}
@@ -255,7 +248,7 @@ export default function TerminalPane({ threadId }: Props) {
         </span>
         <span className="flex-1" />
         <button
-          onClick={() => kill(threadId)}
+          onClick={() => kill(locationId)}
           className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
           style={{ color: 'var(--color-text-muted)' }}
           title="Close terminal"
@@ -266,7 +259,6 @@ export default function TerminalPane({ threadId }: Props) {
         </button>
       </div>
 
-      {/* Terminal container */}
       <div
         ref={containerRef}
         className="flex-1"

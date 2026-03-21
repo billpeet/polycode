@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { type ReactNode, useState, useEffect } from 'react'
 import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelLeft, Pencil, Plus, Settings, X } from 'lucide-react'
 import { LocationPool, Project, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import LocationSection from './LocationSection'
@@ -92,6 +92,11 @@ export default function ExpandedSidebar({
   onUnarchiveThread,
   dialogs,
 }: ExpandedSidebarProps) {
+  const [appVersion, setAppVersion] = useState('')
+  useEffect(() => {
+    window.api.invoke('app:getVersion').then((v) => setAppVersion(v as string))
+  }, [])
+
   return (
     <aside
       className="sidebar-transition flex flex-shrink-0 flex-col overflow-hidden border-r"
@@ -117,6 +122,9 @@ export default function ExpandedSidebar({
           <span className="text-sm font-semibold" style={{ color: 'var(--color-claude)' }}>
             PolyCode
           </span>
+          {appVersion && (
+            <span className="text-[10px] opacity-40">{appVersion}</span>
+          )}
         </div>
         <div className="flex items-center gap-0.5">
           <button

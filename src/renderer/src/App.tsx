@@ -66,11 +66,35 @@ export default function App() {
     currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
   )
 
+  const activeAuxTab = useUiStore((s) =>
+    currentLocationId ? (s.locationAuxTabByLocation[currentLocationId] ?? null) : null
+  )
   const isTerminalOpen = useTerminalStore((s) =>
-    selectedThreadId ? (s.visibleByThread[selectedThreadId] ?? false) : false
+    currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
   )
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
+
+  const hasFilePreview = !!(selectedFilePath || diffView || loadingDiff)
+  const hasCommandLogs = !!(selectedInstance || hasPinnedCommands)
+
+  function renderAuxPane() {
+    if (!selectedThreadId) return null
+
+    if (activeAuxTab === 'terminal' && isTerminalOpen && currentLocationId) {
+      return <TerminalPane threadId={selectedThreadId} locationId={currentLocationId} />
+    }
+    if (activeAuxTab === 'file' && hasFilePreview) {
+      return <FilePreview />
+    }
+    if (activeAuxTab === 'command' && hasCommandLogs) {
+      return <CommandLogs />
+    }
+    if (hasFilePreview) return <FilePreview />
+    if (isTerminalOpen && currentLocationId) return <TerminalPane threadId={selectedThreadId} locationId={currentLocationId} />
+    if (hasCommandLogs) return <CommandLogs />
+    return null
+  }
 
   // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
@@ -134,8 +158,14 @@ export default function App() {
         window.dispatchEvent(new CustomEvent('focus-input'))
       } else if (e.key === '`') {
         e.preventDefault()
-        const tid = useThreadStore.getState().selectedThreadId
-        if (tid) useTerminalStore.getState().toggleVisible(tid)
+        const state = useThreadStore.getState()
+        const tid = state.selectedThreadId
+        if (!tid) return
+        const locationId = Object.values(state.byProject)
+          .flat()
+          .find((thread) => thread.id === tid)
+          ?.location_id
+        if (locationId) useTerminalStore.getState().toggleVisible(locationId)
       }
     }
 
@@ -196,14 +226,7 @@ export default function App() {
                 <div className="flex flex-1 flex-col overflow-hidden">
                   <ThreadView threadId={selectedThreadId} />
                 </div>
-                {(selectedFilePath || diffView || loadingDiff)
-                  ? <FilePreview />
-                  : isTerminalOpen
-                    ? <TerminalPane threadId={selectedThreadId} />
-                    : (selectedInstance || hasPinnedCommands)
-                      ? <CommandLogs />
-                      : null
-                }
+                {renderAuxPane()}
                 {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
               </>
             ) : (
