@@ -37,11 +37,15 @@ jobs:
             exit 0
           fi
 
-          # Find the latest release tag
-          LATEST_TAG=$(git describe --tags --abbrev=0 --match 'v*' 2>/dev/null || echo "")
-          if [ -z "$LATEST_TAG" ]; then
-            # Also check for nightly tags
-            LATEST_TAG=$(git describe --tags --abbrev=0 --match 'nightly-*' 2>/dev/null || echo "")
+          # Check nightly-latest first (updated after every nightly build),
+          # then fall back to the latest versioned release tag.
+          # Note: we must NOT match 'v*' broadly because electron-builder
+          # creates v*-nightly.* tags, which would cause the next nightly
+          # to see 0 new commits and skip.
+          if git rev-parse "nightly-latest" >/dev/null 2>&1; then
+            LATEST_TAG="nightly-latest"
+          else
+            LATEST_TAG=$(git tag --sort=-v:refname --list 'v[0-9]*' | grep -v 'nightly' | head -n1)
           fi
 
           if [ -z "$LATEST_TAG" ]; then

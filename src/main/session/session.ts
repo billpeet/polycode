@@ -424,7 +424,10 @@ export class Session {
     driver.sendMessage(
       'Approved. Execute the plan.',
       (event: OutputEvent) => this.handleEvent(event),
-      (error?: Error) => this.handleDone(error)
+      (error?: Error) => this.handleDone(error),
+      // Force yolo for claude-code (same logic as sendMessage) so plan execution
+      // doesn't fall into the broken control_request stream-json mode.
+      { yoloMode: getThreadProvider(this.threadId) === 'claude-code' ? true : getThreadYoloMode(this.threadId) }
     )
     this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
