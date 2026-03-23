@@ -1,315 +1,472 @@
-import { DriverOptions, MessageOptions } from './types'
+import type {
+  CanUseTool,
+  PermissionMode,
+  PermissionResult,
+  Query,
+  SDKAssistantMessage,
+  SDKMessage,
+  SDKResultMessage,
+  SDKUserMessage,
+} from '@anthropic-ai/claude-agent-sdk'
+import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
-import { SpawnCommand } from './runner/types'
-import { BaseDriver } from './base'
 
-export class ClaudeDriver extends BaseDriver {
+type PendingTurn = {
+  onEvent: (event: OutputEvent) => void
+  onDone: (error?: Error) => void
+}
+
+type PendingPermissionDecision = {
+  input: Record<string, unknown>
+  resolve: (result: PermissionResult) => void
+  reject: (error: Error) => void
+}
+
+type PendingQuestionDecision = {
+  originalQuestions: unknown[]
+  resolve: (result: PermissionResult) => void
+  reject: (error: Error) => void
+}
+
+class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
+  private values: SDKUserMessage[] = []
+  private resolvers: Array<(result: IteratorResult<SDKUserMessage>) => void> = []
+  private closed = false
+
+  push(value: SDKUserMessage): void {
+    if (this.closed) throw new Error('Claude message queue is closed')
+    const resolve = this.resolvers.shift()
+    if (resolve) {
+      resolve({ value, done: false })
+    } else {
+      this.values.push(value)
+    }
+  }
+
+  close(): void {
+    if (this.closed) return
+    this.closed = true
+    for (const resolve of this.resolvers.splice(0)) {
+      resolve({ value: undefined, done: true })
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<SDKUserMessage> {
+    return {
+      next: () => {
+        const value = this.values.shift()
+        if (value) return Promise.resolve({ value, done: false })
+        if (this.closed) return Promise.resolve({ value: undefined, done: true })
+        return new Promise<IteratorResult<SDKUserMessage>>((resolve) => {
+          this.resolvers.push(resolve)
+        })
+      },
+    }
+  }
+}
+
+let sdkModulePromise: Promise<typeof import('@anthropic-ai/claude-agent-sdk')> | null = null
+
+async function getSdk() {
+  if (!sdkModulePromise) {
+    sdkModulePromise = import('@anthropic-ai/claude-agent-sdk')
+  }
+  return sdkModulePromise
+}
+
+export class ClaudeDriver implements CLIDriver {
   private sessionId: string | null = null
-  // Track tool IDs for special tools that we handle differently (e.g., AskUserQuestion, ExitPlanMode)
+  private query: Query | null = null
+  private promptQueue: AsyncMessageQueue | null = null
+  private streamTask: Promise<void> | null = null
+  private currentTurn: PendingTurn | null = null
+  private stopped = false
   private specialToolIds = new Set<string>()
+  private pendingPermissionDecisions = new Map<string, PendingPermissionDecision>()
+  private pendingQuestionDecisions = new Map<string, PendingQuestionDecision>()
+  private currentMessageOptions: MessageOptions = {}
 
-  constructor(options: DriverOptions) {
-    super(options)
+  constructor(private readonly options: DriverOptions) {
     if (options.initialSessionId) {
       this.sessionId = options.initialSessionId
     }
   }
 
-  get driverName(): string { return 'ClaudeDriver' }
+  sendMessage(
+    content: string,
+    onEvent: (event: OutputEvent) => void,
+    onDone: (error?: Error) => void,
+    options?: MessageOptions
+  ): void {
+    if (this.currentTurn) {
+      console.warn('[ClaudeDriver] sendMessage called while a turn is already running')
+      return
+    }
 
-  protected beforeSendMessage(): void {
+    this.stopped = false
     this.specialToolIds.clear()
+    this.currentMessageOptions = options ?? {}
+    this.currentTurn = { onEvent, onDone }
+
+    this.ensureQuery()
+      .then(async () => {
+        await this.applyTurnConfiguration()
+        this.promptQueue?.push({
+          type: 'user',
+          message: {
+            role: 'user',
+            content,
+          },
+        })
+      })
+      .catch((error) => this.finishTurn(error instanceof Error ? error : new Error(String(error))))
   }
 
-  protected buildCommand(content: string, runnerType: 'local' | 'wsl' | 'ssh', options?: MessageOptions): SpawnCommand {
-    const planMode = options?.planMode ?? false
-    const yoloMode = options?.yoloMode ?? this.options.yoloMode ?? false
+  stop(): void {
+    this.stopped = true
 
-    const args = [
-      '--output-format', 'stream-json',
-      '--verbose',
-      '--print',
-    ]
-
-    // Plan mode uses --permission-mode plan (no bypass, no interactive approval).
-    // Yolo mode bypasses all permission checks.
-    // Default mode: use stream-json input so Claude Code can emit control_request
-    // events on stdout and we can send control_response approvals on stdin.
-    if (planMode) {
-      args.push('--permission-mode', 'plan')
-    } else if (yoloMode) {
-      args.push('--dangerously-skip-permissions')
-    } else {
-      args.push('--input-format', 'stream-json')
+    const pendingError = new Error('Claude turn interrupted')
+    for (const pending of this.pendingPermissionDecisions.values()) {
+      pending.reject(pendingError)
     }
+    this.pendingPermissionDecisions.clear()
+
+    for (const pending of this.pendingQuestionDecisions.values()) {
+      pending.reject(pendingError)
+    }
+    this.pendingQuestionDecisions.clear()
+
+    const query = this.query
+    if (!query) {
+      this.finishTurn()
+      return
+    }
+
+    query.interrupt()
+      .catch(() => {
+        query.close()
+      })
+      .finally(() => this.finishTurn())
+  }
+
+  isRunning(): boolean {
+    return this.currentTurn !== null
+  }
+
+  getPid(): number | null {
+    return null
+  }
+
+  sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
+    const permission = this.pendingPermissionDecisions.get(requestId)
+    if (permission) {
+      this.pendingPermissionDecisions.delete(requestId)
+      if (behavior === 'allow') {
+        permission.resolve({ behavior: 'allow', updatedInput: permission.input })
+      } else {
+        permission.resolve({ behavior: 'deny', message: message ?? 'User denied permission' })
+      }
+      return
+    }
+
+    const question = this.pendingQuestionDecisions.get(requestId)
+    if (question) {
+      this.pendingQuestionDecisions.delete(requestId)
+      if (behavior === 'allow') {
+        question.resolve({
+          behavior: 'allow',
+          updatedInput: {
+            questions: question.originalQuestions,
+            answers: {},
+          },
+        })
+      } else {
+        question.resolve({ behavior: 'deny', message: message ?? 'User denied input request' })
+      }
+    }
+  }
+
+  answerQuestion(
+    requestId: string,
+    answers: Record<string, unknown>,
+    message?: string
+  ): void {
+    const pending = this.pendingQuestionDecisions.get(requestId)
+    if (!pending) return
+    this.pendingQuestionDecisions.delete(requestId)
+    pending.resolve({
+      behavior: 'allow',
+      updatedInput: {
+        questions: pending.originalQuestions,
+        answers,
+        ...(message ? { message } : {}),
+      },
+    })
+  }
+
+  private async ensureQuery(): Promise<void> {
+    if (this.query) return
+
+    const sdk = await getSdk()
+    this.promptQueue = new AsyncMessageQueue()
+    this.query = sdk.query({
+      prompt: this.promptQueue,
+      options: {
+        model: this.options.model,
+        cwd: this.options.workingDir,
+        env: process.env,
+        resume: this.sessionId ?? undefined,
+        permissionMode: this.resolvePermissionMode(this.currentMessageOptions),
+        allowDangerouslySkipPermissions: this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions',
+        canUseTool: this.handleCanUseTool,
+      },
+    })
+
+    this.streamTask = this.consumeStream().catch((error) => {
+      this.finishTurn(error instanceof Error ? error : new Error(String(error)))
+    })
+  }
+
+  private async applyTurnConfiguration(): Promise<void> {
+    if (!this.query) return
+    const nextMode = this.resolvePermissionMode(this.currentMessageOptions)
+    await this.query.setPermissionMode(nextMode)
     if (this.options.model) {
-      args.push('--model', this.options.model)
+      await this.query.setModel(this.options.model)
     }
-    if (this.sessionId) {
-      args.push('--resume', this.sessionId)
-    }
+  }
 
-    // Whether to use stdin for the prompt:
-    // - WSL / Windows local: always (argv escaping is unreliable)
-    // - stream-json input mode: always (prompt must be a JSON user message on stdin)
-    // - POSIX local in yolo/plan mode: pass as argv arg
-    const isWindows = process.platform === 'win32'
-    const streamJsonInput = !planMode && !yoloMode
-    const useStdin = runnerType === 'wsl' || (runnerType === 'local' && isWindows) || streamJsonInput
+  private resolvePermissionMode(options?: MessageOptions): PermissionMode {
+    if (options?.planMode) return 'plan'
+    if (options?.yoloMode ?? this.options.yoloMode ?? false) return 'bypassPermissions'
+    return 'default'
+  }
 
-    if (useStdin) {
-      // In stream-json input mode, the prompt must be a JSON user message.
-      // In plain stdin mode (yolo/plan on Windows/WSL), pass raw text.
-      const stdinContent = streamJsonInput
-        ? JSON.stringify({ type: 'user', message: { role: 'user', content } }) + '\n'
-        : content
+  private readonly handleCanUseTool: CanUseTool = async (toolName, input, callbackOptions) => {
+    if (toolName === 'ExitPlanMode') {
+      const plan = typeof input.plan === 'string' ? input.plan : ''
+      const toolUseId = callbackOptions.toolUseID ?? ''
+      if (toolUseId) this.specialToolIds.add(toolUseId)
+      this.emit({
+        type: 'plan_ready',
+        content: plan,
+        metadata: {
+          type: 'plan_ready',
+          id: toolUseId,
+          name: toolName,
+          input,
+        },
+      })
       return {
-        binary: 'claude',
-        args,
-        workDir: this.options.workingDir,
-        stdinContent,
-        // Keep stdin open in stream-json mode so we can write control_response later
-        keepStdinOpen: streamJsonInput,
+        behavior: 'deny',
+        message: 'Plan captured. Wait for user approval before executing.',
       }
-    } else {
-      return {
-        binary: 'claude',
-        args: [...args, content],
-        workDir: this.options.workingDir,
+    }
+
+    if (toolName === 'AskUserQuestion') {
+      const requestId = `question:${callbackOptions.toolUseID}`
+      const toolUseId = callbackOptions.toolUseID ?? ''
+      if (toolUseId) this.specialToolIds.add(toolUseId)
+      this.emit({
+        type: 'question',
+        content: JSON.stringify(Array.isArray(input.questions) ? input.questions : []),
+        metadata: {
+          type: 'question',
+          requestId,
+          toolUseId,
+          questions: input.questions,
+        },
+      })
+
+      return await new Promise<PermissionResult>((resolve, reject) => {
+        this.pendingQuestionDecisions.set(requestId, {
+          originalQuestions: Array.isArray(input.questions) ? input.questions : [],
+          resolve,
+          reject,
+        })
+        callbackOptions.signal.addEventListener('abort', () => {
+          this.pendingQuestionDecisions.delete(requestId)
+          reject(new Error('Question request aborted'))
+        }, { once: true })
+      })
+    }
+
+    if (this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions') {
+      return { behavior: 'allow', updatedInput: input }
+    }
+
+    const requestId = `permission:${callbackOptions.toolUseID}`
+    this.emit({
+      type: 'permission_request',
+      content: toolName,
+      metadata: {
+        type: 'permission_request',
+        requestId,
+        toolName,
+        toolInput: input,
+        toolUseId: callbackOptions.toolUseID,
+      },
+    })
+
+    return await new Promise<PermissionResult>((resolve, reject) => {
+      this.pendingPermissionDecisions.set(requestId, { input, resolve, reject })
+      callbackOptions.signal.addEventListener('abort', () => {
+        this.pendingPermissionDecisions.delete(requestId)
+        reject(new Error('Permission request aborted'))
+      }, { once: true })
+    })
+  }
+
+  private async consumeStream(): Promise<void> {
+    const query = this.query
+    if (!query) return
+
+    for await (const message of query) {
+      const sessionId = this.extractSessionId(message)
+      if (sessionId && sessionId !== this.sessionId) {
+        this.sessionId = sessionId
+        this.options.onSessionId?.(sessionId)
+      }
+
+      for (const event of this.parseMessage(message)) {
+        this.emit(event)
+      }
+
+      if (message.type === 'result') {
+        const error = this.resultError(message)
+        this.finishTurn(error)
       }
     }
   }
 
-  protected parseEvent(data: Record<string, unknown>): OutputEvent[] {
-    const type = data.type as string | undefined
+  private parseMessage(message: SDKMessage): OutputEvent[] {
     const events: OutputEvent[] = []
 
-    switch (type) {
-      case 'system': {
-        // Capture session_id from init event
-        const subtype = data.subtype as string | undefined
-        if (subtype === 'init') {
-          const sid = data.session_id as string | undefined
-          if (sid) {
-            this.sessionId = sid
-            this.options.onSessionId?.(sid)
-          }
-        }
+    switch (message.type) {
+      case 'assistant':
+        this.collectAssistantMessage(message, events)
         break
-      }
 
-      case 'assistant': {
-        const message = data.message as Record<string, unknown> | undefined
-        const contentBlocks = (message?.content ?? []) as Array<Record<string, unknown>>
-        for (const block of contentBlocks) {
-          const blockType = block.type as string | undefined
-          if (blockType === 'thinking') {
-            const thinking = (block.thinking ?? '') as string
-            if (thinking) events.push({ type: 'thinking', content: thinking, metadata: { type: 'thinking' } })
-          } else if (blockType === 'text') {
-            const text = (block.text ?? '') as string
-            if (text) events.push({ type: 'text', content: text })
-          } else if (blockType === 'tool_use') {
-            const toolName = (block.name as string) ?? 'unknown'
-            const toolId = (block.id as string) ?? ''
-
-            // Detect ExitPlanMode tool call — emit special plan_ready event
-            if (toolName === 'ExitPlanMode') {
-              if (toolId) this.specialToolIds.add(toolId)
-              const input = block.input as Record<string, unknown> | undefined
-              events.push({
-                type: 'plan_ready',
-                content: (input?.plan as string) ?? '',
-                metadata: { ...block, type: 'plan_ready' } as Record<string, unknown>
-              })
-            } else if (toolName === 'AskUserQuestion') {
-              // Detect AskUserQuestion tool call — emit question event
-              // Track the tool ID so we can suppress its tool_result
-              if (toolId) this.specialToolIds.add(toolId)
-              const input = block.input as Record<string, unknown> | undefined
-              events.push({
-                type: 'question',
-                content: JSON.stringify(input?.questions ?? []),
-                metadata: { ...block, type: 'question', questions: input?.questions } as Record<string, unknown>
-              })
-            } else {
-              events.push({
-                type: 'tool_call',
-                content: toolName,
-                // Normalize type to 'tool_call' so DB round-trips preserve MessageBubble detection
-                metadata: { ...block, type: 'tool_call' } as Record<string, unknown>
-              })
-            }
-          }
-        }
+      case 'user':
+        this.collectUserMessage(message, events)
         break
-      }
 
-      case 'user': {
-        const message = data.message as Record<string, unknown> | undefined
-        const contentBlocks = (message?.content ?? []) as Array<Record<string, unknown>>
-        for (const block of contentBlocks) {
-          const blockType = block.type as string | undefined
-          if (blockType === 'tool_result') {
-            // Skip tool results for special tools (AskUserQuestion, ExitPlanMode)
-            // These are handled via UI interactions, not shown as tool results
-            const toolUseId = (block.tool_use_id as string) ?? ''
-            if (toolUseId && this.specialToolIds.has(toolUseId)) {
-              continue
-            }
-
-            // block.content is typically [{type:"text", text:"..."}] — extract plain text
-            const raw = block.content
-            let content: string
-            if (Array.isArray(raw)) {
-              content = raw
-                .map((item: unknown) => {
-                  const i = item as Record<string, unknown>
-                  return i.type === 'text' ? String(i.text ?? '') : ''
-                })
-                .join('')
-            } else if (typeof raw === 'string') {
-              content = raw
-            } else {
-              content = JSON.stringify(raw ?? '')
-            }
-            events.push({
-              type: 'tool_result',
-              content,
-              metadata: block as Record<string, unknown>
-            })
-          }
-        }
-        break
-      }
-
-      case 'result': {
-        const subtype = data.subtype as string | undefined
-        // Always try to capture session_id from result
-        const sid = data.session_id as string | undefined
-        if (sid) {
-          this.sessionId = sid
-          this.options.onSessionId?.(sid)
-        }
-        // In --input-format stream-json mode stdin is kept open so we can
-        // (in principle) send follow-up messages.  Close it now so the process
-        // knows the conversation is over and exits naturally.
-        this.process?.stdin?.end()
-
-        if (subtype === 'error') {
-          events.push({
-            type: 'error',
-            content: (data.error as string) ?? 'Unknown error'
-          })
-        } else if (subtype === 'success') {
-          // Extract token usage from the result event
-          const usage = data.usage as { input_tokens?: number; output_tokens?: number } | undefined
-          if (usage && (usage.input_tokens || usage.output_tokens)) {
-            events.push({
-              type: 'usage',
-              content: '',
-              metadata: {
-                input_tokens: usage.input_tokens ?? 0,
-                output_tokens: usage.output_tokens ?? 0,
-              }
-            })
-          }
-        }
-        break
-      }
-
-      case 'rate_limit_event': {
-        const info = data.rate_limit_info as Record<string, unknown> | undefined
-        if (info) {
-          events.push({
-            type: 'rate_limit',
-            content: '',
-            metadata: {
-              status: info.status ?? 'unknown',
-              resetsAt: info.resetsAt,
-              rateLimitType: info.rateLimitType,
-              utilization: info.utilization,
-              surpassedThreshold: info.surpassedThreshold,
-              isUsingOverage: info.isUsingOverage,
-              overageStatus: info.overageStatus,
-              overageDisabledReason: info.overageDisabledReason,
-            }
-          })
-        }
-        break
-      }
-
-      // ── control_request (DISABLED — CLI bug, tracked in open issues) ──────────
-      //
-      // Claude Code CLI is designed to emit a `control_request` event when a tool
-      // requires user approval, then pause and wait for a `control_response` on
-      // stdin.  This would allow true mid-stream permission interception.
-      //
-      // Confirmed protocol shape (from Agent SDK source + anthropics/claude-code#34046):
-      //
-      //   RECEIVE from CLI stdout:
-      //   {
-      //     "type": "control_request",
-      //     "request_id": "<uuid>",
-      //     "request": {
-      //       "subtype": "can_use_tool",
-      //       "tool_name": "Write",
-      //       "tool_use_id": "toolu_...",
-      //       "input": { "file_path": "...", ... }
-      //     }
-      //   }
-      //
-      //   SEND to CLI stdin (via sendControlResponse / writeToStdin):
-      //   {
-      //     "type": "control_response",
-      //     "response": {
-      //       "subtype": "success",
-      //       "request_id": "<same uuid>",
-      //       "response": { "behavior": "allow" }          // or "deny"
-      //     }
-      //   }
-      //
-      // As of CLI v2.1.74+ the event is NOT emitted even with --permission-prompt-tool stdio.
-      // The infrastructure is already in place (keepStdinOpen, writeToStdin, sendControlResponse).
-      // To re-enable when the bug is fixed, uncomment the block below and add
-      // 'permission_request' back to OutputEventType in shared/types.ts.
-      //
-      // case 'control_request': {
-      //   const request = data.request as Record<string, unknown> | undefined
-      //   const requestId = data.request_id as string | undefined
-      //   if (request?.subtype === 'can_use_tool' && requestId) {
-      //     const toolName = (request.tool_name as string) || 'Unknown tool'
-      //     const toolInput = (request.input as Record<string, unknown>) || {}
-      //     const toolUseId = (request.tool_use_id as string) || ''
-      //     events.push({
-      //       type: 'permission_request',
-      //       content: toolName,
-      //       metadata: { type: 'permission_request', requestId, toolName, toolInput, toolUseId }
-      //     })
-      //   }
-      //   break
-      // }
-
-      default:
+      case 'result':
+        this.collectResultMessage(message, events)
         break
     }
 
     return events
   }
 
-  // When the control_request bug is fixed, re-enable this override:
-  // override sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
-  //   const response = {
-  //     type: 'control_response',
-  //     response: {
-  //       subtype: 'success',
-  //       request_id: requestId,
-  //       response: behavior === 'allow'
-  //         ? { behavior: 'allow' }
-  //         : { behavior: 'deny', message: message ?? 'User denied permission' },
-  //     },
-  //   }
-  //   this.writeToStdin(JSON.stringify(response))
-  // }
+  private collectAssistantMessage(message: SDKAssistantMessage, events: OutputEvent[]): void {
+    for (const block of message.message.content) {
+      if (block.type === 'thinking') {
+        if (block.thinking) {
+          events.push({ type: 'thinking', content: block.thinking, metadata: { type: 'thinking' } })
+        }
+        continue
+      }
 
+      if (block.type === 'text') {
+        if (block.text) {
+          events.push({ type: 'text', content: block.text })
+        }
+        continue
+      }
+
+      if (block.type === 'tool_use') {
+        const toolName = block.name ?? 'unknown'
+        const toolId = block.id ?? ''
+        // Special tools are handled via dedicated events (question, plan_ready, permission_request)
+        // and should never appear as tool_call bubbles. Filter by both ID (set by handleCanUseTool)
+        // and name (guards against race where stream message arrives before callback fires).
+        const isSpecialByName = toolName === 'AskUserQuestion' || toolName === 'ExitPlanMode'
+        if (!this.specialToolIds.has(toolId) && !isSpecialByName) {
+          events.push({
+            type: 'tool_call',
+            content: toolName,
+            metadata: {
+              type: 'tool_call',
+              id: toolId,
+              name: toolName,
+              input: block.input as Record<string, unknown>,
+            },
+          })
+        }
+      }
+    }
+  }
+
+  private collectUserMessage(message: SDKMessage, events: OutputEvent[]): void {
+    if (message.type !== 'user') return
+    for (const block of message.message.content) {
+      if (block.type !== 'tool_result') continue
+      if (this.specialToolIds.has(block.tool_use_id ?? '')) continue
+
+      let content = ''
+      if (typeof block.content === 'string') {
+        content = block.content
+      } else if (Array.isArray(block.content)) {
+        content = block.content
+          .map((item) => ('text' in item ? String(item.text ?? '') : ''))
+          .join('')
+      } else if (block.content != null) {
+        content = JSON.stringify(block.content)
+      }
+
+      events.push({
+        type: 'tool_result',
+        content,
+        metadata: {
+          type: 'tool_result',
+          tool_use_id: block.tool_use_id,
+          is_error: block.is_error === true,
+        },
+      })
+    }
+  }
+
+  private collectResultMessage(message: SDKResultMessage, events: OutputEvent[]): void {
+    if (message.usage && (message.usage.input_tokens || message.usage.output_tokens)) {
+      events.push({
+        type: 'usage',
+        content: '',
+        metadata: {
+          input_tokens: message.usage.input_tokens ?? 0,
+          output_tokens: message.usage.output_tokens ?? 0,
+        },
+      })
+    }
+
+    if (message.subtype !== 'success') {
+      events.push({
+        type: 'error',
+        content: (message.errors && message.errors[0]) || 'Claude execution failed',
+      })
+    }
+  }
+
+  private extractSessionId(message: SDKMessage): string | null {
+    if ('session_id' in message && typeof message.session_id === 'string') {
+      return message.session_id
+    }
+    return null
+  }
+
+  private resultError(message: SDKResultMessage): Error | undefined {
+    if (message.subtype === 'success') return undefined
+    return new Error((message.errors && message.errors[0]) || 'Claude execution failed')
+  }
+
+  private emit(event: OutputEvent): void {
+    this.currentTurn?.onEvent(event)
+  }
+
+  private finishTurn(error?: Error): void {
+    if (!this.currentTurn) return
+    const turn = this.currentTurn
+    this.currentTurn = null
+    turn.onDone(error)
+  }
 }

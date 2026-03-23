@@ -55,21 +55,20 @@ export default function ComposerToolbar({
       {supportsYolo && currentThread && (
         <>
           <button
-            onClick={() => currentThread.provider !== 'claude-code' && setYolo(threadId, !currentThread.yolo_mode)}
-            disabled={isProcessing || currentThread.provider === 'claude-code'}
+            onClick={() => setYolo(threadId, !currentThread.yolo_mode)}
+            disabled={isProcessing}
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-60 mb-2"
-            title={currentThread.provider === 'claude-code'
-              ? 'Yolo always on for Claude Code — CLI permission approval is not yet supported (control_request protocol bug)'
-              : 'Codex Yolo: bypass approvals and sandbox'}
+            title={currentThread.provider === 'codex'
+              ? 'Codex Yolo: bypass approvals and sandbox'
+              : 'Yolo: bypass provider approval checks where supported'}
             style={{
-              background: (currentThread.yolo_mode || currentThread.provider === 'claude-code') ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
-              color: (currentThread.yolo_mode || currentThread.provider === 'claude-code') ? '#f97316' : 'var(--color-text-muted)',
-              border: `1px solid ${(currentThread.yolo_mode || currentThread.provider === 'claude-code') ? 'rgba(249, 115, 22, 0.3)' : 'transparent'}`,
-              cursor: currentThread.provider === 'claude-code' ? 'default' : 'pointer',
+              background: currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
+              color: currentThread.yolo_mode ? '#f97316' : 'var(--color-text-muted)',
+              border: `1px solid ${currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.3)' : 'transparent'}`,
             }}
           >
             <YoloIcon />
-            Yolo{currentThread.provider === 'claude-code' && ' (forced)'}
+            Yolo
           </button>
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>

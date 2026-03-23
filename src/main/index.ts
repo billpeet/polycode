@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, protocol, net, Tray, Menu, dialog } from 'electron'
+import { app, BrowserWindow, shell, protocol, net, dialog } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { autoUpdater } from 'electron-updater'
@@ -10,7 +10,10 @@ import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
 import { SENTRY_DSN } from '../shared/sentry.config'
 import { startWebhookServer, stopWebhookServer } from './webhook/server'
+import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { getSetting } from './db/queries'
+import { sessionManager } from './session/manager'
+import { commandManager } from './commands/manager'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
@@ -35,7 +38,6 @@ if (!isDev) {
   })
 }
 
-let tray: Tray | null = null
 let isQuitting = false
 
 // Register custom protocol for serving attachment files
@@ -92,10 +94,34 @@ function createWindow(): BrowserWindow {
     )
   })
 
-  win.on('close', (event: Electron.Event) => {
-    if (!isQuitting) {
+  win.on('close', async (event: Electron.Event) => {
+    if (isQuitting) return
+
+    const threadsRunning = hasRunningThreads()
+    const commandsRunning = commandManager.hasRunning()
+
+    if (threadsRunning || commandsRunning) {
       event.preventDefault()
-      win.hide()
+
+      const parts: string[] = []
+      if (threadsRunning) parts.push('threads')
+      if (commandsRunning) parts.push('project commands')
+      const what = parts.join(' and ')
+
+      const { response } = await dialog.showMessageBox(win, {
+        type: 'warning',
+        title: 'Still running',
+        message: `One or more ${what} are still running. Closing will terminate them.`,
+        buttons: ['Close Anyway', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+      })
+      if (response !== 0) return
+
+      sessionManager.stopAll()
+      commandManager.stopAll()
+      isQuitting = true
+      win.close()
     }
   })
 
@@ -141,6 +167,7 @@ app.whenReady().then(() => {
 
   const win = createWindow()
   registerIpcHandlers(win)
+  startPlanWatcher(win)
 
   startWebhookServer({
     enabled: getSetting('webhook:enabled') === 'true',
@@ -160,45 +187,6 @@ app.whenReady().then(() => {
     autoUpdater.checkForUpdatesAndNotify()
   }
 
-  tray = new Tray(join(__dirname, '../../resources/icon.ico'))
-  tray.setToolTip('PolyCode')
-
-  const contextMenu = Menu.buildFromTemplate([
-    {
-      label: 'Show PolyCode',
-      click: () => {
-        win.show()
-        win.focus()
-      }
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit',
-      click: async () => {
-        if (hasRunningThreads()) {
-          const { response } = await dialog.showMessageBox({
-            type: 'warning',
-            title: 'Threads still running',
-            message: 'One or more threads are still running. Quitting now will interrupt them.',
-            buttons: ['Quit Anyway', 'Cancel'],
-            defaultId: 1,
-            cancelId: 1,
-          })
-          if (response !== 0) return
-        }
-        isQuitting = true
-        app.quit()
-      }
-    }
-  ])
-
-  tray.setContextMenu(contextMenu)
-
-  tray.on('double-click', () => {
-    win.show()
-    win.focus()
-  })
-
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
@@ -216,7 +204,10 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  sessionManager.stopAll()
+  commandManager.stopAll()
   stopWebhookServer()
+  stopPlanWatcher()
   ptyManager.killAll()
   cleanupAllAttachments()
   closeDb()

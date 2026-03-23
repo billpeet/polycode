@@ -109,7 +109,7 @@ export interface Thread {
   name: string
   provider: string
   model: string
-  status: 'idle' | 'running' | 'error' | 'stopped'
+  status: ThreadStatus
   archived: boolean
   input_tokens: number
   output_tokens: number
@@ -189,7 +189,7 @@ export interface RateLimitInfo {
   overageDisabledReason?: string
 }
 
-export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'usage' | 'rate_limit' | 'thinking'
+export type OutputEventType = 'text' | 'tool_call' | 'tool_result' | 'error' | 'status' | 'plan_ready' | 'question' | 'permission_request' | 'usage' | 'rate_limit' | 'thinking'
 
 export interface OutputEvent {
   type: OutputEventType
@@ -202,10 +202,14 @@ export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
 
 /** A tool action that Claude requested but needs permission to execute */
 export interface PermissionRequest {
+  requestId: string
   toolName: string
   toolInput: Record<string, unknown>
   toolUseId: string
   description: string
+  source: 'native' | 'synthetic'
+  provider: Provider
+  createdAt: string
 }
 
 export interface GitFileChange {
@@ -271,6 +275,7 @@ export interface QuestionOption {
 
 /** A single question from AskUserQuestion tool */
 export interface Question {
+  id?: string
   question: string
   header: string
   multiSelect: boolean

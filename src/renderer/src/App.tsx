@@ -14,6 +14,7 @@ import { useUiStore } from './stores/ui'
 import { useToastStore } from './stores/toast'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
+import './stores/plans' // Initialize plan file watcher listener
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'

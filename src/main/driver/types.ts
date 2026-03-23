@@ -22,6 +22,8 @@ export interface CLIDriver {
   /** Send a control_response to the running process (for interactive permission approval).
    *  Default no-op for drivers that don't support this protocol. */
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void
+  /** Structured answer path for drivers that surface AskUserQuestion via a permission callback. */
+  answerQuestion?(requestId: string, answers: Record<string, unknown>, message?: string): void
 }
 
 export interface DriverOptions {

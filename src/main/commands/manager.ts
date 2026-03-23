@@ -393,6 +393,13 @@ class CommandManager {
     }
   }
 
+  hasRunning(): boolean {
+    for (const entry of this.running.values()) {
+      if (entry.status === 'running') return true
+    }
+    return false
+  }
+
   stopAll(): void {
     for (const entry of [...this.running.values()]) {
       void this.stop(entry.commandId, entry.locationId)

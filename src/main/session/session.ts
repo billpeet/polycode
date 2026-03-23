@@ -1,10 +1,11 @@
 import { BrowserWindow } from 'electron'
 import { spawn, ChildProcess } from 'child_process'
+import { randomUUID } from 'crypto'
 import { ClaudeDriver } from '../driver/claude'
 import { CodexDriver } from '../driver/codex'
 import { OpenCodeDriver } from '../driver/opencode'
 import { CLIDriver } from '../driver/types'
-import { OutputEvent, ThreadStatus, SendOptions, Question, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig } from '../../shared/types'
+import { OutputEvent, ThreadStatus, SendOptions, Question, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 import {
@@ -37,10 +38,15 @@ export class Session {
   private planPending = false
   private pendingPlanContent: string | null = null
   private questionPending = false
+  private pendingQuestionRequestId: string | null = null
   private pendingQuestions: Question[] = []
-  private permissionPending = false
-  private pendingPermissions: PermissionRequest[] = []
+  private pendingPermissionOrder: string[] = []
+  private pendingPermissions = new Map<string, PermissionRequest>()
   private recentToolCalls = new Map<string, { name: string; input: Record<string, unknown> }>()
+  private lastPlanFilePath: string | null = null
+  private lastPlanFileName: string | null = null
+  private lastMessageOptions: SendOptions | undefined
+  private suppressAssistantTextForPermissionTurn = false
   private stopped = false
   private shellProcess: ChildProcess | null = null
 
@@ -167,10 +173,12 @@ export class Session {
     this.planPending = false
     this.pendingPlanContent = null
     this.questionPending = false
+    this.pendingQuestionRequestId = null
     this.pendingQuestions = []
-    this.permissionPending = false
-    this.pendingPermissions = []
+    this.clearPendingPermissions()
     this.recentToolCalls.clear()
+    this.lastMessageOptions = options
+    this.suppressAssistantTextForPermissionTurn = false
 
     logThreadEvent(this.threadId, {
       ts: new Date().toISOString(),
@@ -203,10 +211,7 @@ export class Session {
         content,
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        // Claude Code CLI permission approval (control_request protocol) is currently broken —
-        // the CLI never emits control_request events so tools silently fail without yolo.
-        // Force yolo for claude-code until Anthropic fixes it. See claude.ts for the disabled code.
-        { planMode: options?.planMode, yoloMode: getThreadProvider(this.threadId) === 'claude-code' ? true : getThreadYoloMode(this.threadId) }
+        { planMode: options?.planMode, yoloMode: getThreadYoloMode(this.threadId) }
       )
     }
 
@@ -218,6 +223,17 @@ export class Session {
     this.stopped = true
     if (this.activeSessionId) {
       const driver = this.drivers.get(this.activeSessionId)
+      for (const request of this.getPendingPermissions()) {
+        if (request.source === 'native') {
+          driver?.sendControlResponse(request.requestId, 'deny', 'User interrupted the turn')
+        }
+      }
+      this.clearPendingPermissions()
+      this.questionPending = false
+      this.pendingQuestionRequestId = null
+      this.pendingQuestions = []
+      this.planPending = false
+      this.pendingPlanContent = null
       driver?.stop()
     }
     if (this.shellProcess) {
@@ -421,14 +437,12 @@ export class Session {
     this.pendingPlanContent = null
     this.setStatus('running')
 
-    driver.sendMessage(
-      'Approved. Execute the plan.',
-      (event: OutputEvent) => this.handleEvent(event),
-      (error?: Error) => this.handleDone(error),
-      // Force yolo for claude-code (same logic as sendMessage) so plan execution
-      // doesn't fall into the broken control_request stream-json mode.
-      { yoloMode: getThreadProvider(this.threadId) === 'claude-code' ? true : getThreadYoloMode(this.threadId) }
-    )
+      driver.sendMessage(
+        'Approved. Execute the plan.',
+        (event: OutputEvent) => this.handleEvent(event),
+        (error?: Error) => this.handleDone(error),
+        { yoloMode: getThreadYoloMode(this.threadId) }
+      )
     this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
@@ -464,6 +478,7 @@ export class Session {
 
     // Capture questions before clearing
     const questions = this.pendingQuestions
+    const questionRequestId = this.pendingQuestionRequestId
 
     // Build formatted Q&A for display/persistence and for Claude — in one pass
     const qaLines: string[] = []
@@ -506,48 +521,80 @@ export class Session {
     } satisfies OutputEvent)
 
     this.questionPending = false
+    this.pendingQuestionRequestId = null
     this.pendingQuestions = []
     this.setStatus('running')
 
-    driver.sendMessage(
-      answerText,
-      (event: OutputEvent) => this.handleEvent(event),
-      (error?: Error) => this.handleDone(error)
-    )
+    if (questionRequestId && driver.answerQuestion) {
+      const structuredAnswers: Record<string, unknown> = {}
+      for (const q of questions) {
+        const key = q.id ?? q.question
+        const answer = answers[key] ?? answers[q.question]
+        const comment = questionComments[key] ?? questionComments[q.question]
+        if (answer) structuredAnswers[key] = answer
+        if (comment?.trim()) structuredAnswers[`${key}_comment`] = comment.trim()
+      }
+      if (generalComment?.trim()) {
+        structuredAnswers.general_comment = generalComment.trim()
+      }
+      driver.answerQuestion(questionRequestId, structuredAnswers, generalComment.trim() || undefined)
+    } else {
+      driver.sendMessage(
+        answerText,
+        (event: OutputEvent) => this.handleEvent(event),
+        (error?: Error) => this.handleDone(error)
+      )
+    }
     this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
   /** Get pending permission requests */
   getPendingPermissions(): PermissionRequest[] {
-    return this.pendingPermissions
+    return this.pendingPermissionOrder
+      .map((requestId) => this.pendingPermissions.get(requestId))
+      .filter((request): request is PermissionRequest => Boolean(request))
   }
 
-  /** Approve all pending permissions and retry with yolo mode. */
-  approvePermissions(): void {
-    if (!this.permissionPending || !this.activeSessionId) return
+  approvePermissions(requestId?: string): void {
+    const request = this.getTargetPermissionRequest(requestId)
+    if (!request || !this.activeSessionId) return
 
     const driver = this.drivers.get(this.activeSessionId)
     if (!driver) return
 
-    this.permissionPending = false
-    this.pendingPermissions = []
+    if (request.source === 'native') {
+      this.removePendingPermission(request.requestId)
+      driver.sendControlResponse(request.requestId, 'allow')
+      this.setStatus(this.pendingPermissions.size > 0 ? 'permission_pending' : 'running')
+      return
+    }
+
+    this.clearPendingPermissions()
     this.recentToolCalls.clear()
     this.setStatus('running')
 
     driver.sendMessage(
-      'The required permissions have been approved. Please retry your previous action.',
+      'Permission granted. Retry only the action that was previously blocked by permissions, then continue from there.',
       (event: OutputEvent) => this.handleEvent(event),
       (error?: Error) => this.handleDone(error),
-      { yoloMode: true }
+      { ...this.lastMessageOptions, yoloMode: true }
     )
     this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
-  /** Deny pending permissions and return to idle. */
-  denyPermissions(): void {
-    if (!this.permissionPending) return
-    this.permissionPending = false
-    this.pendingPermissions = []
+  denyPermissions(requestId?: string): void {
+    const request = this.getTargetPermissionRequest(requestId)
+    if (!request || !this.activeSessionId) return
+
+    if (request.source === 'native') {
+      const driver = this.drivers.get(this.activeSessionId)
+      driver?.sendControlResponse(request.requestId, 'deny', 'User denied permission')
+      this.removePendingPermission(request.requestId)
+      this.setStatus(this.pendingPermissions.size > 0 ? 'permission_pending' : 'running')
+      return
+    }
+
+    this.clearPendingPermissions()
     this.recentToolCalls.clear()
     this.setStatus('idle')
   }
@@ -566,16 +613,21 @@ export class Session {
 
     // Include sessionId in all events sent to renderer
     const eventWithSession: OutputEvent = { ...event, sessionId: this.activeSessionId ?? undefined }
+    const shouldSuppressAssistantText =
+      this.suppressAssistantTextForPermissionTurn && (event.type === 'text' || event.type === 'thinking')
 
     // Don't send question/permission_request events to renderer message stream —
     // they're handled via UI state (status + banner), not as message bubbles
-    if (event.type !== 'question' && event.type !== 'permission_request') {
+    if (event.type !== 'question' && event.type !== 'permission_request' && !shouldSuppressAssistantText) {
       this.window.webContents.send(`thread:output:${this.threadId}`, eventWithSession)
     }
 
     // Persist all relevant event types to DB with session ID
     switch (event.type) {
       case 'text':
+        if (this.suppressAssistantTextForPermissionTurn) {
+          break
+        }
         if (event.content.trim() && this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
@@ -591,6 +643,15 @@ export class Session {
             name: event.content,
             input: (event.metadata?.input as Record<string, unknown>) ?? {},
           })
+        }
+        // Detect Write calls targeting ~/.claude/plans/ so we can associate the file with this thread
+        if (event.content === 'Write' || (event.metadata?.name as string | undefined) === 'Write') {
+          const filePath = (event.metadata?.input as Record<string, unknown> | undefined)?.file_path as string | undefined
+          if (filePath && /[/\\]\.claude[/\\]plans[/\\][^/\\]+\.md$/i.test(filePath)) {
+            const fileName = filePath.replace(/^.*[/\\]/, '')
+            this.lastPlanFilePath = filePath
+            this.lastPlanFileName = fileName
+          }
         }
         break
       }
@@ -609,17 +670,41 @@ export class Session {
           const toolInput = toolCall?.input ?? {}
           const description = buildPermissionDescription(toolName, toolInput)
           // No requestId — this is the legacy detection path (process already exited)
-          this.pendingPermissions.push({ toolName, toolInput, toolUseId, description })
-          this.permissionPending = true
+          this.enqueuePermissionRequest({
+            requestId: this.makeSyntheticRequestId(toolUseId),
+            toolName,
+            toolInput,
+            toolUseId,
+            description,
+            source: 'synthetic',
+          })
+          this.suppressAssistantTextForPermissionTurn = true
         }
         break
       }
-      // 'permission_request' events (from CLI control_request) are disabled pending
-      // CLI bug fix — see commented-out block in claude.ts parseEvent().
-      // When re-enabled, handle here: set status to 'permission_pending' immediately
-      // (mid-stream, process still alive) then call driver.sendControlResponse() on approval.
+      case 'permission_request': {
+        const requestId = (event.metadata?.requestId as string | undefined) ?? ''
+        const toolName = (event.metadata?.toolName as string | undefined) ?? event.content ?? 'Unknown tool'
+        const toolInput = (event.metadata?.toolInput as Record<string, unknown> | undefined) ?? {}
+        const toolUseId = (event.metadata?.toolUseId as string | undefined) ?? ''
+        this.enqueuePermissionRequest({
+          requestId,
+          toolName,
+          toolInput,
+          toolUseId,
+          description: buildPermissionDescription(toolName, toolInput),
+          source: 'native',
+        })
+        if (this.activeSessionId) {
+          this.setStatus('permission_pending')
+        }
+        break
+      }
 
       case 'thinking':
+        if (this.suppressAssistantTextForPermissionTurn) {
+          break
+        }
         if (this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
@@ -631,11 +716,28 @@ export class Session {
         if (this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
+        // Emit per-thread plan association so the renderer can show the plan for the right thread
+        if (this.lastPlanFileName) {
+          this.window.webContents.send('plan:associated', {
+            threadId: this.threadId,
+            name: this.lastPlanFileName,
+            path: this.lastPlanFilePath,
+            content: event.content,
+          })
+        }
         break
       case 'question':
-        // Mark that we received a question — will set status to question_pending on completion
+        // Native SDK question requests pause the live turn until we answer them,
+        // so expose the pending state immediately instead of waiting for handleDone().
         this.questionPending = true
-        this.pendingQuestions = (event.metadata?.questions as Question[]) ?? []
+        this.pendingQuestionRequestId = (event.metadata?.requestId as string | undefined) ?? null
+        this.pendingQuestions = ((event.metadata?.questions as Question[] | undefined) ?? []).map((question, index) => ({
+          ...question,
+          id: question.id ?? `${question.header || 'q'}-${index}`,
+        }))
+        if (this.activeSessionId) {
+          this.setStatus('question_pending')
+        }
         break
       case 'error':
         if (this.activeSessionId) {
@@ -697,7 +799,7 @@ export class Session {
     } else if (this.questionPending) {
       // Question asked — waiting for user answer
       finalStatus = 'question_pending'
-    } else if (this.permissionPending) {
+    } else if (this.pendingPermissions.size > 0) {
       // Claude requested permissions — waiting for user approval
       finalStatus = 'permission_pending'
     } else {
@@ -727,6 +829,52 @@ export class Session {
   private setStatus(status: ThreadStatus): void {
     updateThreadStatus(this.threadId, status)
     this.window.webContents.send(`thread:status:${this.threadId}`, status)
+  }
+
+  private makeSyntheticRequestId(seed: string): string {
+    return `synthetic:${seed || randomUUID()}`
+  }
+
+  private enqueuePermissionRequest(input: {
+    requestId: string
+    toolName: string
+    toolInput: Record<string, unknown>
+    toolUseId: string
+    description: string
+    source: PermissionRequest['source']
+  }): void {
+    const request: PermissionRequest = {
+      requestId: input.requestId,
+      toolName: input.toolName,
+      toolInput: input.toolInput,
+      toolUseId: input.toolUseId,
+      description: input.description,
+      source: input.source,
+      provider: getThreadProvider(this.threadId) as Provider,
+      createdAt: new Date().toISOString(),
+    }
+    if (!this.pendingPermissions.has(request.requestId)) {
+      this.pendingPermissionOrder.push(request.requestId)
+    }
+    this.pendingPermissions.set(request.requestId, request)
+  }
+
+  private removePendingPermission(requestId: string): void {
+    this.pendingPermissions.delete(requestId)
+    this.pendingPermissionOrder = this.pendingPermissionOrder.filter((id) => id !== requestId)
+  }
+
+  private clearPendingPermissions(): void {
+    this.pendingPermissionOrder = []
+    this.pendingPermissions.clear()
+  }
+
+  private getTargetPermissionRequest(requestId?: string): PermissionRequest | null {
+    if (requestId) {
+      return this.pendingPermissions.get(requestId) ?? null
+    }
+    const firstRequestId = this.pendingPermissionOrder[0]
+    return firstRequestId ? (this.pendingPermissions.get(firstRequestId) ?? null) : null
   }
 
   private triggerAutoTitle(seed: string): void {

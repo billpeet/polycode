@@ -55,8 +55,8 @@ interface ThreadStore {
   getQuestions: (threadId: string) => Promise<Question[]>
   answerQuestion: (threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string) => Promise<void>
   getPermissions: (threadId: string) => Promise<PermissionRequest[]>
-  approvePermissions: (threadId: string) => Promise<void>
-  denyPermissions: (threadId: string) => Promise<void>
+  approvePermissions: (threadId: string, requestId?: string) => Promise<void>
+  denyPermissions: (threadId: string, requestId?: string) => Promise<void>
   setDraft: (threadId: string, draft: string) => void
   setPlanMode: (threadId: string, planMode: boolean) => void
   queueMessage: (threadId: string, content: string, planMode: boolean) => void
@@ -443,19 +443,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     return window.api.invoke('threads:getPendingPermissions', threadId)
   },
 
-  approvePermissions: async (threadId) => {
+  approvePermissions: async (threadId, requestId) => {
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'running' },
       runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
     }))
-    await window.api.invoke('threads:approvePermissions', threadId)
+    await window.api.invoke('threads:approvePermissions', threadId, requestId)
   },
 
-  denyPermissions: async (threadId) => {
+  denyPermissions: async (threadId, requestId) => {
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'idle' },
     }))
-    await window.api.invoke('threads:denyPermissions', threadId)
+    await window.api.invoke('threads:denyPermissions', threadId, requestId)
   },
 
   setDraft: (threadId, draft) =>

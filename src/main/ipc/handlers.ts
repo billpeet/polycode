@@ -2,6 +2,7 @@ import { spawn } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
+import { listPlanFiles, readPlanFile } from '../plans'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import {
@@ -552,17 +553,17 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return session?.getPendingPermissions() ?? []
   })
 
-  ipcMain.handle('threads:approvePermissions', (_event, threadId: string) => {
+  ipcMain.handle('threads:approvePermissions', (_event, threadId: string, requestId?: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
-      session.approvePermissions()
+      session.approvePermissions(requestId)
     }
   })
 
-  ipcMain.handle('threads:denyPermissions', (_event, threadId: string) => {
+  ipcMain.handle('threads:denyPermissions', (_event, threadId: string, requestId?: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
-      session.denyPermissions()
+      session.denyPermissions(requestId)
     }
   })
 
@@ -826,6 +827,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('gh:pr:checkout', (_event, repoPath: string, prId: number) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
+  })
+
+  // ── Plan files ──────────────────────────────────────────────────────────
+
+  ipcMain.handle('plans:list', () => {
+    return listPlanFiles()
+  })
+
+  ipcMain.handle('plans:read', (_event, filePath: string) => {
+    return readPlanFile(filePath)
   })
 
   // ── Files ────────────────────────────────────────────────────────────────

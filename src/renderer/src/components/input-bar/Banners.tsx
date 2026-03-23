@@ -182,6 +182,10 @@ export function QuestionBanner({
 
       {questions.map((q, qIndex) => (
         <div key={qIndex} className="mt-3">
+          {(() => {
+            const questionKey = q.id ?? q.question
+            return (
+              <>
           <div className="mb-2 flex items-center gap-2">
             <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: 'rgba(99, 179, 237, 0.2)', color: '#63b3ed' }}>
               {q.header}
@@ -192,14 +196,14 @@ export function QuestionBanner({
           </div>
           <div className="flex flex-wrap gap-2">
             {q.options.map((opt, optIndex) => {
-              const isSelected = selectedAnswers[q.question] === opt.label
+              const isSelected = selectedAnswers[questionKey] === opt.label
               return (
                 <button
                   key={optIndex}
                   onClick={() =>
                     setSelectedAnswers((prev) => ({
                       ...prev,
-                      [q.question]: prev[q.question] === opt.label ? '' : opt.label,
+                      [questionKey]: prev[questionKey] === opt.label ? '' : opt.label,
                     }))
                   }
                   className="rounded-lg px-3 py-2 text-left transition-all"
@@ -220,12 +224,15 @@ export function QuestionBanner({
           </div>
           <input
             type="text"
-            value={questionComments[q.question] ?? ''}
-            onChange={(e) => setQuestionComments((prev) => ({ ...prev, [q.question]: e.target.value }))}
+            value={questionComments[questionKey] ?? ''}
+            onChange={(e) => setQuestionComments((prev) => ({ ...prev, [questionKey]: e.target.value }))}
             placeholder="Add a comment for this question... (optional)"
             className="mt-2 w-full rounded-lg px-3 py-1.5 text-xs outline-none"
             style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
           />
+              </>
+            )
+          })()}
         </div>
       ))}
 
@@ -265,9 +272,11 @@ export function PermissionBanner({
 }: {
   threadId: string
   permissions: PermissionRequest[]
-  onApprove: (threadId: string) => void
-  onDeny: (threadId: string) => void
+  onApprove: (threadId: string, requestId?: string) => void
+  onDeny: (threadId: string, requestId?: string) => void
 }) {
+  const activePermission = permissions[0]
+
   return (
     <div
       className="mb-3 rounded-xl px-4 py-3"
@@ -307,14 +316,14 @@ export function PermissionBanner({
 
       <div className="flex items-center justify-end gap-2">
         <button
-          onClick={() => onDeny(threadId)}
+          onClick={() => onDeny(threadId, activePermission?.requestId)}
           className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:opacity-80"
           style={{ background: 'transparent', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}
         >
           Deny
         </button>
         <button
-          onClick={() => onApprove(threadId)}
+          onClick={() => onApprove(threadId, activePermission?.requestId)}
           className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
           style={{
             background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
@@ -322,7 +331,7 @@ export function PermissionBanner({
             boxShadow: '0 2px 8px rgba(251, 191, 36, 0.3)',
           }}
         >
-          Approve & Retry
+          Approve & Continue
         </button>
       </div>
     </div>

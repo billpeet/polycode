@@ -40,8 +40,8 @@ export interface WindowApi {
   invoke(channel: 'threads:getQuestions', threadId: string): Promise<Question[]>
   invoke(channel: 'threads:answerQuestion', threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string): Promise<void>
   invoke(channel: 'threads:getPendingPermissions', threadId: string): Promise<PermissionRequest[]>
-  invoke(channel: 'threads:approvePermissions', threadId: string): Promise<void>
-  invoke(channel: 'threads:denyPermissions', threadId: string): Promise<void>
+  invoke(channel: 'threads:approvePermissions', threadId: string, requestId?: string): Promise<void>
+  invoke(channel: 'threads:denyPermissions', threadId: string, requestId?: string): Promise<void>
   invoke(channel: 'threads:updateName', id: string, name: string): Promise<void>
   invoke(channel: 'threads:archivedCount', projectId: string): Promise<number>
   invoke(channel: 'threads:listArchived', projectId: string): Promise<Thread[]>

@@ -7,6 +7,7 @@ import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
 import { useTerminalStore } from '../stores/terminal'
 import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, RepoLocation } from '../types/ipc'
+import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
 
@@ -135,6 +136,9 @@ export default function ThreadHeader({ threadId }: Props) {
     }, 1000)
     return () => clearInterval(interval)
   }, [activeRateLimits.length, threadId])
+
+  const hasPlan = usePlanStore((s) => !!s.planByThread[threadId])
+  const planVisible = usePlanStore((s) => s.visibleByThread[threadId] ?? false)
 
   const [editing, setEditing] = useState(false)
   const [editValue, setEditValue] = useState('')
@@ -483,6 +487,26 @@ export default function ThreadHeader({ threadId }: Props) {
       </div>
 
       <div className="flex items-center gap-2 flex-shrink-0">
+        {/* View Plan button */}
+        {hasPlan && (
+          <button
+            onClick={() => usePlanStore.getState().toggleVisible(threadId)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
+            style={{
+              color: planVisible ? 'var(--color-claude)' : 'var(--color-text-muted)',
+              background: planVisible ? 'rgba(232, 123, 95, 0.1)' : 'transparent',
+              border: `1px solid ${planVisible ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)'}`,
+            }}
+            title="View plan file"
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="1" width="10" height="14" rx="1" />
+              <path d="M6 4h4M6 7h4M6 10h2" />
+            </svg>
+            View Plan
+          </button>
+        )}
+
         {/* Import from CLI history — only for new threads with a location */}
         {!thread?.has_messages && location && selectedProjectId && thread?.location_id && (
           <button

@@ -3,17 +3,20 @@ import { useFilesStore } from '../stores/files'
 import { useTerminalStore } from '../stores/terminal'
 import { useCommandStore } from '../stores/commands'
 import { useThreadStore } from '../stores/threads'
+import { usePlanStore } from '../stores/plans'
 import { DiffPane, FilePane } from './FilePreview'
 import TerminalContent from './Terminal'
 import CommandLogsContent from './CommandLogs'
+import PlanPane from './PlanPane'
 
-type Tab = 'diff' | 'file' | 'terminal' | 'commands'
+type Tab = 'diff' | 'file' | 'terminal' | 'commands' | 'plan'
 
 const TAB_LABELS: Record<Tab, string> = {
   diff: 'Git Diff',
   file: 'File Preview',
   terminal: 'Terminal',
   commands: 'Command Logs',
+  plan: 'Plan',
 }
 
 // ─── Resize handle ────────────────────────────────────────────────────────────
@@ -83,8 +86,6 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   const diffView = useFilesStore((s) => s.diffView)
   const loadingDiff = useFilesStore((s) => s.loadingDiff)
 
-  const isTerminalOpen = useTerminalStore((s) => s.visibleByThread[threadId] ?? false)
-
   const currentLocationId = useThreadStore((s) => {
     if (!s.selectedThreadId) return null
     for (const threads of Object.values(s.byProject)) {
@@ -94,6 +95,10 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     return null
   })
 
+  const isTerminalOpen = useTerminalStore((s) =>
+    currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
+  )
+
   const selectedInstance = useCommandStore((s) =>
     currentLocationId ? (s.selectedInstanceByLocation[currentLocationId] ?? null) : null
   )
@@ -101,12 +106,17 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
   )
 
+  const planVisible = usePlanStore((s) => s.visibleByThread[threadId] ?? false)
+  const hasPlan = usePlanStore((s) => !!s.planByThread[threadId])
+
   const hasDiff = !!(diffView || loadingDiff)
   const hasFile = !!selectedFilePath
   const hasTerminal = isTerminalOpen
   const hasCommands = !!(selectedInstance || hasPinnedCommands)
+  const showPlan = planVisible && hasPlan
 
   const availableTabs: Tab[] = []
+  if (showPlan) availableTabs.push('plan')
   if (hasDiff) availableTabs.push('diff')
   if (hasFile) availableTabs.push('file')
   if (hasTerminal) availableTabs.push('terminal')
@@ -119,6 +129,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   const prevHasFile = useRef(hasFile)
   const prevHasTerminal = useRef(hasTerminal)
   const prevHasCommands = useRef(hasCommands)
+  const prevShowPlan = useRef(showPlan)
 
   useEffect(() => {
     if (hasDiff && !prevHasDiff.current) setActiveTab('diff')
@@ -139,6 +150,11 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     if (hasCommands && !prevHasCommands.current) setActiveTab('commands')
     prevHasCommands.current = hasCommands
   }, [hasCommands])
+
+  useEffect(() => {
+    if (showPlan && !prevShowPlan.current) setActiveTab('plan')
+    prevShowPlan.current = showPlan
+  }, [showPlan])
 
   const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
 
@@ -186,6 +202,13 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
               {TAB_LABELS[tab]}
             </button>
           ))}
+        </div>
+      )}
+
+      {/* Plan preview */}
+      {currentTab === 'plan' && showPlan && (
+        <div className="flex flex-col flex-1 overflow-hidden">
+          <PlanPane threadId={threadId} />
         </div>
       )}
 
