@@ -17,6 +17,12 @@ const GROUP_THRESHOLD = 3
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8
 const AUTO_SCROLL_THRESHOLD_PX = 64
 
+// Persistent height cache — survives thread switches and re-renders.
+// Keyed by entry.key (message id or group id).
+const heightCache = new Map<string, number>()
+let heightCacheWidth: number | null = null
+const WIDTH_CHANGE_THRESHOLD = 16
+
 function safeParseJson(str: string | null): Record<string, unknown> | null {
   if (!str) return null
   try { return JSON.parse(str) } catch { return null }
@@ -166,6 +172,7 @@ export default function MessageStream({ threadId, sessionId }: Props) {
   const messages = sessionMessages ?? threadMessages ?? EMPTY
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const containerRef = useRef<HTMLDivElement>(null)
+  const tailRef = useRef<HTMLDivElement>(null)
   const shouldFollowBottom = useRef(true)
   const [showLatestButton, setShowLatestButton] = useState(false)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
@@ -217,6 +224,8 @@ export default function MessageStream({ threadId, sessionId }: Props) {
     estimateSize: (index: number) => {
       const entry = entries[index]
       if (!entry) return 96
+      const cached = heightCache.get(entry.key)
+      if (cached != null) return cached
       return estimateEntryHeight(entry, containerWidth)
     },
     overscan: 5,
@@ -235,9 +244,16 @@ export default function MessageStream({ threadId, sessionId }: Props) {
     }
   }, [rowVirtualizer])
 
-  // Re-measure when container width changes
+  // Re-measure when container width changes; clear height cache if width shifted significantly
   useEffect(() => {
     if (containerWidth != null) {
+      if (
+        heightCacheWidth != null &&
+        Math.abs(containerWidth - heightCacheWidth) > WIDTH_CHANGE_THRESHOLD
+      ) {
+        heightCache.clear()
+      }
+      heightCacheWidth = containerWidth
       rowVirtualizer.measure()
     }
   }, [containerWidth, rowVirtualizer])
@@ -257,6 +273,32 @@ export default function MessageStream({ threadId, sessionId }: Props) {
     const el = containerRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
+  })
+
+  // Measure non-virtualized tail items after render and store in height cache.
+  // These items have no virtualizer measureElement ref, so without this they'd
+  // rely purely on the heuristic estimate when they later enter the virtualized zone.
+  useLayoutEffect(() => {
+    const el = tailRef.current
+    if (!el) return
+    for (const child of el.children) {
+      const key = (child as HTMLElement).dataset.entryKey
+      if (key) {
+        heightCache.set(key, (child as HTMLElement).offsetHeight)
+      }
+    }
+  })
+
+  // Back up virtualizer ResizeObserver-driven measurements into the persistent cache.
+  // This runs on every render so that if TanStack corrects a size via its internal
+  // ResizeObserver, we capture it before a future measure() call wipes itemSizeCache.
+  useEffect(() => {
+    for (const item of rowVirtualizer.getVirtualItems()) {
+      const entry = entries[item.index]
+      if (entry) {
+        heightCache.set(entry.key, item.size)
+      }
+    }
   })
 
   function handleScroll(): void {
@@ -311,9 +353,9 @@ export default function MessageStream({ threadId, sessionId }: Props) {
         )}
 
         {/* Non-virtualized tail (recent messages + current turn) */}
-        <div className="space-y-2">
+        <div ref={tailRef}>
           {nonVirtualizedEntries.map((entry) => (
-            <div key={entry.key}>
+            <div key={entry.key} data-entry-key={entry.key} className="pb-2">
               {renderEntry(entry)}
             </div>
           ))}

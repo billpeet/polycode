@@ -7,6 +7,7 @@ import { usePlanStore } from '../stores/plans'
 import { DiffPane, FilePane } from './FilePreview'
 import TerminalContent from './Terminal'
 import CommandLogsContent from './CommandLogs'
+import Assassin from './Assassin'
 import PlanPane from './PlanPane'
 
 type Tab = 'diff' | 'file' | 'terminal' | 'commands' | 'plan'
@@ -242,6 +243,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       {/* Command logs panel */}
       {currentTab === 'commands' && hasCommands && (
         <div className="flex flex-col flex-1 overflow-hidden">
+          <Assassin />
           <CommandLogsContent />
         </div>
       )}

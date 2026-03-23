@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { spawn, exec } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -1063,6 +1063,88 @@ export function registerIpcHandlers(window: BrowserWindow): void {
           break
         } catch { /* try next */ }
       }
+    }
+  })
+
+  // ── Process Assassin ─────────────────────────────────────────────────────────
+
+  function killByPid(pid: number): Promise<void> {
+    if (pid === process.pid) return Promise.reject(new Error('Refusing to kill own process'))
+    if (!Number.isInteger(pid) || pid <= 0) return Promise.reject(new Error('Invalid PID'))
+    return new Promise((resolve, reject) => {
+      if (process.platform === 'win32') {
+        exec(`taskkill /F /T /PID ${pid}`, (err) => {
+          if (err) reject(new Error(`taskkill failed: ${err.message}`))
+          else resolve()
+        })
+      } else {
+        try {
+          process.kill(pid, 'SIGKILL')
+          resolve()
+        } catch (e: unknown) {
+          reject(new Error(`kill failed: ${e instanceof Error ? e.message : String(e)}`))
+        }
+      }
+    })
+  }
+
+  function findPidsByPort(port: number): Promise<number[]> {
+    return new Promise((resolve, reject) => {
+      if (process.platform === 'win32') {
+        exec('netstat -ano', (err, stdout) => {
+          if (err) return reject(new Error(`netstat failed: ${err.message}`))
+          const pids = new Set<number>()
+          for (const line of stdout.split('\n')) {
+            // Match lines with :<port> in the local address column
+            const match = line.match(new RegExp(`:${port}\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\d+)`))
+            if (match) {
+              const pid = parseInt(match[4], 10)
+              if (pid > 0) pids.add(pid)
+            }
+          }
+          resolve(Array.from(pids))
+        })
+      } else {
+        exec(`lsof -ti:${port}`, (err, stdout) => {
+          if (err) return resolve([]) // lsof returns error when no match
+          const pids = stdout.trim().split('\n').map((s) => parseInt(s, 10)).filter((n) => n > 0)
+          resolve(pids)
+        })
+      }
+    })
+  }
+
+  async function killByPort(port: number): Promise<void> {
+    if (!Number.isInteger(port) || port < 1 || port > 65535) {
+      throw new Error('Port must be between 1 and 65535')
+    }
+    const pids = await findPidsByPort(port)
+    if (pids.length === 0) throw new Error(`No process found on port ${port}`)
+    const errors: string[] = []
+    for (const pid of pids) {
+      try {
+        await killByPid(pid)
+      } catch (e: unknown) {
+        errors.push(e instanceof Error ? e.message : String(e))
+      }
+    }
+    if (errors.length > 0 && errors.length === pids.length) {
+      throw new Error(errors.join('; '))
+    }
+  }
+
+  ipcMain.handle('process:kill', async (_event, target: string, type: 'pid' | 'port') => {
+    try {
+      const num = parseInt(target, 10)
+      if (isNaN(num)) return { ok: false, error: 'Invalid number' }
+      if (type === 'pid') {
+        await killByPid(num)
+      } else {
+        await killByPort(num)
+      }
+      return { ok: true }
+    } catch (e: unknown) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
     }
   })
 
