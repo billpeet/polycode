@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'bun:test'
-import { shellEscape, winQuote, cdTarget, buildSshBaseArgs, augmentWindowsPath } from '../runner/utils'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
+import os from 'os'
+import path from 'path'
+import { shellEscape, winQuote, cdTarget, buildSshBaseArgs, augmentWindowsPath, resolveClaudeCodeExecutable, expandHomePath } from '../runner/utils'
 import type { SshConfig } from '../../../shared/types'
 
 // ── shellEscape ───────────────────────────────────────────────────────────────
@@ -183,5 +186,47 @@ describe('augmentWindowsPath', () => {
     expect(next.Path).toContain('C:\\Windows\\System32')
     expect(next.Path).toContain('C:\\Tools')
     expect(next.PATH).toBe(next.Path)
+  })
+})
+
+// ── resolveClaudeCodeExecutable ──────────────────────────────────────────────
+
+describe('resolveClaudeCodeExecutable', () => {
+  it('prefers an explicit CLAUDE_CODE_PATH override', () => {
+    expect(resolveClaudeCodeExecutable({ CLAUDE_CODE_PATH: '/tmp/custom-claude' })).toBe('/tmp/custom-claude')
+  })
+
+  it('expands ~ in an explicit CLAUDE_CODE_PATH override', () => {
+    expect(resolveClaudeCodeExecutable({ CLAUDE_CODE_PATH: '~/bin/claude' })).toBe(path.join(os.homedir(), 'bin/claude'))
+  })
+
+  it('returns a discovered binary from PATH on non-win32', () => {
+    if (process.platform === 'win32') return
+    const root = mkdtempSync(path.join(os.tmpdir(), 'polycode-claude-'))
+    const binDir = path.join(root, '.local', 'bin')
+    const claudePath = path.join(binDir, 'claude')
+    mkdirSync(binDir, { recursive: true })
+    writeFileSync(claudePath, '#!/bin/sh\n')
+    chmodSync(claudePath, 0o755)
+    const env = {
+      HOME: root,
+      PATH: ['/usr/bin', binDir].join(path.delimiter),
+    }
+    expect(resolveClaudeCodeExecutable(env)).toBe(claudePath)
+    rmSync(root, { recursive: true, force: true })
+  })
+})
+
+describe('expandHomePath', () => {
+  it('expands a bare ~', () => {
+    expect(expandHomePath('~', '/tmp/home')).toBe('/tmp/home')
+  })
+
+  it('expands ~/subdir paths', () => {
+    expect(expandHomePath('~/projects/app', '/tmp/home')).toBe('/tmp/home/projects/app')
+  })
+
+  it('leaves non-tilde paths unchanged', () => {
+    expect(expandHomePath('/tmp/work')).toBe('/tmp/work')
   })
 })

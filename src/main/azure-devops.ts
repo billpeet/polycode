@@ -1,6 +1,7 @@
 import { spawn, execFile } from 'child_process'
 import { promisify } from 'util'
 import { AzureDevOpsPullRequest, SshConfig, WslConfig } from '../shared/types'
+import { augmentWindowsPath, winQuote } from './driver/runner'
 import { sshExec } from './ssh'
 import { wslExec } from './wsl'
 
@@ -178,12 +179,20 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
 
 async function runLocal(cmd: string, args: string[], cwd: string): Promise<SpawnResult> {
   return new Promise((resolve) => {
-    const proc = spawn(cmd, args, {
-      cwd,
-      // On Windows, global CLIs are often .cmd shims and need shell resolution.
-      shell: process.platform === 'win32',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const isWindows = process.platform === 'win32'
+    const proc = isWindows
+      ? spawn([cmd, ...args.map(winQuote)].join(' '), [], {
+        cwd,
+        // On Windows, global CLIs are often .cmd shims and need shell resolution.
+        shell: true,
+        env: augmentWindowsPath(),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      : spawn(cmd, args, {
+        cwd,
+        shell: false,
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
 
     let stdout = ''
     let stderr = ''

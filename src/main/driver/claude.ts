@@ -10,6 +10,7 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
+import { augmentWindowsPath, expandHomePath, resolveClaudeCodeExecutable } from './runner'
 
 type PendingTurn = {
   onEvent: (event: OutputEvent) => void
@@ -208,18 +209,26 @@ export class ClaudeDriver implements CLIDriver {
     if (this.query) return
 
     const sdk = await getSdk()
+    const env = process.platform === 'win32' ? augmentWindowsPath(process.env) : process.env
+    const workingDir = expandHomePath(this.options.workingDir)
+    const queryOptions = {
+      model: this.options.model,
+      cwd: workingDir,
+      pathToClaudeCodeExecutable: resolveClaudeCodeExecutable(env),
+      env,
+      resume: this.sessionId ?? undefined,
+      permissionMode: this.resolvePermissionMode(this.currentMessageOptions),
+      allowDangerouslySkipPermissions: this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions',
+      additionalDirectories: workingDir ? [workingDir] : undefined,
+      canUseTool: this.handleCanUseTool,
+      // The SDK accepts these setting sources even though older typings omit them.
+      // Without them, user/project skills and plugins are not surfaced consistently.
+      settingSources: ['user', 'project', 'local'],
+    } as Parameters<typeof sdk.query>[0]['options'] & { settingSources: string[] }
     this.promptQueue = new AsyncMessageQueue()
     this.query = sdk.query({
       prompt: this.promptQueue,
-      options: {
-        model: this.options.model,
-        cwd: this.options.workingDir,
-        env: process.env,
-        resume: this.sessionId ?? undefined,
-        permissionMode: this.resolvePermissionMode(this.currentMessageOptions),
-        allowDangerouslySkipPermissions: this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions',
-        canUseTool: this.handleCanUseTool,
-      },
+      options: queryOptions,
     })
 
     this.streamTask = this.consumeStream().catch((error) => {

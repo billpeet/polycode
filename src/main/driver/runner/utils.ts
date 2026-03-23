@@ -1,4 +1,5 @@
 import { existsSync } from 'fs'
+import { homedir } from 'os'
 import path from 'path'
 import { SshConfig } from '../../../shared/types'
 
@@ -20,6 +21,19 @@ export function winQuote(s: string): string {
 
 function getWindowsPathKey(env: NodeJS.ProcessEnv): 'PATH' | 'Path' {
   return typeof env.Path === 'string' ? 'Path' : 'PATH'
+}
+
+function uniqPaths(values: Array<string | null | undefined>): string[] {
+  const seen = new Set<string>()
+  const result: string[] = []
+  for (const value of values) {
+    if (!value) continue
+    const key = process.platform === 'win32' ? value.toLowerCase() : value
+    if (seen.has(key)) continue
+    seen.add(key)
+    result.push(value)
+  }
+  return result
 }
 
 /**
@@ -69,6 +83,58 @@ export function augmentWindowsPath(env: NodeJS.ProcessEnv = process.env): NodeJS
     PATH: nextPath,
     Path: nextPath,
   }
+}
+
+/**
+ * Resolve the Claude Code executable path from PATH and common install locations.
+ * Falls back to the bare `claude` command if no absolute path can be found.
+ */
+export function resolveClaudeCodeExecutable(env: NodeJS.ProcessEnv = process.env): string {
+  const explicit = expandHomePath(env.CLAUDE_CODE_PATH ?? env.CLAUDE_PATH)
+  if (explicit) return explicit
+
+  const pathKey = getWindowsPathKey(env)
+  const pathValue = env[pathKey] ?? env.PATH ?? env.Path ?? ''
+  const home = env.HOME
+  const userProfile = env.USERPROFILE
+  const appData = env.APPDATA
+  const localAppData = env.LOCALAPPDATA
+
+  const names = process.platform === 'win32'
+    ? ['claude.exe', 'claude.cmd', 'claude.bat', 'claude']
+    : ['claude']
+
+  const searchDirs = uniqPaths([
+    ...pathValue.split(path.delimiter).filter(Boolean),
+    home ? path.join(home, '.local', 'bin') : null,
+    home ? path.join(home, '.bun', 'bin') : null,
+    home ? path.join(home, '.npm-global', 'bin') : null,
+    home ? path.join(home, 'bin') : null,
+    userProfile ? path.join(userProfile, '.local', 'bin') : null,
+    userProfile ? path.join(userProfile, '.bun', 'bin') : null,
+    appData ? path.join(appData, 'npm') : null,
+    localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
+  ])
+
+  for (const dir of searchDirs) {
+    for (const name of names) {
+      const candidate = path.join(dir, name)
+      if (existsSync(candidate)) return candidate
+    }
+  }
+
+  return 'claude'
+}
+
+/** Expand a leading ~ to the current user's home directory. */
+export function expandHomePath(
+  input: string | null | undefined,
+  homeDir = process.env.HOME ?? process.env.USERPROFILE ?? homedir()
+): string | undefined {
+  if (!input) return undefined
+  if (input === '~') return homeDir
+  if (input.startsWith('~/')) return path.join(homeDir, input.slice(2))
+  return input
 }
 
 /**
