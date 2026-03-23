@@ -77,7 +77,7 @@ import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, c
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
-import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
+import { wslExec, wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import {
   saveAttachment,
@@ -1068,9 +1068,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Process Assassin ─────────────────────────────────────────────────────────
 
-  function killByPid(pid: number): Promise<void> {
+  function killByPid(pid: number, wsl?: WslConfig | null): Promise<void> {
     if (pid === process.pid) return Promise.reject(new Error('Refusing to kill own process'))
     if (!Number.isInteger(pid) || pid <= 0) return Promise.reject(new Error('Invalid PID'))
+    if (wsl) {
+      return wslExec(wsl, '/', `kill -9 ${pid}`)
+        .then(() => undefined)
+        .catch((e: unknown) => {
+          throw new Error(`kill failed: ${e instanceof Error ? e.message : String(e)}`)
+        })
+    }
     return new Promise((resolve, reject) => {
       if (process.platform === 'win32') {
         exec(`taskkill /F /T /PID ${pid}`, (err) => {
@@ -1088,8 +1095,18 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     })
   }
 
-  function findPidsByPort(port: number): Promise<number[]> {
+  function findPidsByPort(port: number, wsl?: WslConfig | null): Promise<number[]> {
     return new Promise((resolve, reject) => {
+      if (wsl) {
+        const cmd = `if command -v lsof >/dev/null 2>&1; then lsof -ti:${port}; else ss -ltnp 'sport = :${port}' | sed -n 's/.*pid=\\([0-9]\\+\\).*/\\1/p'; fi`
+        wslExec(wsl, '/', cmd)
+          .then((stdout) => {
+            const pids = stdout.trim().split('\n').map((s) => parseInt(s, 10)).filter((n) => n > 0)
+            resolve(Array.from(new Set(pids)))
+          })
+          .catch(() => resolve([]))
+        return
+      }
       if (process.platform === 'win32') {
         exec('netstat -ano', (err, stdout) => {
           if (err) return reject(new Error(`netstat failed: ${err.message}`))
@@ -1114,16 +1131,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     })
   }
 
-  async function killByPort(port: number): Promise<void> {
+  async function killByPort(port: number, wsl?: WslConfig | null): Promise<void> {
     if (!Number.isInteger(port) || port < 1 || port > 65535) {
       throw new Error('Port must be between 1 and 65535')
     }
-    const pids = await findPidsByPort(port)
+    const pids = await findPidsByPort(port, wsl)
     if (pids.length === 0) throw new Error(`No process found on port ${port}`)
     const errors: string[] = []
     for (const pid of pids) {
       try {
-        await killByPid(pid)
+        await killByPid(pid, wsl)
       } catch (e: unknown) {
         errors.push(e instanceof Error ? e.message : String(e))
       }
@@ -1133,14 +1150,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   }
 
-  ipcMain.handle('process:kill', async (_event, target: string, type: 'pid' | 'port') => {
+  ipcMain.handle('process:kill', async (_event, target: string, type: 'pid' | 'port', threadId?: string) => {
     try {
       const num = parseInt(target, 10)
       if (isNaN(num)) return { ok: false, error: 'Invalid number' }
+      const wsl = threadId ? getWslConfigForThread(threadId) : null
       if (type === 'pid') {
-        await killByPid(num)
+        await killByPid(num, wsl)
       } else {
-        await killByPort(num)
+        await killByPort(num, wsl)
       }
       return { ok: true }
     } catch (e: unknown) {

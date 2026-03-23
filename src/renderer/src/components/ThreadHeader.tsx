@@ -1,17 +1,15 @@
 import { useState, useRef, useEffect, KeyboardEvent } from 'react'
 import { useRateLimitStore, RateLimitEntry } from '../stores/rateLimits'
 import { useThreadStore } from '../stores/threads'
-import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
 import { useTerminalStore } from '../stores/terminal'
-import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, RepoLocation } from '../types/ipc'
+import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT } from '../types/ipc'
 import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
 
-const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
 
 // ─── Rate limit helpers ───────────────────────────────────────────────────────
@@ -75,12 +73,12 @@ interface Props {
 }
 
 export default function ThreadHeader({ threadId }: Props) {
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const thread = useThreadStore((s) => {
-    if (!selectedProjectId) return undefined
-    const threads = s.byProject[selectedProjectId]
-    return threads?.find((t) => t.id === threadId)
-  })
+  const threadProjectId = useThreadStore((s) =>
+    Object.entries(s.byProject).find(([, threads]) => threads?.some((t) => t.id === threadId))?.[0] ?? null
+  )
+  const thread = useThreadStore((s) =>
+    threadProjectId ? s.byProject[threadProjectId]?.find((t) => t.id === threadId) : undefined
+  )
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const pid = useThreadStore((s) => s.pidByThread[threadId] ?? null)
   const rename = useThreadStore((s) => s.rename)
@@ -88,8 +86,8 @@ export default function ThreadHeader({ threadId }: Props) {
   // Look up location for this thread
   const locationId = thread?.location_id ?? null
   const location = useLocationStore((s) => {
-    if (!selectedProjectId || !locationId) return null
-    const locations = s.byProject[selectedProjectId]
+    if (!threadProjectId || !locationId) return null
+    const locations = s.byProject[threadProjectId]
     return locations?.find((l) => l.id === locationId) ?? null
   })
   const locationPath = location?.path ?? null
@@ -97,10 +95,10 @@ export default function ThreadHeader({ threadId }: Props) {
   // Ensure locations are fetched for the current project
   const fetchLocations = useLocationStore((s) => s.fetch)
   useEffect(() => {
-    if (selectedProjectId && locationId && !location) {
-      fetchLocations(selectedProjectId)
+    if (threadProjectId && locationId && !location) {
+      fetchLocations(threadProjectId)
     }
-  }, [selectedProjectId, locationId, location, fetchLocations])
+  }, [threadProjectId, locationId, location, fetchLocations])
 
 
   const usage = useThreadStore((s) => s.usageByThread[threadId])
@@ -508,7 +506,7 @@ export default function ThreadHeader({ threadId }: Props) {
         )}
 
         {/* Import from CLI history — only for new threads with a location */}
-        {!thread?.has_messages && location && selectedProjectId && thread?.location_id && (
+        {!thread?.has_messages && location && threadProjectId && thread?.location_id && (
           <button
             onClick={() => setImportDialogOpen(true)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
@@ -543,13 +541,13 @@ export default function ThreadHeader({ threadId }: Props) {
         </button>
       </div>
 
-      {importDialogOpen && selectedProjectId && thread?.location_id && location?.path && (
+      {importDialogOpen && threadProjectId && thread?.location_id && location?.path && (
         <ImportHistoryDialog
-          projectId={selectedProjectId}
+          projectId={threadProjectId}
           locationId={thread.location_id}
           locationPath={location.path}
           onClose={() => setImportDialogOpen(false)}
-          onImported={() => fetchThreads(selectedProjectId)}
+          onImported={() => fetchThreads(threadProjectId)}
         />
       )}
       {logsOpen && (

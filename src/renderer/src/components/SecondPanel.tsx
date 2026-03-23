@@ -243,7 +243,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       {/* Command logs panel */}
       {currentTab === 'commands' && hasCommands && (
         <div className="flex flex-col flex-1 overflow-hidden">
-          <Assassin />
+          <Assassin threadId={threadId} />
           <CommandLogsContent />
         </div>
       )}

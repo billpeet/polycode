@@ -112,7 +112,7 @@ export interface WindowApi {
   invoke(channel: 'shell:copyPath', dirPath: string): Promise<void>
   invoke(channel: 'shell:openInExplorer', dirPath: string): Promise<void>
   invoke(channel: 'shell:openInTerminal', dirPath: string, wsl?: WslConfig | null): Promise<void>
-  invoke(channel: 'process:kill', target: string, type: 'pid' | 'port'): Promise<{ ok: boolean; error?: string }>
+  invoke(channel: 'process:kill', target: string, type: 'pid' | 'port', threadId?: string): Promise<{ ok: boolean; error?: string }>
   invoke(channel: 'window:minimize'): Promise<void>
   invoke(channel: 'window:maximize'): Promise<void>
   invoke(channel: 'window:close'): Promise<void>

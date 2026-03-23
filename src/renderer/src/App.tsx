@@ -34,6 +34,7 @@ export default function App() {
   const expandProject = useProjectStore((s) => s.expand)
 
   const fetchThreads = useThreadStore((s) => s.fetch)
+  const byProject = useThreadStore((s) => s.byProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const fetchPools = useLocationStore((s) => s.fetchPools)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
@@ -157,6 +158,26 @@ export default function App() {
       window.api.invoke('settings:set', SETTING_THREAD_KEY, selectedThreadId)
     }
   }, [selectedThreadId])
+
+  // Keep the selected project aligned with the currently selected thread.
+  useEffect(() => {
+    if (!selectedThreadId) return
+
+    const ownerProjectId = Object.entries(byProject).find(([, threads]) =>
+      (threads ?? []).some((thread) => thread.id === selectedThreadId)
+    )?.[0]
+
+    if (!ownerProjectId || ownerProjectId === selectedProjectId) return
+
+    selectProject(ownerProjectId)
+    expandProject(ownerProjectId)
+    if (!useLocationStore.getState().byProject[ownerProjectId]) {
+      void fetchLocations(ownerProjectId)
+    }
+    if (!useLocationStore.getState().poolsByProject[ownerProjectId]) {
+      void fetchPools(ownerProjectId)
+    }
+  }, [byProject, expandProject, fetchLocations, fetchPools, selectedProjectId, selectedThreadId, selectProject])
 
   return (
     <ErrorBoundary fallback={

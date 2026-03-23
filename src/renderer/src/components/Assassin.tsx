@@ -4,7 +4,7 @@ import { Crosshair } from 'lucide-react'
 type Mode = 'pid' | 'port'
 type Feedback = { type: 'success' | 'error'; text: string } | null
 
-export default function Assassin() {
+export default function Assassin({ threadId }: { threadId: string }) {
   const [expanded, setExpanded] = useState(false)
   const [mode, setMode] = useState<Mode>('pid')
   const [value, setValue] = useState('')
@@ -39,7 +39,7 @@ export default function Assassin() {
     setLoading(true)
     showFeedback(null)
     try {
-      const result = await window.api.invoke('process:kill', trimmed, mode)
+      const result = await window.api.invoke('process:kill', trimmed, mode, threadId)
       if (result.ok) {
         showFeedback({ type: 'success', text: `Killed ${mode === 'pid' ? 'PID' : 'port'} ${trimmed}` })
         setValue('')
@@ -51,7 +51,7 @@ export default function Assassin() {
     } finally {
       setLoading(false)
     }
-  }, [value, mode, loading, showFeedback])
+  }, [value, mode, loading, showFeedback, threadId])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {

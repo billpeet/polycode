@@ -101,11 +101,13 @@ export default function InputBar({ threadId }: Props) {
   const appendUserMessage = useMessageStore((s) => s.appendUserMessage)
 
   const projects = useProjectStore((s) => s.projects)
-  const selectedProjectId = useProjectStore((s) => s.selectedProjectId)
-  const project = projects.find((p) => p.id === selectedProjectId)
-  const projectThreads = useThreadStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_THREADS) : EMPTY_THREADS)
+  const threadProjectId = useThreadStore((s) =>
+    Object.entries(s.byProject).find(([, threads]) => threads?.some((t) => t.id === threadId))?.[0] ?? null
+  )
+  const project = projects.find((p) => p.id === threadProjectId)
+  const projectThreads = useThreadStore((s) => threadProjectId ? (s.byProject[threadProjectId] ?? EMPTY_THREADS) : EMPTY_THREADS)
   const currentThread = projectThreads.find((t) => t.id === threadId)
-  const projectLocations = useLocationStore((s) => selectedProjectId ? (s.byProject[selectedProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
+  const projectLocations = useLocationStore((s) => threadProjectId ? (s.byProject[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
   const location = currentThread?.location_id ? projectLocations.find((l) => l.id === currentThread.location_id) : null
   const addToast = useToastStore((s) => s.add)
 
@@ -164,7 +166,7 @@ export default function InputBar({ threadId }: Props) {
   const youtrackServers = useYouTrackStore((s) => s.servers)
   const slashCommandsByScope = useSlashCommandStore((s) => s.commandsByScope)
   const fetchSlashCommands = useSlashCommandStore((s) => s.fetch)
-  const slashCommands = slashCommandsByScope[selectedProjectId ?? 'global'] ?? slashCommandsByScope['global'] ?? EMPTY_SLASH_COMMANDS
+  const slashCommands = slashCommandsByScope[threadProjectId ?? 'global'] ?? slashCommandsByScope['global'] ?? EMPTY_SLASH_COMMANDS
   const sendingRef = useRef(false)
 
   const isProcessing = status === 'running' || status === 'stopping'
@@ -238,8 +240,8 @@ export default function InputBar({ threadId }: Props) {
 
   // Fetch slash commands whenever the active project changes
   useEffect(() => {
-    fetchSlashCommands(selectedProjectId ?? null)
-  }, [selectedProjectId, fetchSlashCommands])
+    fetchSlashCommands(threadProjectId ?? null)
+  }, [threadProjectId, fetchSlashCommands])
 
   async function handleSend(): Promise<void> {
     // Guard against concurrent sends (e.g. rapid Enter presses before React re-renders)
