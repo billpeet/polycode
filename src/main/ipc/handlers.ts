@@ -418,8 +418,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return archivedThreadCount(projectId)
   })
 
-  ipcMain.handle('threads:listArchived', (_event, projectId: string) => {
-    return listArchivedThreads(projectId)
+  ipcMain.handle('threads:listArchived', (_event, projectId: string, limit?: number, offset?: number) => {
+    return listArchivedThreads(projectId, limit, offset)
   })
 
   ipcMain.handle('threads:archive', (_event, id: string) => {

@@ -247,8 +247,12 @@ export class ClaudeDriver implements CLIDriver {
 
   private resolvePermissionMode(options?: MessageOptions): PermissionMode {
     if (options?.planMode) return 'plan'
-    if (options?.yoloMode ?? this.options.yoloMode ?? false) return 'bypassPermissions'
+    if (this.isYoloEnabled(options)) return 'bypassPermissions'
     return 'default'
+  }
+
+  private isYoloEnabled(options?: MessageOptions): boolean {
+    return options?.yoloMode ?? this.options.yoloMode ?? false
   }
 
   private readonly handleCanUseTool: CanUseTool = async (toolName, input, callbackOptions) => {
@@ -300,7 +304,7 @@ export class ClaudeDriver implements CLIDriver {
       })
     }
 
-    if (this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions') {
+    if (this.isYoloEnabled(this.currentMessageOptions)) {
       return { behavior: 'allow', updatedInput: input }
     }
 

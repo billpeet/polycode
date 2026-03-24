@@ -18,7 +18,8 @@ interface ExpandedSidebarProps {
   byProject: Record<string, Thread[] | undefined>
   archivedByProject: Record<string, Thread[] | undefined>
   archivedCountByProject: Record<string, number | undefined>
-  showArchived: boolean
+  expandedArchivedProjectId: string | null
+  archivedPageByProject: Record<string, number | undefined>
   statusMap: Record<string, ThreadStatus | undefined>
   unreadByThread: Record<string, boolean | undefined>
   locationsByProject: Record<string, RepoLocation[] | undefined>
@@ -38,6 +39,7 @@ interface ExpandedSidebarProps {
   onConfirmDeleteProject: (project: Project) => void
   onToggleArchivedSection: () => void
   onToggleShowArchived: (projectId: string) => void
+  onSetArchivedPage: (projectId: string, page: number) => void | Promise<void>
   onOpenLocationDialog: (projectId: string) => void
   onTogglePoolAvailableExpanded: (poolId: string) => void
   onToggleLocationCollapsed: (locationId: string) => void
@@ -61,7 +63,8 @@ export default function ExpandedSidebar({
   byProject,
   archivedByProject,
   archivedCountByProject,
-  showArchived,
+  expandedArchivedProjectId,
+  archivedPageByProject,
   statusMap,
   unreadByThread,
   locationsByProject,
@@ -81,6 +84,7 @@ export default function ExpandedSidebar({
   onConfirmDeleteProject,
   onToggleArchivedSection,
   onToggleShowArchived,
+  onSetArchivedPage,
   onOpenLocationDialog,
   onTogglePoolAvailableExpanded,
   onToggleLocationCollapsed,
@@ -212,9 +216,12 @@ export default function ExpandedSidebar({
           ))
         })() : projects.map((project) => {
           const isExpanded = expandedProjectIds.has(project.id)
+          const isArchivedExpanded = expandedArchivedProjectId === project.id
           const projectThreads = byProject[project.id] ?? []
           const projectArchivedThreads = archivedByProject[project.id] ?? []
           const projectArchivedCount = archivedCountByProject[project.id] ?? 0
+          const archivedPage = archivedPageByProject[project.id] ?? 0
+          const archivedPageCount = Math.ceil(projectArchivedCount / 10)
           const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
           const pools = poolsByProject[project.id] ?? EMPTY_POOLS
           const runningThreads = projectThreads.filter((thread) => statusMap[thread.id] === 'running' || statusMap[thread.id] === 'stopping')
@@ -488,13 +495,13 @@ export default function ExpandedSidebar({
                     </button>
                   )}
 
-                  {(projectArchivedCount > 0 || showArchived) && (
+                  {(projectArchivedCount > 0 || isArchivedExpanded) && (
                     <button
                       onClick={() => onToggleShowArchived(project.id)}
                       className="flex w-full items-center pl-6 pr-4 py-1 text-left text-[10px] opacity-40 transition-opacity hover:opacity-70"
                       style={{ color: 'var(--color-text-muted)' }}
                     >
-                      {showArchived ? (
+                      {isArchivedExpanded ? (
                         <><ChevronDown size={9} className="mr-1" /> Hide archived</>
                       ) : (
                         <><ChevronRight size={9} className="mr-1" /> Archived ({projectArchivedCount})</>
@@ -502,22 +509,49 @@ export default function ExpandedSidebar({
                     </button>
                   )}
 
-                  {showArchived && projectArchivedThreads.map((thread) => (
-                    <ThreadRow
-                      key={thread.id}
-                      thread={thread}
-                      isArchived
-                      projectId={project.id}
-                      indent="pl-8"
-                      selectedThreadId={selectedThreadId}
-                      statusMap={statusMap}
-                      unreadByThread={unreadByThread}
-                      branchByLocation={branchByLocation}
-                      onSelectThread={onSelectThread}
-                      onArchiveThread={onArchiveThread}
-                      onUnarchiveThread={onUnarchiveThread}
-                    />
-                  ))}
+                  {isArchivedExpanded && (
+                    <>
+                      {projectArchivedThreads.map((thread) => (
+                        <ThreadRow
+                          key={thread.id}
+                          thread={thread}
+                          isArchived
+                          projectId={project.id}
+                          indent="pl-8"
+                          selectedThreadId={selectedThreadId}
+                          statusMap={statusMap}
+                          unreadByThread={unreadByThread}
+                          branchByLocation={branchByLocation}
+                          onSelectThread={onSelectThread}
+                          onArchiveThread={onArchiveThread}
+                          onUnarchiveThread={onUnarchiveThread}
+                        />
+                      ))}
+
+                      {archivedPageCount > 1 && (
+                        <div
+                          className="flex items-center justify-between pl-8 pr-4 py-1 text-[10px]"
+                          style={{ color: 'var(--color-text-muted)' }}
+                        >
+                          <button
+                            onClick={() => onSetArchivedPage(project.id, archivedPage - 1)}
+                            className="transition-opacity hover:opacity-70 disabled:cursor-default disabled:opacity-30"
+                            disabled={archivedPage === 0}
+                          >
+                            Back
+                          </button>
+                          <span>{archivedPage + 1} / {archivedPageCount}</span>
+                          <button
+                            onClick={() => onSetArchivedPage(project.id, archivedPage + 1)}
+                            className="transition-opacity hover:opacity-70 disabled:cursor-default disabled:opacity-30"
+                            disabled={archivedPage >= archivedPageCount - 1}
+                          >
+                            Forward
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
             </div>

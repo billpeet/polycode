@@ -73,6 +73,22 @@ describe('ClaudeDriver permission control flow', () => {
     })
   })
 
+  it('auto-approves tool use when both plan mode and yolo mode are enabled', async () => {
+    const driver = makeDriver()
+    ;(driver as any).currentMessageOptions = { planMode: true, yoloMode: true }
+
+    await expect(
+      (driver as any).handleCanUseTool(
+        'Write',
+        { file_path: 'src/app.ts' },
+        { signal: new AbortController().signal, toolUseID: 'tool-789' },
+      )
+    ).resolves.toEqual({
+      behavior: 'allow',
+      updatedInput: { file_path: 'src/app.ts' },
+    })
+  })
+
   it('emits question events and resolves with structured answers', async () => {
     const driver = makeDriver()
     const events: OutputEvent[] = []

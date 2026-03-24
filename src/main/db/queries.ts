@@ -342,12 +342,12 @@ export function archivedThreadCount(projectId: string): number {
   return row.count
 }
 
-export function listArchivedThreads(projectId: string): Thread[] {
+export function listArchivedThreads(projectId: string, limit?: number, offset?: number): Thread[] {
   const rows = getDb()
     .prepare(
-      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 1 ORDER BY t.updated_at DESC'
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 1 ORDER BY t.updated_at DESC LIMIT ? OFFSET ?'
     )
-    .all(projectId) as ThreadRow[]
+    .all(projectId, limit ?? -1, offset ?? 0) as ThreadRow[]
   return rows.map(rowToThread)
 }
 

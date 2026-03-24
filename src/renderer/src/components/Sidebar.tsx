@@ -57,14 +57,16 @@ export default function Sidebar() {
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
   const statusMap = useThreadStore((s) => s.statusMap)
   const unreadByThread = useThreadStore((s) => s.unreadByThread)
-  const showArchived = useThreadStore((s) => s.showArchived)
+  const expandedArchivedProjectId = useThreadStore((s) => s.expandedArchivedProjectId)
   const archivedCountByProject = useThreadStore((s) => s.archivedCountByProject)
+  const archivedPageByProject = useThreadStore((s) => s.archivedPageByProject)
   const fetchThreads = useThreadStore((s) => s.fetch)
   const createThread = useThreadStore((s) => s.create)
   const removeThread = useThreadStore((s) => s.remove)
   const archiveThread = useThreadStore((s) => s.archive)
   const unarchiveThread = useThreadStore((s) => s.unarchive)
   const toggleShowArchived = useThreadStore((s) => s.toggleShowArchived)
+  const setArchivedPage = useThreadStore((s) => s.setArchivedPage)
   const selectThread = useThreadStore((s) => s.select)
   const setName = useThreadStore((s) => s.setName)
   const setUnread = useThreadStore((s) => s.setUnread)
@@ -355,7 +357,8 @@ export default function Sidebar() {
       byProject={byProject}
       archivedByProject={archivedByProject}
       archivedCountByProject={archivedCountByProject}
-      showArchived={showArchived}
+      expandedArchivedProjectId={expandedArchivedProjectId}
+      archivedPageByProject={archivedPageByProject}
       statusMap={statusMap}
       unreadByThread={unreadByThread}
       locationsByProject={locationsByProject}
@@ -375,6 +378,7 @@ export default function Sidebar() {
       onConfirmDeleteProject={(project) => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id })}
       onToggleArchivedSection={() => setArchivedSectionExpanded((value) => !value)}
       onToggleShowArchived={toggleShowArchived}
+      onSetArchivedPage={setArchivedPage}
       onOpenLocationDialog={(projectId) => setLocationDialog({ mode: 'create', projectId })}
       onTogglePoolAvailableExpanded={togglePoolAvailableExpanded}
       onToggleLocationCollapsed={toggleLocationCollapsed}

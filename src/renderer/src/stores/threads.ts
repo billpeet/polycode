@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { Thread, ThreadStatus, SendOptions, Question, PermissionRequest, TokenUsage } from '../types/ipc'
 
+const ARCHIVED_THREADS_PAGE_SIZE = 10
+
 export interface QueuedMessage {
   content: string
   planMode: boolean
@@ -13,10 +15,11 @@ interface ThreadStore {
   archivedByProject: Record<string, Thread[]>
   /** count of archived threads keyed by project ID — populated on fetch, no full data load required */
   archivedCountByProject: Record<string, number>
+  archivedPageByProject: Record<string, number>
   selectedThreadId: string | null
   statusMap: Record<string, ThreadStatus>
   unreadByThread: Record<string, boolean>
-  showArchived: boolean
+  expandedArchivedProjectId: string | null
   /** draft input text keyed by thread ID */
   draftByThread: Record<string, string>
   /** plan mode toggle keyed by thread ID */
@@ -30,12 +33,13 @@ interface ThreadStore {
   /** OS PID of the running process, keyed by thread ID (null when not running) */
   pidByThread: Record<string, number | null>
   fetch: (projectId: string) => Promise<void>
-  fetchArchived: (projectId: string) => Promise<void>
+  fetchArchived: (projectId: string, page?: number) => Promise<void>
   create: (projectId: string, name: string, locationId: string) => Promise<void>
   remove: (id: string, projectId: string) => Promise<void>
   archive: (id: string, projectId: string) => Promise<void>
   unarchive: (id: string, projectId: string) => Promise<void>
   toggleShowArchived: (projectId: string) => void
+  setArchivedPage: (projectId: string, page: number) => Promise<void>
   select: (id: string | null) => void
   setStatus: (threadId: string, status: ThreadStatus) => void
   setUnread: (threadId: string, unread: boolean) => void
@@ -70,10 +74,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   byProject: {},
   archivedByProject: {},
   archivedCountByProject: {},
+  archivedPageByProject: {},
   selectedThreadId: null,
   statusMap: {},
   unreadByThread: {},
-  showArchived: false,
+  expandedArchivedProjectId: null,
   draftByThread: {},
   planModeByThread: {},
   queuedMessageByThread: {},
@@ -108,11 +113,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }))
   },
 
-  fetchArchived: async (projectId) => {
-    const threads = await window.api.invoke('threads:listArchived', projectId)
+  fetchArchived: async (projectId, page) => {
+    const nextPage = page ?? get().archivedPageByProject[projectId] ?? 0
+    const threads = await window.api.invoke(
+      'threads:listArchived',
+      projectId,
+      ARCHIVED_THREADS_PAGE_SIZE,
+      nextPage * ARCHIVED_THREADS_PAGE_SIZE
+    )
     set((s) => ({
       archivedByProject: { ...s.archivedByProject, [projectId]: threads },
-      archivedCountByProject: { ...s.archivedCountByProject, [projectId]: threads.length },
+      archivedPageByProject: { ...s.archivedPageByProject, [projectId]: nextPage },
     }))
   },
 
@@ -191,6 +202,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   archive: async (id, projectId) => {
+    const wasArchivedExpanded = get().expandedArchivedProjectId === projectId
+    const currentArchivedPage = get().archivedPageByProject[projectId] ?? 0
     const result = await window.api.invoke('threads:archive', id)
     set((s) => {
       const thread = (s.byProject[projectId] ?? []).find((t) => t.id === id)
@@ -222,12 +235,6 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const prevCount = s.archivedCountByProject[projectId] ?? 0
       return {
         byProject: { ...s.byProject, [projectId]: withoutThread },
-        archivedByProject: {
-          ...s.archivedByProject,
-          [projectId]: thread
-            ? [{ ...thread, archived: true }, ...(s.archivedByProject[projectId] ?? [])]
-            : (s.archivedByProject[projectId] ?? [])
-        },
         archivedCountByProject: { ...s.archivedCountByProject, [projectId]: prevCount + 1 },
         selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
         statusMap: updatedStatus,
@@ -238,9 +245,14 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         pidByThread: updatedPid,
       }
     })
+    if (result === 'archived' && wasArchivedExpanded) {
+      await get().setArchivedPage(projectId, currentArchivedPage)
+    }
   },
 
   unarchive: async (id, projectId) => {
+    const wasArchivedExpanded = get().expandedArchivedProjectId === projectId
+    const currentArchivedPage = get().archivedPageByProject[projectId] ?? 0
     await window.api.invoke('threads:unarchive', id)
     set((s) => {
       const thread = (s.archivedByProject[projectId] ?? []).find((t) => t.id === id)
@@ -264,14 +276,26 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         unreadByThread: thread ? { ...s.unreadByThread, [id]: !!thread.unread } : s.unreadByThread
       }
     })
+    if (wasArchivedExpanded) {
+      await get().setArchivedPage(projectId, currentArchivedPage)
+    }
   },
 
   toggleShowArchived: (projectId) => {
-    const next = !get().showArchived
-    set({ showArchived: next })
-    if (next) {
-      get().fetchArchived(projectId)
+    const isExpanded = get().expandedArchivedProjectId === projectId
+    if (isExpanded) {
+      set({ expandedArchivedProjectId: null })
+      return
     }
+    set({ expandedArchivedProjectId: projectId })
+    void get().fetchArchived(projectId, 0)
+  },
+
+  setArchivedPage: async (projectId, page) => {
+    const count = get().archivedCountByProject[projectId] ?? 0
+    const maxPage = Math.max(0, Math.ceil(count / ARCHIVED_THREADS_PAGE_SIZE) - 1)
+    const nextPage = Math.min(Math.max(page, 0), maxPage)
+    await get().fetchArchived(projectId, nextPage)
   },
 
   select: (id) => {

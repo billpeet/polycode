@@ -44,7 +44,7 @@ export interface WindowApi {
   invoke(channel: 'threads:denyPermissions', threadId: string, requestId?: string): Promise<void>
   invoke(channel: 'threads:updateName', id: string, name: string): Promise<void>
   invoke(channel: 'threads:archivedCount', projectId: string): Promise<number>
-  invoke(channel: 'threads:listArchived', projectId: string): Promise<Thread[]>
+  invoke(channel: 'threads:listArchived', projectId: string, limit?: number, offset?: number): Promise<Thread[]>
   invoke(channel: 'threads:archive', id: string): Promise<'archived' | 'deleted'>
   invoke(channel: 'threads:unarchive', id: string): Promise<void>
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
