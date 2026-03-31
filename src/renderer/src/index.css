@@ -112,6 +112,15 @@ body,
   line-height: 1.65;
   font-size: 0.875rem;
   overflow-wrap: anywhere;
+  display: flow-root;
+}
+
+.prose-content > :first-child {
+  margin-top: 0;
+}
+
+.prose-content > :last-child {
+  margin-bottom: 0;
 }
 
 .prose-content h1,

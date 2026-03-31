@@ -275,19 +275,33 @@ export default function MessageStream({ threadId, sessionId }: Props) {
     el.scrollTop = el.scrollHeight
   })
 
-  // Measure non-virtualized tail items after render and store in height cache.
-  // These items have no virtualizer measureElement ref, so without this they'd
-  // rely purely on the heuristic estimate when they later enter the virtualized zone.
-  useLayoutEffect(() => {
+  // Keep non-virtualized tail heights current. Tail rows can change height after
+  // initial paint (for example after markdown/code styling settles), and stale
+  // cached heights cause overlap once those rows move into the virtualized zone.
+  useEffect(() => {
     const el = tailRef.current
     if (!el) return
-    for (const child of el.children) {
-      const key = (child as HTMLElement).dataset.entryKey
-      if (key) {
-        heightCache.set(key, (child as HTMLElement).offsetHeight)
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const key = (entry.target as HTMLElement).dataset.entryKey
+        if (key) {
+          heightCache.set(key, entry.contentRect.height)
+        }
       }
+    })
+
+    for (const child of el.children) {
+      const node = child as HTMLElement
+      const key = node.dataset.entryKey
+      if (key) {
+        heightCache.set(key, node.getBoundingClientRect().height)
+      }
+      observer.observe(node)
     }
-  })
+
+    return () => observer.disconnect()
+  }, [nonVirtualizedEntries])
 
   // Back up virtualizer ResizeObserver-driven measurements into the persistent cache.
   // This runs on every render so that if TanStack corrects a size via its internal
