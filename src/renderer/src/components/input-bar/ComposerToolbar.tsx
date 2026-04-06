@@ -14,7 +14,6 @@ interface ComposerToolbarProps {
   setWsl: (threadId: string, useWsl: boolean, distro: string | null) => void
   setProviderAndModel: (threadId: string, provider: Provider, model: string) => void
   setModel: (threadId: string, model: string) => void
-  showCodexWslWarning: boolean
   elapsedSeconds: number
 }
 
@@ -30,7 +29,6 @@ export default function ComposerToolbar({
   setWsl,
   setProviderAndModel,
   setModel,
-  showCodexWslWarning,
   elapsedSeconds,
 }: ComposerToolbarProps) {
   const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
@@ -133,10 +131,6 @@ export default function ComposerToolbar({
           onChange={(e) => {
             const provider = e.target.value as Provider
             const defaultModel = getDefaultModelForProvider(provider)
-            if (provider === 'codex' && currentThread && isLocalLocation && !currentThread.use_wsl) {
-              const distro = currentThread.wsl_distro ?? availableDistros[0] ?? null
-              if (distro) setWsl(threadId, true, distro)
-            }
             setProviderAndModel(threadId, provider, defaultModel)
           }}
           disabled={isProcessing}
@@ -156,11 +150,6 @@ export default function ComposerToolbar({
           ))}
         </select>
       </span>
-      {showCodexWslWarning && (
-        <span className="text-xs flex-shrink-0 mb-2" style={{ color: '#facc15' }} title="Codex is significantly more reliable via WSL on Windows.">
-          Codex + WSL recommended
-        </span>
-      )}
       <select
         value={currentThread?.model ?? getDefaultModelForProvider((currentThread?.provider ?? 'claude-code') as Provider)}
         onChange={(e) => setModel(threadId, e.target.value)}

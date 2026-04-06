@@ -135,8 +135,6 @@ export default function InputBar({ threadId }: Props) {
 
   const [availableDistros, setAvailableDistros] = useState<string[]>([])
   const isLocalLocation = location?.connection_type === 'local'
-  const isWslSelected = location?.connection_type === 'wsl' || (isLocalLocation && !!currentThread?.use_wsl)
-  const showCodexWslWarning = currentThread?.provider === 'codex' && !isWslSelected
 
   useEffect(() => {
     if (!isLocalLocation) return
@@ -738,7 +736,6 @@ export default function InputBar({ threadId }: Props) {
           setWsl={setWsl}
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}
-          showCodexWslWarning={showCodexWslWarning}
           elapsedSeconds={elapsedSeconds}
         />
 
