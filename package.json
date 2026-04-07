@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.50",
+    "@openai/codex-sdk": "^0.118.0",
     "@pierre/diffs": "^1.0.11",
     "@sentry/electron": "^7.8.0",
     "@sentry/react": "^10.40.0",
