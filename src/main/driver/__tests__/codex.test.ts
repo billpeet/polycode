@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
+import path from 'path'
 import {
+  buildCodexEnvironment,
+  buildCodexSdkOptions,
   CodexDriver,
   buildCodexArgs,
   createCodexStreamState,
@@ -197,14 +200,48 @@ describe('parseCodexSdkEvent', () => {
 describe('CodexDriver transport selection', () => {
   it('uses the SDK locally', () => {
     const driver = makeDriver()
-    expect((driver as any).sdk).toBeDefined()
+    expect((driver as any).sdkPromise).toBeDefined()
     expect((driver as any).fallbackDriver).toBeNull()
   })
 
   it('keeps the CLI fallback for WSL', () => {
     const driver = makeDriver({ wsl: { distro: 'Ubuntu' } })
-    expect((driver as any).sdk).toBeNull()
+    expect((driver as any).sdkPromise).toBeNull()
     expect((driver as any).fallbackDriver).toBeDefined()
   })
 })
 
+describe('buildCodexEnvironment', () => {
+  it('derives CODEX_HOME from USERPROFILE on Windows-style envs', () => {
+    const env = buildCodexEnvironment({
+      USERPROFILE: 'C:\\Users\\marti',
+      PATH: 'C:\\Windows\\System32',
+    })
+
+    expect(env.HOME).toBe('C:\\Users\\marti')
+    expect(env.CODEX_HOME).toBe('C:\\Users\\marti\\.codex')
+  })
+
+  it('preserves an explicit CODEX_HOME', () => {
+    const env = buildCodexEnvironment({
+      HOME: '/tmp/home',
+      CODEX_HOME: '/tmp/custom-codex-home',
+    })
+
+    expect(env.HOME).toBe('/tmp/home')
+    expect(env.CODEX_HOME).toBe('/tmp/custom-codex-home')
+  })
+})
+
+describe('buildCodexSdkOptions', () => {
+  it('passes the normalized env through to the SDK', () => {
+    const options = buildCodexSdkOptions({
+      HOME: '/tmp/home',
+    })
+
+    expect(options.env).toMatchObject({
+      HOME: '/tmp/home',
+      CODEX_HOME: path.join('/tmp/home', '.codex'),
+    })
+  })
+})

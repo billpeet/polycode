@@ -1,5 +1,6 @@
 import type {
   Codex as CodexSdk,
+  CodexOptions as CodexSdkOptions,
   ThreadEvent,
   ThreadItem,
   ThreadOptions as CodexThreadOptions,
@@ -8,6 +9,9 @@ import { DriverOptions, MessageOptions, CLIDriver } from './types'
 import { OutputEvent } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
 import { BaseDriver } from './base'
+import { augmentWindowsPath } from './runner'
+import { homedir } from 'os'
+import path from 'path'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
 
@@ -276,6 +280,33 @@ function buildSdkThreadOptions(options: DriverOptions, yoloMode: boolean): Codex
 function normalizeRunError(error: unknown): Error {
   if (error instanceof Error) return error
   return new Error(String(error))
+}
+
+function sanitizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(env).filter(([, value]): value is string => typeof value === 'string')
+  )
+}
+
+export function buildCodexEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const nextEnv = process.platform === 'win32' ? augmentWindowsPath(env) : { ...env }
+  const homeDir = nextEnv.HOME ?? nextEnv.USERPROFILE ?? homedir()
+
+  if (!nextEnv.HOME && homeDir) nextEnv.HOME = homeDir
+  if (process.platform === 'win32' && !nextEnv.USERPROFILE && homeDir) {
+    nextEnv.USERPROFILE = homeDir
+  }
+  if (!nextEnv.CODEX_HOME && homeDir) {
+    nextEnv.CODEX_HOME = path.join(homeDir, '.codex')
+  }
+
+  return sanitizeEnv(nextEnv)
+}
+
+export function buildCodexSdkOptions(env: NodeJS.ProcessEnv = process.env): CodexSdkOptions {
+  return {
+    env: buildCodexEnvironment(env),
+  }
 }
 
 /**
@@ -569,5 +600,5 @@ export class CodexDriver implements CLIDriver {
 
 async function loadCodexSdk(): Promise<CodexSdk> {
   const mod = await import('@openai/codex-sdk')
-  return new mod.Codex()
+  return new mod.Codex(buildCodexSdkOptions())
 }
