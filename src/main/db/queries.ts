@@ -636,11 +636,71 @@ export function getOrCreateActiveSession(threadId: string): Session {
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
+function parseMessageMetadata(metadata: string | null): Record<string, unknown> | null {
+  if (!metadata) return null
+  try {
+    return JSON.parse(metadata) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function compactCodexMessages(messages: MessageRow[]): Message[] {
+  const compacted: MessageRow[] = []
+
+  for (const message of messages) {
+    const previous = compacted[compacted.length - 1]
+    if (!previous || previous.role !== message.role) {
+      compacted.push({ ...message })
+      continue
+    }
+
+    const previousMetadata = parseMessageMetadata(previous.metadata)
+    const currentMetadata = parseMessageMetadata(message.metadata)
+    const previousType = previousMetadata?.type
+    const currentType = currentMetadata?.type
+
+    if (!previousType && !currentType && message.role === 'assistant') {
+      previous.content += message.content
+      previous.created_at = message.created_at
+      continue
+    }
+
+    if (previousType === 'tool_result' && currentType === 'tool_result') {
+      const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
+      const currentToolUseId = typeof currentMetadata?.tool_use_id === 'string' ? currentMetadata.tool_use_id : null
+      if (previousToolUseId && previousToolUseId === currentToolUseId) {
+        previous.content = message.content.startsWith(previous.content)
+          ? message.content
+          : previous.content + message.content
+        previous.metadata = message.metadata
+        previous.created_at = message.created_at
+        continue
+      }
+    }
+
+    compacted.push({ ...message })
+  }
+
+  return compacted as Message[]
+}
+
+function shouldCompactMessagesForThread(threadId: string): boolean {
+  return getThreadProvider(threadId) === 'codex'
+}
+
+function shouldCompactMessagesForSession(sessionId: string): boolean {
+  const row = getDb()
+    .prepare('SELECT t.provider FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?')
+    .get(sessionId) as { provider: string | null } | undefined
+  return (row?.provider ?? 'claude-code') === 'codex'
+}
+
 export function listMessages(threadId: string): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC')
     .all(threadId) as MessageRow[]
-  return rows as Message[]
+  return shouldCompactMessagesForThread(threadId) ? compactCodexMessages(rows) : rows as Message[]
 }
 
 export function insertMessage(
@@ -672,7 +732,7 @@ export function listMessagesBySession(sessionId: string): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC')
     .all(sessionId) as MessageRow[]
-  return rows as Message[]
+  return shouldCompactMessagesForSession(sessionId) ? compactCodexMessages(rows) : rows as Message[]
 }
 
 /**

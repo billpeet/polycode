@@ -13,8 +13,12 @@ export interface CLIDriver {
     onDone: (error?: Error) => void,
     options?: MessageOptions
   ): void
+  /** Inject a follow-up user message into a running session when supported. */
+  injectMessage?(content: string, options?: MessageOptions): void
   /** Stop the CLI process */
   stop(): void
+  /** Force-stop and detach the current CLI process so the session can be abandoned safely. */
+  forceStop?(): void
   /** Returns true if the process is currently running */
   isRunning(): boolean
   /** Returns the OS PID of the running process, or null if not running */

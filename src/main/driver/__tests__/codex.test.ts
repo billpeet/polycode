@@ -198,15 +198,15 @@ describe('parseCodexSdkEvent', () => {
 })
 
 describe('CodexDriver transport selection', () => {
-  it('uses the SDK locally', () => {
+  it('uses the app-server driver locally', () => {
     const driver = makeDriver()
-    expect((driver as any).sdkPromise).toBeDefined()
+    expect((driver as any).localDriver).toBeDefined()
     expect((driver as any).fallbackDriver).toBeNull()
   })
 
   it('keeps the CLI fallback for WSL', () => {
     const driver = makeDriver({ wsl: { distro: 'Ubuntu' } })
-    expect((driver as any).sdkPromise).toBeNull()
+    expect((driver as any).localDriver).toBeNull()
     expect((driver as any).fallbackDriver).toBeDefined()
   })
 })

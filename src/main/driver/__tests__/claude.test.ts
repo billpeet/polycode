@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, it, expect, mock } from 'bun:test'
+import path from 'path'
 import { ClaudeDriver } from '../claude'
 import type { DriverOptions } from '../types'
 import type { OutputEvent } from '../../../shared/types'
@@ -194,8 +195,33 @@ describe('ClaudeDriver query configuration', () => {
 
     await (driver as any).ensureQuery()
 
-    expect(capturedInput.options.cwd).toBe('/tmp/home/repo')
-    expect(capturedInput.options.additionalDirectories).toEqual(['/tmp/home/repo'])
+    expect(capturedInput.options.cwd).toBe(path.join('/tmp/home', 'repo'))
+    expect(capturedInput.options.additionalDirectories).toEqual([path.join('/tmp/home', 'repo')])
     expect(capturedInput.options.settingSources).toEqual(['user', 'project', 'local'])
+  })
+})
+
+describe('ClaudeDriver live input', () => {
+  it('keeps the turn open until queued injected prompts are finished', async () => {
+    const driver = makeDriver()
+    const done = mock(() => {})
+
+    ;(driver as any).currentTurn = {
+      onEvent: () => {},
+      onDone: done,
+    }
+    ;(driver as any).queuedTurnCount = 1
+    ;(driver as any).query = {
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: 'result', subtype: 'success' }
+        yield { type: 'result', subtype: 'success' }
+      },
+    }
+
+    await (driver as any).consumeStream()
+
+    expect(done).toHaveBeenCalledTimes(1)
+    expect((driver as any).queuedTurnCount).toBe(0)
+    expect((driver as any).currentTurn).toBeNull()
   })
 })

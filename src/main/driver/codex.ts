@@ -5,6 +5,7 @@ import type {
   ThreadItem,
   ThreadOptions as CodexThreadOptions,
 } from '@openai/codex-sdk'
+import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
 import { OutputEvent } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
@@ -12,6 +13,7 @@ import { BaseDriver } from './base'
 import { augmentWindowsPath } from './runner'
 import { homedir } from 'os'
 import path from 'path'
+import readline from 'readline'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
 
@@ -268,6 +270,214 @@ export function parseCodexSdkEvent(
   return events
 }
 
+function normalizeAppServerItem(raw: Record<string, unknown>): ThreadItem | null {
+  const itemType = raw.type as string | undefined
+  const id = raw.id as string | undefined
+  if (!itemType || !id) return null
+
+  switch (itemType) {
+    case 'userMessage':
+      return null
+    case 'agentMessage':
+      return {
+        id,
+        type: 'agent_message',
+        text: String(raw.text ?? ''),
+      }
+    case 'reasoning':
+      return {
+        id,
+        type: 'reasoning',
+        text: String(raw.text ?? ''),
+      }
+    case 'commandExecution':
+      return {
+        id,
+        type: 'command_execution',
+        command: String(raw.command ?? ''),
+        aggregated_output: String(raw.aggregatedOutput ?? ''),
+        status: ((raw.status as string | undefined) ?? 'in_progress') as 'in_progress' | 'completed' | 'failed',
+        ...(typeof raw.exitCode === 'number' ? { exit_code: raw.exitCode } : {}),
+      }
+    case 'fileChange':
+      return {
+        id,
+        type: 'file_change',
+        changes: Array.isArray(raw.changes) ? raw.changes as Array<{ path: string; kind: 'add' | 'delete' | 'update' }> : [],
+        status: ((raw.status as string | undefined) ?? 'completed') as 'completed' | 'failed',
+      }
+    case 'mcpToolCall':
+      return {
+        id,
+        type: 'mcp_tool_call',
+        server: String(raw.server ?? ''),
+        tool: String(raw.tool ?? ''),
+        arguments: raw.arguments,
+        ...(raw.result && typeof raw.result === 'object'
+          ? {
+              result: {
+                content: Array.isArray((raw.result as Record<string, unknown>).content)
+                  ? ((raw.result as Record<string, unknown>).content as Array<Record<string, unknown>>)
+                  : [],
+                structured_content: (raw.result as Record<string, unknown>).structuredContent,
+              },
+            }
+          : {}),
+        ...(raw.error && typeof raw.error === 'object'
+          ? {
+              error: {
+                message: String((raw.error as Record<string, unknown>).message ?? ''),
+              },
+            }
+          : {}),
+        status: ((raw.status as string | undefined) ?? 'in_progress') as 'in_progress' | 'completed' | 'failed',
+      }
+    case 'webSearch':
+      return {
+        id,
+        type: 'web_search',
+        query: String(raw.query ?? ''),
+      }
+    case 'todoList':
+      return {
+        id,
+        type: 'todo_list',
+        items: Array.isArray(raw.items)
+          ? raw.items.map((item) => ({
+              text: String((item as Record<string, unknown>).text ?? ''),
+              completed: Boolean((item as Record<string, unknown>).completed),
+            }))
+          : [],
+      }
+    case 'error':
+      return {
+        id,
+        type: 'error',
+        message: String(raw.message ?? 'Unknown Codex error'),
+      }
+    default:
+      return {
+        id,
+        type: 'error',
+        message: `Unsupported Codex item type: ${itemType}`,
+      }
+  }
+}
+
+function parseCodexAppServerNotification(
+  method: string,
+  params: Record<string, unknown> | undefined,
+  state: CodexStreamState,
+  onSessionId?: (sessionId: string) => void
+): OutputEvent[] {
+  const events: OutputEvent[] = []
+
+  switch (method) {
+    case 'thread/started': {
+      const thread = params?.thread as Record<string, unknown> | undefined
+      const threadId = (thread?.id as string | undefined) ?? (params?.threadId as string | undefined)
+      if (threadId) onSessionId?.(threadId)
+      break
+    }
+    case 'item/agentMessage/delta': {
+      const delta = params?.delta as string | undefined
+      const itemId = (params?.itemId as string | undefined) ?? ((params?.item as Record<string, unknown> | undefined)?.id as string | undefined)
+      if (delta) {
+        if (itemId) {
+          state.streamedItemIds.add(itemId)
+          state.lastAgentTextById.set(itemId, `${state.lastAgentTextById.get(itemId) ?? ''}${delta}`)
+        }
+        events.push({ type: 'text', content: delta })
+      }
+      break
+    }
+    case 'item/started':
+    case 'item/completed': {
+      const item = params?.item && typeof params.item === 'object'
+        ? normalizeAppServerItem(params.item as Record<string, unknown>)
+        : null
+      if (!item) break
+
+      if (item.type === 'agent_message') {
+        if (method === 'item/completed') {
+          const previous = state.lastAgentTextById.get(item.id) ?? ''
+          const delta = extractTextDelta(previous, item.text)
+          state.lastAgentTextById.set(item.id, item.text)
+          if (delta) events.push({ type: 'text', content: delta })
+        }
+        break
+      }
+
+      if (item.type === 'reasoning') break
+      if (method === 'item/completed' && state.completedItemIds.has(item.id)) break
+      if (method === 'item/completed') state.completedItemIds.add(item.id)
+
+      if (item.type === 'error') {
+        events.push({ type: 'error', content: item.message })
+        break
+      }
+
+      if (!state.announcedItemIds.has(item.id)) {
+        const { content, metadata } = makeToolCallEvent(item)
+        events.push({ type: 'tool_call', content, metadata })
+        state.announcedItemIds.add(item.id)
+      }
+
+      if (method === 'item/completed') {
+        const toolResult = buildToolResult(item)
+        if (toolResult) events.push(toolResult)
+      }
+      break
+    }
+    case 'item/commandExecution/outputDelta':
+    case 'item/fileChange/outputDelta': {
+      const delta = params?.delta as string | undefined
+      const itemId = (params?.itemId as string | undefined)
+        ?? ((params?.item as Record<string, unknown> | undefined)?.id as string | undefined)
+      if (delta) {
+        events.push({
+          type: 'tool_result',
+          content: delta,
+          metadata: {
+            ...(params ?? {}),
+            type: 'tool_result',
+            ...(itemId ? { tool_use_id: itemId } : {}),
+          },
+        })
+      }
+      break
+    }
+    case 'turn/completed': {
+      const turn = params?.turn as Record<string, unknown> | undefined
+      const usage = (turn?.usage as Record<string, unknown> | undefined) ?? (params?.usage as Record<string, unknown> | undefined)
+      const inputTokens = Number(usage?.inputTokens ?? usage?.input_tokens ?? 0)
+      const outputTokens = Number(usage?.outputTokens ?? usage?.output_tokens ?? 0)
+      if (inputTokens || outputTokens) {
+        events.push({
+          type: 'usage',
+          content: '',
+          metadata: {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+          },
+        })
+      }
+      if ((turn?.status as string | undefined) === 'failed') {
+        const error = turn?.error as Record<string, unknown> | undefined
+        events.push({ type: 'error', content: String(error?.message ?? 'Unknown Codex error') })
+      }
+      break
+    }
+    case 'error': {
+      const error = params?.error as Record<string, unknown> | undefined
+      events.push({ type: 'error', content: String(error?.message ?? 'Unknown Codex error') })
+      break
+    }
+  }
+
+  return events
+}
+
 function buildSdkThreadOptions(options: DriverOptions, yoloMode: boolean): CodexThreadOptions {
   return {
     model: options.model,
@@ -446,11 +656,18 @@ class CodexCliDriver extends BaseDriver {
       case 'item.commandExecution.outputDelta':
       case 'item.fileChange.outputDelta': {
         const delta = data.delta as string | undefined
+        const itemId = (data.item_id as string | undefined)
+          ?? (data.itemId as string | undefined)
+          ?? ((data.item as Record<string, unknown> | undefined)?.id as string | undefined)
         if (delta) {
           events.push({
             type: 'tool_result',
             content: delta,
-            metadata: data as Record<string, unknown>,
+            metadata: {
+              ...(data as Record<string, unknown>),
+              type: 'tool_result',
+              ...(itemId ? { tool_use_id: itemId } : {}),
+            },
           })
         }
         break
@@ -489,23 +706,318 @@ class CodexCliDriver extends BaseDriver {
   }
 }
 
-export class CodexDriver implements CLIDriver {
-  private readonly fallbackDriver: CodexCliDriver | null
-  private readonly sdkPromise: Promise<CodexSdk> | null
+type JsonRpcRequest = {
+  id: number
+  method: string
+  params?: unknown
+}
+
+type JsonRpcResponse = {
+  id: number
+  result?: unknown
+  error?: { message?: string }
+}
+
+type JsonRpcNotification = {
+  method: string
+  params?: unknown
+}
+
+class CodexAppServerDriver implements CLIDriver {
+  private child: ChildProcessWithoutNullStreams | null = null
+  private output: readline.Interface | null = null
   private codexThreadId: string | null = null
-  private running = false
-  private abortController: AbortController | null = null
+  private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>()
+  private nextRequestId = 1
+  private currentTurn: { onEvent: (event: OutputEvent) => void; onDone: (error?: Error) => void } | null = null
+  private outstandingTurnCount = 0
+  private activeTurnId: string | null = null
+  private readyPromise: Promise<void> | null = null
+  private state = createCodexStreamState()
   private stopRequested = false
-  private streamState = createCodexStreamState()
 
   constructor(private readonly options: DriverOptions) {
     if (options.initialSessionId) {
       this.codexThreadId = options.initialSessionId
     }
+  }
 
+  sendMessage(
+    content: string,
+    onEvent: (event: OutputEvent) => void,
+    onDone: (error?: Error) => void,
+    options?: MessageOptions
+  ): void {
+    if (this.currentTurn) {
+      console.warn('[CodexAppServerDriver] sendMessage called while a turn chain is already running')
+      return
+    }
+
+    this.currentTurn = { onEvent, onDone }
+    this.outstandingTurnCount = 0
+    this.stopRequested = false
+
+    this.startTurn(content, options).catch((error) => {
+      this.finishTurn(normalizeRunError(error))
+    })
+  }
+
+  injectMessage(content: string, options?: MessageOptions): void {
+    if (!this.currentTurn) {
+      console.warn('[CodexAppServerDriver] injectMessage called without an active turn chain')
+      return
+    }
+
+    this.startTurn(content, options).catch((error) => {
+      this.finishTurn(normalizeRunError(error))
+    })
+  }
+
+  stop(): void {
+    this.stopRequested = true
+    if (this.activeTurnId && this.codexThreadId) {
+      void this.sendRequest('turn/interrupt', {
+        threadId: this.codexThreadId,
+        turnId: this.activeTurnId,
+      }).catch(() => {
+        this.cleanupProcess()
+      })
+      return
+    }
+    this.cleanupProcess()
+  }
+
+  isRunning(): boolean {
+    return this.currentTurn !== null
+  }
+
+  getPid(): number | null {
+    return this.child?.pid ?? null
+  }
+
+  sendControlResponse(_requestId: string, _behavior: 'allow' | 'deny', _message?: string): void {}
+
+  private async startTurn(content: string, options?: MessageOptions): Promise<void> {
+    await this.ensureReady()
+    if (!this.codexThreadId) {
+      throw new Error('Codex session is missing a thread id')
+    }
+
+    this.outstandingTurnCount += 1
+    try {
+      const response = await this.sendRequest('turn/start', {
+        threadId: this.codexThreadId,
+        input: [{ type: 'text', text: content, text_elements: [] }],
+        ...(this.options.model ? { model: this.options.model } : {}),
+        sandbox: (options?.yoloMode ?? this.options.yoloMode ?? false) ? 'danger-full-access' : 'workspace-write',
+      })
+      const record = response && typeof response === 'object' ? response as Record<string, unknown> : {}
+      const turn = record.turn && typeof record.turn === 'object' ? record.turn as Record<string, unknown> : undefined
+      this.activeTurnId = (turn?.id as string | undefined) ?? this.activeTurnId
+    } catch (error) {
+      this.outstandingTurnCount = Math.max(0, this.outstandingTurnCount - 1)
+      throw error
+    }
+  }
+
+  private async ensureReady(): Promise<void> {
+    if (this.readyPromise) {
+      return this.readyPromise
+    }
+
+    this.readyPromise = (async () => {
+      const env = buildCodexEnvironment()
+      this.child = spawn('codex', ['app-server'], {
+        cwd: this.options.workingDir,
+        env,
+        shell: process.platform === 'win32',
+        stdio: ['pipe', 'pipe', 'pipe'],
+      })
+      this.output = readline.createInterface({ input: this.child.stdout })
+      this.output.on('line', (line) => this.handleLine(line))
+      this.child.stderr.on('data', (chunk: Buffer) => {
+        const message = chunk.toString('utf8').trim()
+        if (message) {
+          this.emit({ type: 'error', content: message })
+        }
+      })
+      this.child.on('error', (error) => this.finishTurn(error))
+      this.child.on('exit', (_code, _signal) => {
+        if (!this.stopRequested && this.currentTurn) {
+          this.finishTurn(new Error('Codex app-server exited unexpectedly'))
+        }
+      })
+
+      await this.sendRequest('initialize', {
+        clientInfo: { name: 'polycode', version: '0.1.0' },
+        capabilities: { experimentalApi: true },
+      })
+      this.writeMessage({ method: 'initialized' })
+
+      const threadMethod = this.codexThreadId ? 'thread/resume' : 'thread/start'
+      const result = await this.sendRequest(threadMethod, {
+        model: this.options.model,
+        cwd: this.options.workingDir,
+        approvalPolicy: 'never',
+        sandbox: this.options.yoloMode ? 'danger-full-access' : 'workspace-write',
+        ...(this.codexThreadId ? { threadId: this.codexThreadId } : {}),
+      })
+      const record = result && typeof result === 'object' ? result as Record<string, unknown> : {}
+      const thread = record.thread && typeof record.thread === 'object' ? record.thread as Record<string, unknown> : undefined
+      const threadId = (thread?.id as string | undefined) ?? (record.threadId as string | undefined)
+      if (!threadId) {
+        throw new Error(`${threadMethod} did not return a thread id`)
+      }
+      this.codexThreadId = threadId
+      this.options.onSessionId?.(threadId)
+    })()
+
+    try {
+      await this.readyPromise
+    } catch (error) {
+      this.readyPromise = null
+      this.cleanupProcess()
+      throw error
+    }
+  }
+
+  private handleLine(line: string): void {
+    let parsed: JsonRpcRequest | JsonRpcResponse | JsonRpcNotification
+    try {
+      parsed = JSON.parse(line) as JsonRpcRequest | JsonRpcResponse | JsonRpcNotification
+    } catch {
+      return
+    }
+
+    if ('id' in parsed && typeof parsed.id === 'number' && !('method' in parsed)) {
+      this.handleResponse(parsed)
+      return
+    }
+
+    if ('method' in parsed && typeof parsed.method === 'string' && !('id' in parsed)) {
+      const params = parsed.params && typeof parsed.params === 'object'
+        ? parsed.params as Record<string, unknown>
+        : undefined
+      const outputEvents = parseCodexAppServerNotification(parsed.method, params, this.state, (sessionId) => {
+        this.codexThreadId = sessionId
+        this.options.onSessionId?.(sessionId)
+      })
+      for (const event of outputEvents) this.emit(event)
+
+      if (parsed.method === 'turn/started') {
+        const turn = params?.turn as Record<string, unknown> | undefined
+        this.activeTurnId = (turn?.id as string | undefined) ?? this.activeTurnId
+      } else if (parsed.method === 'turn/completed') {
+        const turn = params?.turn as Record<string, unknown> | undefined
+        const status = turn?.status as string | undefined
+        this.activeTurnId = null
+        if (status === 'failed') {
+          const error = turn?.error as Record<string, unknown> | undefined
+          this.outstandingTurnCount = 0
+          this.finishTurn(new Error(String(error?.message ?? 'Codex turn failed')))
+        } else {
+          this.outstandingTurnCount = Math.max(0, this.outstandingTurnCount - 1)
+          if (this.outstandingTurnCount === 0) {
+            this.finishTurn()
+          }
+        }
+      } else if (parsed.method === 'error') {
+        const error = params?.error as Record<string, unknown> | undefined
+        this.outstandingTurnCount = 0
+        this.finishTurn(new Error(String(error?.message ?? 'Codex app-server error')))
+      }
+      return
+    }
+
+    if ('method' in parsed && typeof parsed.method === 'string' && 'id' in parsed && typeof parsed.id === 'number') {
+      // We run Codex in never-approval mode, so reject unexpected server requests.
+      this.writeMessage({
+        id: parsed.id,
+        error: {
+          code: -32601,
+          message: `Unsupported server request: ${parsed.method}`,
+        },
+      })
+    }
+  }
+
+  private handleResponse(response: JsonRpcResponse): void {
+    const pending = this.pending.get(response.id)
+    if (!pending) return
+    clearTimeout(pending.timeout)
+    this.pending.delete(response.id)
+    if (response.error?.message) {
+      pending.reject(new Error(response.error.message))
+      return
+    }
+    pending.resolve(response.result)
+  }
+
+  private async sendRequest(method: string, params: unknown, timeoutMs = 20_000): Promise<unknown> {
+    const id = this.nextRequestId++
+    return await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new Error(`Timed out waiting for ${method}`))
+      }, timeoutMs)
+      this.pending.set(id, { resolve, reject, timeout })
+      this.writeMessage({ id, method, params })
+    })
+  }
+
+  private writeMessage(message: unknown): void {
+    if (!this.child?.stdin.writable) {
+      throw new Error('Cannot write to codex app-server stdin')
+    }
+    this.child.stdin.write(`${JSON.stringify(message)}\n`)
+  }
+
+  private emit(event: OutputEvent): void {
+    this.currentTurn?.onEvent(event)
+  }
+
+  private finishTurn(error?: Error): void {
+    if (!this.currentTurn) return
+    const turn = this.currentTurn
+    this.currentTurn = null
+    this.outstandingTurnCount = 0
+    if (error || this.stopRequested) {
+      this.cleanupProcess()
+    }
+    turn.onDone(this.stopRequested ? undefined : error)
+    this.stopRequested = false
+  }
+
+  private cleanupProcess(): void {
+    for (const pending of this.pending.values()) {
+      clearTimeout(pending.timeout)
+      pending.reject(new Error('Codex app-server stopped'))
+    }
+    this.pending.clear()
+    this.output?.close()
+    this.output = null
+    if (this.child && !this.child.killed) {
+      try {
+        this.child.kill()
+      } catch {
+        // ignore
+      }
+    }
+    this.child = null
+    this.readyPromise = null
+    this.activeTurnId = null
+    this.state = createCodexStreamState()
+  }
+}
+
+export class CodexDriver implements CLIDriver {
+  private readonly fallbackDriver: CodexCliDriver | null
+  private readonly localDriver: CodexAppServerDriver | null
+
+  constructor(private readonly options: DriverOptions) {
     const useFallback = Boolean(options.ssh || options.wsl)
     this.fallbackDriver = useFallback ? new CodexCliDriver(options) : null
-    this.sdkPromise = useFallback ? null : loadCodexSdk()
+    this.localDriver = useFallback ? null : new CodexAppServerDriver(options)
   }
 
   sendMessage(
@@ -518,55 +1030,15 @@ export class CodexDriver implements CLIDriver {
       this.fallbackDriver.sendMessage(content, onEvent, onDone, options)
       return
     }
+    this.localDriver?.sendMessage(content, onEvent, onDone, options)
+  }
 
-    if (!this.sdkPromise) {
-      onDone(new Error('Codex SDK is not available'))
+  injectMessage(content: string, options?: MessageOptions): void {
+    if (this.fallbackDriver) {
+      this.fallbackDriver.injectMessage?.(content, options)
       return
     }
-
-    if (this.running) {
-      console.warn('[CodexDriver] sendMessage called while a turn is already running — ignoring')
-      return
-    }
-
-    this.running = true
-    this.stopRequested = false
-    this.streamState = createCodexStreamState()
-    this.abortController = new AbortController()
-
-    const threadOptions = buildSdkThreadOptions(
-      this.options,
-      options?.yoloMode ?? this.options.yoloMode ?? false
-    )
-
-    void (async () => {
-      try {
-        const sdk = await this.sdkPromise
-        const thread = this.codexThreadId
-          ? sdk.resumeThread(this.codexThreadId, threadOptions)
-          : sdk.startThread(threadOptions)
-        const streamed = await thread.runStreamed(content, { signal: this.abortController?.signal })
-        for await (const event of streamed.events) {
-          if (event.type === 'thread.started' && event.thread_id && event.thread_id !== this.codexThreadId) {
-            this.codexThreadId = event.thread_id
-          }
-          const outputEvents = parseCodexSdkEvent(event, this.streamState, (sessionId) => {
-            this.codexThreadId = sessionId
-            this.options.onSessionId?.(sessionId)
-          })
-          for (const outputEvent of outputEvents) onEvent(outputEvent)
-        }
-        onDone()
-      } catch (error) {
-        const normalized = normalizeRunError(error)
-        const isAbort = normalized.name === 'AbortError' || /aborted|abort/i.test(normalized.message)
-        onDone(this.stopRequested && isAbort ? undefined : normalized)
-      } finally {
-        this.abortController = null
-        this.running = false
-        this.stopRequested = false
-      }
-    })()
+    this.localDriver?.injectMessage?.(content, options)
   }
 
   stop(): void {
@@ -574,19 +1046,15 @@ export class CodexDriver implements CLIDriver {
       this.fallbackDriver.stop()
       return
     }
-
-    if (this.abortController) {
-      this.stopRequested = true
-      this.abortController.abort()
-    }
+    this.localDriver?.stop()
   }
 
   isRunning(): boolean {
-    return this.fallbackDriver ? this.fallbackDriver.isRunning() : this.running
+    return this.fallbackDriver ? this.fallbackDriver.isRunning() : (this.localDriver?.isRunning() ?? false)
   }
 
   getPid(): number | null {
-    return this.fallbackDriver ? this.fallbackDriver.getPid() : null
+    return this.fallbackDriver ? this.fallbackDriver.getPid() : (this.localDriver?.getPid() ?? null)
   }
 
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
@@ -596,9 +1064,4 @@ export class CodexDriver implements CLIDriver {
   answerQuestion(requestId: string, answers: Record<string, unknown>, message?: string): void {
     this.fallbackDriver?.answerQuestion?.(requestId, answers, message)
   }
-}
-
-async function loadCodexSdk(): Promise<CodexSdk> {
-  const mod = await import('@openai/codex-sdk')
-  return new mod.Codex(buildCodexSdkOptions())
 }

@@ -172,11 +172,13 @@ export default function InputBar({ threadId }: Props) {
   const isPlanPending = status === 'plan_pending'
   const isQuestionPending = status === 'question_pending'
   const isPermissionPending = status === 'permission_pending'
+  const supportsLiveInput = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const hasContent = value.trim().length > 0 || attachments.length > 0
   // Can send when idle and has content, location path exists, and CLI is available
   const canSend = !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
   // Can queue only when actively running (not while stopping) and no existing queue
   const canQueue = status === 'running' && !queuedMessage && hasContent && !locationPathMissing && !cliUnavailable
+  const canInject = status === 'running' && supportsLiveInput && hasContent && !locationPathMissing && !cliUnavailable
 
   // Elapsed timer while processing
   useEffect(() => {
@@ -285,7 +287,20 @@ export default function InputBar({ threadId }: Props) {
         finalContent = finalContent ? `${mentions}\n\n${trimmed}` : mentions
       }
 
-      // If processing, queue the message instead of sending
+      // Claude/Codex support live input while the provider is still running.
+      if (canInject) {
+        const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
+        if (activeSessionId) {
+          useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent)
+        } else {
+          appendUserMessage(threadId, finalContent)
+        }
+        await send(threadId, finalContent, { planMode: currentPlanMode })
+        if (currentPlanMode) setPlanMode(threadId, false)
+        return
+      }
+
+      // Providers without live input support still queue the message.
       if (isProcessing) {
         queueMessage(threadId, finalContent, currentPlanMode)
         if (currentPlanMode) setPlanMode(threadId, false)
@@ -778,7 +793,9 @@ export default function InputBar({ threadId }: Props) {
               cliUnavailable
                 ? 'CLI not available — input disabled'
                 : isProcessing
-                  ? (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
+                  ? supportsLiveInput
+                    ? 'Type to send immediately...'
+                    : (queuedMessage ? 'Message already queued...' : 'Type to queue a message...')
                   : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
             }
             disabled={isPlanPending || isQuestionPending || isPermissionPending || cliUnavailable}
@@ -793,8 +810,25 @@ export default function InputBar({ threadId }: Props) {
           {/* Send / Queue / Stop buttons */}
           {isProcessing ? (
             <>
-              {/* Queue button — hidden while stopping */}
-              {!isStopping && (
+              {!isStopping && supportsLiveInput && (
+                <button
+                  onClick={handleSend}
+                  disabled={!canInject}
+                  className="input-send-btn flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 disabled:cursor-not-allowed"
+                  style={{
+                    background: canInject
+                      ? 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)'
+                      : 'var(--color-surface-2)',
+                    boxShadow: canInject ? '0 2px 8px rgba(232, 123, 95, 0.3)' : 'none',
+                    opacity: canInject ? 1 : 0.4,
+                  }}
+                  title="Send message immediately (Enter)"
+                >
+                  <SendIcon className={canInject ? 'text-white' : 'text-gray-500'} />
+                </button>
+              )}
+              {/* Queue button — hidden while stopping or when live input is supported */}
+              {!isStopping && !supportsLiveInput && (
                 <button
                   onClick={handleSend}
                   disabled={!canQueue}

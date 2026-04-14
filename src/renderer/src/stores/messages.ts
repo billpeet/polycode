@@ -1,6 +1,66 @@
 import { create } from 'zustand'
 import { Message, OutputEvent } from '../types/ipc'
 
+function parseMetadata(metadata: string | null): Record<string, unknown> | null {
+  if (!metadata) return null
+  try {
+    return JSON.parse(metadata) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+function appendOrMergeMessage(messages: Message[], incoming: Message, event: OutputEvent): Message[] {
+  const previous = messages[messages.length - 1]
+  if (!previous || previous.role !== incoming.role) {
+    return [...messages, incoming]
+  }
+
+  const previousMetadata = parseMetadata(previous.metadata)
+  const nextMetadata = event.metadata ?? null
+
+  if (event.type === 'text') {
+    const previousType = previousMetadata?.type
+    if (!previousType) {
+      return [
+        ...messages.slice(0, -1),
+        {
+          ...previous,
+          content: previous.content + incoming.content,
+          created_at: incoming.created_at,
+        },
+      ]
+    }
+    return [...messages, incoming]
+  }
+
+  if (event.type === 'tool_result') {
+    const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
+    const nextToolUseId = typeof nextMetadata?.tool_use_id === 'string' ? nextMetadata.tool_use_id : null
+    if (!previousToolUseId || !nextToolUseId || previousToolUseId !== nextToolUseId) {
+      return [...messages, incoming]
+    }
+
+    const previousContent = previous.content
+    const nextContent =
+      incoming.content.startsWith(previousContent)
+        ? incoming.content
+        : previousContent + incoming.content
+
+    return [
+      ...messages.slice(0, -1),
+      {
+        ...previous,
+        content: nextContent,
+        metadata: incoming.metadata,
+        created_at: incoming.created_at,
+      },
+    ]
+  }
+
+  return [...messages, incoming]
+}
+
 interface MessageStore {
   messagesByThread: Record<string, Message[]>
   messagesBySession: Record<string, Message[]>
@@ -49,7 +109,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
     set((s) => ({
       messagesByThread: {
         ...s.messagesByThread,
-        [threadId]: [...(s.messagesByThread[threadId] ?? []), msg]
+        [threadId]: appendOrMergeMessage(s.messagesByThread[threadId] ?? [], msg, event)
       }
     }))
   },
@@ -70,7 +130,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
     set((s) => ({
       messagesBySession: {
         ...s.messagesBySession,
-        [sessionId]: [...(s.messagesBySession[sessionId] ?? []), msg]
+        [sessionId]: appendOrMergeMessage(s.messagesBySession[sessionId] ?? [], msg, event)
       }
     }))
   },

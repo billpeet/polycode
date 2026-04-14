@@ -9,6 +9,7 @@ import TerminalContent from './Terminal'
 import CommandLogsContent from './CommandLogs'
 import Assassin from './Assassin'
 import PlanPane from './PlanPane'
+import PanelErrorBoundary from './PanelErrorBoundary'
 
 type Tab = 'diff' | 'file' | 'terminal' | 'commands' | 'plan'
 
@@ -208,23 +209,35 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
 
       {/* Plan preview */}
       {currentTab === 'plan' && showPlan && (
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <PlanPane threadId={threadId} />
-        </div>
+        <PanelErrorBoundary context={`Plan panel (${threadId})`}>
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <PlanPane threadId={threadId} />
+          </div>
+        </PanelErrorBoundary>
       )}
 
       {/* Diff panel */}
       {currentTab === 'diff' && hasDiff && (
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <DiffPane />
-        </div>
+        <PanelErrorBoundary
+          context={diffView ? `Diff preview (${diffView.filePath})` : 'Diff preview'}
+          onDismiss={() => useFilesStore.getState().clearDiff()}
+        >
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <DiffPane />
+          </div>
+        </PanelErrorBoundary>
       )}
 
       {/* File preview panel */}
       {currentTab === 'file' && hasFile && (
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <FilePane />
-        </div>
+        <PanelErrorBoundary
+          context={`File preview (${selectedFilePath})`}
+          onDismiss={() => useFilesStore.getState().clearSelection()}
+        >
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <FilePane />
+          </div>
+        </PanelErrorBoundary>
       )}
 
       {/* Terminal — kept mounted while open to preserve PTY; hidden behind other tabs via height:0 */}

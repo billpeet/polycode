@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, protocol, net, dialog } from 'electron'
+import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import { autoUpdater } from 'electron-updater'
@@ -14,8 +14,32 @@ import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { getSetting } from './db/queries'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
+import { installAppLogger, writeRendererLog } from './app-logger'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
+
+installAppLogger()
+
+ipcMain.on('log:write', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return
+
+  const candidate = payload as Partial<{
+    source: 'main' | 'renderer'
+    level: 'log' | 'info' | 'warn' | 'error' | 'debug'
+    timestamp: string
+    messages: string[]
+  }>
+
+  if (candidate.source !== 'renderer') return
+  if (!candidate.level || !candidate.timestamp || !Array.isArray(candidate.messages)) return
+
+  writeRendererLog({
+    source: 'renderer',
+    level: candidate.level,
+    timestamp: candidate.timestamp,
+    messages: candidate.messages.map((message) => String(message)),
+  })
+})
 
 // EPIPE errors from network streams (e.g. electron-updater downloading latest.yml)
 // can escape electron-updater's own error handler and surface as uncaught exceptions.

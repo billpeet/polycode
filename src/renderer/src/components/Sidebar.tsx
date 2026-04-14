@@ -261,7 +261,25 @@ export default function Sidebar() {
   async function handleArchiveThread(thread: Thread, projectId: string): Promise<void> {
     await archiveThread(thread.id, projectId)
 
-    const latestThread = (useThreadStore.getState().byProject[projectId] ?? [])
+    const remainingThreads = useThreadStore.getState().byProject[projectId] ?? []
+    const latestThreadInLocation = thread.location_id
+      ? remainingThreads
+        .filter((candidate) => candidate.location_id === thread.location_id)
+        .slice()
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0]
+      : null
+
+    if (latestThreadInLocation) {
+      selectThread(latestThreadInLocation.id)
+      return
+    }
+
+    if (thread.location_id) {
+      await createThread(projectId, 'New thread', thread.location_id)
+      return
+    }
+
+    const latestThread = remainingThreads
       .slice()
       .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0]
 

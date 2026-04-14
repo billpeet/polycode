@@ -82,6 +82,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const pid = useThreadStore((s) => s.pidByThread[threadId] ?? null)
   const rename = useThreadStore((s) => s.rename)
+  const resetThread = useThreadStore((s) => s.reset)
 
   // Look up location for this thread
   const locationId = thread?.location_id ?? null
@@ -539,6 +540,24 @@ export default function ThreadHeader({ threadId }: Props) {
           </svg>
           Logs
         </button>
+        {(status === 'stopping' || status === 'stopped') && (
+          <button
+            onClick={() => void resetThread(threadId)}
+            className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
+            style={{
+              color: '#facc15',
+              background: 'rgba(250, 204, 21, 0.08)',
+              border: '1px solid rgba(250, 204, 21, 0.25)',
+            }}
+            title="Force-reset this thread back to idle"
+          >
+            <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M13 3v4H9" />
+              <path d="M13 7a5 5 0 1 0 1 3" />
+            </svg>
+            Reset
+          </button>
+        )}
       </div>
 
       {importDialogOpen && threadProjectId && thread?.location_id && location?.path && (

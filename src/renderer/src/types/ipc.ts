@@ -33,6 +33,7 @@ export interface WindowApi {
   invoke(channel: 'threads:delete', id: string): Promise<void>
   invoke(channel: 'threads:start', threadId: string): Promise<void>
   invoke(channel: 'threads:stop', threadId: string): Promise<void>
+  invoke(channel: 'threads:reset', threadId: string): Promise<void>
   invoke(channel: 'threads:getPid', threadId: string): Promise<number | null>
   invoke(channel: 'threads:send', threadId: string, content: string, options?: SendOptions): Promise<void>
   invoke(channel: 'threads:approvePlan', threadId: string): Promise<void>
@@ -118,6 +119,7 @@ export interface WindowApi {
   invoke(channel: 'window:close'): Promise<void>
   invoke(channel: 'window:is-maximized'): Promise<boolean>
   invoke(channel: 'app:getVersion'): Promise<string>
+  invoke(channel: 'app:open-logs-folder'): Promise<string>
   invoke(channel: 'app:install-update'): Promise<void>
   invoke(channel: 'commands:list', projectId: string): Promise<ProjectCommand[]>
   invoke(channel: 'commands:create', projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null): Promise<ProjectCommand>

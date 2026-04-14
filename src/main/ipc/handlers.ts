@@ -87,6 +87,7 @@ import {
 } from '../attachments'
 import { getThreadLogs } from '../thread-logger'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
+import { getLogsDirPath } from '../app-logger'
 
 /** Get SSH config from the thread's linked repo location. */
 function getSshConfigForThread(threadId: string): SshConfig | null {
@@ -492,6 +493,13 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
+  ipcMain.handle('threads:reset', (_event, threadId: string) => {
+    sessionManager.reset(threadId)
+    updateThreadStatus(threadId, 'idle')
+    window.webContents.send(`thread:status:${threadId}`, 'idle')
+    window.webContents.send(`thread:pid:${threadId}`, null)
+  })
+
   ipcMain.handle('threads:getPid', (_event, threadId: string) => {
     return sessionManager.get(threadId)?.getPid() ?? null
   })
@@ -508,10 +516,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const sshConfig = getSshConfigForThread(threadId)
     const wslConfig = getWslConfigForThread(threadId)
     const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
-    if (session.isRunning()) {
-      console.warn('[handlers] threads:send while session is running — ignoring for thread', threadId)
-      return
-    }
     session.sendMessage(content, options)
     // Capture git branch on first message (fire-and-forget, doesn't block send)
     const location = getLocationForThread(threadId)
@@ -1184,6 +1188,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const isDev = !packaged && process.env.NODE_ENV !== 'production'
     if (isDev) return 'Local Dev'
     return `v${version}`
+  })
+
+  ipcMain.handle('app:open-logs-folder', () => {
+    return shell.openPath(getLogsDirPath())
   })
 
   // ── Auto-updater ───────────────────────────────────────────────────────────

@@ -180,11 +180,16 @@ export default function App() {
   }, [byProject, expandProject, fetchLocations, fetchPools, selectedProjectId, selectedThreadId, selectProject])
 
   return (
-    <ErrorBoundary fallback={
-      <div className="flex h-full w-full items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-        Something went wrong. Please restart PolyCode.
-      </div>
-    }>
+    <ErrorBoundary
+      onError={(error, componentStack) => {
+        console.error('[renderer] Unhandled React error reached app boundary', error, componentStack)
+      }}
+      fallback={
+        <div className="flex h-full w-full items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
+          Something went wrong. Please restart PolyCode.
+        </div>
+      }
+    >
       <SidebarProvider>
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
         <TitleBar />

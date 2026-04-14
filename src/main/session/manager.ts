@@ -35,6 +35,12 @@ class SessionManager {
     this.sessions.delete(threadId)
   }
 
+  reset(threadId: string): void {
+    const session = this.sessions.get(threadId)
+    session?.forceReset()
+    this.sessions.delete(threadId)
+  }
+
   stopAll(): void {
     for (const session of this.sessions.values()) {
       if (session.isRunning()) {

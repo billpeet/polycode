@@ -48,6 +48,7 @@ export class Session {
   private lastMessageOptions: SendOptions | undefined
   private suppressAssistantTextForPermissionTurn = false
   private stopped = false
+  private abandoned = false
   private shellProcess: ChildProcess | null = null
 
   constructor(threadId: string, workingDir: string, window: BrowserWindow, sshConfig?: SshConfig | null, wslConfig?: WslConfig | null) {
@@ -164,11 +165,22 @@ export class Session {
     if (!driver) return
 
     if (driver.isRunning()) {
-      console.warn('[Session] sendMessage called while driver is already running — ignoring for thread', this.threadId)
+      if (driver.injectMessage) {
+        logThreadEvent(this.threadId, {
+          ts: new Date().toISOString(),
+          type: 'message_injected',
+          content: content.slice(0, 500),
+        })
+        insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId)
+        driver.injectMessage(content, { planMode: options?.planMode, yoloMode: getThreadYoloMode(this.threadId) })
+      } else {
+        console.warn('[Session] sendMessage called while driver is already running — ignoring for thread', this.threadId)
+      }
       return
     }
 
     this.setStatus('running')
+    this.abandoned = false
     this.stopped = false
     this.planPending = false
     this.pendingPlanContent = null
@@ -244,6 +256,41 @@ export class Session {
     // the DB in 'stopping' which startup wouldn't know to handle).
     // The DB and final UI status are both set in handleDone() when the process exits.
     this.window.webContents.send(`thread:status:${this.threadId}`, 'stopping')
+  }
+
+  forceReset(): void {
+    this.abandoned = true
+    this.stopped = false
+    if (this.activeSessionId) {
+      const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
+      for (const msg of cancelled) {
+        this.window.webContents.send(`thread:output:${this.threadId}`, {
+          type: 'tool_result',
+          content: '',
+          metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
+          sessionId: this.activeSessionId,
+        } satisfies OutputEvent)
+      }
+    }
+    if (this.activeSessionId) {
+      const driver = this.drivers.get(this.activeSessionId)
+      driver?.forceStop?.()
+      if (!driver?.forceStop) {
+        driver?.stop()
+      }
+    }
+    if (this.shellProcess) {
+      killProcessTree(this.shellProcess)
+      this.shellProcess = null
+    }
+    this.questionPending = false
+    this.pendingQuestionRequestId = null
+    this.pendingQuestions = []
+    this.planPending = false
+    this.pendingPlanContent = null
+    this.clearPendingPermissions()
+    this.recentToolCalls.clear()
+    this.window.webContents.send(`thread:pid:${this.threadId}`, null)
   }
 
   isRunning(): boolean {
@@ -600,6 +647,7 @@ export class Session {
   }
 
   private handleEvent(event: OutputEvent): void {
+    if (this.abandoned) return
     // Drop all events after stop is requested — the process is winding down
     // and we don't want orphaned output appearing in the UI or DB.
     if (this.stopped) return
@@ -755,6 +803,7 @@ export class Session {
   }
 
   private handleDone(error?: Error): void {
+    if (this.abandoned) return
     logThreadEvent(this.threadId, {
       ts: new Date().toISOString(),
       type: 'done',

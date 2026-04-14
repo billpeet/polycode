@@ -86,6 +86,7 @@ export class ClaudeDriver implements CLIDriver {
   private pendingPermissionDecisions = new Map<string, PendingPermissionDecision>()
   private pendingQuestionDecisions = new Map<string, PendingQuestionDecision>()
   private currentMessageOptions: MessageOptions = {}
+  private queuedTurnCount = 0
 
   constructor(private readonly options: DriverOptions) {
     if (options.initialSessionId) {
@@ -106,6 +107,7 @@ export class ClaudeDriver implements CLIDriver {
 
     this.stopped = false
     this.specialToolIds.clear()
+    this.queuedTurnCount = 0
     this.currentMessageOptions = options ?? {}
     this.currentTurn = { onEvent, onDone }
 
@@ -123,8 +125,32 @@ export class ClaudeDriver implements CLIDriver {
       .catch((error) => this.finishTurn(error instanceof Error ? error : new Error(String(error))))
   }
 
+  injectMessage(content: string, options?: MessageOptions): void {
+    if (!this.currentTurn) {
+      console.warn('[ClaudeDriver] injectMessage called without an active turn')
+      return
+    }
+
+    this.queuedTurnCount += 1
+    this.currentMessageOptions = options ?? {}
+
+    this.ensureQuery()
+      .then(async () => {
+        await this.applyTurnConfiguration()
+        this.promptQueue?.push({
+          type: 'user',
+          message: {
+            role: 'user',
+            content,
+          },
+        })
+      })
+      .catch((error) => this.finishTurn(error instanceof Error ? error : new Error(String(error))))
+  }
+
   stop(): void {
     this.stopped = true
+    this.queuedTurnCount = 0
 
     const pendingError = new Error('Claude turn interrupted')
     for (const pending of this.pendingPermissionDecisions.values()) {
@@ -347,7 +373,13 @@ export class ClaudeDriver implements CLIDriver {
 
       if (message.type === 'result') {
         const error = this.resultError(message)
-        this.finishTurn(error)
+        if (error) {
+          this.finishTurn(error)
+        } else if (this.queuedTurnCount > 0) {
+          this.queuedTurnCount -= 1
+        } else {
+          this.finishTurn()
+        }
       }
     }
   }

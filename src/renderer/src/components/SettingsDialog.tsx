@@ -24,6 +24,17 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
   const backdropClose = useBackdropClose(onClose)
   const [activeTab, setActiveTab] = useState<Tab>('health')
 
+  async function openLogsFolder(): Promise<void> {
+    try {
+      const result = await window.api.invoke('app:open-logs-folder')
+      if (typeof result === 'string' && result.trim()) {
+        throw new Error(result)
+      }
+    } catch (error) {
+      console.error('[settings] Failed to open logs folder', error)
+    }
+  }
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
@@ -67,6 +78,18 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
         <div className="flex-1 flex flex-col min-w-0 p-5 overflow-hidden">
           {/* Close button */}
           <div className="flex justify-end mb-2 flex-shrink-0">
+            <button
+              onClick={() => void openLogsFolder()}
+              className="rounded px-2.5 py-1 text-xs mr-2 transition-colors hover:opacity-90"
+              style={{
+                color: 'var(--color-text)',
+                background: 'var(--color-surface)',
+                border: '1px solid var(--color-border)',
+              }}
+              title="Open the folder containing PolyCode app logs"
+            >
+              Open Logs Folder
+            </button>
             <button
               onClick={onClose}
               className="rounded p-1 text-xs opacity-50 hover:opacity-100 transition-opacity"

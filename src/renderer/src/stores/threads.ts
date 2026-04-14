@@ -53,6 +53,7 @@ interface ThreadStore {
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string) => Promise<void>
   stop: (threadId: string) => Promise<void>
+  reset: (threadId: string) => Promise<void>
   send: (threadId: string, content: string, options?: SendOptions) => Promise<void>
   approvePlan: (threadId: string) => Promise<void>
   rejectPlan: (threadId: string) => Promise<void>
@@ -418,6 +419,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   stop: async (threadId) => {
     await window.api.invoke('threads:stop', threadId)
+  },
+
+  reset: async (threadId) => {
+    set((s) => {
+      const runStartedAtByThread = { ...s.runStartedAtByThread }
+      delete runStartedAtByThread[threadId]
+      return {
+        statusMap: { ...s.statusMap, [threadId]: 'idle' },
+        pidByThread: { ...s.pidByThread, [threadId]: null },
+        runStartedAtByThread,
+      }
+    })
+    await window.api.invoke('threads:reset', threadId)
   },
 
   send: async (threadId, content, options) => {

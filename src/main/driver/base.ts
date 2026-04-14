@@ -1,4 +1,4 @@
-import { ChildProcess } from 'child_process'
+import { ChildProcess, spawn } from 'child_process'
 import * as Sentry from '@sentry/electron/main'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
@@ -110,13 +110,24 @@ export abstract class BaseDriver implements CLIDriver {
       const proc = this.process
       setTimeout(() => {
         try {
-          if (proc.exitCode === null && !proc.killed) {
+          if (shouldForceKillProcess(proc)) {
             console.warn(`[${this.driverName}] Process did not exit after SIGTERM, sending SIGKILL`)
-            proc.kill('SIGKILL')
+            forceKillProcess(proc)
           }
         } catch { /* process already gone */ }
       }, 5000)
     }
+  }
+
+  forceStop(): void {
+    if (!this.process) return
+    const proc = this.process
+    this.process = null
+    this.buffer = ''
+    proc.stdout?.removeAllListeners()
+    proc.stderr?.removeAllListeners()
+    proc.removeAllListeners()
+    forceKillProcess(proc)
   }
 
   isRunning(): boolean {
@@ -147,4 +158,21 @@ export abstract class BaseDriver implements CLIDriver {
       }
     }
   }
+}
+
+function forceKillProcess(proc: ChildProcess): void {
+  if (!shouldForceKillProcess(proc)) return
+  if (process.platform === 'win32' && proc.pid != null) {
+    spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { shell: false })
+    return
+  }
+  try {
+    proc.kill('SIGKILL')
+  } catch {
+    // ignore
+  }
+}
+
+export function shouldForceKillProcess(proc: Pick<ChildProcess, 'exitCode' | 'signalCode'>): boolean {
+  return proc.exitCode === null && proc.signalCode === null
 }
