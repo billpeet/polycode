@@ -97,7 +97,12 @@ export default function App() {
         if (isInputField) return
         e.preventDefault()
         if (selectedProjectId) {
-          useThreadStore.getState().create(selectedProjectId, 'New thread')
+          const locations = useLocationStore.getState().byProject[selectedProjectId] ?? []
+          const activeLocations = locations.filter((location) => !location.pool_id || location.checked_out)
+          const locationId = activeLocations[0]?.id
+          if (locationId) {
+            useThreadStore.getState().create(selectedProjectId, 'New thread', locationId)
+          }
         }
       } else if (e.key === 'w' || e.key === 'W') {
         if (isInputField) return

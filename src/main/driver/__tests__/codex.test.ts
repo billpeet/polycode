@@ -7,6 +7,7 @@ import {
   buildCodexArgs,
   createCodexStreamState,
   parseBashCommand,
+  parseCodexAppServerNotification,
   parseCodexSdkEvent,
   winQuote,
 } from '../codex'
@@ -194,6 +195,42 @@ describe('parseCodexSdkEvent', () => {
       { type: 'turn.failed', error: { message: 'context limit exceeded' } },
       state
     )).toEqual([{ type: 'error', content: 'context limit exceeded' } satisfies OutputEvent])
+  })
+})
+
+describe('parseCodexAppServerNotification', () => {
+  let state: ReturnType<typeof createCodexStreamState>
+
+  beforeEach(() => {
+    state = createCodexStreamState()
+  })
+
+  it('emits usage but not a duplicate error for failed turn/completed notifications', () => {
+    expect(parseCodexAppServerNotification(
+      'turn/completed',
+      {
+        turn: {
+          status: 'failed',
+          error: { message: 'tool router failed' },
+          usage: { inputTokens: 12, outputTokens: 4 },
+        },
+      },
+      state,
+    )).toEqual([
+      {
+        type: 'usage',
+        content: '',
+        metadata: { input_tokens: 12, output_tokens: 4 },
+      } satisfies OutputEvent,
+    ])
+  })
+
+  it('does not surface protocol error notifications as chat error events', () => {
+    expect(parseCodexAppServerNotification(
+      'error',
+      { error: { message: 'internal app-server error' } },
+      state,
+    )).toEqual([])
   })
 })
 

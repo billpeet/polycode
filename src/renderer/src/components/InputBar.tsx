@@ -107,6 +107,7 @@ export default function InputBar({ threadId }: Props) {
   const project = projects.find((p) => p.id === threadProjectId)
   const projectThreads = useThreadStore((s) => threadProjectId ? (s.byProject[threadProjectId] ?? EMPTY_THREADS) : EMPTY_THREADS)
   const currentThread = projectThreads.find((t) => t.id === threadId)
+  const isPendingThread = !!currentThread?.is_pending
   const projectLocations = useLocationStore((s) => threadProjectId ? (s.byProject[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
   const location = currentThread?.location_id ? projectLocations.find((l) => l.id === currentThread.location_id) : null
   const addToast = useToastStore((s) => s.add)
@@ -115,6 +116,7 @@ export default function InputBar({ threadId }: Props) {
 
   // Check if the thread's local location path exists
   useEffect(() => {
+    if (isPendingThread) return
     if (!location || location.connection_type !== 'local') {
       setLocationPathMissing(false)
       return
@@ -122,7 +124,7 @@ export default function InputBar({ threadId }: Props) {
     window.api.invoke('locations:pathExists', location.path).then((exists) => {
       setLocationPathMissing(!exists)
     }).catch(() => {})
-  }, [location])
+  }, [location, isPendingThread])
 
   const cliHealth = useCliHealthStore((s) => s.healthByThread[threadId])
   const cliUnavailable = cliHealth?.status === 'unavailable' || cliHealth?.status === 'error'
@@ -137,14 +139,19 @@ export default function InputBar({ threadId }: Props) {
   const isLocalLocation = location?.connection_type === 'local'
 
   useEffect(() => {
+    if (isPendingThread) return
     if (!isLocalLocation) return
     window.api.invoke('wsl:list-distros').then(setAvailableDistros)
-  }, [isLocalLocation])
+  }, [isLocalLocation, isPendingThread])
 
   // Run a CLI health check whenever the effective provider/connection configuration changes
   const checkCliHealth = useCliHealthStore((s) => s.check)
   const clearCliHealth = useCliHealthStore((s) => s.clear)
   useEffect(() => {
+    if (isPendingThread) {
+      clearCliHealth(threadId)
+      return
+    }
     if (!currentThread || !location) {
       clearCliHealth(threadId)
       return
@@ -159,7 +166,7 @@ export default function InputBar({ threadId }: Props) {
         : null
     checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentThread?.provider, currentThread?.use_wsl, currentThread?.wsl_distro, location?.connection_type, location?.id, threadId])
+  }, [currentThread?.provider, currentThread?.use_wsl, currentThread?.wsl_distro, location?.connection_type, location?.id, threadId, isPendingThread, clearCliHealth, checkCliHealth])
 
   const youtrackServers = useYouTrackStore((s) => s.servers)
   const slashCommandsByScope = useSlashCommandStore((s) => s.commandsByScope)
@@ -175,10 +182,10 @@ export default function InputBar({ threadId }: Props) {
   const supportsLiveInput = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const hasContent = value.trim().length > 0 || attachments.length > 0
   // Can send when idle and has content, location path exists, and CLI is available
-  const canSend = !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
+  const canSend = !isPendingThread && !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
   // Can queue only when actively running (not while stopping) and no existing queue
-  const canQueue = status === 'running' && !queuedMessage && hasContent && !locationPathMissing && !cliUnavailable
-  const canInject = status === 'running' && supportsLiveInput && hasContent && !locationPathMissing && !cliUnavailable
+  const canQueue = !isPendingThread && status === 'running' && !queuedMessage && hasContent && !locationPathMissing && !cliUnavailable
+  const canInject = !isPendingThread && status === 'running' && supportsLiveInput && hasContent && !locationPathMissing && !cliUnavailable
 
   // Elapsed timer while processing
   useEffect(() => {
@@ -245,7 +252,7 @@ export default function InputBar({ threadId }: Props) {
 
   async function handleSend(): Promise<void> {
     // Guard against concurrent sends (e.g. rapid Enter presses before React re-renders)
-    if (sendingRef.current) return
+    if (sendingRef.current || isPendingThread) return
 
     const trimmed = value.trim()
     if ((!trimmed && attachments.length === 0) || !project) return
@@ -790,7 +797,9 @@ export default function InputBar({ threadId }: Props) {
             onBlur={() => setIsFocused(false)}
             rows={1}
             placeholder={
-              cliUnavailable
+              isPendingThread
+                ? 'Creating thread... you can type while it loads'
+                : cliUnavailable
                 ? 'CLI not available — input disabled'
                 : isProcessing
                   ? supportsLiveInput

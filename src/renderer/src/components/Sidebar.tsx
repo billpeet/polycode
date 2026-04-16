@@ -259,9 +259,8 @@ export default function Sidebar() {
   }
 
   async function handleArchiveThread(thread: Thread, projectId: string): Promise<void> {
-    await archiveThread(thread.id, projectId)
-
-    const remainingThreads = useThreadStore.getState().byProject[projectId] ?? []
+    const currentThreads = useThreadStore.getState().byProject[projectId] ?? []
+    const remainingThreads = currentThreads.filter((candidate) => candidate.id !== thread.id)
     const latestThreadInLocation = thread.location_id
       ? remainingThreads
         .filter((candidate) => candidate.location_id === thread.location_id)
@@ -271,38 +270,35 @@ export default function Sidebar() {
 
     if (latestThreadInLocation) {
       selectThread(latestThreadInLocation.id)
-      return
-    }
-
-    if (thread.location_id) {
-      await createThread(projectId, 'New thread', thread.location_id)
-      return
-    }
-
-    const latestThread = remainingThreads
-      .slice()
-      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0]
-
-    if (latestThread) {
-      selectThread(latestThread.id)
-      return
-    }
-
-    const loadedLocations = locationsByProject[projectId] ?? []
-    const loadedActiveLocations = loadedLocations.filter((location) => !location.pool_id || location.checked_out)
-    let locationId = loadedActiveLocations[0]?.id ?? null
-
-    if (!locationId) {
-      const fetchedLocations = await window.api.invoke('locations:list', projectId) as RepoLocation[]
-      const fetchedActiveLocations = fetchedLocations.filter((location) => !location.pool_id || location.checked_out)
-      locationId = fetchedActiveLocations[0]?.id ?? null
-    }
-
-    if (locationId) {
-      await createThread(projectId, 'New thread', locationId)
+    } else if (thread.location_id) {
+      void createThread(projectId, 'New thread', thread.location_id)
     } else {
-      selectThread(null)
+      const latestThread = remainingThreads
+        .slice()
+        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0]
+
+      if (latestThread) {
+        selectThread(latestThread.id)
+      } else {
+        const loadedLocations = locationsByProject[projectId] ?? []
+        const loadedActiveLocations = loadedLocations.filter((location) => !location.pool_id || location.checked_out)
+        let locationId = loadedActiveLocations[0]?.id ?? null
+
+        if (!locationId) {
+          const fetchedLocations = await window.api.invoke('locations:list', projectId) as RepoLocation[]
+          const fetchedActiveLocations = fetchedLocations.filter((location) => !location.pool_id || location.checked_out)
+          locationId = fetchedActiveLocations[0]?.id ?? null
+        }
+
+        if (locationId) {
+          void createThread(projectId, 'New thread', locationId)
+        } else {
+          selectThread(null)
+        }
+      }
     }
+
+    await archiveThread(thread.id, projectId)
   }
 
   async function handleUnarchiveThread(thread: Thread, projectId: string): Promise<void> {

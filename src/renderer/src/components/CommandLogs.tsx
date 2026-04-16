@@ -44,15 +44,17 @@ function StatusDot({ status }: { status: CommandStatus }) {
 
 // ─── Write log lines to xterm ─────────────────────────────────────────────────
 
-function writeLogLinesToXterm(term: XTerm, lines: CommandLogLine[]) {
+function buildXtermChunk(lines: CommandLogLine[]): string {
+  let chunk = ''
   for (const line of lines) {
     if (line.stream === 'stderr') {
       // Wrap stderr lines in red if they don't already contain ANSI color codes
-      term.write(`\x1b[31m${line.text}\x1b[0m\r\n`)
+      chunk += `\x1b[31m${line.text}\x1b[0m\r\n`
     } else {
-      term.write(`${line.text}\r\n`)
+      chunk += `${line.text}\r\n`
     }
   }
+  return chunk
 }
 
 // ─── Single command log panel ─────────────────────────────────────────────────
@@ -89,6 +91,24 @@ function CommandLogPanel({
   const fitAddonRef = useRef<FitAddon | null>(null)
   const searchAddonRef = useRef<SearchAddon | null>(null)
   const initializedRef = useRef(false)
+  const pendingOutputRef = useRef('')
+  const flushFrameRef = useRef<number | null>(null)
+
+  const flushPendingOutput = useCallback(() => {
+    flushFrameRef.current = null
+    const term = xtermRef.current
+    const chunk = pendingOutputRef.current
+    if (!term || chunk.length === 0) return
+    pendingOutputRef.current = ''
+    term.write(chunk)
+  }, [])
+
+  const queueLogLines = useCallback((lines: CommandLogLine[]) => {
+    if (lines.length === 0) return
+    pendingOutputRef.current += buildXtermChunk(lines)
+    if (flushFrameRef.current !== null) return
+    flushFrameRef.current = requestAnimationFrame(flushPendingOutput)
+  }, [flushPendingOutput])
 
   const toggleSearch = useCallback(() => {
     setSearchOpen((prev) => {
@@ -209,12 +229,17 @@ function CommandLogPanel({
     // Load existing logs from backend
     window.api.invoke('commands:getLogs', commandId, locationId).then((logs: CommandLogLine[]) => {
       if (logs.length > 0) {
-        writeLogLinesToXterm(term, logs)
+        term.write(buildXtermChunk(logs))
       }
       initializedRef.current = true
     })
 
     return () => {
+      if (flushFrameRef.current !== null) {
+        cancelAnimationFrame(flushFrameRef.current)
+        flushFrameRef.current = null
+      }
+      pendingOutputRef.current = ''
       xtermRef.current = null
       fitAddonRef.current = null
       searchAddonRef.current = null
@@ -232,10 +257,10 @@ function CommandLogPanel({
       const lines: CommandLogLine[] = Array.isArray(payload)
         ? payload as CommandLogLine[]
         : [payload as CommandLogLine]
-      writeLogLinesToXterm(term, lines)
+      queueLogLines(lines)
     })
     return unsub
-  }, [instanceKey])
+  }, [instanceKey, queueLogLines])
 
   // Clear terminal on restart (status transitions to 'running' after 'stopping')
   const prevStatusRef = useRef(status)

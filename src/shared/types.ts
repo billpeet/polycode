@@ -107,6 +107,8 @@ export interface Thread {
   project_id: string
   location_id: string | null
   name: string
+  /** Renderer-only flag for a temporary thread placeholder during optimistic creation. */
+  is_pending?: boolean
   provider: string
   model: string
   status: ThreadStatus

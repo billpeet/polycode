@@ -79,6 +79,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const thread = useThreadStore((s) =>
     threadProjectId ? s.byProject[threadProjectId]?.find((t) => t.id === threadId) : undefined
   )
+  const isPendingThread = !!thread?.is_pending
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const pid = useThreadStore((s) => s.pidByThread[threadId] ?? null)
   const rename = useThreadStore((s) => s.rename)
@@ -96,10 +97,11 @@ export default function ThreadHeader({ threadId }: Props) {
   // Ensure locations are fetched for the current project
   const fetchLocations = useLocationStore((s) => s.fetch)
   useEffect(() => {
+    if (isPendingThread) return
     if (threadProjectId && locationId && !location) {
       fetchLocations(threadProjectId)
     }
-  }, [threadProjectId, locationId, location, fetchLocations])
+  }, [threadProjectId, locationId, location, fetchLocations, isPendingThread])
 
 
   const usage = useThreadStore((s) => s.usageByThread[threadId])
@@ -153,21 +155,23 @@ export default function ThreadHeader({ threadId }: Props) {
 
   // Poll git status for the thread's location
   useEffect(() => {
+    if (isPendingThread) return
     if (!locationPath) return
     fetchGit(locationPath)
     const lp = locationPath
     const interval = setInterval(() => fetchGit(lp), 10_000)
     return () => clearInterval(interval)
-  }, [locationPath, fetchGit])
+  }, [locationPath, fetchGit, isPendingThread])
 
   // Periodically fetch from remotes so ahead/behind indicators stay current.
   useEffect(() => {
+    if (isPendingThread) return
     if (!locationPath) return
     const lp = locationPath
     void refreshRemoteGit(lp)
     const interval = setInterval(() => { void refreshRemoteGit(lp) }, 60_000)
     return () => clearInterval(interval)
-  }, [locationPath, refreshRemoteGit])
+  }, [locationPath, refreshRemoteGit, isPendingThread])
 
   const statusColor =
     status === 'running'
@@ -247,10 +251,10 @@ export default function ThreadHeader({ threadId }: Props) {
           />
         ) : (
           <button
-            onClick={startEditing}
+            onClick={isPendingThread ? undefined : startEditing}
             className="text-sm font-medium truncate text-left hover:opacity-70 transition-opacity"
-            style={{ color: 'var(--color-text)' }}
-            title="Click to rename"
+            style={{ color: 'var(--color-text)', cursor: isPendingThread ? 'default' : 'pointer' }}
+            title={isPendingThread ? 'Creating thread…' : 'Click to rename'}
           >
             {thread?.name ?? 'New thread'}
           </button>
@@ -279,7 +283,7 @@ export default function ThreadHeader({ threadId }: Props) {
         )}
 
         {/* Location quick-actions */}
-        {locationPath && (
+        {locationPath && !isPendingThread && (
           <span className="flex items-center gap-0.5 flex-shrink-0">
             <button
               onClick={() => window.api.invoke('shell:copyPath', locationPath)}
@@ -507,7 +511,7 @@ export default function ThreadHeader({ threadId }: Props) {
         )}
 
         {/* Import from CLI history — only for new threads with a location */}
-        {!thread?.has_messages && location && threadProjectId && thread?.location_id && (
+        {!isPendingThread && !thread?.has_messages && location && threadProjectId && thread?.location_id && (
           <button
             onClick={() => setImportDialogOpen(true)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
@@ -527,20 +531,22 @@ export default function ThreadHeader({ threadId }: Props) {
         )}
         <button
           onClick={() => setLogsOpen(true)}
+          disabled={isPendingThread}
           className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
           style={{
             color: 'var(--color-text-muted)',
             background: 'transparent',
             border: '1px solid var(--color-border)',
+            opacity: isPendingThread ? 0.4 : 1,
           }}
-          title="View thread logs"
+          title={isPendingThread ? 'Logs are available after thread creation completes' : 'View thread logs'}
         >
           <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
             <path d="M2 4h12M2 8h8M2 12h5" />
           </svg>
           Logs
         </button>
-        {(status === 'stopping' || status === 'stopped') && (
+        {!isPendingThread && (status === 'stopping' || status === 'stopped') && (
           <button
             onClick={() => void resetThread(threadId)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"

@@ -3,6 +3,18 @@ import { Thread, ThreadStatus, SendOptions, Question, PermissionRequest, TokenUs
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 
+function makeOptimisticThreadId(): string {
+  return `pending-thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+}
+
+function replaceThreadInList(threads: Thread[], threadId: string, nextThread: Thread): Thread[] {
+  return threads.map((thread) => (thread.id === threadId ? nextThread : thread))
+}
+
+function removeThreadFromList(threads: Thread[], threadId: string): Thread[] {
+  return threads.filter((thread) => thread.id !== threadId)
+}
+
 export interface QueuedMessage {
   content: string
   planMode: boolean
@@ -32,6 +44,8 @@ interface ThreadStore {
   runStartedAtByThread: Record<string, number>
   /** OS PID of the running process, keyed by thread ID (null when not running) */
   pidByThread: Record<string, number | null>
+  /** temporary thread ID currently being created per location */
+  pendingThreadIdByLocation: Record<string, string | undefined>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string, page?: number) => Promise<void>
   create: (projectId: string, name: string, locationId: string) => Promise<void>
@@ -86,6 +100,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   usageByThread: {},
   runStartedAtByThread: {},
   pidByThread: {},
+  pendingThreadIdByLocation: {},
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -129,42 +144,183 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   create: async (projectId, name, locationId) => {
+    const existingPendingId = get().pendingThreadIdByLocation[locationId]
+    if (existingPendingId) {
+      set({ selectedThreadId: existingPendingId })
+      return
+    }
+
     const projectThreads = get().byProject[projectId] ?? []
+    const previousSelectedThreadId = get().selectedThreadId
     const selectedThread = projectThreads.find((t) => t.id === get().selectedThreadId)
     const sourceThread =
       (selectedThread && selectedThread.location_id === locationId) ? selectedThread
         : projectThreads.find((t) => t.location_id === locationId) ?? null
 
-    let thread = await window.api.invoke('threads:create', projectId, name, locationId)
-
-    // Carry over per-thread WSL override for this location to new threads.
-    if (
-      sourceThread &&
-      (
-        thread.use_wsl !== sourceThread.use_wsl ||
-        thread.wsl_distro !== sourceThread.wsl_distro ||
-        thread.yolo_mode !== sourceThread.yolo_mode
-      )
-    ) {
-      await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
-      await window.api.invoke('threads:setYolo', thread.id, sourceThread.yolo_mode)
-      thread = {
-        ...thread,
-        use_wsl: sourceThread.use_wsl,
-        wsl_distro: sourceThread.wsl_distro,
-        yolo_mode: sourceThread.yolo_mode,
-      }
+    const optimisticId = makeOptimisticThreadId()
+    const now = new Date().toISOString()
+    const optimisticThread: Thread = {
+      id: optimisticId,
+      project_id: projectId,
+      location_id: locationId,
+      name,
+      is_pending: true,
+      provider: sourceThread?.provider ?? 'claude-code',
+      model: sourceThread?.model ?? 'claude-opus-4-5',
+      status: 'idle',
+      archived: false,
+      input_tokens: 0,
+      output_tokens: 0,
+      context_window: 0,
+      unread: false,
+      has_messages: false,
+      yolo_mode: sourceThread?.yolo_mode ?? false,
+      use_wsl: sourceThread?.use_wsl ?? false,
+      wsl_distro: sourceThread?.wsl_distro ?? null,
+      git_branch: null,
+      created_at: now,
+      updated_at: now,
     }
 
     set((s) => ({
       byProject: {
         ...s.byProject,
-        [projectId]: [thread, ...(s.byProject[projectId] ?? [])]
+        [projectId]: [optimisticThread, ...(s.byProject[projectId] ?? [])]
       },
-      statusMap: { ...s.statusMap, [thread.id]: 'idle' },
-      unreadByThread: { ...s.unreadByThread, [thread.id]: false },
-      selectedThreadId: thread.id
+      statusMap: { ...s.statusMap, [optimisticId]: 'idle' },
+      unreadByThread: { ...s.unreadByThread, [optimisticId]: false },
+      pendingThreadIdByLocation: { ...s.pendingThreadIdByLocation, [locationId]: optimisticId },
+      selectedThreadId: optimisticId,
     }))
+
+    try {
+      let thread = await window.api.invoke('threads:create', projectId, name, locationId)
+
+      // Carry over per-thread WSL override for this location to new threads.
+      if (
+        sourceThread &&
+        (
+          thread.use_wsl !== sourceThread.use_wsl ||
+          thread.wsl_distro !== sourceThread.wsl_distro ||
+          thread.yolo_mode !== sourceThread.yolo_mode
+        )
+      ) {
+        await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
+        await window.api.invoke('threads:setYolo', thread.id, sourceThread.yolo_mode)
+        thread = {
+          ...thread,
+          use_wsl: sourceThread.use_wsl,
+          wsl_distro: sourceThread.wsl_distro,
+          yolo_mode: sourceThread.yolo_mode,
+        }
+      }
+
+      set((s) => {
+        const draft = s.draftByThread[optimisticId]
+        const planMode = s.planModeByThread[optimisticId]
+        const queuedMessage = s.queuedMessageByThread[optimisticId]
+        const usage = s.usageByThread[optimisticId]
+        const runStartedAt = s.runStartedAtByThread[optimisticId]
+        const pid = s.pidByThread[optimisticId]
+
+        const nextDraftByThread = { ...s.draftByThread }
+        if (draft !== undefined) nextDraftByThread[thread.id] = draft
+        delete nextDraftByThread[optimisticId]
+
+        const nextPlanModeByThread = { ...s.planModeByThread }
+        if (planMode !== undefined) nextPlanModeByThread[thread.id] = planMode
+        delete nextPlanModeByThread[optimisticId]
+
+        const nextQueuedByThread = { ...s.queuedMessageByThread }
+        if (queuedMessage !== undefined) nextQueuedByThread[thread.id] = queuedMessage
+        delete nextQueuedByThread[optimisticId]
+
+        const nextUsageByThread = { ...s.usageByThread }
+        if (usage !== undefined) nextUsageByThread[thread.id] = usage
+        delete nextUsageByThread[optimisticId]
+
+        const nextRunStartedAtByThread = { ...s.runStartedAtByThread }
+        if (runStartedAt !== undefined) nextRunStartedAtByThread[thread.id] = runStartedAt
+        delete nextRunStartedAtByThread[optimisticId]
+
+        const nextPidByThread = { ...s.pidByThread }
+        if (pid !== undefined) nextPidByThread[thread.id] = pid
+        delete nextPidByThread[optimisticId]
+
+        const nextStatusMap = { ...s.statusMap, [thread.id]: 'idle' }
+        delete nextStatusMap[optimisticId]
+
+        const nextUnreadByThread = { ...s.unreadByThread, [thread.id]: false }
+        delete nextUnreadByThread[optimisticId]
+
+        const nextPendingThreadIdByLocation = { ...s.pendingThreadIdByLocation }
+        delete nextPendingThreadIdByLocation[locationId]
+
+        return {
+          byProject: {
+            ...s.byProject,
+            [projectId]: replaceThreadInList(s.byProject[projectId] ?? [], optimisticId, thread)
+          },
+          statusMap: nextStatusMap,
+          unreadByThread: nextUnreadByThread,
+          pendingThreadIdByLocation: nextPendingThreadIdByLocation,
+          draftByThread: nextDraftByThread,
+          planModeByThread: nextPlanModeByThread,
+          queuedMessageByThread: nextQueuedByThread,
+          usageByThread: nextUsageByThread,
+          runStartedAtByThread: nextRunStartedAtByThread,
+          pidByThread: nextPidByThread,
+          selectedThreadId: s.selectedThreadId === optimisticId ? thread.id : s.selectedThreadId,
+        }
+      })
+    } catch (error) {
+      set((s) => {
+        const nextPendingThreadIdByLocation = { ...s.pendingThreadIdByLocation }
+        delete nextPendingThreadIdByLocation[locationId]
+
+        const nextStatusMap = { ...s.statusMap }
+        delete nextStatusMap[optimisticId]
+
+        const nextUnreadByThread = { ...s.unreadByThread }
+        delete nextUnreadByThread[optimisticId]
+
+        const nextDraftByThread = { ...s.draftByThread }
+        delete nextDraftByThread[optimisticId]
+
+        const nextPlanModeByThread = { ...s.planModeByThread }
+        delete nextPlanModeByThread[optimisticId]
+
+        const nextQueuedByThread = { ...s.queuedMessageByThread }
+        delete nextQueuedByThread[optimisticId]
+
+        const nextUsageByThread = { ...s.usageByThread }
+        delete nextUsageByThread[optimisticId]
+
+        const nextRunStartedAtByThread = { ...s.runStartedAtByThread }
+        delete nextRunStartedAtByThread[optimisticId]
+
+        const nextPidByThread = { ...s.pidByThread }
+        delete nextPidByThread[optimisticId]
+
+        return {
+          byProject: {
+            ...s.byProject,
+            [projectId]: removeThreadFromList(s.byProject[projectId] ?? [], optimisticId)
+          },
+          statusMap: nextStatusMap,
+          unreadByThread: nextUnreadByThread,
+          pendingThreadIdByLocation: nextPendingThreadIdByLocation,
+          draftByThread: nextDraftByThread,
+          planModeByThread: nextPlanModeByThread,
+          queuedMessageByThread: nextQueuedByThread,
+          usageByThread: nextUsageByThread,
+          runStartedAtByThread: nextRunStartedAtByThread,
+          pidByThread: nextPidByThread,
+          selectedThreadId: s.selectedThreadId === optimisticId ? previousSelectedThreadId : s.selectedThreadId,
+        }
+      })
+      throw error
+    }
   },
 
   remove: async (id, projectId) => {
@@ -203,11 +359,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   archive: async (id, projectId) => {
+    const snapshot = get()
     const wasArchivedExpanded = get().expandedArchivedProjectId === projectId
     const currentArchivedPage = get().archivedPageByProject[projectId] ?? 0
-    const result = await window.api.invoke('threads:archive', id)
     set((s) => {
       const thread = (s.byProject[projectId] ?? []).find((t) => t.id === id)
+      if (!thread) return s
       const updatedStatus = { ...s.statusMap }
       delete updatedStatus[id]
       const updatedUnread = { ...s.unreadByThread }
@@ -220,19 +377,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedRunStartedAt[id]
       const updatedPid = { ...s.pidByThread }
       delete updatedPid[id]
-      const withoutThread = (s.byProject[projectId] ?? []).filter((t) => t.id !== id)
-      if (result === 'deleted') {
-        return {
-          byProject: { ...s.byProject, [projectId]: withoutThread },
-          selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
-          statusMap: updatedStatus,
-          unreadByThread: updatedUnread,
-          queuedMessageByThread: updatedQueue,
-          planModeByThread: updatedPlanMode,
-          runStartedAtByThread: updatedRunStartedAt,
-          pidByThread: updatedPid,
-        }
-      }
+      const withoutThread = removeThreadFromList(s.byProject[projectId] ?? [], id)
       const prevCount = s.archivedCountByProject[projectId] ?? 0
       return {
         byProject: { ...s.byProject, [projectId]: withoutThread },
@@ -246,8 +391,35 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         pidByThread: updatedPid,
       }
     })
-    if (result === 'archived' && wasArchivedExpanded) {
-      await get().setArchivedPage(projectId, currentArchivedPage)
+
+    try {
+      const result = await window.api.invoke('threads:archive', id)
+      if (result === 'deleted') {
+        set((s) => {
+          const prevCount = s.archivedCountByProject[projectId] ?? 0
+          return {
+            archivedCountByProject: {
+              ...s.archivedCountByProject,
+              [projectId]: Math.max(0, prevCount - 1)
+            }
+          }
+        })
+      } else if (wasArchivedExpanded) {
+        await get().setArchivedPage(projectId, currentArchivedPage)
+      }
+    } catch (error) {
+      set({
+        byProject: snapshot.byProject,
+        archivedCountByProject: snapshot.archivedCountByProject,
+        selectedThreadId: snapshot.selectedThreadId,
+        statusMap: snapshot.statusMap,
+        unreadByThread: snapshot.unreadByThread,
+        queuedMessageByThread: snapshot.queuedMessageByThread,
+        planModeByThread: snapshot.planModeByThread,
+        runStartedAtByThread: snapshot.runStartedAtByThread,
+        pidByThread: snapshot.pidByThread,
+      })
+      throw error
     }
   },
 

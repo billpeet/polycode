@@ -364,7 +364,7 @@ function normalizeAppServerItem(raw: Record<string, unknown>): ThreadItem | null
   }
 }
 
-function parseCodexAppServerNotification(
+export function parseCodexAppServerNotification(
   method: string,
   params: Record<string, unknown> | undefined,
   state: CodexStreamState,
@@ -462,17 +462,10 @@ function parseCodexAppServerNotification(
           },
         })
       }
-      if ((turn?.status as string | undefined) === 'failed') {
-        const error = turn?.error as Record<string, unknown> | undefined
-        events.push({ type: 'error', content: String(error?.message ?? 'Unknown Codex error') })
-      }
       break
     }
-    case 'error': {
-      const error = params?.error as Record<string, unknown> | undefined
-      events.push({ type: 'error', content: String(error?.message ?? 'Unknown Codex error') })
+    case 'error':
       break
-    }
   }
 
   return events
@@ -838,7 +831,10 @@ class CodexAppServerDriver implements CLIDriver {
       this.child.stderr.on('data', (chunk: Buffer) => {
         const message = chunk.toString('utf8').trim()
         if (message) {
-          this.emit({ type: 'error', content: message })
+          // Codex app-server writes internal diagnostics to stderr. Surfacing
+          // those as chat messages is noisy, and tool failures are already
+          // represented by command_execution/tool_result events.
+          console.warn('[CodexAppServerDriver][stderr]', message)
         }
       })
       this.child.on('error', (error) => this.finishTurn(error))

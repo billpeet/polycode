@@ -1,4 +1,4 @@
-import { spawn, exec } from 'child_process'
+import { spawn, exec, execFile } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -88,6 +88,30 @@ import {
 import { getThreadLogs } from '../thread-logger'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
+
+const MAX_EXEC_OUTPUT = 1024 * 1024
+
+function runExecFile(cmd: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      cmd,
+      args,
+      { encoding: 'utf8', windowsHide: true, maxBuffer: MAX_EXEC_OUTPUT },
+      (error, stdout) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve(stdout)
+      },
+    )
+  })
+}
+
+function getPowerShellExe(): string {
+  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+}
 
 /** Get SSH config from the thread's linked repo location. */
 function getSshConfigForThread(threadId: string): SshConfig | null {
@@ -1112,19 +1136,23 @@ export function registerIpcHandlers(window: BrowserWindow): void {
         return
       }
       if (process.platform === 'win32') {
-        exec('netstat -ano', (err, stdout) => {
-          if (err) return reject(new Error(`netstat failed: ${err.message}`))
-          const pids = new Set<number>()
-          for (const line of stdout.split('\n')) {
-            // Match lines with :<port> in the local address column
-            const match = line.match(new RegExp(`:${port}\\s+(\\S+)\\s+(\\S+)\\s+(\\S+)\\s+(\\d+)`))
-            if (match) {
-              const pid = parseInt(match[4], 10)
-              if (pid > 0) pids.add(pid)
-            }
-          }
-          resolve(Array.from(pids))
-        })
+        const script = `
+$port = ${port}
+$tcp = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
+$udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
+@($tcp + $udp) | Where-Object { $_ -gt 0 } | Sort-Object -Unique
+`.trim()
+        runExecFile(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
+          .then((stdout) => {
+            const pids = stdout
+              .split(/\r?\n/)
+              .map((line) => parseInt(line.trim(), 10))
+              .filter((pid) => pid > 0)
+            resolve(Array.from(new Set(pids)))
+          })
+          .catch((err: unknown) => {
+            reject(new Error(`port lookup failed: ${err instanceof Error ? err.message : String(err)}`))
+          })
       } else {
         exec(`lsof -ti:${port}`, (err, stdout) => {
           if (err) return resolve([]) // lsof returns error when no match

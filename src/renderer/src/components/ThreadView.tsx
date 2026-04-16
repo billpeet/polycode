@@ -67,16 +67,21 @@ export default function ThreadView({ threadId }: Props) {
   const fetchSessions = useSessionStore((s) => s.fetch)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const activeSessionId = useSessionStore((s) => s.activeSessionByThread[threadId])
+  const isPendingThread = useThreadStore((s) =>
+    Object.values(s.byProject).some((threads) => (threads ?? []).some((thread) => thread.id === threadId && thread.is_pending))
+  )
 
   const cleanupRef = useRef<Array<() => void>>([])
 
   // Fetch sessions when thread changes
   useEffect(() => {
+    if (isPendingThread) return
     fetchSessions(threadId)
-  }, [threadId, fetchSessions])
+  }, [threadId, fetchSessions, isPendingThread])
 
   // Fetch messages when active session changes, and sync todos from persisted messages
   useEffect(() => {
+    if (isPendingThread) return
     const doFetch = async () => {
       if (activeSessionId) {
         await fetchMessagesBySession(activeSessionId)
@@ -89,9 +94,10 @@ export default function ThreadView({ threadId }: Props) {
       }
     }
     doFetch()
-  }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession])
+  }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession, isPendingThread])
 
   useEffect(() => {
+    if (isPendingThread) return
     // Subscribe to streaming events
     const unsubOutput = window.api.on(`thread:output:${threadId}`, (...args) => {
       const event = args[0] as OutputEvent
@@ -277,12 +283,12 @@ export default function ThreadView({ threadId }: Props) {
       cleanupRef.current.forEach((fn) => fn())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [threadId])
+  }, [threadId, isPendingThread])
 
   return (
     <div className="relative flex flex-1 flex-col h-full overflow-hidden">
       <ThreadHeader threadId={threadId} />
-      <SessionTabs threadId={threadId} />
+      {!isPendingThread && <SessionTabs threadId={threadId} />}
       <MessageStream threadId={threadId} sessionId={activeSessionId} />
       <InputBar threadId={threadId} />
     </div>
