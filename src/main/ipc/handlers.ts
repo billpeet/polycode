@@ -72,7 +72,7 @@ import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch, discardFileChanges, discardAllChanges } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -691,6 +691,32 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:stageFiles', (_event, repoPath: string, filePaths: string[]) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return stageFiles(repoPath, filePaths, ssh, wsl)
+  })
+
+  ipcMain.handle('git:discardFile', (_event, repoPath: string, filePath: string, oldPath?: string | null) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return discardFileChanges(repoPath, filePath, oldPath ?? null, ssh, wsl)
+  })
+
+  ipcMain.handle('git:discardFiles', async (_event, repoPath: string, files: Array<{ path: string; oldPath?: string | null }>) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    // Discard one at a time so one failure doesn't abort the rest
+    const errors: Array<{ path: string; error: string }> = []
+    for (const file of files) {
+      try {
+        await discardFileChanges(repoPath, file.path, file.oldPath ?? null, ssh, wsl)
+      } catch (err) {
+        errors.push({ path: file.path, error: err instanceof Error ? err.message : String(err) })
+      }
+    }
+    if (errors.length > 0) {
+      throw new Error(`Failed to discard ${errors.length} file${errors.length !== 1 ? 's' : ''}: ${errors.map((e) => `${e.path} (${e.error})`).join('; ')}`)
+    }
+  })
+
+  ipcMain.handle('git:discardAll', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return discardAllChanges(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:generateCommitMessage', (_event, repoPath: string) => {

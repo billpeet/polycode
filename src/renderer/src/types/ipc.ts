@@ -70,6 +70,9 @@ export interface WindowApi {
   invoke(channel: 'git:stageAll', repoPath: string): Promise<void>
   invoke(channel: 'git:unstageAll', repoPath: string): Promise<void>
   invoke(channel: 'git:stageFiles', repoPath: string, filePaths: string[]): Promise<void>
+  invoke(channel: 'git:discardFile', repoPath: string, filePath: string, oldPath?: string | null): Promise<void>
+  invoke(channel: 'git:discardFiles', repoPath: string, files: Array<{ path: string; oldPath?: string | null }>): Promise<void>
+  invoke(channel: 'git:discardAll', repoPath: string): Promise<void>
   invoke(channel: 'git:generateCommitMessage', repoPath: string): Promise<string>
   invoke(channel: 'git:generateCommitMessageWithContext', repoPath: string, filePaths: string[], context: string): Promise<string>
   invoke(channel: 'git:push', repoPath: string): Promise<void>

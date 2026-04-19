@@ -1,5 +1,17 @@
 import { create } from 'zustand'
 import { GitStatus, GitBranches } from '../types/ipc'
+import { useFilesStore } from './files'
+
+type DiscardTarget = { path: string; oldPath?: string | null }
+
+/** Close the diff panel if it's currently showing one of the discarded paths. */
+function clearDiffIfMatches(repoPath: string, paths: string[]): void {
+  const diffView = useFilesStore.getState().diffView
+  if (!diffView || diffView.repoPath !== repoPath) return
+  if (paths.includes(diffView.filePath)) {
+    useFilesStore.getState().clearDiff()
+  }
+}
 
 interface GitStore {
   // Keyed by project path
@@ -26,6 +38,9 @@ interface GitStore {
   stageAll: (repoPath: string) => Promise<void>
   unstageAll: (repoPath: string) => Promise<void>
   stageFiles: (repoPath: string, filePaths: string[]) => Promise<void>
+  discardFile: (repoPath: string, file: DiscardTarget) => Promise<void>
+  discardFiles: (repoPath: string, files: DiscardTarget[]) => Promise<void>
+  discardAll: (repoPath: string) => Promise<void>
   setCommitMessage: (repoPath: string, message: string) => void
   generateCommitMessage: (repoPath: string) => Promise<void>
   generateCommitMessageWithContext: (repoPath: string, filePaths: string[], context: string) => Promise<void>
@@ -122,6 +137,30 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   stageFiles: async (repoPath, filePaths) => {
     await window.api.invoke('git:stageFiles', repoPath, filePaths)
+    await get().fetch(repoPath)
+  },
+
+  discardFile: async (repoPath, file) => {
+    await window.api.invoke('git:discardFile', repoPath, file.path, file.oldPath ?? null)
+    clearDiffIfMatches(repoPath, [file.path, file.oldPath].filter(Boolean) as string[])
+    await get().fetch(repoPath)
+  },
+
+  discardFiles: async (repoPath, files) => {
+    if (files.length === 0) return
+    await window.api.invoke('git:discardFiles', repoPath, files)
+    const discarded = files.flatMap((f) => [f.path, f.oldPath].filter(Boolean) as string[])
+    clearDiffIfMatches(repoPath, discarded)
+    await get().fetch(repoPath)
+  },
+
+  discardAll: async (repoPath) => {
+    await window.api.invoke('git:discardAll', repoPath)
+    // Any diff view for this repo is now stale
+    const diffView = useFilesStore.getState().diffView
+    if (diffView && diffView.repoPath === repoPath) {
+      useFilesStore.getState().clearDiff()
+    }
     await get().fetch(repoPath)
   },
 

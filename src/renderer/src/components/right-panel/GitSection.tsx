@@ -54,6 +54,15 @@ function dirname(p: string): string {
   return parts.length <= 1 ? '' : parts.slice(0, -1).join('/')
 }
 
+function DiscardIcon() {
+  // Curved backward arrow (revert / discard)
+  return (
+    <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 3a5 5 0 1 1-4.546 7.914.75.75 0 1 0-1.294.76 6.5 6.5 0 1 0-.16-6.164l-.854-.854a.5.5 0 0 0-.854.354v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .354-.854l-.89-.89A4.99 4.99 0 0 1 8 3z" />
+    </svg>
+  )
+}
+
 function FileGroup({
   label,
   files,
@@ -63,6 +72,8 @@ function FileGroup({
   actionTitle = 'Action',
   showActions = true,
   onFileClick,
+  onFileDiscard,
+  onGroupDiscard,
 }: {
   label: string
   files: GitFileChange[]
@@ -72,6 +83,8 @@ function FileGroup({
   actionTitle?: string
   showActions?: boolean
   onFileClick?: (file: GitFileChange) => void
+  onFileDiscard?: (file: GitFileChange) => void
+  onGroupDiscard?: () => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
 
@@ -85,6 +98,19 @@ function FileGroup({
           <span className="text-[10px] font-semibold uppercase tracking-wider">{label}</span>
           <span className="ml-1 text-[10px] rounded-full px-1.5" style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}>{files.length}</span>
         </button>
+        {onGroupDiscard && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation()
+              onGroupDiscard()
+            }}
+            className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all"
+            style={{ color: '#f87171' }}
+            title={`Discard All ${label}`}
+          >
+            <DiscardIcon />
+          </button>
+        )}
         {showActions && onGroupAction && (
           <button
             onClick={(e) => {
@@ -114,6 +140,16 @@ function FileGroup({
                   {name}
                 </span>
                 {dir && <span className="text-[10px] truncate flex-shrink-0 max-w-[60px] group-hover:hidden" style={{ color: 'var(--color-text-muted)' }}>{dir}</span>}
+                {onFileDiscard && (
+                  <button
+                    onClick={() => onFileDiscard(file)}
+                    className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all flex-shrink-0"
+                    style={{ color: '#f87171' }}
+                    title="Discard changes"
+                  >
+                    <DiscardIcon />
+                  </button>
+                )}
                 {showActions && onFileAction && (
                   <button onClick={() => onFileAction(file.path)} className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all flex-shrink-0" title={actionTitle}>
                     {actionIcon === 'plus' ? (
@@ -521,6 +557,9 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const stageAllFiles = useGitStore((s) => s.stageAll)
   const unstageAllFiles = useGitStore((s) => s.unstageAll)
   const stageFilesAction = useGitStore((s) => s.stageFiles)
+  const discardFileAction = useGitStore((s) => s.discardFile)
+  const discardFilesAction = useGitStore((s) => s.discardFiles)
+  const discardAllAction = useGitStore((s) => s.discardAll)
   const fetchModifiedFiles = useGitStore((s) => s.fetchModifiedFiles)
   const addToast = useToastStore((s) => s.add)
   const selectDiff = useFilesStore((s) => s.selectDiff)
@@ -692,6 +731,47 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     try { await stageFilesAction(projectPath, otherUnstagedFiles.map((file) => file.path)) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 }) }
   }, [projectPath, otherUnstagedFiles, stageFilesAction, addToast])
 
+  const handleDiscardFile = useCallback(async (file: GitFileChange) => {
+    if (!projectPath) return
+    const label = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path
+    const warning = file.status === '?' || file.status === 'A'
+      ? `Permanently delete ${label}?\n\nThis cannot be undone.`
+      : `Discard changes to ${label}?\n\nThis cannot be undone.`
+    if (!window.confirm(warning)) return
+    try {
+      await discardFileAction(projectPath, { path: file.path, oldPath: file.oldPath })
+      addToast({ type: 'success', message: `Discarded changes to ${basename(file.path)}`, duration: 3000 })
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to discard changes', duration: 0 })
+    }
+  }, [projectPath, discardFileAction, addToast])
+
+  const handleDiscardGroup = useCallback(async (groupLabel: string, files: GitFileChange[]) => {
+    if (!projectPath || files.length === 0) return
+    const n = files.length
+    const warning = `Discard changes to ${n} file${n !== 1 ? 's' : ''} in "${groupLabel}"?\n\nThis cannot be undone. Any new (untracked) files in this group will be deleted from disk.`
+    if (!window.confirm(warning)) return
+    try {
+      await discardFilesAction(projectPath, files.map((f) => ({ path: f.path, oldPath: f.oldPath })))
+      addToast({ type: 'success', message: `Discarded ${n} file${n !== 1 ? 's' : ''}`, duration: 3000 })
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to discard changes', duration: 0 })
+    }
+  }, [projectPath, discardFilesAction, addToast])
+
+  const handleDiscardAll = useCallback(async () => {
+    if (!projectPath || !gitStatus || gitStatus.files.length === 0) return
+    const n = gitStatus.files.length
+    const warning = `Discard ALL local changes?\n\nThis will revert every tracked file and delete every untracked file (${n} total). This cannot be undone.`
+    if (!window.confirm(warning)) return
+    try {
+      await discardAllAction(projectPath)
+      addToast({ type: 'success', message: 'Discarded all local changes', duration: 3000 })
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to discard all changes', duration: 0 })
+    }
+  }, [projectPath, gitStatus, discardAllAction, addToast])
+
   const totalChanges = gitStatus?.files.length ?? 0
   const otherOpenPrs = currentPr ? openPrs.filter((pr) => pr.id !== currentPr.id) : openPrs
   const refreshButton = (
@@ -803,11 +883,22 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         </div>
         {gitStatus && <div className="py-1">
           {totalChanges === 0 ? <p className="px-4 py-4 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No local changes.</p> : <>
-            {stagedFiles.length > 0 && <FileGroup label="Staged" files={stagedFiles} onFileAction={handleUnstage} onGroupAction={handleUnstageAll} actionIcon="minus" actionTitle="Unstage" onFileClick={handleFileClick} />}
+            {stagedFiles.length > 0 && <FileGroup label="Staged" files={stagedFiles} onFileAction={handleUnstage} onGroupAction={handleUnstageAll} actionIcon="minus" actionTitle="Unstage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Staged', stagedFiles)} />}
             {showThreadSplit ? <>
-              <FileGroup label="From this thread" files={threadUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageThreadFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} />
-              {otherUnstagedFiles.length > 0 && <FileGroup label="Other changes" files={otherUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageOtherFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} />}
-            </> : unstagedFiles.length > 0 && <FileGroup label="Changes" files={unstagedFiles} onFileAction={handleStage} onGroupAction={handleStageAll} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} />}
+              <FileGroup label="From this thread" files={threadUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageThreadFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('From this thread', threadUnstagedFiles)} />
+              {otherUnstagedFiles.length > 0 && <FileGroup label="Other changes" files={otherUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageOtherFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Other changes', otherUnstagedFiles)} />}
+            </> : unstagedFiles.length > 0 && <FileGroup label="Changes" files={unstagedFiles} onFileAction={handleStage} onGroupAction={handleStageAll} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Changes', unstagedFiles)} />}
+            <div className="mt-1 px-3 pt-1.5">
+              <button
+                onClick={() => void handleDiscardAll()}
+                className="w-full flex items-center justify-center gap-1.5 rounded py-1.5 text-[11px] font-medium transition-colors"
+                style={{ background: 'transparent', border: '1px solid rgba(248, 113, 113, 0.3)', color: '#f87171' }}
+                title="Revert every tracked file to HEAD and delete untracked files"
+              >
+                <DiscardIcon />
+                Discard All Changes ({totalChanges})
+              </button>
+            </div>
           </>}
           <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
             <div className="px-3 pb-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Compare base: <code>{compareBaseRef}</code></div>

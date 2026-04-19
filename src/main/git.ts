@@ -632,6 +632,105 @@ export async function getDefaultBranch(repoPath: string, ssh?: SshConfig | null,
   return 'main'
 }
 
+/**
+ * Check whether the repo has any commits (i.e. HEAD is a valid ref).
+ * A freshly-initialised repo has no HEAD until the first commit.
+ */
+async function hasHeadCommit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {
+  try {
+    await git(repoPath, ['rev-parse', '--verify', 'HEAD'], ssh, wsl)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function fileExistsInHead(repoPath: string, filePath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {
+  try {
+    await git(repoPath, ['cat-file', '-e', `HEAD:${filePath}`], ssh, wsl)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Discard local changes for a single file. Restores the file to HEAD state and
+ * removes any staged modifications. Handles all status flavours:
+ *   - Modified / Deleted / Unmerged (tracked): `git checkout HEAD -- <path>`
+ *   - Newly added (staged A) or untracked (?): unstage + delete worktree copy
+ *   - Rename (R): restore the old path from HEAD, delete the new path
+ *
+ * Irreversible — the caller is expected to confirm.
+ */
+export async function discardFileChanges(
+  repoPath: string,
+  filePath: string,
+  oldPath?: string | null,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<void> {
+  const headExists = await hasHeadCommit(repoPath, ssh, wsl)
+
+  // Remove a path entirely (from index if staged, from worktree if present).
+  const removePath = async (path: string): Promise<void> => {
+    if (headExists) {
+      // Unstage any staged changes (safe to ignore if nothing staged)
+      try { await git(repoPath, ['reset', 'HEAD', '--', path], ssh, wsl) } catch { /* nothing to unstage */ }
+    } else {
+      // No HEAD yet — drop from index directly
+      try { await git(repoPath, ['rm', '-f', '--cached', '--', path], ssh, wsl) } catch { /* not in index */ }
+    }
+    // Remove from working tree (respects .gitignore by default)
+    try { await git(repoPath, ['clean', '-f', '--', path], ssh, wsl) } catch { /* nothing to clean */ }
+  }
+
+  // Rename: restore the old path and delete the new one.
+  if (oldPath && oldPath !== filePath) {
+    if (headExists && (await fileExistsInHead(repoPath, oldPath, ssh, wsl))) {
+      // Unstage both sides of the rename so checkout isn't rejected
+      try { await git(repoPath, ['reset', 'HEAD', '--', oldPath, filePath], ssh, wsl) } catch { /* best-effort */ }
+      await git(repoPath, ['checkout', 'HEAD', '--', oldPath], ssh, wsl)
+      await removePath(filePath)
+      return
+    }
+    // Fallback — treat as an ordinary "new file" discard
+    await removePath(filePath)
+    return
+  }
+
+  // Tracked file (modified, deleted, unmerged): restore from HEAD.
+  if (headExists && (await fileExistsInHead(repoPath, filePath, ssh, wsl))) {
+    await git(repoPath, ['checkout', 'HEAD', '--', filePath], ssh, wsl)
+    return
+  }
+
+  // New file (staged A) or untracked (?): unstage + delete.
+  await removePath(filePath)
+}
+
+/**
+ * Discard ALL local changes — equivalent to VS Code's "Discard All Changes".
+ *   - `git reset --hard HEAD` wipes staged + unstaged changes on tracked files.
+ *   - `git clean -fd` removes untracked files and directories (honours .gitignore).
+ *
+ * Irreversible — the caller is expected to confirm.
+ */
+export async function discardAllChanges(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<void> {
+  if (await hasHeadCommit(repoPath, ssh, wsl)) {
+    await git(repoPath, ['reset', '--hard', 'HEAD'], ssh, wsl)
+  } else {
+    // No HEAD yet — empty the index so staged additions go away
+    try { await git(repoPath, ['rm', '-rf', '--cached', '.'], ssh, wsl) } catch { /* index empty */ }
+  }
+  // Remove untracked files + directories (ignored files preserved)
+  try { await git(repoPath, ['clean', '-fd'], ssh, wsl) } catch { /* nothing to clean */ }
+}
+
 export async function mergeBranch(repoPath: string, source: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ conflicts: string[] }> {
   try {
     await git(repoPath, ['merge', source], ssh, wsl)
