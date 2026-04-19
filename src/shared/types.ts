@@ -43,6 +43,7 @@ export interface Project {
 }
 
 export const ANTHROPIC_MODELS = [
+  { id: 'claude-opus-4-7', label: 'Opus 4.7' },
   { id: 'claude-opus-4-6', label: 'Opus 4.6' },
   { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
   { id: 'claude-opus-4-5', label: 'Opus 4.5' },
@@ -155,6 +156,7 @@ export interface TokenUsage {
 }
 
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-opus-4-7': 200_000,
   'claude-opus-4-6': 200_000,
   'claude-sonnet-4-6': 200_000,
   'claude-opus-4-5': 200_000,

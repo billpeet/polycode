@@ -66,7 +66,7 @@ function runMigrations(database: Database.Database): void {
   }
   const hasModel = cols.some((c) => c.name === 'model')
   if (!hasModel) {
-    database.exec(`ALTER TABLE threads ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-4-5'`)
+    database.exec(`ALTER TABLE threads ADD COLUMN model TEXT NOT NULL DEFAULT 'claude-opus-4-7'`)
   }
 
   // ── Multi-session support migration ────────────────────────────────────────

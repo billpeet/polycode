@@ -354,7 +354,7 @@ export default function ThreadHeader({ threadId }: Props) {
 
         {/* Token usage + context window */}
         {usage && (() => {
-          const model = thread?.model ?? 'claude-opus-4-5'
+          const model = thread?.model ?? 'claude-opus-4-7'
           const contextLimit = MODEL_CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
           const contextPct = Math.min(usage.context_window / contextLimit, 1)
           const barColor = contextPct < 0.5 ? '#4ade80' : contextPct < 0.8 ? '#facc15' : '#f87171'
