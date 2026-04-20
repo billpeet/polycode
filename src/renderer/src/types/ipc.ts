@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -65,6 +65,9 @@ export interface WindowApi {
   invoke(channel: 'git:branch', repoPath: string): Promise<string | null>
   invoke(channel: 'git:status', repoPath: string): Promise<GitStatus | null>
   invoke(channel: 'git:commit', repoPath: string, message: string): Promise<void>
+  invoke(channel: 'git:lastCommit', repoPath: string): Promise<LastCommitInfo | null>
+  invoke(channel: 'git:amendCommit', repoPath: string, message?: string | null): Promise<void>
+  invoke(channel: 'git:undoLastCommit', repoPath: string): Promise<void>
   invoke(channel: 'git:stage', repoPath: string, filePath: string): Promise<void>
   invoke(channel: 'git:unstage', repoPath: string, filePath: string): Promise<void>
   invoke(channel: 'git:stageAll', repoPath: string): Promise<void>
@@ -77,8 +80,14 @@ export interface WindowApi {
   invoke(channel: 'git:generateCommitMessageWithContext', repoPath: string, filePaths: string[], context: string): Promise<string>
   invoke(channel: 'git:push', repoPath: string): Promise<void>
   invoke(channel: 'git:pushSetUpstream', repoPath: string, branch: string): Promise<void>
-  invoke(channel: 'git:pull', repoPath: string): Promise<void>
+  invoke(channel: 'git:pull', repoPath: string, autoStash?: boolean): Promise<PullResult | void>
   invoke(channel: 'git:pullOrigin', repoPath: string): Promise<void>
+  invoke(channel: 'git:stashList', repoPath: string): Promise<StashEntry[]>
+  invoke(channel: 'git:stashCreate', repoPath: string, opts: { message?: string; includeUntracked?: boolean }): Promise<void>
+  invoke(channel: 'git:stashApply', repoPath: string, ref: string): Promise<void>
+  invoke(channel: 'git:stashPop', repoPath: string, ref: string): Promise<void>
+  invoke(channel: 'git:stashDrop', repoPath: string, ref: string): Promise<void>
+  invoke(channel: 'git:forceUnlock', repoPath: string): Promise<{ removed: string[] }>
   invoke(channel: 'git:fetchRemote', repoPath: string): Promise<void>
   invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
   invoke(channel: 'git:compareToMain', repoPath: string): Promise<GitCompareResult>
@@ -115,6 +124,7 @@ export interface WindowApi {
   invoke(channel: 'dialog:open-files'): Promise<string[]>
   invoke(channel: 'shell:copyPath', dirPath: string): Promise<void>
   invoke(channel: 'shell:openInExplorer', dirPath: string): Promise<void>
+  invoke(channel: 'shell:revealInExplorer', filePath: string): Promise<void>
   invoke(channel: 'shell:openInTerminal', dirPath: string, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'process:kill', target: string, type: 'pid' | 'port', threadId?: string): Promise<{ ok: boolean; error?: string }>
   invoke(channel: 'window:minimize'): Promise<void>

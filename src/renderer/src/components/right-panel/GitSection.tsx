@@ -4,8 +4,21 @@ import { useGitStore } from '../../stores/git'
 import { useLocationStore } from '../../stores/locations'
 import { useThreadStore } from '../../stores/threads'
 import { useToastStore } from '../../stores/toast'
-import { GitCompareResult, GitFileChange, RepoLocation } from '../../types/ipc'
+import { GitCompareResult, GitFileChange, PullResult, RepoLocation } from '../../types/ipc'
+import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu'
 import { SectionHeader, SparkleIcon } from './shared'
+import { StashSection } from './StashSection'
+import { useGitErrorReporter } from '../../lib/gitErrorToast'
+
+/** Join a repo path and a relative file path using the separator style implied by the repo path. */
+function joinRepoPath(repoPath: string, relPath: string): string {
+  const useBackslash = repoPath.includes('\\')
+  const trimmed = repoPath.replace(/[\\/]+$/, '')
+  if (useBackslash) {
+    return `${trimmed}\\${relPath.replace(/\//g, '\\')}`
+  }
+  return `${trimmed}/${relPath}`
+}
 
 type PullRequestItem = {
   id: number
@@ -74,6 +87,7 @@ function FileGroup({
   onFileClick,
   onFileDiscard,
   onGroupDiscard,
+  onFileContextMenu,
 }: {
   label: string
   files: GitFileChange[]
@@ -85,6 +99,7 @@ function FileGroup({
   onFileClick?: (file: GitFileChange) => void
   onFileDiscard?: (file: GitFileChange) => void
   onGroupDiscard?: () => void
+  onFileContextMenu?: (file: GitFileChange, event: React.MouseEvent) => void
 }) {
   const [collapsed, setCollapsed] = useState(false)
 
@@ -134,7 +149,17 @@ function FileGroup({
             const name = basename(file.path)
             const dir = dirname(file.path)
             return (
-              <li key={`${file.path}-${idx}`} className="flex items-center gap-2 px-4 py-1 hover:bg-white/5 transition-colors group" title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}>
+              <li
+                key={`${file.path}-${idx}`}
+                className="flex items-center gap-2 px-4 py-1 hover:bg-white/5 transition-colors group"
+                title={file.oldPath ? `${file.oldPath} → ${file.path}` : `${file.path}\n(right-click for more)`}
+                onContextMenu={(e) => {
+                  if (!onFileContextMenu) return
+                  e.preventDefault()
+                  e.stopPropagation()
+                  onFileContextMenu(file, e)
+                }}
+              >
                 <FileStatusBadge status={file.status} staged={file.staged} />
                 <span className="text-xs truncate min-w-0 flex-1" style={{ color: 'var(--color-text)', cursor: onFileClick ? 'pointer' : 'default' }} onClick={() => onFileClick?.(file)}>
                   {name}
@@ -199,6 +224,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
   const pullOriginAction = useGitStore((s) => s.pullOrigin)
   const pullingByPath = useGitStore((s) => s.pullingByPath)
   const addToast = useToastStore((s) => s.add)
+  const reportGitError = useGitErrorReporter(projectPath)
   const isPullingOrigin = pullingByPath[projectPath] ?? false
 
   function toggleOpen() {
@@ -238,7 +264,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
       setMergeFromMaster(false)
       setOpen(false)
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Checkout failed', duration: 0 })
+      reportGitError(err, 'Checkout failed')
     } finally {
       setSwitching(false)
     }
@@ -253,7 +279,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
       setNewName('')
       setOpen(false)
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Create branch failed', duration: 0 })
+      reportGitError(err, 'Create branch failed')
     } finally {
       setCreating(false)
     }
@@ -313,7 +339,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
     } catch (err) {
       const conflicts = (err as { conflicts?: string[] }).conflicts
       if (conflicts && conflicts.length > 0) setMergeConflicts(conflicts)
-      else addToast({ type: 'error', message: err instanceof Error ? err.message : 'Merge failed', duration: 0 })
+      else reportGitError(err, 'Merge failed')
     } finally {
       setMerging(false)
     }
@@ -341,7 +367,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
                   await pullOriginAction(projectPath)
                   addToast({ type: 'success', message: 'Pulled from origin successfully', duration: 3000 })
                 } catch (err) {
-                  addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull from origin failed', duration: 0 })
+                  reportGitError(err, 'Pull from origin failed')
                 }
               }}
               disabled={isPullingOrigin}
@@ -540,16 +566,24 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const pushingByPath = useGitStore((s) => s.pushingByPath)
   const pullingByPath = useGitStore((s) => s.pullingByPath)
   const initializingByPath = useGitStore((s) => s.initializingByPath)
+  const lastCommitByPath = useGitStore((s) => s.lastCommitByPath)
+  const amendingByPath = useGitStore((s) => s.amendingByPath)
+  const undoingCommitByPath = useGitStore((s) => s.undoingCommitByPath)
   const gitStatus = projectPath ? (statusByPath[projectPath] ?? null) : null
   const isNotRepo = projectPath ? (notRepoByPath[projectPath] ?? false) : false
   const isInitializing = projectPath ? (initializingByPath[projectPath] ?? false) : false
   const commitMsg = projectPath ? (commitMessageByPath[projectPath] ?? '') : ''
   const isGeneratingMessage = projectPath ? (generatingMessageByPath[projectPath] ?? false) : false
+  const lastCommit = projectPath ? (lastCommitByPath[projectPath] ?? null) : null
+  const isAmending = projectPath ? (amendingByPath[projectPath] ?? false) : false
+  const isUndoingCommit = projectPath ? (undoingCommitByPath[projectPath] ?? false) : false
   const modifiedFiles = useGitStore((s) => s.modifiedFilesByThread[threadId] ?? EMPTY_FILES)
   const fetchGit = useGitStore((s) => s.fetch)
   const refreshRemoteGit = useGitStore((s) => s.refreshRemote)
   const initRepo = useGitStore((s) => s.initRepo)
   const commitGit = useGitStore((s) => s.commit)
+  const amendCommitAction = useGitStore((s) => s.amendCommit)
+  const undoLastCommitAction = useGitStore((s) => s.undoLastCommit)
   const setCommitMsg = useGitStore((s) => s.setCommitMessage)
   const generateMsg = useGitStore((s) => s.generateCommitMessage)
   const stageFile = useGitStore((s) => s.stage)
@@ -564,13 +598,17 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const addToast = useToastStore((s) => s.add)
   const selectDiff = useFilesStore((s) => s.selectDiff)
   const selectCompareDiffToMain = useFilesStore((s) => s.selectCompareDiffToMain)
+  const selectFile = useFilesStore((s) => s.selectFile)
   const pushGit = useGitStore((s) => s.push)
   const pullGit = useGitStore((s) => s.pull)
+  const reportGitError = useGitErrorReporter(projectPath)
   const isPushing = projectPath ? (pushingByPath[projectPath] ?? false) : false
   const isPulling = projectPath ? (pullingByPath[projectPath] ?? false) : false
   const checkoutGit = useGitStore((s) => s.checkout)
 
   const [committing, setCommitting] = useState(false)
+  const [amendMode, setAmendMode] = useState(false)
+  const [fileMenu, setFileMenu] = useState<{ x: number; y: number; file: GitFileChange } | null>(null)
   const [openPrs, setOpenPrs] = useState<PullRequestItem[]>([])
   const [currentPr, setCurrentPr] = useState<PullRequestItem | null>(null)
   const [prProvider, setPrProvider] = useState<'azure' | 'github' | null>(null)
@@ -677,19 +715,78 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const otherUnstagedFiles = unstagedFiles.filter((file) => !threadRelPaths.has(file.path))
   const showThreadSplit = threadUnstagedFiles.length > 0 && stagedFiles.length === 0
 
+  const lastCommitIsPushed = !!(gitStatus?.hasUpstream && gitStatus.ahead === 0 && lastCommit)
+
   async function handleCommit() {
-    if (!projectPath || !commitMsg.trim() || (gitStatus?.files.length ?? 0) === 0) return
+    if (!projectPath) return
+    // In normal commit mode we require a message + changes to commit.
+    if (!amendMode && (!commitMsg.trim() || (gitStatus?.files.length ?? 0) === 0)) return
+    // In amend mode we allow commits with no staged changes (message-only fix)
+    // but require at least a message or an unchanged last message to fall back to.
+    if (amendMode && !commitMsg.trim() && !lastCommit) return
+
+    if (amendMode && lastCommitIsPushed) {
+      if (!window.confirm('Amend the last commit?\n\nThis commit has already been pushed to origin. Amending will rewrite history and you will need to force-push.')) return
+    }
+
     setCommitting(true)
     try {
-      if (stagedFiles.length === 0) await stageAllFiles(projectPath)
-      await commitGit(projectPath, commitMsg.trim())
-      addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
+      if (amendMode) {
+        // Stage changes when a message-change-only amend still has unstaged files.
+        if (stagedFiles.length === 0 && unstagedFiles.length > 0) await stageAllFiles(projectPath)
+        // If the message matches the existing one, pass null to use --no-edit and avoid a no-op rewrite.
+        const trimmed = commitMsg.trim()
+        const existing = lastCommit?.message.trim() ?? ''
+        const msgToSend = trimmed && trimmed !== existing ? trimmed : null
+        await amendCommitAction(projectPath, msgToSend)
+        setAmendMode(false)
+        addToast({ type: 'success', message: 'Amended last commit', duration: 3000 })
+      } else {
+        if (stagedFiles.length === 0) await stageAllFiles(projectPath)
+        await commitGit(projectPath, commitMsg.trim())
+        addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
+      }
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Commit failed', duration: 0 })
+      reportGitError(err, 'Commit failed')
     } finally {
       setCommitting(false)
     }
   }
+
+  const handleToggleAmend = useCallback(() => {
+    if (!projectPath || !lastCommit) return
+    setAmendMode((prev) => {
+      const next = !prev
+      if (next) {
+        // Turning amend on — prefill the textarea with the last commit's message if empty.
+        if (commitMsg.trim() === '') {
+          setCommitMsg(projectPath, lastCommit.message)
+        }
+      } else {
+        // Turning amend off — clear the textarea only if it still contains the exact prefilled message
+        // (i.e. the user didn't edit it and hasn't typed their own message).
+        if (commitMsg === lastCommit.message) {
+          setCommitMsg(projectPath, '')
+        }
+      }
+      return next
+    })
+  }, [projectPath, lastCommit, commitMsg, setCommitMsg])
+
+  const handleUndoLastCommit = useCallback(async () => {
+    if (!projectPath || !lastCommit || !lastCommit.hasParent) return
+    const pushed = lastCommitIsPushed
+    const warning = pushed
+      ? `Undo the last commit "${lastCommit.subject}"?\n\nThis commit has already been pushed to origin. Undoing will rewrite history and you will need to force-push.\n\nChanges will be kept in the index (staged) so you can re-commit.`
+      : `Undo the last commit "${lastCommit.subject}"?\n\nChanges will be kept in the index (staged) so you can re-commit.`
+    if (!window.confirm(warning)) return
+    try {
+      await undoLastCommitAction(projectPath)
+      addToast({ type: 'success', message: 'Undid last commit — changes are staged', duration: 3000 })
+    } catch (err) {
+      reportGitError(err, 'Failed to undo last commit')
+    }
+  }, [projectPath, lastCommit, lastCommitIsPushed, undoLastCommitAction, addToast, reportGitError])
 
   async function handleGenerateMessage() {
     if (!projectPath) return
@@ -702,16 +799,16 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
 
   const handleStage = useCallback(async (filePath: string) => {
     if (!projectPath) return
-    try { await stageFile(projectPath, filePath) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage file', duration: 3000 }) }
-  }, [projectPath, stageFile, addToast])
+    try { await stageFile(projectPath, filePath) } catch (err) { reportGitError(err, 'Failed to stage file', 3000) }
+  }, [projectPath, stageFile, reportGitError])
   const handleUnstage = useCallback(async (filePath: string) => {
     if (!projectPath) return
-    try { await unstageFile(projectPath, filePath) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to unstage file', duration: 3000 }) }
-  }, [projectPath, unstageFile, addToast])
+    try { await unstageFile(projectPath, filePath) } catch (err) { reportGitError(err, 'Failed to unstage file', 3000) }
+  }, [projectPath, unstageFile, reportGitError])
   const handleStageAll = useCallback(async () => {
     if (!projectPath) return
-    try { await stageAllFiles(projectPath) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 }) }
-  }, [projectPath, stageAllFiles, addToast])
+    try { await stageAllFiles(projectPath) } catch (err) { reportGitError(err, 'Failed to stage files', 3000) }
+  }, [projectPath, stageAllFiles, reportGitError])
   const handleFileClick = useCallback((file: GitFileChange) => {
     if (projectPath) selectDiff(projectPath, file.path, file.staged)
   }, [projectPath, selectDiff])
@@ -720,16 +817,16 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   }, [projectPath, selectCompareDiffToMain])
   const handleUnstageAll = useCallback(async () => {
     if (!projectPath) return
-    try { await unstageAllFiles(projectPath) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to unstage files', duration: 3000 }) }
-  }, [projectPath, unstageAllFiles, addToast])
+    try { await unstageAllFiles(projectPath) } catch (err) { reportGitError(err, 'Failed to unstage files', 3000) }
+  }, [projectPath, unstageAllFiles, reportGitError])
   const handleStageThreadFiles = useCallback(async () => {
     if (!projectPath || threadUnstagedFiles.length === 0) return
-    try { await stageFilesAction(projectPath, threadUnstagedFiles.map((file) => file.path)) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 }) }
-  }, [projectPath, threadUnstagedFiles, stageFilesAction, addToast])
+    try { await stageFilesAction(projectPath, threadUnstagedFiles.map((file) => file.path)) } catch (err) { reportGitError(err, 'Failed to stage files', 3000) }
+  }, [projectPath, threadUnstagedFiles, stageFilesAction, reportGitError])
   const handleStageOtherFiles = useCallback(async () => {
     if (!projectPath || otherUnstagedFiles.length === 0) return
-    try { await stageFilesAction(projectPath, otherUnstagedFiles.map((file) => file.path)) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to stage files', duration: 3000 }) }
-  }, [projectPath, otherUnstagedFiles, stageFilesAction, addToast])
+    try { await stageFilesAction(projectPath, otherUnstagedFiles.map((file) => file.path)) } catch (err) { reportGitError(err, 'Failed to stage files', 3000) }
+  }, [projectPath, otherUnstagedFiles, stageFilesAction, reportGitError])
 
   const handleDiscardFile = useCallback(async (file: GitFileChange) => {
     if (!projectPath) return
@@ -742,9 +839,9 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       await discardFileAction(projectPath, { path: file.path, oldPath: file.oldPath })
       addToast({ type: 'success', message: `Discarded changes to ${basename(file.path)}`, duration: 3000 })
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to discard changes', duration: 0 })
+      reportGitError(err, 'Failed to discard changes')
     }
-  }, [projectPath, discardFileAction, addToast])
+  }, [projectPath, discardFileAction, addToast, reportGitError])
 
   const handleDiscardGroup = useCallback(async (groupLabel: string, files: GitFileChange[]) => {
     if (!projectPath || files.length === 0) return
@@ -755,9 +852,45 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       await discardFilesAction(projectPath, files.map((f) => ({ path: f.path, oldPath: f.oldPath })))
       addToast({ type: 'success', message: `Discarded ${n} file${n !== 1 ? 's' : ''}`, duration: 3000 })
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to discard changes', duration: 0 })
+      reportGitError(err, 'Failed to discard changes')
     }
-  }, [projectPath, discardFilesAction, addToast])
+  }, [projectPath, discardFilesAction, addToast, reportGitError])
+
+  const handleFileOpen = useCallback((file: GitFileChange) => {
+    if (!projectPath) return
+    // Deleted files don't exist on disk — fall back to opening the diff so the user sees *something*.
+    if (file.status === 'D') {
+      selectDiff(projectPath, file.path, file.staged)
+      return
+    }
+    const fullPath = joinRepoPath(projectPath, file.path)
+    selectFile(fullPath)
+  }, [projectPath, selectFile, selectDiff])
+
+  const handleRevealInExplorer = useCallback(async (file: GitFileChange) => {
+    if (!projectPath) return
+    try {
+      const fullPath = joinRepoPath(projectPath, file.path)
+      await window.api.invoke('shell:revealInExplorer', fullPath)
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to reveal in Explorer', duration: 3000 })
+    }
+  }, [projectPath, addToast])
+
+  const handleCopyPath = useCallback(async (file: GitFileChange, relative: boolean) => {
+    if (!projectPath) return
+    try {
+      const value = relative ? file.path : joinRepoPath(projectPath, file.path)
+      await window.api.invoke('shell:copyPath', value)
+      addToast({ type: 'success', message: relative ? 'Copied relative path' : 'Copied path', duration: 2000 })
+    } catch (err) {
+      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to copy path', duration: 3000 })
+    }
+  }, [projectPath, addToast])
+
+  const handleFileContextMenu = useCallback((file: GitFileChange, event: React.MouseEvent) => {
+    setFileMenu({ x: event.clientX, y: event.clientY, file })
+  }, [])
 
   const handleDiscardAll = useCallback(async () => {
     if (!projectPath || !gitStatus || gitStatus.files.length === 0) return
@@ -768,9 +901,9 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       await discardAllAction(projectPath)
       addToast({ type: 'success', message: 'Discarded all local changes', duration: 3000 })
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to discard all changes', duration: 0 })
+      reportGitError(err, 'Failed to discard all changes')
     }
-  }, [projectPath, gitStatus, discardAllAction, addToast])
+  }, [projectPath, gitStatus, discardAllAction, addToast, reportGitError])
 
   const totalChanges = gitStatus?.files.length ?? 0
   const otherOpenPrs = currentPr ? openPrs.filter((pr) => pr.id !== currentPr.id) : openPrs
@@ -871,23 +1004,59 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
           {isNotRepo ? <div className="py-3 flex flex-col items-center gap-2"><p className="text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No Git repository found.</p><button onClick={async () => { if (!projectPath) return; try { await initRepo(projectPath); addToast({ type: 'success', message: 'Git repository initialised', duration: 3000 }) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to initialise repository', duration: 0 }) } }} disabled={isInitializing || !projectPath} className="rounded px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{isInitializing ? 'Initialising…' : 'Initialise Repository'}</button></div> : !gitStatus ? <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>{!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for project.' : 'Loading...'}</p> : <>
             <div className="relative">
-              <textarea value={commitMsg} onChange={(e) => handleSetCommitMsg(e.target.value)} placeholder="Commit message (Ctrl+Enter)" rows={2} onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); void handleCommit() } }} className="w-full resize-none rounded px-2 py-1.5 pr-7 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
+              <textarea value={commitMsg} onChange={(e) => handleSetCommitMsg(e.target.value)} placeholder={amendMode ? 'Leave unchanged to keep the existing commit message' : 'Commit message (Ctrl+Enter)'} rows={2} onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); void handleCommit() } }} className="w-full resize-none rounded px-2 py-1.5 pr-7 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: amendMode ? '1px solid var(--color-claude)' : '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
               <button onClick={() => void handleGenerateMessage()} disabled={isGeneratingMessage || totalChanges === 0} className="absolute right-1 top-1 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-claude)' }} title="Generate commit message with AI">{isGeneratingMessage ? <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <SparkleIcon />}</button>
             </div>
-            <button onClick={() => void handleCommit()} disabled={!commitMsg.trim() || committing || totalChanges === 0} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{committing ? 'Committing…' : 'Commit'}</button>
+            {lastCommit && <div className="mt-1.5 flex items-center justify-between gap-2">
+              <label className="flex items-center gap-1.5 cursor-pointer min-w-0 flex-1" title={lastCommit.message}>
+                <input type="checkbox" checked={amendMode} onChange={handleToggleAmend} style={{ accentColor: 'var(--color-claude)', flexShrink: 0 }} />
+                <span className="text-[10px] truncate" style={{ color: amendMode ? 'var(--color-claude)' : 'var(--color-text-muted)' }}>
+                  Amend: <span className="font-mono">{lastCommit.subject}</span>
+                </span>
+              </label>
+              {lastCommit.hasParent && <button onClick={() => void handleUndoLastCommit()} disabled={isUndoingCommit} className="shrink-0 flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title={`Undo last commit (git reset --soft HEAD~1)${lastCommitIsPushed ? ' — WARNING: already pushed' : ''}`}>
+                <svg width="9" height="9" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 3a5 5 0 1 1-4.546 7.914.75.75 0 1 0-1.294.76 6.5 6.5 0 1 0-.16-6.164l-.854-.854a.5.5 0 0 0-.854.354v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .354-.854l-.89-.89A4.99 4.99 0 0 1 8 3z" /></svg>
+                {isUndoingCommit ? 'Undoing…' : 'Undo'}
+              </button>}
+            </div>}
+            <button onClick={() => void handleCommit()} disabled={committing || isAmending || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : (!commitMsg.trim() || totalChanges === 0))} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
             <div className="flex gap-1.5 mt-1.5">
-              <button onClick={async () => { if (!projectPath) return; try { await pullGit(projectPath); addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 }) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull failed', duration: 0 }) } }} disabled={isPulling} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: gitStatus.behind > 0 ? '#f87171' : 'var(--color-text-muted)' }} title="Pull from remote">{isPulling ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z" /></svg>}Pull{gitStatus.behind > 0 ? ` ↓${gitStatus.behind}` : ''}</button>
-              <button onClick={async () => { if (!projectPath) return; try { await pushGit(projectPath); addToast({ type: 'success', message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully', duration: 3000 }) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 }) } }} disabled={isPushing} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: !gitStatus.hasUpstream ? 'rgba(232, 123, 95, 0.12)' : 'var(--color-surface-2)', border: !gitStatus.hasUpstream ? '1px solid rgba(232, 123, 95, 0.4)' : '1px solid var(--color-border)', color: !gitStatus.hasUpstream ? 'var(--color-claude)' : gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)' }} title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin` : 'Push to remote'}>{isPushing ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4l4 4H9.5v4h-3V8H4l4-4z" /></svg>}{isPushing ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…') : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}</button>
+              <button
+                onClick={async () => {
+                  if (!projectPath) return
+                  try {
+                    const result = await pullGit(projectPath, true) as PullResult | void
+                    if (result && typeof result === 'object' && 'popConflict' in result && result.popConflict) {
+                      addToast({ type: 'error', message: `Pulled but could not re-apply auto-stash (${result.stashRef}) — resolve conflicts manually`, duration: 0 })
+                    } else if (result && typeof result === 'object' && 'stashed' in result && result.stashed) {
+                      addToast({ type: 'success', message: 'Pulled (auto-stashed & restored local changes)', duration: 3000 })
+                    } else {
+                      addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
+                    }
+                  } catch (err) {
+                    reportGitError(err, 'Pull failed')
+                  }
+                }}
+                disabled={isPulling}
+                className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
+                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: gitStatus.behind > 0 ? '#f87171' : 'var(--color-text-muted)' }}
+                title="Pull from remote (auto-stashes local changes if the tree is dirty)"
+              >
+                {isPulling ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z" /></svg>}
+                Pull{gitStatus.behind > 0 ? ` ↓${gitStatus.behind}` : ''}
+              </button>
+              <button onClick={async () => { if (!projectPath) return; try { await pushGit(projectPath); addToast({ type: 'success', message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully', duration: 3000 }) } catch (err) { reportGitError(err, 'Push failed') } }} disabled={isPushing} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: !gitStatus.hasUpstream ? 'rgba(232, 123, 95, 0.12)' : 'var(--color-surface-2)', border: !gitStatus.hasUpstream ? '1px solid rgba(232, 123, 95, 0.4)' : '1px solid var(--color-border)', color: !gitStatus.hasUpstream ? 'var(--color-claude)' : gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)' }} title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin (--force-with-lease)` : 'Push to remote (--force-with-lease, safe after amend/rebase)'}>{isPushing ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4l4 4H9.5v4h-3V8H4l4-4z" /></svg>}{isPushing ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…') : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}</button>
             </div>
           </>}
         </div>
+        {projectPath && gitStatus && !isNotRepo && <StashSection projectPath={projectPath} />}
         {gitStatus && <div className="py-1">
           {totalChanges === 0 ? <p className="px-4 py-4 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No local changes.</p> : <>
-            {stagedFiles.length > 0 && <FileGroup label="Staged" files={stagedFiles} onFileAction={handleUnstage} onGroupAction={handleUnstageAll} actionIcon="minus" actionTitle="Unstage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Staged', stagedFiles)} />}
+            {stagedFiles.length > 0 && <FileGroup label="Staged" files={stagedFiles} onFileAction={handleUnstage} onGroupAction={handleUnstageAll} actionIcon="minus" actionTitle="Unstage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Staged', stagedFiles)} onFileContextMenu={handleFileContextMenu} />}
             {showThreadSplit ? <>
-              <FileGroup label="From this thread" files={threadUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageThreadFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('From this thread', threadUnstagedFiles)} />
-              {otherUnstagedFiles.length > 0 && <FileGroup label="Other changes" files={otherUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageOtherFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Other changes', otherUnstagedFiles)} />}
-            </> : unstagedFiles.length > 0 && <FileGroup label="Changes" files={unstagedFiles} onFileAction={handleStage} onGroupAction={handleStageAll} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Changes', unstagedFiles)} />}
+              <FileGroup label="From this thread" files={threadUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageThreadFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('From this thread', threadUnstagedFiles)} onFileContextMenu={handleFileContextMenu} />
+              {otherUnstagedFiles.length > 0 && <FileGroup label="Other changes" files={otherUnstagedFiles} onFileAction={handleStage} onGroupAction={handleStageOtherFiles} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Other changes', otherUnstagedFiles)} onFileContextMenu={handleFileContextMenu} />}
+            </> : unstagedFiles.length > 0 && <FileGroup label="Changes" files={unstagedFiles} onFileAction={handleStage} onGroupAction={handleStageAll} actionIcon="plus" actionTitle="Stage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Changes', unstagedFiles)} onFileContextMenu={handleFileContextMenu} />}
             <div className="mt-1 px-3 pt-1.5">
               <button
                 onClick={() => void handleDiscardAll()}
@@ -902,10 +1071,49 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           </>}
           <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
             <div className="px-3 pb-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Compare base: <code>{compareBaseRef}</code></div>
-            {compareLoading ? <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>Loading compare…</p> : compareFiles.length === 0 ? <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No changes vs {compareBaseRef}.</p> : <FileGroup label="Compare to Master" files={compareFiles} showActions={false} onFileClick={handleCompareFileClick} />}
+            {compareLoading ? <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>Loading compare…</p> : compareFiles.length === 0 ? <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No changes vs {compareBaseRef}.</p> : <FileGroup label="Compare to Master" files={compareFiles} showActions={false} onFileClick={handleCompareFileClick} onFileContextMenu={handleFileContextMenu} />}
           </div>
         </div>}
       </>}
+      {fileMenu && (() => {
+        const { file } = fileMenu
+        const isDeleted = file.status === 'D'
+        const isSsh = location?.connection_type === 'ssh'
+        const items: ContextMenuItem[] = [
+          {
+            id: 'open-file',
+            label: 'Open File',
+            title: isDeleted ? 'File has been deleted — opens the diff instead' : 'View the current contents of this file',
+            onSelect: () => handleFileOpen(file),
+          },
+          {
+            id: 'open-diff',
+            label: 'Open Diff',
+            title: 'Show the diff for this file',
+            onSelect: () => { if (projectPath) selectDiff(projectPath, file.path, file.staged) },
+          },
+          {
+            id: 'reveal',
+            label: 'Reveal in Explorer',
+            separator: true,
+            disabled: isSsh,
+            title: isSsh ? 'Not available for SSH-hosted repos' : 'Show this file in the system file manager',
+            onSelect: () => handleRevealInExplorer(file),
+          },
+          {
+            id: 'copy-path',
+            label: 'Copy Path',
+            separator: true,
+            onSelect: () => handleCopyPath(file, false),
+          },
+          {
+            id: 'copy-rel-path',
+            label: 'Copy Relative Path',
+            onSelect: () => handleCopyPath(file, true),
+          },
+        ]
+        return <ContextMenu x={fileMenu.x} y={fileMenu.y} items={items} onClose={() => setFileMenu(null)} />
+      })()}
     </div>
   )
 }

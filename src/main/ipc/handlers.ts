@@ -72,7 +72,7 @@ import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch, discardFileChanges, discardAllChanges } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch, discardFileChanges, discardAllChanges, getLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -146,6 +146,25 @@ function windowsPathToWsl(winPath: string): string {
   return winPath
     .replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
     .replace(/\\/g, '/')
+}
+
+/**
+ * Convert a WSL-native path to a Windows UNC path so Explorer can open it.
+ * e.g. /home/foo/bar in distro "Ubuntu"  →  \\wsl$\Ubuntu\home\foo\bar
+ *
+ * Handles /mnt/c-style paths specially: /mnt/c/Users/foo → C:\Users\foo
+ * so we use the real Windows path rather than going through the WSL filesystem.
+ */
+function wslPathToUnc(wslPath: string, distro: string): string {
+  // /mnt/<drive>/... is a mounted Windows drive — convert back to a native Windows path.
+  const mntMatch = wslPath.match(/^\/mnt\/([A-Za-z])(\/.*)?$/)
+  if (mntMatch) {
+    const drive = mntMatch[1].toUpperCase()
+    const rest = (mntMatch[2] ?? '').replace(/\//g, '\\')
+    return `${drive}:${rest || '\\'}`
+  }
+  const rel = wslPath.replace(/\//g, '\\').replace(/^\\+/, '')
+  return `\\\\wsl$\\${distro}\\${rel}`
 }
 
 /**
@@ -668,6 +687,21 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return commitChanges(repoPath, message, ssh, wsl)
   })
 
+  ipcMain.handle('git:lastCommit', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getLastCommit(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:amendCommit', (_event, repoPath: string, message?: string | null) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return amendCommit(repoPath, message ?? null, ssh, wsl)
+  })
+
+  ipcMain.handle('git:undoLastCommit', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return undoLastCommit(repoPath, ssh, wsl)
+  })
+
   ipcMain.handle('git:stage', (_event, repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return stageFile(repoPath, filePath, ssh, wsl)
@@ -739,14 +773,46 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return gitPushSetUpstream(repoPath, branch, ssh, wsl)
   })
 
-  ipcMain.handle('git:pull', (_event, repoPath: string) => {
+  ipcMain.handle('git:pull', (_event, repoPath: string, autoStash?: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
+    if (autoStash) return gitPullWithAutoStash(repoPath, true, ssh, wsl)
     return gitPull(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:pullOrigin', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return gitPullOrigin(repoPath, ssh, wsl)
+  })
+
+  // ─── Stash ────────────────────────────────────────────────────────────────
+  ipcMain.handle('git:stashList', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listStashes(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:stashCreate', (_event, repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return createStash(repoPath, opts ?? {}, ssh, wsl)
+  })
+
+  ipcMain.handle('git:stashApply', (_event, repoPath: string, ref: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return applyStash(repoPath, ref, ssh, wsl)
+  })
+
+  ipcMain.handle('git:stashPop', (_event, repoPath: string, ref: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return popStash(repoPath, ref, ssh, wsl)
+  })
+
+  ipcMain.handle('git:stashDrop', (_event, repoPath: string, ref: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return dropStash(repoPath, ref, ssh, wsl)
+  })
+
+  ipcMain.handle('git:forceUnlock', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return forceUnlockRepo(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:fetchRemote', (_event, repoPath: string) => {
@@ -1098,6 +1164,21 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('shell:openInExplorer', (_event, dirPath: string) => {
     shell.openPath(dirPath)
+  })
+
+  // Reveal a specific file in the native file manager (Explorer / Finder), highlighting it.
+  // For WSL-native paths, translates to a \\wsl$\<distro>\… UNC path so Explorer can open it.
+  // Throws for SSH-hosted paths (cannot reveal a remote file locally).
+  ipcMain.handle('shell:revealInExplorer', (_event, filePath: string) => {
+    const { ssh, wsl } = getConfigForPath(filePath)
+    if (ssh) {
+      throw new Error('Cannot reveal files hosted on a remote SSH location.')
+    }
+    let revealPath = filePath
+    if (wsl && !/^[A-Za-z]:[/\\]/.test(filePath)) {
+      revealPath = wslPathToUnc(filePath, wsl.distro)
+    }
+    shell.showItemInFolder(revealPath)
   })
 
   ipcMain.handle('shell:openInTerminal', (_event, dirPath: string, wsl?: WslConfig | null) => {

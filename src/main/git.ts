@@ -1,7 +1,9 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
+import { promises as fsPromises } from 'fs'
+import * as path from 'path'
 import { simpleQuery } from './claude-sdk'
-import { SshConfig, WslConfig, GitBranches } from '../shared/types'
+import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult } from '../shared/types'
 import { sshExec } from './ssh'
 import { wslExec } from './wsl'
 
@@ -48,16 +50,161 @@ function parseNameStatus(output: string): GitFileChange[] {
   return files
 }
 
+/**
+ * Error thrown when git repeatedly fails because another process holds the repo lock.
+ * The `lockPath` (when known) points at the offending `.git/*.lock` file so the UI can
+ * offer a "Force Unlock" action. Inspired by VS Code's `RepositoryIsLocked` error code.
+ */
+export class GitLockedError extends Error {
+  code = 'GIT_LOCKED' as const
+  lockPath: string | null
+  constructor(message: string, lockPath: string | null = null) {
+    super(message)
+    this.name = 'GitLockedError'
+    this.lockPath = lockPath
+  }
+}
+
+/**
+ * Pattern-match git stderr for lock-contention errors. Covers the three common flavours:
+ *  - `fatal: Unable to create '<repo>/.git/index.lock': File exists.`
+ *  - `Another git process seems to be running in this repository, e.g. an editor …`
+ *  - `fatal: cannot lock ref 'refs/heads/foo': Unable to create '<…>/foo.lock': File exists.`
+ */
+function extractLockPathFromStderr(stderr: string): string | null {
+  if (!stderr) return null
+  if (!/index\.lock|Another git process seems to be running|cannot lock ref|Unable to create .*\.lock/i.test(stderr)) {
+    return null
+  }
+  // Prefer the exact lock path when git names it (quoted form is most reliable).
+  const quoted = stderr.match(/Unable to create\s+'([^']+\.lock)'/i) || stderr.match(/'([^']+\.lock)'/i)
+  if (quoted) return quoted[1]
+  if (/Another git process seems to be running/i.test(stderr)) return 'index.lock'
+  const bare = stderr.match(/([^\s'"`]+\.lock)\b/i)
+  return bare ? bare[1] : null
+}
+
+/** True if the error thrown by one of the transport-specific git execs looks like a lock-contention failure. */
+function isLockError(err: unknown): { locked: true; lockPath: string | null } | null {
+  const stderr = (err as { stderr?: string } | null)?.stderr ?? ''
+  const message = (err instanceof Error ? err.message : String(err ?? '')) ?? ''
+  const lockPath = extractLockPathFromStderr(stderr) ?? extractLockPathFromStderr(message)
+  return lockPath !== null ? { locked: true, lockPath } : null
+}
+
+const GIT_LOCK_MAX_ATTEMPTS = 10
+
 async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
-  if (ssh) {
-    return sshExec(ssh, cwd, gitCmd)
+
+  // Retry on lock contention with VS Code-style quadratic backoff: 50ms, 200ms, 450ms, …, ~5s.
+  // This transparently rides out races between concurrent Claude sessions, the user's editor,
+  // and other tooling all touching the same repo at once.
+  let lastLockPath: string | null = null
+  for (let attempt = 1; attempt <= GIT_LOCK_MAX_ATTEMPTS; attempt++) {
+    try {
+      if (ssh) return await sshExec(ssh, cwd, gitCmd)
+      if (wsl) return await wslExec(wsl, cwd, gitCmd)
+      const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 })
+      return stdout.trimEnd()
+    } catch (err) {
+      const lock = isLockError(err)
+      if (!lock) throw err
+      lastLockPath = lock.lockPath
+      if (attempt === GIT_LOCK_MAX_ATTEMPTS) break
+      const delayMs = Math.pow(attempt, 2) * 50
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
   }
-  if (wsl) {
-    return wslExec(wsl, cwd, gitCmd)
+  throw new GitLockedError(
+    `Git repository is locked${lastLockPath ? ` (${lastLockPath})` : ''}. Another git process may be running, or a previous one crashed and left a stale lock.`,
+    lastLockPath,
+  )
+}
+
+/**
+ * Well-known lock files that sit directly in `.git/`. Loose-ref locks under `refs/` are handled separately.
+ */
+const TOP_LEVEL_LOCK_FILES = ['index.lock', 'HEAD.lock', 'config.lock', 'shallow.lock', 'packed-refs.lock'] as const
+
+/**
+ * Forcefully remove stale `.git/*.lock` files. Use ONLY in response to an explicit user action —
+ * deleting these while another git process is actively running CAN corrupt the repository.
+ *
+ * Covers:
+ *   - top-level locks in `.git/` (index, HEAD, config, shallow, packed-refs)
+ *   - loose-ref locks (`.git/refs/heads/*.lock`, `.git/refs/tags/*.lock`, etc.)
+ *
+ * Returns the list of files that were removed (relative to `.git/`) so the UI can report outcome.
+ */
+export async function forceUnlockRepo(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<{ removed: string[] }> {
+  if (ssh || wsl) {
+    // Remote: use a tiny shell script that lists each removed lock so we can report it.
+    // `rev-parse --git-dir` succeeds even when the index is locked, since it doesn't touch the index.
+    const script = [
+      'GITDIR=$(git rev-parse --git-dir)',
+      'cd "$GITDIR"',
+      // Top-level locks
+      'for f in index.lock HEAD.lock config.lock shallow.lock packed-refs.lock; do',
+      '  if [ -f "$f" ]; then echo "$f"; rm -f "$f"; fi',
+      'done',
+      // Loose-ref locks under refs/
+      'if [ -d refs ]; then find refs -type f -name "*.lock" -print -delete 2>/dev/null || true; fi',
+    ].join(' && ')
+    const out = ssh
+      ? await sshExec(ssh, repoPath, script)
+      : await wslExec(wsl!, repoPath, script)
+    const removed = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    return { removed }
   }
-  const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 })
-  return stdout.trimEnd()
+
+  // Local: resolve `.git` via git itself (works with worktrees and submodules), then unlink files directly.
+  const gitDirRel = (await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: repoPath, maxBuffer: 1024 * 1024 })).stdout.trim()
+  const gitDir = path.isAbsolute(gitDirRel) ? gitDirRel : path.join(repoPath, gitDirRel)
+  const removed: string[] = []
+
+  for (const name of TOP_LEVEL_LOCK_FILES) {
+    const full = path.join(gitDir, name)
+    try {
+      await fsPromises.unlink(full)
+      removed.push(name)
+    } catch (err) {
+      // ENOENT is the normal case — the lock just isn't there.
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+    }
+  }
+
+  // Walk `.git/refs/` for any `*.lock` files left behind by a crashed `update-ref`.
+  const refsDir = path.join(gitDir, 'refs')
+  async function walkAndUnlock(dir: string): Promise<void> {
+    let entries: Awaited<ReturnType<typeof fsPromises.readdir>>
+    try {
+      entries = await fsPromises.readdir(dir, { withFileTypes: true })
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return
+      throw err
+    }
+    for (const entry of entries) {
+      const full = path.join(dir, entry.name)
+      if (entry.isDirectory()) {
+        await walkAndUnlock(full)
+      } else if (entry.isFile() && entry.name.endsWith('.lock')) {
+        try {
+          await fsPromises.unlink(full)
+          removed.push(path.relative(gitDir, full).replace(/\\/g, '/'))
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
+        }
+      }
+    }
+  }
+  await walkAndUnlock(refsDir)
+
+  return { removed }
 }
 
 function detectProviderFromRemoteUrl(remoteUrl: string): GitHostingProvider | null {
@@ -203,6 +350,43 @@ export async function commitChanges(repoPath: string, message: string, ssh?: Ssh
   await git(repoPath, ['commit', '-m', message], ssh, wsl)
 }
 
+export async function getLastCommit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<LastCommitInfo | null> {
+  try {
+    const hash = (await git(repoPath, ['rev-parse', 'HEAD'], ssh, wsl)).trim()
+    const subject = (await git(repoPath, ['log', '-1', '--format=%s'], ssh, wsl)).trim()
+    const message = (await git(repoPath, ['log', '-1', '--format=%B'], ssh, wsl)).trimEnd()
+    let hasParent = false
+    try {
+      await git(repoPath, ['rev-parse', '--verify', 'HEAD~1'], ssh, wsl)
+      hasParent = true
+    } catch { /* initial commit */ }
+    return { hash, subject, message, hasParent }
+  } catch {
+    return null // no commits yet, or not a repo
+  }
+}
+
+/**
+ * Amend the last commit. Pass a new message to replace the existing one, or
+ * `null`/`undefined` to keep the current message (equivalent to `--no-edit`).
+ * Any staged changes at the time of call are folded into the amended commit.
+ */
+export async function amendCommit(repoPath: string, message: string | null | undefined, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  if (message != null && message.length > 0) {
+    await git(repoPath, ['commit', '--amend', '-m', message], ssh, wsl)
+  } else {
+    await git(repoPath, ['commit', '--amend', '--no-edit'], ssh, wsl)
+  }
+}
+
+/**
+ * Undo the last commit, keeping its changes staged in the index so the user
+ * can re-commit them. Equivalent to `git reset --soft HEAD~1`.
+ */
+export async function undoLastCommit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['reset', '--soft', 'HEAD~1'], ssh, wsl)
+}
+
 export async function stageFile(repoPath: string, filePath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['add', '--', filePath], ssh, wsl)
 }
@@ -229,12 +413,17 @@ export async function gitPush(repoPath: string, ssh?: SshConfig | null, wsl?: Ws
   // Always push to origin/<local-branch-name> and set/update upstream tracking.
   // This handles: no upstream, upstream pointing to a differently-named branch (e.g. origin/master),
   // and normal repeat pushes.
-  await git(repoPath, ['push', '--set-upstream', 'origin', 'HEAD'], ssh, wsl)
+  //
+  // `--force-with-lease` makes amend/rebase workflows work without ever allowing a blind clobber:
+  // if the remote ref has moved since our last fetch, the push is rejected rather than overwriting
+  // someone else's commits. Fast-forward pushes behave identically to a plain push.
+  await git(repoPath, ['push', '--force-with-lease', '--set-upstream', 'origin', 'HEAD'], ssh, wsl)
   return { pushed: true }
 }
 
 export async function gitPushSetUpstream(repoPath: string, branch: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pushed: true }> {
-  await git(repoPath, ['push', '--set-upstream', 'origin', branch], ssh, wsl)
+  // See gitPush for rationale behind --force-with-lease.
+  await git(repoPath, ['push', '--force-with-lease', '--set-upstream', 'origin', branch], ssh, wsl)
   return { pushed: true }
 }
 
@@ -246,6 +435,122 @@ export async function gitPull(repoPath: string, ssh?: SshConfig | null, wsl?: Ws
 export async function gitPullOrigin(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pulled: true }> {
   await git(repoPath, ['pull', 'origin'], ssh, wsl)
   return { pulled: true }
+}
+
+/**
+ * Returns true if the working tree has any uncommitted / untracked changes.
+ * Uses `git status --porcelain` which outputs an empty string for a clean tree.
+ */
+async function hasDirtyWorkingTree(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {
+  const output = await git(repoPath, ['status', '--porcelain'], ssh, wsl)
+  return output.trim().length > 0
+}
+
+/**
+ * Pull, optionally auto-stashing dirty changes first.
+ * - If autoStash is false or the tree is clean, behaves like a plain pull.
+ * - Otherwise: stash -u → pull → pop. If pop hits a conflict, the stash is left intact so the user can resolve.
+ * - If the pull itself fails after stashing, we best-effort pop the stash to restore state before re-throwing.
+ */
+export async function gitPullWithAutoStash(repoPath: string, autoStash: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<PullResult> {
+  if (!autoStash) {
+    await git(repoPath, ['pull'], ssh, wsl)
+    return { pulled: true, stashed: false }
+  }
+
+  const dirty = await hasDirtyWorkingTree(repoPath, ssh, wsl)
+  if (!dirty) {
+    await git(repoPath, ['pull'], ssh, wsl)
+    return { pulled: true, stashed: false }
+  }
+
+  // Stash dirty changes (including untracked) with a recognisable label.
+  const stamp = new Date().toISOString()
+  const message = `polycode: auto-stash before pull @ ${stamp}`
+  const stashOutput = await git(repoPath, ['stash', 'push', '-u', '-m', message], ssh, wsl)
+  // Racey: another process may have staged something between the dirty-check and the stash.
+  if (/No local changes to save/i.test(stashOutput)) {
+    await git(repoPath, ['pull'], ssh, wsl)
+    return { pulled: true, stashed: false }
+  }
+
+  try {
+    await git(repoPath, ['pull'], ssh, wsl)
+  } catch (err) {
+    // Pull failed — restore working tree via pop so we don't leave the user stranded.
+    try { await git(repoPath, ['stash', 'pop'], ssh, wsl) } catch { /* swallow; surface original error */ }
+    throw err
+  }
+
+  // Pull succeeded — try to pop. If it conflicts, leave the stash for manual resolution.
+  try {
+    await git(repoPath, ['stash', 'pop'], ssh, wsl)
+    return { pulled: true, stashed: true }
+  } catch (err: unknown) {
+    const output: string = (err as { stdout?: string; message?: string }).stdout ?? (err instanceof Error ? err.message : '') ?? ''
+    if (/CONFLICT|conflict|could not restore untracked files/i.test(output)) {
+      // Stash is still present at the top of the stack — report the ref so the UI can surface it.
+      return { pulled: true, stashed: true, popConflict: true, stashRef: 'stash@{0}' }
+    }
+    throw err
+  }
+}
+
+// ─────────── Stash ───────────
+
+/**
+ * List stash entries newest-first.
+ * Format: reflog-selector TAB committer-timestamp TAB reflog-subject
+ * e.g. `stash@{0}\t1700000000\tWIP on main: abc123 Subject`
+ */
+export async function listStashes(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<StashEntry[]> {
+  const output = await git(repoPath, ['stash', 'list', '--format=%gd%x09%ct%x09%gs'], ssh, wsl)
+  const entries: StashEntry[] = []
+  for (const rawLine of output.split('\n')) {
+    const line = rawLine.trimEnd()
+    if (!line) continue
+    const parts = line.split('\t')
+    if (parts.length < 3) continue
+    const [ref, tsRaw, ...subjectParts] = parts
+    const subject = subjectParts.join('\t')
+    const indexMatch = ref.match(/stash@\{(\d+)\}/)
+    const index = indexMatch ? Number(indexMatch[1]) : -1
+    const ts = Number(tsRaw)
+    const createdAt = Number.isFinite(ts) ? new Date(ts * 1000).toISOString() : new Date().toISOString()
+    // Subjects take two shapes:
+    //   "WIP on <branch>: <hash> <subject>"  (no -m supplied)
+    //   "On <branch>: <custom message>"      (-m supplied)
+    const subjectMatch = subject.match(/^(WIP )?[Oo]n ([^:]+): (.*)$/)
+    const autoGenerated = !!subjectMatch?.[1]
+    const branch = subjectMatch?.[2] ?? ''
+    const message = subjectMatch?.[3] ?? subject
+    entries.push({ ref, index, branch, message, createdAt, autoGenerated })
+  }
+  return entries
+}
+
+export async function createStash(repoPath: string, opts: { message?: string; includeUntracked?: boolean }, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  const args = ['stash', 'push']
+  if (opts.includeUntracked) args.push('-u')
+  if (opts.message && opts.message.trim().length > 0) {
+    args.push('-m', opts.message.trim())
+  }
+  const output = await git(repoPath, args, ssh, wsl)
+  if (/No local changes to save/i.test(output)) {
+    throw new Error('No local changes to stash.')
+  }
+}
+
+export async function applyStash(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['stash', 'apply', ref], ssh, wsl)
+}
+
+export async function popStash(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['stash', 'pop', ref], ssh, wsl)
+}
+
+export async function dropStash(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  await git(repoPath, ['stash', 'drop', ref], ssh, wsl)
 }
 
 export async function gitFetchRemote(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ fetched: true }> {

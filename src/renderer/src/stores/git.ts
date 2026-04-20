@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { GitStatus, GitBranches } from '../types/ipc'
+import { GitStatus, GitBranches, LastCommitInfo, StashEntry, PullResult } from '../types/ipc'
 import { useFilesStore } from './files'
 
 type DiscardTarget = { path: string; oldPath?: string | null }
@@ -27,12 +27,21 @@ interface GitStore {
   branchesByPath: Record<string, GitBranches | null>
   branchLoadingByPath: Record<string, boolean>
   initializingByPath: Record<string, boolean>
+  lastCommitByPath: Record<string, LastCommitInfo | null>
+  amendingByPath: Record<string, boolean>
+  undoingCommitByPath: Record<string, boolean>
+  stashesByPath: Record<string, StashEntry[]>
+  stashLoadingByPath: Record<string, boolean>
+  stashBusyByPath: Record<string, boolean>
   // Keyed by threadId
   modifiedFilesByThread: Record<string, string[]>
 
   fetch: (repoPath: string) => Promise<void>
   initRepo: (repoPath: string) => Promise<void>
   commit: (repoPath: string, message: string) => Promise<void>
+  amendCommit: (repoPath: string, message?: string | null) => Promise<void>
+  undoLastCommit: (repoPath: string) => Promise<void>
+  fetchLastCommit: (repoPath: string) => Promise<void>
   stage: (repoPath: string, filePath: string) => Promise<void>
   unstage: (repoPath: string, filePath: string) => Promise<void>
   stageAll: (repoPath: string) => Promise<void>
@@ -46,8 +55,14 @@ interface GitStore {
   generateCommitMessageWithContext: (repoPath: string, filePaths: string[], context: string) => Promise<void>
   push: (repoPath: string) => Promise<void>
   pushSetUpstream: (repoPath: string, branch: string) => Promise<void>
-  pull: (repoPath: string) => Promise<void>
+  pull: (repoPath: string, autoStash?: boolean) => Promise<PullResult | void>
   pullOrigin: (repoPath: string) => Promise<void>
+  fetchStashes: (repoPath: string) => Promise<void>
+  createStash: (repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => Promise<void>
+  applyStash: (repoPath: string, ref: string) => Promise<void>
+  popStash: (repoPath: string, ref: string) => Promise<void>
+  dropStash: (repoPath: string, ref: string) => Promise<void>
+  forceUnlock: (repoPath: string) => Promise<{ removed: string[] }>
   refreshRemote: (repoPath: string) => Promise<void>
   fetchModifiedFiles: (threadId: string) => Promise<void>
   fetchBranches: (repoPath: string) => Promise<void>
@@ -70,6 +85,12 @@ export const useGitStore = create<GitStore>((set, get) => ({
   branchesByPath: {},
   branchLoadingByPath: {},
   initializingByPath: {},
+  lastCommitByPath: {},
+  amendingByPath: {},
+  undoingCommitByPath: {},
+  stashesByPath: {},
+  stashLoadingByPath: {},
+  stashBusyByPath: {},
   modifiedFilesByThread: {},
 
   fetch: async (repoPath) => {
@@ -80,19 +101,33 @@ export const useGitStore = create<GitStore>((set, get) => ({
       if (!isRepo) {
         set((s) => ({
           statusByPath: { ...s.statusByPath, [repoPath]: null },
+          lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: null },
           notRepoByPath: { ...s.notRepoByPath, [repoPath]: true },
           loadingByPath: { ...s.loadingByPath, [repoPath]: false },
         }))
         return
       }
-      const status = await window.api.invoke('git:status', repoPath)
+      const [status, lastCommit] = await Promise.all([
+        window.api.invoke('git:status', repoPath),
+        window.api.invoke('git:lastCommit', repoPath),
+      ])
       set((s) => ({
         statusByPath: { ...s.statusByPath, [repoPath]: status },
+        lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit },
         notRepoByPath: { ...s.notRepoByPath, [repoPath]: false },
         loadingByPath: { ...s.loadingByPath, [repoPath]: false },
       }))
     } catch {
       set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: false } }))
+    }
+  },
+
+  fetchLastCommit: async (repoPath) => {
+    try {
+      const lastCommit = await window.api.invoke('git:lastCommit', repoPath)
+      set((s) => ({ lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit } }))
+    } catch {
+      // Silently ignore — not fatal
     }
   },
 
@@ -113,6 +148,29 @@ export const useGitStore = create<GitStore>((set, get) => ({
     // Clear commit message and refresh status after commit
     set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: '' } }))
     await get().fetch(repoPath)
+  },
+
+  amendCommit: async (repoPath, message) => {
+    if (get().amendingByPath[repoPath]) return
+    set((s) => ({ amendingByPath: { ...s.amendingByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:amendCommit', repoPath, message ?? null)
+      set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: '' } }))
+      await get().fetch(repoPath)
+    } finally {
+      set((s) => ({ amendingByPath: { ...s.amendingByPath, [repoPath]: false } }))
+    }
+  },
+
+  undoLastCommit: async (repoPath) => {
+    if (get().undoingCommitByPath[repoPath]) return
+    set((s) => ({ undoingCommitByPath: { ...s.undoingCommitByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:undoLastCommit', repoPath)
+      await get().fetch(repoPath)
+    } finally {
+      set((s) => ({ undoingCommitByPath: { ...s.undoingCommitByPath, [repoPath]: false } }))
+    }
   },
 
   stage: async (repoPath, filePath) => {
@@ -218,14 +276,17 @@ export const useGitStore = create<GitStore>((set, get) => ({
     }
   },
 
-  pull: async (repoPath) => {
+  pull: async (repoPath, autoStash = false) => {
     if (get().pullingByPath[repoPath]) return
     set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:pull', repoPath)
+      const result = await window.api.invoke('git:pull', repoPath, autoStash) as PullResult | undefined
+      return result
     } finally {
       set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
+      // Auto-stash may have created/popped a stash; keep the list in sync.
+      if (autoStash) void get().fetchStashes(repoPath)
     }
   },
 
@@ -238,6 +299,72 @@ export const useGitStore = create<GitStore>((set, get) => ({
       set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
     }
+  },
+
+  fetchStashes: async (repoPath) => {
+    if (get().stashLoadingByPath[repoPath]) return
+    set((s) => ({ stashLoadingByPath: { ...s.stashLoadingByPath, [repoPath]: true } }))
+    try {
+      const stashes = await window.api.invoke('git:stashList', repoPath) as StashEntry[]
+      set((s) => ({
+        stashesByPath: { ...s.stashesByPath, [repoPath]: stashes },
+        stashLoadingByPath: { ...s.stashLoadingByPath, [repoPath]: false },
+      }))
+    } catch {
+      set((s) => ({ stashLoadingByPath: { ...s.stashLoadingByPath, [repoPath]: false } }))
+    }
+  },
+
+  createStash: async (repoPath, opts) => {
+    if (get().stashBusyByPath[repoPath]) return
+    set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:stashCreate', repoPath, opts)
+      await Promise.all([get().fetch(repoPath), get().fetchStashes(repoPath)])
+    } finally {
+      set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
+    }
+  },
+
+  applyStash: async (repoPath, ref) => {
+    if (get().stashBusyByPath[repoPath]) return
+    set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:stashApply', repoPath, ref)
+      await Promise.all([get().fetch(repoPath), get().fetchStashes(repoPath)])
+    } finally {
+      set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
+    }
+  },
+
+  popStash: async (repoPath, ref) => {
+    if (get().stashBusyByPath[repoPath]) return
+    set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:stashPop', repoPath, ref)
+      await Promise.all([get().fetch(repoPath), get().fetchStashes(repoPath)])
+    } finally {
+      set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
+    }
+  },
+
+  dropStash: async (repoPath, ref) => {
+    if (get().stashBusyByPath[repoPath]) return
+    set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
+    try {
+      await window.api.invoke('git:stashDrop', repoPath, ref)
+      await get().fetchStashes(repoPath)
+    } finally {
+      set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
+    }
+  },
+
+  forceUnlock: async (repoPath) => {
+    // Destructive; caller is expected to have already confirmed with the user.
+    // Refresh status afterwards in case the lock was keeping our view out of date.
+    const result = await window.api.invoke('git:forceUnlock', repoPath) as { removed: string[] }
+    await get().fetch(repoPath)
+    return result
   },
 
   refreshRemote: async (repoPath) => {

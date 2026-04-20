@@ -4,6 +4,7 @@ import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
+import { useGitErrorReporter } from '../lib/gitErrorToast'
 import { useTerminalStore } from '../stores/terminal'
 import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT } from '../types/ipc'
 import { usePlanStore } from '../stores/plans'
@@ -117,6 +118,7 @@ export default function ThreadHeader({ threadId }: Props) {
   const isPushing = useGitStore((s) => locationPath ? (s.pushingByPath[locationPath] ?? false) : false)
   const isPulling = useGitStore((s) => locationPath ? (s.pullingByPath[locationPath] ?? false) : false)
   const addToast = useToastStore((s) => s.add)
+  const reportGitError = useGitErrorReporter(locationPath)
 
   const fetchThreads = useThreadStore((s) => s.fetch)
 
@@ -429,13 +431,13 @@ export default function ThreadHeader({ threadId }: Props) {
                       await pushGit(locationPath)
                       addToast({ type: 'success', message: 'Pushed successfully', duration: 3000 })
                     } catch (err) {
-                      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Push failed', duration: 0 })
+                      reportGitError(err, 'Push failed')
                     }
                   }}
                   disabled={isPushing}
                   className="hover:opacity-70 transition-opacity disabled:opacity-40"
                   style={{ color: '#4ade80', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
-                  title={`Push (${gitStatus.ahead} ahead)`}
+                  title={`Push (${gitStatus.ahead} ahead, --force-with-lease)`}
                 >
                   {isPushing ? (
                     <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin" style={{ verticalAlign: 'middle' }}>
@@ -455,7 +457,7 @@ export default function ThreadHeader({ threadId }: Props) {
                       await pullGit(locationPath)
                       addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
                     } catch (err) {
-                      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Pull failed', duration: 0 })
+                      reportGitError(err, 'Pull failed')
                     }
                   }}
                   disabled={isPulling}
