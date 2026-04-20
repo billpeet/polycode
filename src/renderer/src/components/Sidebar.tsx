@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { useCommandStore, instKey } from '../stores/commands'
 import { useLocationStore } from '../stores/locations'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
@@ -80,6 +81,10 @@ export default function Sidebar() {
   const returnLocationToPool = useLocationStore((s) => s.returnToPool)
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
+  const commandByProject = useCommandStore((s) => s.byProject)
+  const fetchCommands = useCommandStore((s) => s.fetch)
+  const fetchCommandStatuses = useCommandStore((s) => s.fetchStatuses)
+  const setCommandStatus = useCommandStore((s) => s.setStatus)
 
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -93,6 +98,7 @@ export default function Sidebar() {
   const [pathExistsByLocation, setPathExistsByLocation] = useState<Record<string, boolean>>({})
 
   const subsRef = useRef<Map<string, Array<() => void>>>(new Map())
+  const commandSubsRef = useRef<Map<string, () => void>>(new Map())
 
   useEffect(() => {
     const allThreadIds = new Set<string>()
@@ -141,8 +147,51 @@ export default function Sidebar() {
         unsubs.forEach((unsubscribe) => unsubscribe())
       }
       subsRef.current.clear()
+      for (const unsubscribe of commandSubsRef.current.values()) {
+        unsubscribe()
+      }
+      commandSubsRef.current.clear()
     }
   }, [])
+
+  useEffect(() => {
+    const expandedProjectList = Array.from(expandedProjectIds)
+    for (const projectId of expandedProjectList) {
+      if (!commandByProject[projectId]) {
+        void fetchCommands(projectId)
+      }
+    }
+  }, [commandByProject, expandedProjectIds, fetchCommands])
+
+  useEffect(() => {
+    const activeKeys = new Set<string>()
+
+    for (const projectId of expandedProjectIds) {
+      const commands = commandByProject[projectId] ?? []
+      const locations = locationsByProject[projectId] ?? []
+      if (commands.length === 0 || locations.length === 0) continue
+
+      for (const location of locations) {
+        void fetchCommandStatuses(projectId, location.id)
+        for (const command of commands) {
+          const key = instKey(command.id, location.id)
+          activeKeys.add(key)
+          if (!commandSubsRef.current.has(key)) {
+            const unsubscribe = window.api.on(`command:status:${key}`, (status) => {
+              setCommandStatus(key, status as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
+            })
+            commandSubsRef.current.set(key, unsubscribe)
+          }
+        }
+      }
+    }
+
+    for (const [key, unsubscribe] of commandSubsRef.current) {
+      if (activeKeys.has(key)) continue
+      unsubscribe()
+      commandSubsRef.current.delete(key)
+    }
+  }, [commandByProject, expandedProjectIds, fetchCommandStatuses, locationsByProject, setCommandStatus])
 
   useEffect(() => {
     fetchYouTrackServers()

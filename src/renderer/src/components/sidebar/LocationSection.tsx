@@ -2,6 +2,7 @@ import { ChevronDown, ChevronRight } from 'lucide-react'
 import { RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import ThreadRow from './ThreadRow'
 import { ConnectionBadge } from './shared'
+import { useCommandStore, EMPTY_COMMANDS, instKey } from '../../stores/commands'
 
 interface LocationSectionProps {
   projectId: string
@@ -46,6 +47,12 @@ export default function LocationSection({
   const locationThreads = projectThreads.filter((thread) => thread.location_id === location.id)
   const isCheckedOut = !location.pool_id || location.checked_out
   const pathMissing = location.connection_type === 'local' && pathExistsByLocation[location.id] === false
+  const projectCommands = useCommandStore((s) => s.byProject[projectId] ?? EMPTY_COMMANDS)
+  const commandStatusMap = useCommandStore((s) => s.statusMap)
+  const activeCommandCount = projectCommands.reduce((count, command) => {
+    const status = commandStatusMap[instKey(command.id, location.id)] ?? 'idle'
+    return status === 'running' || status === 'stopping' ? count + 1 : count
+  }, 0)
 
   return (
     <div>
@@ -64,6 +71,19 @@ export default function LocationSection({
           {branchByLocation[location.id] && (
             <span className="ml-1 flex-shrink-0 text-[9px] opacity-50">
               ({branchByLocation[location.id]})
+            </span>
+          )}
+          {activeCommandCount > 0 && (
+            <span
+              className="ml-1 inline-flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-semibold"
+              style={{
+                background: 'rgba(74, 222, 128, 0.15)',
+                color: '#4ade80',
+                border: '1px solid rgba(74, 222, 128, 0.3)',
+              }}
+              title={`${activeCommandCount} command${activeCommandCount === 1 ? '' : 's'} running`}
+            >
+              {activeCommandCount}
             </span>
           )}
           <ConnectionBadge connectionType={location.connection_type} />
