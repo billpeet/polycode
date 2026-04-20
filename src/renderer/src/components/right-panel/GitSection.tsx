@@ -8,6 +8,7 @@ import { GitCompareResult, GitFileChange, PullResult, RepoLocation } from '../..
 import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu'
 import { SectionHeader, SparkleIcon } from './shared'
 import { StashSection } from './StashSection'
+import { CommitLogSection } from './CommitLogSection'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
@@ -1050,6 +1051,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           </>}
         </div>
         {projectPath && gitStatus && !isNotRepo && <StashSection projectPath={projectPath} />}
+        {projectPath && gitStatus && !isNotRepo && <CommitLogSection projectPath={projectPath} range="HEAD" label="Commit Log" topBorder />}
         {gitStatus && <div className="py-1">
           {totalChanges === 0 ? <p className="px-4 py-4 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No local changes.</p> : <>
             {stagedFiles.length > 0 && <FileGroup label="Staged" files={stagedFiles} onFileAction={handleUnstage} onGroupAction={handleUnstageAll} actionIcon="minus" actionTitle="Unstage" onFileClick={handleFileClick} onFileDiscard={handleDiscardFile} onGroupDiscard={() => void handleDiscardGroup('Staged', stagedFiles)} onFileContextMenu={handleFileContextMenu} />}
@@ -1072,6 +1074,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           <div className="mt-1 pt-1" style={{ borderTop: '1px solid var(--color-border)' }}>
             <div className="px-3 pb-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Compare base: <code>{compareBaseRef}</code></div>
             {compareLoading ? <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>Loading compare…</p> : compareFiles.length === 0 ? <p className="px-4 py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No changes vs {compareBaseRef}.</p> : <FileGroup label="Compare to Master" files={compareFiles} showActions={false} onFileClick={handleCompareFileClick} onFileContextMenu={handleFileContextMenu} />}
+            {projectPath && <CommitLogSection projectPath={projectPath} range={`${compareBaseRef}..HEAD`} label="Commits vs Base" refreshKey={compareBaseRef} topBorder />}
           </div>
         </div>}
       </>}

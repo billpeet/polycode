@@ -72,7 +72,7 @@ import { checkCliHealth, updateCli } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch, discardFileChanges, discardAllChanges, getLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo } from '../git'
+import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch, discardFileChanges, discardAllChanges, getLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -833,6 +833,21 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:compareDiffToMain', (_event, repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:log', (_event, repoPath: string, opts?: { range?: string; limit?: number }) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listCommits(repoPath, opts ?? {}, ssh, wsl)
+  })
+
+  ipcMain.handle('git:commitFiles', (_event, repoPath: string, sha: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listCommitFiles(repoPath, sha, ssh, wsl)
+  })
+
+  ipcMain.handle('git:commitDiff', (_event, repoPath: string, sha: string, filePath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCommitFileDiff(repoPath, sha, filePath, ssh, wsl)
   })
 
   ipcMain.handle('git:branches', (_event, repoPath: string) => {

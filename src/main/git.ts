@@ -3,7 +3,7 @@ import { promisify } from 'util'
 import { promises as fsPromises } from 'fs'
 import * as path from 'path'
 import { simpleQuery } from './claude-sdk'
-import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult } from '../shared/types'
+import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry } from '../shared/types'
 import { sshExec } from './ssh'
 import { wslExec } from './wsl'
 
@@ -622,6 +622,93 @@ export async function getFileDiff(repoPath: string, filePath: string, staged: bo
       return header + lines.map(l => `+${l}`).join('\n')
     }
     return await git(repoPath, ['diff', '--', filePath], ssh, wsl)
+  } catch {
+    return ''
+  }
+}
+
+/**
+ * Parse the output of `git log --format=<custom>` where each commit occupies a single line,
+ * with fields separated by TAB. Subject (last field) is the only one that may contain spaces;
+ * we deliberately omit body and anything that could contain literal TABs or newlines.
+ *
+ * Format string: `%H%x09%h%x09%an%x09%ae%x09%aI%x09%P%x09%s`
+ *   %H  full sha         %h  short sha     %an author name
+ *   %ae author email     %aI ISO date      %P  parents (space-separated)
+ *   %s  subject (single line — git never emits newlines in %s)
+ */
+function parseCommitLog(output: string): CommitLogEntry[] {
+  if (!output) return []
+  const entries: CommitLogEntry[] = []
+  for (const line of output.split(/\r?\n/)) {
+    if (!line) continue
+    // Split with limit so any stray TABs in subject don't break the record (they shouldn't exist, but belt-and-braces).
+    const parts = line.split('\t')
+    if (parts.length < 7) continue
+    const [sha, shortSha, authorName, authorEmail, authorDate, parentsRaw, ...subjectRest] = parts
+    const subject = subjectRest.join('\t')
+    const parents = parentsRaw ? parentsRaw.split(/\s+/).filter(Boolean) : []
+    entries.push({ sha, shortSha, authorName, authorEmail, authorDate, parents, subject })
+  }
+  return entries
+}
+
+/**
+ * List commits reachable from `opts.range` (default `HEAD`) in chronological (newest-first) order.
+ * Pass a range like `"origin/main..HEAD"` to limit to commits on the current branch not yet on base.
+ * Caps at `opts.limit` entries (default 100) to keep renderer work bounded.
+ */
+export async function listCommits(
+  repoPath: string,
+  opts: { range?: string; limit?: number } = {},
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<CommitLogEntry[]> {
+  const range = opts.range ?? 'HEAD'
+  const limit = opts.limit ?? 100
+  // `--no-merges` was considered but VS Code's history view shows merges, so we include them too.
+  // The `--` terminator prevents a range that happens to collide with a path from being parsed as one.
+  const format = '%H%x09%h%x09%an%x09%ae%x09%aI%x09%P%x09%s'
+  try {
+    const out = await git(repoPath, ['log', `--max-count=${limit}`, `--format=${format}`, range, '--'], ssh, wsl)
+    return parseCommitLog(out)
+  } catch (err) {
+    // A pathological range (e.g. base branch doesn't exist) should yield an empty list, not an error toast.
+    const stderr = (err as { stderr?: string } | null)?.stderr ?? ''
+    if (/unknown revision|not a valid object name|ambiguous argument/i.test(stderr)) return []
+    throw err
+  }
+}
+
+/**
+ * List the files changed in a single commit, with the same status codes as our working-tree status parser.
+ * For the root commit (no parent), git show emits every file as 'A'.
+ */
+export async function listCommitFiles(
+  repoPath: string,
+  sha: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<GitFileChange[]> {
+  // `--format=` suppresses the commit header so only the name-status lines remain.
+  const out = await git(repoPath, ['show', '--name-status', '--format=', sha], ssh, wsl)
+  return parseNameStatus(out)
+}
+
+/**
+ * Return the diff of a single file introduced by `sha` — i.e. the change relative to the commit's parent.
+ * For root commits, git show produces an all-added diff.
+ */
+export async function getCommitFileDiff(
+  repoPath: string,
+  sha: string,
+  filePath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  try {
+    // `git show <sha> -- <path>` restricts the diff to one file; `--format=` suppresses the commit header.
+    return await git(repoPath, ['show', '--format=', sha, '--', filePath], ssh, wsl)
   } catch {
     return ''
   }

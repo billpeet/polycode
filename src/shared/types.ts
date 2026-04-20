@@ -279,6 +279,24 @@ export interface PullResult {
   stashRef?: string
 }
 
+/** A single entry in a git log listing. */
+export interface CommitLogEntry {
+  /** Full commit SHA. */
+  sha: string
+  /** Abbreviated SHA (typically 7–8 chars, as git shows it). */
+  shortSha: string
+  /** First line of the commit message. */
+  subject: string
+  /** Commit author's display name. */
+  authorName: string
+  /** Commit author's email. */
+  authorEmail: string
+  /** ISO-8601 author date. */
+  authorDate: string
+  /** Full parent SHAs; length > 1 indicates a merge commit. */
+  parents: string[]
+}
+
 export interface AzureDevOpsPullRequest {
   id: number
   title: string

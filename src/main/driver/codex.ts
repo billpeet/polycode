@@ -17,6 +17,13 @@ import readline from 'readline'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
 
+type ContextCompactionItem = {
+  id: string
+  type: 'context_compaction'
+}
+
+type CodexThreadItem = ThreadItem | ContextCompactionItem
+
 type CodexStreamState = {
   streamedItemIds: Set<string>
   announcedItemIds: Set<string>
@@ -46,7 +53,7 @@ export function parseBashCommand(raw: string): { name: string; innerCmd: string 
 }
 
 /** Build a tool_call event for a Codex item. */
-function makeToolCallEvent(item: ThreadItem): ToolCallPayload {
+function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
   if (item.type === 'command_execution') {
     const { name, innerCmd } = parseBashCommand(item.command)
     const label = innerCmd.split('\n')[0].slice(0, 120) || name
@@ -91,6 +98,18 @@ function makeToolCallEvent(item: ThreadItem): ToolCallPayload {
     }
   }
 
+  if (item.type === 'context_compaction') {
+    return {
+      content: 'conversation history',
+      metadata: {
+        ...item,
+        type: 'tool_call',
+        name: 'ContextCompaction',
+        input: { action: 'compact_history' },
+      },
+    }
+  }
+
   return {
     content: item.type,
     metadata: { ...item, type: 'tool_call' },
@@ -118,7 +137,7 @@ function summarizeMcpResult(item: Extract<ThreadItem, { type: 'mcp_tool_call' }>
   return ''
 }
 
-function buildToolResult(item: ThreadItem): OutputEvent | null {
+function buildToolResult(item: CodexThreadItem): OutputEvent | null {
   switch (item.type) {
     case 'command_execution':
       return {
@@ -145,9 +164,10 @@ function buildToolResult(item: ThreadItem): OutputEvent | null {
     case 'file_change':
     case 'web_search':
     case 'todo_list':
+    case 'context_compaction':
       return {
         type: 'tool_result',
-        content: '',
+        content: item.type === 'context_compaction' ? 'Conversation history compacted.' : '',
         metadata: {
           ...item,
           type: 'tool_result',
@@ -270,7 +290,7 @@ export function parseCodexSdkEvent(
   return events
 }
 
-function normalizeAppServerItem(raw: Record<string, unknown>): ThreadItem | null {
+function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem | null {
   const itemType = raw.type as string | undefined
   const id = raw.id as string | undefined
   if (!itemType || !id) return null
@@ -348,6 +368,11 @@ function normalizeAppServerItem(raw: Record<string, unknown>): ThreadItem | null
               completed: Boolean((item as Record<string, unknown>).completed),
             }))
           : [],
+      }
+    case 'contextCompaction':
+      return {
+        id,
+        type: 'context_compaction',
       }
     case 'error':
       return {

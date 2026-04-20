@@ -232,6 +232,53 @@ describe('parseCodexAppServerNotification', () => {
       state,
     )).toEqual([])
   })
+
+  it('renders context compaction notifications as informational tool events', () => {
+    const started = parseCodexAppServerNotification(
+      'item/started',
+      {
+        item: {
+          id: 'compact_1',
+          type: 'contextCompaction',
+        },
+      },
+      state,
+    )
+    const completed = parseCodexAppServerNotification(
+      'item/completed',
+      {
+        item: {
+          id: 'compact_1',
+          type: 'contextCompaction',
+        },
+      },
+      state,
+    )
+
+    expect(started).toEqual([
+      {
+        type: 'tool_call',
+        content: 'conversation history',
+        metadata: {
+          id: 'compact_1',
+          type: 'tool_call',
+          name: 'ContextCompaction',
+          input: { action: 'compact_history' },
+        },
+      } satisfies OutputEvent,
+    ])
+    expect(completed).toEqual([
+      {
+        type: 'tool_result',
+        content: 'Conversation history compacted.',
+        metadata: {
+          id: 'compact_1',
+          type: 'tool_result',
+          tool_use_id: 'compact_1',
+        },
+      } satisfies OutputEvent,
+    ])
+  })
 })
 
 describe('CodexDriver transport selection', () => {

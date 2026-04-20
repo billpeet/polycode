@@ -385,10 +385,11 @@ export function DiffPane() {
           {fileName}
         </span>
         <span
-          className="text-[10px] px-1.5 py-0.5 rounded uppercase"
+          className="text-[10px] px-1.5 py-0.5 rounded uppercase font-mono"
           style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)' }}
+          title={diffView?.commitSha ? `Diff at commit ${diffView.commitSha}` : undefined}
         >
-          Diff
+          {diffView?.commitShortSha ? `@ ${diffView.commitShortSha}` : 'Diff'}
         </span>
         {diffView && (
           <button

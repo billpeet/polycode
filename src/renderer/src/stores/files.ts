@@ -13,6 +13,10 @@ interface DiffView {
   filePath: string
   diff: string
   staged: boolean
+  /** When present, the diff is for the file as introduced by this specific commit. */
+  commitSha?: string
+  /** Short SHA for display purposes when `commitSha` is set. */
+  commitShortSha?: string
 }
 
 interface FilesStore {
@@ -39,6 +43,7 @@ interface FilesStore {
   clearSelection: () => void
   selectDiff: (repoPath: string, filePath: string, staged: boolean) => Promise<void>
   selectCompareDiffToMain: (repoPath: string, filePath: string) => Promise<void>
+  selectCommitDiff: (repoPath: string, commitSha: string, commitShortSha: string, filePath: string) => Promise<void>
   clearDiff: () => void
   switchDiffToFile: () => void
 }
@@ -177,6 +182,25 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     try {
       const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
       set({ diffView: { repoPath, filePath, diff, staged: false }, loadingDiff: false })
+    } catch {
+      set({ loadingDiff: false })
+    }
+  },
+
+  selectCommitDiff: async (repoPath, commitSha, commitShortSha, filePath) => {
+    set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
+    const thread = Object.values(useThreadStore.getState().byProject)
+      .flat()
+      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
+    if (thread?.location_id) {
+      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
+    }
+    try {
+      const diff = await window.api.invoke('git:commitDiff', repoPath, commitSha, filePath) as string
+      // Abort if the user clicked a different diff before this one resolved.
+      const current = get().diffView
+      if (current && current.filePath === filePath && current.commitSha && current.commitSha !== commitSha) return
+      set({ diffView: { repoPath, filePath, diff, staged: false, commitSha, commitShortSha }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }
