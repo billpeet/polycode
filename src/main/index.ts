@@ -11,14 +11,17 @@ import { ptyManager } from './terminal/manager'
 import { SENTRY_DSN } from '../shared/sentry.config'
 import { startWebhookServer, stopWebhookServer } from './webhook/server'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
+import { stopAllFileWatches } from './file-watch'
 import { getSetting } from './db/queries'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
 import { installAppLogger, writeRendererLog } from './app-logger'
+import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
 installAppLogger()
+installMainThreadStallMonitor()
 
 ipcMain.on('log:write', (_event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return
@@ -177,6 +180,8 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  installIpcProfiling()
+
   // Register protocol handler for attachment:// URLs
   // Maps attachment://threadId/filename to the actual temp file
   protocol.handle('attachment', (request) => {
@@ -232,6 +237,7 @@ app.on('before-quit', () => {
   commandManager.stopAll()
   stopWebhookServer()
   stopPlanWatcher()
+  stopAllFileWatches()
   ptyManager.killAll()
   cleanupAllAttachments()
   closeDb()

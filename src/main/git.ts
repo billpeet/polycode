@@ -9,6 +9,97 @@ import { wslExec } from './wsl'
 
 const execFileAsync = promisify(execFile)
 
+type CachePolicy = {
+  ttlMs: number
+}
+
+type CacheEntry<T> = {
+  expiresAt: number
+  value: T
+}
+
+const gitReadCache = new Map<string, CacheEntry<unknown>>()
+const gitInFlight = new Map<string, Promise<unknown>>()
+
+const CACHE_POLICY = {
+  isRepo: { ttlMs: 60_000 },
+  branch: { ttlMs: 10_000 },
+  status: { ttlMs: 5_000 },
+  lastCommit: { ttlMs: 10_000 },
+  branches: { ttlMs: 30_000 },
+  compareToMain: { ttlMs: 15_000 },
+  hostingProvider: { ttlMs: 60_000 },
+  defaultBranch: { ttlMs: 60_000 },
+  fetchRemote: { ttlMs: 30_000 },
+} satisfies Record<string, CachePolicy>
+
+function getTransportCacheKey(ssh?: SshConfig | null, wsl?: WslConfig | null): string {
+  if (ssh) {
+    return `ssh:${ssh.user}@${ssh.host}:${ssh.port ?? 22}:${ssh.keyPath ?? ''}`
+  }
+  if (wsl) {
+    return `wsl:${wsl.distro}`
+  }
+  return 'local'
+}
+
+function getCacheScope(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): string {
+  return `${getTransportCacheKey(ssh, wsl)}::${repoPath}`
+}
+
+function getCacheKey(op: string, repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): string {
+  return `${op}::${getCacheScope(repoPath, ssh, wsl)}`
+}
+
+async function readWithCache<T>(
+  op: keyof typeof CACHE_POLICY,
+  repoPath: string,
+  fn: () => Promise<T>,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<T> {
+  const key = getCacheKey(op, repoPath, ssh, wsl)
+  const now = Date.now()
+  const cached = gitReadCache.get(key) as CacheEntry<T> | undefined
+  if (cached && cached.expiresAt > now) {
+    return cached.value
+  }
+
+  const existing = gitInFlight.get(key) as Promise<T> | undefined
+  if (existing) {
+    return existing
+  }
+
+  const promise = fn()
+    .then((value) => {
+      gitReadCache.set(key, {
+        value,
+        expiresAt: Date.now() + CACHE_POLICY[op].ttlMs,
+      })
+      return value
+    })
+    .finally(() => {
+      gitInFlight.delete(key)
+    })
+
+  gitInFlight.set(key, promise)
+  return promise
+}
+
+export function invalidateGitCache(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): void {
+  const scope = getCacheScope(repoPath, ssh, wsl)
+  for (const key of gitReadCache.keys()) {
+    if (key.endsWith(`::${scope}`)) {
+      gitReadCache.delete(key)
+    }
+  }
+  for (const key of gitInFlight.keys()) {
+    if (key.endsWith(`::${scope}`)) {
+      gitInFlight.delete(key)
+    }
+  }
+}
+
 export interface GitFileChange {
   status: 'M' | 'A' | 'D' | 'R' | 'U' | '?'
   path: string
@@ -242,12 +333,24 @@ export async function detectGitHostingProvider(
   return null
 }
 
+export function detectGitHostingProviderCached(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<GitHostingProvider | null> {
+  return readWithCache('hostingProvider', repoPath, () => detectGitHostingProvider(repoPath, ssh, wsl), ssh, wsl)
+}
+
 export async function getGitBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
   try {
     return await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)
   } catch {
     return null
   }
+}
+
+export function getCachedGitBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
+  return readWithCache('branch', repoPath, () => getGitBranch(repoPath, ssh, wsl), ssh, wsl)
 }
 
 export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitStatus | null> {
@@ -346,6 +449,10 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
   }
 }
 
+export function getCachedGitStatus(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitStatus | null> {
+  return readWithCache('status', repoPath, () => getGitStatus(repoPath, ssh, wsl), ssh, wsl)
+}
+
 export async function commitChanges(repoPath: string, message: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['commit', '-m', message], ssh, wsl)
 }
@@ -364,6 +471,10 @@ export async function getLastCommit(repoPath: string, ssh?: SshConfig | null, ws
   } catch {
     return null // no commits yet, or not a repo
   }
+}
+
+export function getCachedLastCommit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<LastCommitInfo | null> {
+  return readWithCache('lastCommit', repoPath, () => getLastCommit(repoPath, ssh, wsl), ssh, wsl)
 }
 
 /**
@@ -557,6 +668,14 @@ export async function gitFetchRemote(repoPath: string, ssh?: SshConfig | null, w
   // Keep this non-interactive so periodic refreshes never block on credentials.
   await git(repoPath, ['-c', 'credential.interactive=never', 'fetch', '--all', '--prune', '--tags', '--quiet'], ssh, wsl)
   return { fetched: true }
+}
+
+export async function gitFetchRemoteCached(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ fetched: true }> {
+  return readWithCache('fetchRemote', repoPath, async () => {
+    const result = await gitFetchRemote(repoPath, ssh, wsl)
+    invalidateGitCache(repoPath, ssh, wsl)
+    return result
+  }, ssh, wsl)
 }
 
 export async function generateCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
@@ -779,6 +898,14 @@ export async function getCompareToMainChanges(
   }
 }
 
+export function getCachedCompareToMainChanges(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<{ baseRef: string; files: GitFileChange[] }> {
+  return readWithCache('compareToMain', repoPath, () => getCompareToMainChanges(repoPath, ssh, wsl), ssh, wsl)
+}
+
 export async function getCompareToMainFileDiff(
   repoPath: string,
   filePath: string,
@@ -874,6 +1001,10 @@ export async function listBranches(repoPath: string, ssh?: SshConfig | null, wsl
   const remote = remoteOut.split('\n').filter(Boolean).filter((b) => !b.endsWith('/HEAD') && !b.includes('HEAD ->'))
 
   return { current, local, remote }
+}
+
+export function listCachedBranches(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitBranches> {
+  return readWithCache('branches', repoPath, () => listBranches(repoPath, ssh, wsl), ssh, wsl)
 }
 
 export async function checkoutBranch(repoPath: string, branch: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
@@ -1001,6 +1132,10 @@ export async function isGitRepo(repoPath: string, ssh?: SshConfig | null, wsl?: 
   }
 }
 
+export function isGitRepoCached(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {
+  return readWithCache('isRepo', repoPath, () => isGitRepo(repoPath, ssh, wsl), ssh, wsl)
+}
+
 export async function getDefaultBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   // Try symbolic-ref for origin/HEAD first (fast, no network)
   try {
@@ -1022,6 +1157,10 @@ export async function getDefaultBranch(repoPath: string, ssh?: SshConfig | null,
   }
 
   return 'main'
+}
+
+export function getCachedDefaultBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  return readWithCache('defaultBranch', repoPath, () => getDefaultBranch(repoPath, ssh, wsl), ssh, wsl)
 }
 
 /**

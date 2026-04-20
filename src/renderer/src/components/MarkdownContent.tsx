@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { getHighlighter, onReady } from '../lib/shiki'
+import { reportPerf } from '../lib/perf'
 
 // Configure marked with syntax highlighting and copy-button chrome
 marked.setOptions({
@@ -71,12 +72,22 @@ export default function MarkdownContent({ content }: Props) {
 
   useEffect(() => {
     if (!ref.current) return
+    const startedAt = performance.now()
     const raw = marked.parse(content) as string
     const clean = DOMPurify.sanitize(raw, {
       ADD_ATTR: ['data-code', 'style', 'tabindex'],
       ADD_TAGS: ['button']
     })
     ref.current.innerHTML = clean
+    reportPerf(
+      'markdown-content:render',
+      performance.now() - startedAt,
+      {
+        contentLength: content.length,
+        hasHighlighter: !!getHighlighter(),
+      },
+      { thresholdMs: 12, minIntervalMs: 1000 }
+    )
 
     const container = ref.current
     const handleClick = (e: MouseEvent) => {

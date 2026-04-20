@@ -28,10 +28,17 @@ const EMPTY_STATUS: ProviderStatus = {
   showOutput: false,
 }
 
+function createEmptyStatuses(overrides: Partial<ProviderStatus> = {}): Record<Provider, ProviderStatus> {
+  return Object.fromEntries(
+    PROVIDERS.map(({ id }) => [id, { ...EMPTY_STATUS, ...overrides }])
+  ) as Record<Provider, ProviderStatus>
+}
+
 const PROVIDER_LABELS: Record<Provider, string> = {
   'claude-code': 'Claude Code',
   'codex': 'Codex',
   'opencode': 'OpenCode',
+  'pi': 'Pi',
 }
 
 interface PanelProps {
@@ -78,11 +85,7 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
   }
 
   const [selectedEnvIdx, setSelectedEnvIdx] = useState(0)
-  const [statuses, setStatuses] = useState<Record<Provider, ProviderStatus>>({
-    'claude-code': { ...EMPTY_STATUS },
-    'codex': { ...EMPTY_STATUS },
-    'opencode': { ...EMPTY_STATUS },
-  })
+  const [statuses, setStatuses] = useState<Record<Provider, ProviderStatus>>(() => createEmptyStatuses())
 
   const selectedEnv = environmentOptions[selectedEnvIdx] ?? environmentOptions[0]
 
@@ -90,11 +93,7 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
     const env = environmentOptions[selectedEnvIdx] ?? environmentOptions[0]
 
     // Reset all to loading
-    setStatuses({
-      'claude-code': { ...EMPTY_STATUS, loading: true },
-      'codex': { ...EMPTY_STATUS, loading: true },
-      'opencode': { ...EMPTY_STATUS, loading: true },
-    })
+    setStatuses(createEmptyStatuses({ loading: true }))
 
     // Check all providers in parallel
     await Promise.all(

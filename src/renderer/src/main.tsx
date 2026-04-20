@@ -5,6 +5,7 @@ import { init as reactInit } from '@sentry/react'
 import './index.css'
 import App from './App'
 import { SENTRY_DSN } from '../../shared/sentry.config'
+import { installRendererPerfObservers, reportReactCommit } from './lib/perf'
 
 type RendererLogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug'
 
@@ -49,6 +50,7 @@ function installRendererLogForwarding(): void {
 }
 
 installRendererLogForwarding()
+installRendererPerfObservers()
 
 if (import.meta.env.PROD) {
   Sentry.init(
@@ -76,6 +78,8 @@ window.addEventListener('unhandledrejection', (event) => {
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
-    <App />
+    <React.Profiler id="App" onRender={reportReactCommit}>
+      <App />
+    </React.Profiler>
   </React.StrictMode>
 )

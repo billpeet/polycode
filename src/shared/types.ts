@@ -83,23 +83,36 @@ export const OPENCODE_MODELS = [
 
 export type OpenCodeModelId = typeof OPENCODE_MODELS[number]['id']
 
-export type Provider = 'claude-code' | 'codex' | 'opencode'
+export const PI_MODELS = [
+  { id: 'openai/gpt-5.4', label: 'GPT-5.4' },
+  { id: 'openai/gpt-5.4-mini', label: 'GPT-5.4 Mini' },
+  { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7' },
+  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
+  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
+] as const
+
+export type PiModelId = typeof PI_MODELS[number]['id']
+
+export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi'
 
 export const PROVIDERS = [
   { id: 'claude-code' as Provider, label: 'Claude Code' },
   { id: 'codex' as Provider, label: 'Codex' },
   { id: 'opencode' as Provider, label: 'OpenCode' },
+  { id: 'pi' as Provider, label: 'Pi' },
 ] as const
 
 export function getModelsForProvider(provider: Provider) {
   if (provider === 'codex') return OPENAI_MODELS
   if (provider === 'opencode') return OPENCODE_MODELS
+  if (provider === 'pi') return PI_MODELS
   return ANTHROPIC_MODELS
 }
 
 export function getDefaultModelForProvider(provider: Provider): string {
   if (provider === 'codex') return OPENAI_MODELS[0].id
   if (provider === 'opencode') return OPENCODE_MODELS[0].id
+  if (provider === 'pi') return PI_MODELS[0].id
   return ANTHROPIC_MODELS[0].id
 }
 
@@ -172,6 +185,10 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'anthropic/claude-sonnet-4-5': 200_000,
   'anthropic/claude-haiku-4-5': 200_000,
   'openai/gpt-4o': 128_000,
+  'openai/gpt-5.4': 200_000,
+  'openai/gpt-5.4-mini': 200_000,
+  'anthropic/claude-opus-4-7': 200_000,
+  'anthropic/claude-sonnet-4-6': 200_000,
   'google/gemini-2.5-pro': 1_000_000,
   'opencode/big-pickle': 128_000,
   'opencode/glm-5-free': 128_000,

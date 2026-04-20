@@ -116,6 +116,8 @@ export interface WindowApi {
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>
+  invoke(channel: 'files:watchStart', filePath: string): Promise<boolean>
+  invoke(channel: 'files:watchStop', filePath: string): Promise<void>
   invoke(channel: 'claude-history:listProjects'): Promise<ClaudeProject[]>
   invoke(channel: 'claude-history:listSessions', encodedPath: string): Promise<ClaudeSession[]>
   invoke(channel: 'claude-history:importedIds', projectId: string): Promise<string[]>

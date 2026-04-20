@@ -352,6 +352,20 @@ function runMigrations(database: Database.Database): void {
       linkThreads.run(locationId, proj.id)
     }
   }
+
+  // ── Performance indexes ───────────────────────────────────────────────────
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_threads_project_archived_updated
+      ON threads(project_id, archived, updated_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_messages_thread_created
+      ON messages(thread_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_messages_session_created
+      ON messages(session_id, created_at ASC);
+    CREATE INDEX IF NOT EXISTS idx_sessions_thread_active
+      ON sessions(thread_id, is_active);
+    CREATE INDEX IF NOT EXISTS idx_repo_locations_project_created
+      ON repo_locations(project_id, created_at ASC);
+  `)
 }
 
 export function closeDb(): void {

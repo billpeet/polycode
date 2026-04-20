@@ -3,8 +3,9 @@ import { useFilesStore } from '../stores/files'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { getHighlighter, onReady } from '../lib/shiki'
-import type { ThemedToken } from 'shiki'
+import type { BundledLanguage, SpecialLanguage, ThemedToken } from 'shiki'
 import { PatchDiff } from '@pierre/diffs/react'
+import { reportPerf } from '../lib/perf'
 
 function getLanguageFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase()
@@ -65,21 +66,44 @@ function basename(filePath: string): string {
   return filePath.split(/[/\\]/).pop() ?? filePath
 }
 
+function toPreviewPath(repoPath: string, relativePath: string): string {
+  const trimmedRepo = repoPath.replace(/[\\/]+$/, '')
+  const trimmedRelative = relativePath.replace(/^[/\\]+/, '')
+  return `${trimmedRepo}/${trimmedRelative}`
+}
+
 function CodePreview({ content, language }: { content: string; language: string }) {
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
   useEffect(() => onReady(() => setShikiReady(true)), [])
 
-  const tokenLines = useMemo(() => {
+  const highlighted = useMemo(() => {
+    const startedAt = performance.now()
     const hl = getHighlighter()
-    if (!hl || !shikiReady) return null
+    if (!hl || !shikiReady) {
+      return { tokenLines: null as ThemedToken[][] | null, durationMs: performance.now() - startedAt }
+    }
     const loaded = hl.getLoadedLanguages()
-    const lang = loaded.includes(language) ? language : 'text'
+    const lang: BundledLanguage | SpecialLanguage = loaded.includes(language as BundledLanguage)
+      ? language as BundledLanguage
+      : 'text'
     const { tokens } = hl.codeToTokens(content, { lang, theme: 'github-dark' })
-    return tokens
+    return { tokenLines: tokens, durationMs: performance.now() - startedAt }
   }, [content, language, shikiReady])
 
+  useEffect(() => {
+    reportPerf(
+      'file-preview:code-to-tokens',
+      highlighted.durationMs,
+      {
+        contentLength: content.length,
+        language,
+      },
+      { thresholdMs: 12, minIntervalMs: 1000 }
+    )
+  }, [content.length, highlighted.durationMs, language])
+
   const plainLines = useMemo(() => content.split('\n'), [content])
-  const lineCount = tokenLines ? tokenLines.length : plainLines.length
+  const lineCount = highlighted.tokenLines ? highlighted.tokenLines.length : plainLines.length
   const lineNumberWidth = String(lineCount).length
 
   return (
@@ -93,12 +117,12 @@ function CodePreview({ content, language }: { content: string; language: string 
     >
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <tbody>
-          {(tokenLines ?? plainLines).map((line, i) => (
+          {(highlighted.tokenLines ?? plainLines).map((line, i) => (
             <LineRow
               key={i}
               lineNumber={i + 1}
-              tokens={tokenLines ? (line as ThemedToken[]) : null}
-              plainText={tokenLines ? null : (line as string)}
+              tokens={highlighted.tokenLines ? (line as ThemedToken[]) : null}
+              plainText={highlighted.tokenLines ? null : (line as string)}
               lineNumberWidth={lineNumberWidth}
             />
           ))}
@@ -303,6 +327,7 @@ function MarkdownPreview({ content }: { content: string }) {
 
   useEffect(() => {
     if (!ref.current) return
+    const startedAt = performance.now()
     const raw = marked.parse(content) as string
     const clean = DOMPurify.sanitize(raw)
     ref.current.innerHTML = clean
@@ -314,7 +339,16 @@ function MarkdownPreview({ content }: { content: string }) {
       const id = text.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
       el.id = id
     })
-  }, [content])
+    reportPerf(
+      'file-preview:markdown-render',
+      performance.now() - startedAt,
+      {
+        contentLength: content.length,
+        tocEntries: tocEntries.length,
+      },
+      { thresholdMs: 12, minIntervalMs: 1000 }
+    )
+  }, [content, tocEntries.length])
 
   const handleNavigate = useCallback((id: string) => {
     if (!ref.current) return
@@ -367,8 +401,46 @@ export function DiffPane() {
   const loadingDiff = useFilesStore((s) => s.loadingDiff)
   const clearDiff = useFilesStore((s) => s.clearDiff)
   const switchDiffToFile = useFilesStore((s) => s.switchDiffToFile)
+  const refreshDiff = useFilesStore((s) => s.refreshDiff)
 
   const fileName = diffView ? basename(diffView.filePath) : '...'
+  const watchedPath = diffView && diffView.kind !== 'commit'
+    ? toPreviewPath(diffView.repoPath, diffView.filePath)
+    : null
+
+  useEffect(() => {
+    if (!watchedPath || !diffView || diffView.kind === 'commit') return
+
+    let disposed = false
+    let stopWatching: (() => void) | null = null
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+
+    const unsubscribe = window.api.on('files:changed', (data: unknown) => {
+      const payload = data as { path?: string }
+      if (payload.path === watchedPath) void refreshDiff()
+    })
+
+    void window.api.invoke('files:watchStart', watchedPath).then((watching) => {
+      if (disposed) {
+        if (watching) void window.api.invoke('files:watchStop', watchedPath)
+        return
+      }
+
+      if (watching) {
+        stopWatching = () => { void window.api.invoke('files:watchStop', watchedPath) }
+        return
+      }
+
+      pollTimer = setInterval(() => { void refreshDiff() }, 5000)
+    })
+
+    return () => {
+      disposed = true
+      unsubscribe()
+      if (pollTimer) clearInterval(pollTimer)
+      stopWatching?.()
+    }
+  }, [diffView?.commitSha, diffView?.filePath, diffView?.kind, diffView?.repoPath, refreshDiff, watchedPath])
 
   return (
     <>
@@ -401,6 +473,15 @@ export function DiffPane() {
             View file
           </button>
         )}
+        <button
+          onClick={() => void refreshDiff()}
+          disabled={!diffView || loadingDiff}
+          className="text-[10px] px-1.5 py-0.5 rounded transition-colors hover:bg-white/10 disabled:opacity-40"
+          style={{ color: 'var(--color-text-muted)' }}
+          title="Refresh diff"
+        >
+          Refresh
+        </button>
         <button
           onClick={clearDiff}
           className="rounded p-1 hover:bg-white/10 transition-colors"
@@ -438,6 +519,41 @@ export function FilePane() {
   const fileContent = useFilesStore((s) => s.fileContent)
   const loadingContent = useFilesStore((s) => s.loadingContent)
   const clearSelection = useFilesStore((s) => s.clearSelection)
+  const refreshSelectedFile = useFilesStore((s) => s.refreshSelectedFile)
+
+  useEffect(() => {
+    if (!selectedFilePath) return
+
+    let disposed = false
+    let stopWatching: (() => void) | null = null
+    let pollTimer: ReturnType<typeof setInterval> | null = null
+
+    const unsubscribe = window.api.on('files:changed', (data: unknown) => {
+      const payload = data as { path?: string }
+      if (payload.path === selectedFilePath) void refreshSelectedFile()
+    })
+
+    void window.api.invoke('files:watchStart', selectedFilePath).then((watching) => {
+      if (disposed) {
+        if (watching) void window.api.invoke('files:watchStop', selectedFilePath)
+        return
+      }
+
+      if (watching) {
+        stopWatching = () => { void window.api.invoke('files:watchStop', selectedFilePath) }
+        return
+      }
+
+      pollTimer = setInterval(() => { void refreshSelectedFile() }, 5000)
+    })
+
+    return () => {
+      disposed = true
+      unsubscribe()
+      if (pollTimer) clearInterval(pollTimer)
+      stopWatching?.()
+    }
+  }, [refreshSelectedFile, selectedFilePath])
 
   if (!selectedFilePath) return null
 
@@ -475,6 +591,15 @@ export function FilePane() {
             {language}
           </span>
         )}
+        <button
+          onClick={() => void refreshSelectedFile()}
+          disabled={loadingContent}
+          className="text-[10px] px-1.5 py-0.5 rounded transition-colors hover:bg-white/10 disabled:opacity-40"
+          style={{ color: 'var(--color-text-muted)' }}
+          title="Refresh preview"
+        >
+          Refresh
+        </button>
         <button
           onClick={clearSelection}
           className="rounded p-1 hover:bg-white/10 transition-colors"

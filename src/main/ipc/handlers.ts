@@ -68,14 +68,15 @@ import {
   setSetting,
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
-import { checkCliHealth, updateCli } from '../health/checker'
+import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getGitBranch, getGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemote, getFileDiff, getCompareToMainChanges, getCompareToMainFileDiff, listBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepo, detectGitHostingProvider, getDefaultBranch, discardFileChanges, discardAllChanges, getLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
+import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff, invalidateGitCache } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
+import { startFileWatch, stopFileWatch } from '../file-watch'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslExec, wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
@@ -206,6 +207,13 @@ function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: WslConfig
   const location = getLocationByPath(path)
   return { ssh: location?.ssh ?? null, wsl: location?.wsl ?? null }
 }
+
+function invalidateRepoGitCache(repoPath: string): void {
+  const { ssh, wsl } = getConfigForPath(repoPath)
+  invalidateGitCache(repoPath, ssh, wsl)
+}
+
+let cachedWslDistros: { expiresAt: number; value: string[] } | null = null
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   commandManager.init(window)
@@ -415,6 +423,9 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('wsl:list-distros', (): Promise<string[]> => {
+    if (cachedWslDistros && cachedWslDistros.expiresAt > Date.now()) {
+      return Promise.resolve(cachedWslDistros.value)
+    }
     return new Promise((resolve) => {
       const proc = spawn('wsl', ['--list', '--quiet'], {
         shell: false,
@@ -430,6 +441,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
         if (code === 0) {
           const stdout = decodeWslBuffer(Buffer.concat(stdoutChunks))
           const distros = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
+          cachedWslDistros = { value: distros, expiresAt: Date.now() + 10 * 60_000 }
           resolve(distros)
         } else {
           resolve([])
@@ -563,7 +575,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     // Capture git branch on first message (fire-and-forget, doesn't block send)
     const location = getLocationForThread(threadId)
     if (location) {
-      getGitBranch(location.path, location.ssh, location.wsl).then((branch) => {
+      getCachedGitBranch(location.path, location.ssh, location.wsl).then((branch) => {
         if (branch) setThreadGitBranchIfUnset(threadId, branch)
       }).catch(() => {/* not a git repo */})
     }
@@ -674,62 +686,71 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:branch', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getGitBranch(repoPath, ssh, wsl)
+    return getCachedGitBranch(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:status', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getGitStatus(repoPath, ssh, wsl)
+    return getCachedGitStatus(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:commit', (_event, repoPath: string, message: string) => {
+  ipcMain.handle('git:commit', async (_event, repoPath: string, message: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return commitChanges(repoPath, message, ssh, wsl)
+    await commitChanges(repoPath, message, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
   ipcMain.handle('git:lastCommit', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getLastCommit(repoPath, ssh, wsl)
+    return getCachedLastCommit(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:amendCommit', (_event, repoPath: string, message?: string | null) => {
+  ipcMain.handle('git:amendCommit', async (_event, repoPath: string, message?: string | null) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return amendCommit(repoPath, message ?? null, ssh, wsl)
+    await amendCommit(repoPath, message ?? null, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:undoLastCommit', (_event, repoPath: string) => {
+  ipcMain.handle('git:undoLastCommit', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return undoLastCommit(repoPath, ssh, wsl)
+    await undoLastCommit(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stage', (_event, repoPath: string, filePath: string) => {
+  ipcMain.handle('git:stage', async (_event, repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return stageFile(repoPath, filePath, ssh, wsl)
+    await stageFile(repoPath, filePath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:unstage', (_event, repoPath: string, filePath: string) => {
+  ipcMain.handle('git:unstage', async (_event, repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return unstageFile(repoPath, filePath, ssh, wsl)
+    await unstageFile(repoPath, filePath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stageAll', (_event, repoPath: string) => {
+  ipcMain.handle('git:stageAll', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return stageAll(repoPath, ssh, wsl)
+    await stageAll(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:unstageAll', (_event, repoPath: string) => {
+  ipcMain.handle('git:unstageAll', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return unstageAll(repoPath, ssh, wsl)
+    await unstageAll(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stageFiles', (_event, repoPath: string, filePaths: string[]) => {
+  ipcMain.handle('git:stageFiles', async (_event, repoPath: string, filePaths: string[]) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return stageFiles(repoPath, filePaths, ssh, wsl)
+    await stageFiles(repoPath, filePaths, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:discardFile', (_event, repoPath: string, filePath: string, oldPath?: string | null) => {
+  ipcMain.handle('git:discardFile', async (_event, repoPath: string, filePath: string, oldPath?: string | null) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return discardFileChanges(repoPath, filePath, oldPath ?? null, ssh, wsl)
+    await discardFileChanges(repoPath, filePath, oldPath ?? null, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
   ipcMain.handle('git:discardFiles', async (_event, repoPath: string, files: Array<{ path: string; oldPath?: string | null }>) => {
@@ -746,11 +767,13 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     if (errors.length > 0) {
       throw new Error(`Failed to discard ${errors.length} file${errors.length !== 1 ? 's' : ''}: ${errors.map((e) => `${e.path} (${e.error})`).join('; ')}`)
     }
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:discardAll', (_event, repoPath: string) => {
+  ipcMain.handle('git:discardAll', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return discardAllChanges(repoPath, ssh, wsl)
+    await discardAllChanges(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
   ipcMain.handle('git:generateCommitMessage', (_event, repoPath: string) => {
@@ -763,25 +786,34 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
   })
 
-  ipcMain.handle('git:push', (_event, repoPath: string) => {
+  ipcMain.handle('git:push', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return gitPush(repoPath, ssh, wsl)
+    const result = await gitPush(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
-  ipcMain.handle('git:pushSetUpstream', (_event, repoPath: string, branch: string) => {
+  ipcMain.handle('git:pushSetUpstream', async (_event, repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return gitPushSetUpstream(repoPath, branch, ssh, wsl)
+    const result = await gitPushSetUpstream(repoPath, branch, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
-  ipcMain.handle('git:pull', (_event, repoPath: string, autoStash?: boolean) => {
+  ipcMain.handle('git:pull', async (_event, repoPath: string, autoStash?: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    if (autoStash) return gitPullWithAutoStash(repoPath, true, ssh, wsl)
-    return gitPull(repoPath, ssh, wsl)
+    const result = autoStash
+      ? await gitPullWithAutoStash(repoPath, true, ssh, wsl)
+      : await gitPull(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
-  ipcMain.handle('git:pullOrigin', (_event, repoPath: string) => {
+  ipcMain.handle('git:pullOrigin', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return gitPullOrigin(repoPath, ssh, wsl)
+    const result = await gitPullOrigin(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
   // ─── Stash ────────────────────────────────────────────────────────────────
@@ -790,24 +822,28 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listStashes(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:stashCreate', (_event, repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => {
+  ipcMain.handle('git:stashCreate', async (_event, repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return createStash(repoPath, opts ?? {}, ssh, wsl)
+    await createStash(repoPath, opts ?? {}, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stashApply', (_event, repoPath: string, ref: string) => {
+  ipcMain.handle('git:stashApply', async (_event, repoPath: string, ref: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return applyStash(repoPath, ref, ssh, wsl)
+    await applyStash(repoPath, ref, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stashPop', (_event, repoPath: string, ref: string) => {
+  ipcMain.handle('git:stashPop', async (_event, repoPath: string, ref: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return popStash(repoPath, ref, ssh, wsl)
+    await popStash(repoPath, ref, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stashDrop', (_event, repoPath: string, ref: string) => {
+  ipcMain.handle('git:stashDrop', async (_event, repoPath: string, ref: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return dropStash(repoPath, ref, ssh, wsl)
+    await dropStash(repoPath, ref, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
   ipcMain.handle('git:forceUnlock', (_event, repoPath: string) => {
@@ -817,7 +853,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:fetchRemote', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return gitFetchRemote(repoPath, ssh, wsl)
+    return gitFetchRemoteCached(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:diff', (_event, repoPath: string, filePath: string, staged: boolean) => {
@@ -827,7 +863,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:compareToMain', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCompareToMainChanges(repoPath, ssh, wsl)
+    return getCachedCompareToMainChanges(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:compareDiffToMain', (_event, repoPath: string, filePath: string) => {
@@ -852,22 +888,26 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:branches', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return listBranches(repoPath, ssh, wsl)
+    return listCachedBranches(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:checkout', (_event, repoPath: string, branch: string) => {
+  ipcMain.handle('git:checkout', async (_event, repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return checkoutBranch(repoPath, branch, ssh, wsl)
+    await checkoutBranch(repoPath, branch, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:createBranch', (_event, repoPath: string, name: string, base: string, pullFirst: boolean) => {
+  ipcMain.handle('git:createBranch', async (_event, repoPath: string, name: string, base: string, pullFirst: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return createBranch(repoPath, name, base, pullFirst, ssh, wsl)
+    await createBranch(repoPath, name, base, pullFirst, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:merge', (_event, repoPath: string, source: string) => {
+  ipcMain.handle('git:merge', async (_event, repoPath: string, source: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return mergeBranch(repoPath, source, ssh, wsl)
+    const result = await mergeBranch(repoPath, source, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
   ipcMain.handle('git:findMergedBranches', (_event, repoPath: string) => {
@@ -880,24 +920,25 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return deleteBranches(repoPath, branches, ssh, wsl)
   })
 
-  ipcMain.handle('git:init', (_event, repoPath: string) => {
+  ipcMain.handle('git:init', async (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return gitInit(repoPath, ssh, wsl)
+    await gitInit(repoPath, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
   })
 
   ipcMain.handle('git:isRepo', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return isGitRepo(repoPath, ssh, wsl)
+    return isGitRepoCached(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:hostingProvider', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return detectGitHostingProvider(repoPath, ssh, wsl)
+    return detectGitHostingProviderCached(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:defaultBranch', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getDefaultBranch(repoPath, ssh, wsl)
+    return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
   // ── Azure DevOps Pull Requests ────────────────────────────────────────────
@@ -995,6 +1036,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     if (ssh) return sshListAllFiles(ssh, rootPath)
     if (wsl) return wslListAllFiles(wsl, rootPath)
     return listAllFiles(rootPath)
+  })
+
+  ipcMain.handle('files:watchStart', (_event, filePath: string) => {
+    const { ssh, wsl } = getConfigForPath(filePath)
+    if (ssh || wsl) return false
+    return startFileWatch(window, filePath)
+  })
+
+  ipcMain.handle('files:watchStop', (_event, filePath: string) => {
+    stopFileWatch(filePath)
   })
 
   // ── Claude History ─────────────────────────────────────────────────────────
@@ -1362,14 +1413,16 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     return checkCliHealth(provider, connectionType, ssh, wsl)
   })
 
-  ipcMain.handle('cli:update', (
+  ipcMain.handle('cli:update', async (
     _event,
     provider: Provider,
     connectionType: string,
     ssh?: SshConfig | null,
     wsl?: WslConfig | null,
   ) => {
-    return updateCli(provider, connectionType, ssh, wsl)
+    const result = await updateCli(provider, connectionType, ssh, wsl)
+    invalidateCliHealthCache(provider, connectionType, ssh, wsl)
+    return result
   })
 
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────

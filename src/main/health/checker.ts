@@ -7,6 +7,97 @@ interface SpawnResult {
   exitCode: number | null
 }
 
+type CacheEntry<T> = {
+  expiresAt: number
+  value: T
+}
+
+const VERSION_CHECK_TTL_MS = 60_000
+const LATEST_VERSION_TTL_MS = 15 * 60_000
+const HEALTH_RESULT_TTL_MS = 60_000
+
+const cliCache = new Map<string, CacheEntry<unknown>>()
+const cliInFlight = new Map<string, Promise<unknown>>()
+
+function readWithCache<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  const now = Date.now()
+  const cached = cliCache.get(key) as CacheEntry<T> | undefined
+  if (cached && cached.expiresAt > now) {
+    return Promise.resolve(cached.value)
+  }
+
+  const existing = cliInFlight.get(key) as Promise<T> | undefined
+  if (existing) {
+    return existing
+  }
+
+  const promise = fn()
+    .then((value) => {
+      cliCache.set(key, {
+        value,
+        expiresAt: Date.now() + ttlMs,
+      })
+      return value
+    })
+    .finally(() => {
+      cliInFlight.delete(key)
+    })
+
+  cliInFlight.set(key, promise)
+  return promise
+}
+
+function getTransportCacheKey(connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): string {
+  if (connectionType === 'ssh' && ssh) {
+    return `ssh:${ssh.user}@${ssh.host}:${ssh.port ?? 22}:${ssh.keyPath ?? ''}`
+  }
+  if (connectionType === 'wsl' && wsl) {
+    return `wsl:${wsl.distro}`
+  }
+  return connectionType
+}
+
+function getVersionCacheKey(
+  provider: Provider,
+  connectionType: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): string {
+  return `version:${provider}:${getTransportCacheKey(connectionType, ssh, wsl)}`
+}
+
+function getHealthCacheKey(
+  provider: Provider,
+  connectionType: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): string {
+  return `health:${provider}:${getTransportCacheKey(connectionType, ssh, wsl)}`
+}
+
+function getLatestVersionCacheKey(packageName: string): string {
+  return `latest:${packageName}`
+}
+
+export function invalidateCliHealthCache(
+  provider: Provider,
+  connectionType: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): void {
+  const prefix = `${provider}:${getTransportCacheKey(connectionType, ssh, wsl)}`
+  for (const key of cliCache.keys()) {
+    if (key === `version:${prefix}` || key === `health:${prefix}`) {
+      cliCache.delete(key)
+    }
+  }
+  for (const key of cliInFlight.keys()) {
+    if (key === `version:${prefix}` || key === `health:${prefix}`) {
+      cliInFlight.delete(key)
+    }
+  }
+}
+
 function runProcess(
   cmd: string,
   args: string[],
@@ -60,14 +151,16 @@ function isUpToDate(current: string, latest: string): boolean {
 
 /** Fetch latest published version of an npm package. */
 async function fetchLatestVersion(packageName: string): Promise<string | null> {
-  try {
-    const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`)
-    if (!response.ok) return null
-    const data = await response.json() as { version?: string }
-    return data.version ?? null
-  } catch {
-    return null
-  }
+  return readWithCache(getLatestVersionCacheKey(packageName), LATEST_VERSION_TTL_MS, async () => {
+    try {
+      const response = await fetch(`https://registry.npmjs.org/${encodeURIComponent(packageName)}/latest`)
+      if (!response.ok) return null
+      const data = await response.json() as { version?: string }
+      return data.version ?? null
+    } catch {
+      return null
+    }
+  })
 }
 
 const PROVIDER_INFO: Record<Provider, {
@@ -82,6 +175,7 @@ const PROVIDER_INFO: Record<Provider, {
   'claude-code': { cmd: 'claude',   package: '@anthropic-ai/claude-code', updateCmd: ['claude', 'update'] },
   'codex':       { cmd: 'codex',   package: '@openai/codex',             updatePkg: '@openai/codex@latest' },
   'opencode':    { cmd: 'opencode', package: 'opencode-ai',              updatePkg: 'opencode-ai@latest' },
+  'pi':          { cmd: 'pi',      package: '@mariozechner/pi-coding-agent', updatePkg: '@mariozechner/pi-coding-agent@latest' },
 }
 
 function buildSshArgs(ssh: SshConfig): string[] {
@@ -97,6 +191,10 @@ async function runVersionCheck(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<SpawnResult> {
+  return readWithCache(
+    getVersionCacheKey(provider, connectionType, ssh, wsl),
+    VERSION_CHECK_TTL_MS,
+    async () => {
   const info = PROVIDER_INFO[provider]
   const versionCmd = `${info.cmd} --version 2>&1`
 
@@ -118,6 +216,8 @@ async function runVersionCheck(
     shell: process.platform === 'win32',
     timeout: 10000,
   })
+    }
+  )
 }
 
 async function runUpdate(
@@ -169,18 +269,24 @@ export async function checkCliHealth(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<CliHealthResult> {
-  const info = PROVIDER_INFO[provider]
+  return readWithCache(
+    getHealthCacheKey(provider, connectionType, ssh, wsl),
+    HEALTH_RESULT_TTL_MS,
+    async () => {
+      const info = PROVIDER_INFO[provider]
 
-  const [versionResult, latestVersion] = await Promise.all([
-    runVersionCheck(provider, connectionType, ssh, wsl),
-    fetchLatestVersion(info.package),
-  ])
+      const [versionResult, latestVersion] = await Promise.all([
+        runVersionCheck(provider, connectionType, ssh, wsl),
+        fetchLatestVersion(info.package),
+      ])
 
-  const currentVersion = extractVersion(versionResult.output)
-  const installed = currentVersion !== null
-  const upToDate = installed && latestVersion ? isUpToDate(currentVersion!, latestVersion) : null
+      const currentVersion = extractVersion(versionResult.output)
+      const installed = currentVersion !== null
+      const upToDate = installed && latestVersion ? isUpToDate(currentVersion, latestVersion) : null
 
-  return { installed, currentVersion, latestVersion, upToDate }
+      return { installed, currentVersion, latestVersion, upToDate }
+    },
+  )
 }
 
 export async function updateCli(

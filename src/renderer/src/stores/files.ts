@@ -13,6 +13,7 @@ interface DiffView {
   filePath: string
   diff: string
   staged: boolean
+  kind: 'working' | 'compareToMain' | 'commit'
   /** When present, the diff is for the file as introduced by this specific commit. */
   commitSha?: string
   /** Short SHA for display purposes when `commitSha` is set. */
@@ -41,9 +42,11 @@ interface FilesStore {
   selectFile: (filePath: string | null) => void
   fetchFileContent: (filePath: string) => Promise<void>
   clearSelection: () => void
+  refreshSelectedFile: () => Promise<void>
   selectDiff: (repoPath: string, filePath: string, staged: boolean) => Promise<void>
   selectCompareDiffToMain: (repoPath: string, filePath: string) => Promise<void>
   selectCommitDiff: (repoPath: string, commitSha: string, commitShortSha: string, filePath: string) => Promise<void>
+  refreshDiff: () => Promise<void>
   clearDiff: () => void
   switchDiffToFile: () => void
 }
@@ -155,6 +158,12 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     set({ selectedFilePath: null, fileContent: null, diffView: null })
   },
 
+  refreshSelectedFile: async () => {
+    const { selectedFilePath } = get()
+    if (!selectedFilePath) return
+    await get().fetchFileContent(selectedFilePath)
+  },
+
   selectDiff: async (repoPath: string, filePath: string, staged: boolean) => {
     set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
     const thread = Object.values(useThreadStore.getState().byProject)
@@ -165,7 +174,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     }
     try {
       const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
-      set({ diffView: { repoPath, filePath, diff, staged }, loadingDiff: false })
+      set({ diffView: { repoPath, filePath, diff, staged, kind: 'working' }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }
@@ -181,7 +190,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     }
     try {
       const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
-      set({ diffView: { repoPath, filePath, diff, staged: false }, loadingDiff: false })
+      set({ diffView: { repoPath, filePath, diff, staged: false, kind: 'compareToMain' }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }
@@ -200,7 +209,41 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       // Abort if the user clicked a different diff before this one resolved.
       const current = get().diffView
       if (current && current.filePath === filePath && current.commitSha && current.commitSha !== commitSha) return
-      set({ diffView: { repoPath, filePath, diff, staged: false, commitSha, commitShortSha }, loadingDiff: false })
+      set({ diffView: { repoPath, filePath, diff, staged: false, kind: 'commit', commitSha, commitShortSha }, loadingDiff: false })
+    } catch {
+      set({ loadingDiff: false })
+    }
+  },
+
+  refreshDiff: async () => {
+    const current = get().diffView
+    if (!current) return
+
+    set({ loadingDiff: true })
+    try {
+      let diff = ''
+      if (current.kind === 'commit' && current.commitSha) {
+        diff = await window.api.invoke('git:commitDiff', current.repoPath, current.commitSha, current.filePath) as string
+      } else if (current.kind === 'compareToMain') {
+        diff = await window.api.invoke('git:compareDiffToMain', current.repoPath, current.filePath) as string
+      } else {
+        diff = await window.api.invoke('git:diff', current.repoPath, current.filePath, current.staged) as string
+      }
+
+      const latest = get().diffView
+      if (
+        !latest ||
+        latest.repoPath !== current.repoPath ||
+        latest.filePath !== current.filePath ||
+        latest.kind !== current.kind ||
+        latest.commitSha !== current.commitSha ||
+        latest.staged !== current.staged
+      ) {
+        set({ loadingDiff: false })
+        return
+      }
+
+      set({ diffView: { ...latest, diff }, loadingDiff: false })
     } catch {
       set({ loadingDiff: false })
     }

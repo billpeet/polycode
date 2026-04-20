@@ -170,7 +170,6 @@ export default function ThreadHeader({ threadId }: Props) {
     if (isPendingThread) return
     if (!locationPath) return
     const lp = locationPath
-    void refreshRemoteGit(lp)
     const interval = setInterval(() => { void refreshRemoteGit(lp) }, 60_000)
     return () => clearInterval(interval)
   }, [locationPath, refreshRemoteGit, isPendingThread])

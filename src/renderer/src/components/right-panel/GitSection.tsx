@@ -629,14 +629,25 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [compareFiles, setCompareFiles] = useState<GitFileChange[]>([])
   const [compareLoading, setCompareLoading] = useState(false)
   const [compareLoadedBranch, setCompareLoadedBranch] = useState<string | null>(null)
+  const [prsLoadedBranch, setPrsLoadedBranch] = useState<string | null>(null)
+  const [prsLoadedProjectPath, setPrsLoadedProjectPath] = useState<string | null>(null)
+  const [compareLoadedProjectPath, setCompareLoadedProjectPath] = useState<string | null>(null)
 
   useEffect(() => {
-    if (projectPath && !collapsed) fetchGit(projectPath)
+    if (!projectPath || collapsed) return
+    const timeoutId = window.setTimeout(() => {
+      fetchGit(projectPath)
+    }, 150)
+    return () => window.clearTimeout(timeoutId)
   }, [projectPath, collapsed, fetchGit])
 
   useEffect(() => {
-    if (threadId) fetchModifiedFiles(threadId)
-  }, [threadId, fetchModifiedFiles])
+    if (!threadId || collapsed) return
+    const timeoutId = window.setTimeout(() => {
+      fetchModifiedFiles(threadId)
+    }, 300)
+    return () => window.clearTimeout(timeoutId)
+  }, [threadId, collapsed, fetchModifiedFiles])
 
   useEffect(() => {
     if (gitStatus && !createPrTitleEdited) setCreatePrTitle(`Merge ${gitStatus.branch} into ${createPrTarget}`)
@@ -660,6 +671,8 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         setCurrentPr(current as PullRequestItem | null)
         setPrProvider('azure')
         setCreatePrTarget(resolvedDefaultBranch)
+        setPrsLoadedBranch(gitStatus.branch)
+        setPrsLoadedProjectPath(projectPath)
         return
       }
 
@@ -669,12 +682,16 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         setCurrentPr(current as PullRequestItem | null)
         setPrProvider('github')
         setCreatePrTarget(resolvedDefaultBranch)
+        setPrsLoadedBranch(gitStatus.branch)
+        setPrsLoadedProjectPath(projectPath)
         return
       }
 
       setOpenPrs([])
       setCurrentPr(null)
       setPrProvider(null)
+      setPrsLoadedBranch(gitStatus.branch)
+      setPrsLoadedProjectPath(projectPath)
     } finally {
       setLoadingPrs(false)
     }
@@ -690,6 +707,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       setCompareBaseRef(result.baseRef)
       setCompareFiles(result.files)
       setCompareLoadedBranch(currentBranch)
+      setCompareLoadedProjectPath(projectPath)
     } catch {
       if (showLoading) setCompareFiles([])
     } finally {
@@ -698,12 +716,22 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   }, [projectPath, gitStatus, isNotRepo, compareLoadedBranch])
 
   useEffect(() => {
-    if (projectPath && !collapsed && gitStatus && !isNotRepo) void refreshPullRequests()
-  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshPullRequests])
+    if (!projectPath || collapsed || !gitStatus || isNotRepo) return
+    if (prsLoadedProjectPath === projectPath && prsLoadedBranch === gitStatus.branch) return
+    const timeoutId = window.setTimeout(() => {
+      void refreshPullRequests()
+    }, 600)
+    return () => window.clearTimeout(timeoutId)
+  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshPullRequests, prsLoadedProjectPath, prsLoadedBranch])
 
   useEffect(() => {
-    if (projectPath && !collapsed && gitStatus && !isNotRepo) void refreshCompareToMain()
-  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshCompareToMain])
+    if (!projectPath || collapsed || !gitStatus || isNotRepo) return
+    if (compareLoadedProjectPath === projectPath && compareLoadedBranch === gitStatus.branch) return
+    const timeoutId = window.setTimeout(() => {
+      void refreshCompareToMain()
+    }, 900)
+    return () => window.clearTimeout(timeoutId)
+  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshCompareToMain, compareLoadedProjectPath, compareLoadedBranch])
 
   const handleSetCommitMsg = useCallback((msg: string) => {
     if (projectPath) setCommitMsg(projectPath, msg)

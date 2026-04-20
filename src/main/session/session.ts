@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto'
 import { ClaudeDriver } from '../driver/claude'
 import { CodexDriver } from '../driver/codex'
 import { OpenCodeDriver } from '../driver/opencode'
+import { PiDriver } from '../driver/pi'
 import { CLIDriver } from '../driver/types'
 import { OutputEvent, ThreadStatus, SendOptions, Question, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
@@ -81,6 +82,8 @@ export class Session {
       ? new CodexDriver(options)
       : provider === 'opencode'
       ? new OpenCodeDriver(options)
+      : provider === 'pi'
+      ? new PiDriver(options)
       : new ClaudeDriver(options)
     this.drivers.set(sessionId, driver)
     return driver

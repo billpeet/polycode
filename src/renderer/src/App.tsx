@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { Profiler, useEffect } from 'react'
 import { ErrorBoundary } from '@sentry/react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
@@ -15,6 +15,7 @@ import { useToastStore } from './stores/toast'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 import './stores/plans' // Initialize plan file watcher listener
+import { reportReactCommit } from './lib/perf'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
@@ -199,15 +200,25 @@ export default function App() {
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
         <TitleBar />
         <div className="flex flex-1 overflow-hidden">
-          <Sidebar />
+          <Profiler id="Sidebar" onRender={reportReactCommit}>
+            <Sidebar />
+          </Profiler>
           <main className="flex flex-1 overflow-hidden">
             {selectedThreadId ? (
               <>
                 <div className="flex flex-1 flex-col overflow-hidden">
-                  <ThreadView threadId={selectedThreadId} />
+                  <Profiler id="ThreadView" onRender={reportReactCommit}>
+                    <ThreadView threadId={selectedThreadId} />
+                  </Profiler>
                 </div>
-                <SecondPanel threadId={selectedThreadId} />
-                {isTodoPanelOpen && <RightPanel threadId={selectedThreadId} />}
+                <Profiler id="SecondPanel" onRender={reportReactCommit}>
+                  <SecondPanel threadId={selectedThreadId} />
+                </Profiler>
+                {isTodoPanelOpen && (
+                  <Profiler id="RightPanel" onRender={reportReactCommit}>
+                    <RightPanel threadId={selectedThreadId} />
+                  </Profiler>
+                )}
               </>
             ) : (
               <div className="flex flex-1 items-center justify-center gap-2" style={{ color: 'var(--color-text-muted)' }}>

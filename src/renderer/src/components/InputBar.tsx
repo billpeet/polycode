@@ -141,7 +141,10 @@ export default function InputBar({ threadId }: Props) {
   useEffect(() => {
     if (isPendingThread) return
     if (!isLocalLocation) return
-    window.api.invoke('wsl:list-distros').then(setAvailableDistros)
+    const timeoutId = window.setTimeout(() => {
+      window.api.invoke('wsl:list-distros').then(setAvailableDistros).catch(() => {})
+    }, 250)
+    return () => window.clearTimeout(timeoutId)
   }, [isLocalLocation, isPendingThread])
 
   // Run a CLI health check whenever the effective provider/connection configuration changes
@@ -164,7 +167,10 @@ export default function InputBar({ threadId }: Props) {
       : (connectionType === 'local' && currentThread.use_wsl && currentThread.wsl_distro)
         ? { distro: currentThread.wsl_distro }
         : null
-    checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
+    const timeoutId = window.setTimeout(() => {
+      checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
+    }, 750)
+    return () => window.clearTimeout(timeoutId)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentThread?.provider, currentThread?.use_wsl, currentThread?.wsl_distro, location?.connection_type, location?.id, threadId, isPendingThread, clearCliHealth, checkCliHealth])
 
