@@ -6,12 +6,10 @@ import { BaseDriver } from './base'
 export function buildPiArgs(
   sessionId: string | null,
   model: string | undefined,
-  content: string,
 ): string[] {
   const args: string[] = ['--mode', 'json']
   if (sessionId) args.push('--session', sessionId)
   if (model) args.push('--model', model)
-  args.push(content)
   return args
 }
 
@@ -58,8 +56,9 @@ export class PiDriver extends BaseDriver {
   ): SpawnCommand {
     return {
       binary: 'pi',
-      args: buildPiArgs(this.sessionId, this.options.model, content),
+      args: buildPiArgs(this.sessionId, this.options.model),
       workDir: this.options.workingDir,
+      stdinContent: content,
     }
   }
 
@@ -125,13 +124,15 @@ export class PiDriver extends BaseDriver {
         const usage = message?.usage as Record<string, unknown> | undefined
         const inputTokens = Number(usage?.input ?? 0)
         const outputTokens = Number(usage?.output ?? 0)
-        if (inputTokens || outputTokens) {
+        const contextWindow = inputTokens + outputTokens
+        if (inputTokens || outputTokens || contextWindow) {
           events.push({
             type: 'usage',
             content: '',
             metadata: {
               input_tokens: inputTokens,
               output_tokens: outputTokens,
+              context_window: contextWindow,
             },
           })
         }

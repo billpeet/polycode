@@ -557,11 +557,11 @@ export function updateThreadSessionId(threadId: string, sessionId: string): void
     .run(sessionId, threadId)
 }
 
-/** Accumulate input/output token totals and set context_window to latest snapshot. */
-export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, contextWindow: number): void {
+/** Accumulate input/output token totals and optionally set context_window to the latest snapshot. */
+export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, contextWindow: number | null): void {
   getDb()
     .prepare(
-      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, context_window = ?, updated_at = ? WHERE id = ?'
+      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, context_window = COALESCE(?, context_window), updated_at = ? WHERE id = ?'
     )
     .run(inputTokens, outputTokens, contextWindow, new Date().toISOString(), id)
 }
@@ -645,7 +645,7 @@ function parseMessageMetadata(metadata: string | null): Record<string, unknown> 
   }
 }
 
-function compactCodexMessages(messages: MessageRow[]): Message[] {
+function compactStreamingMessages(messages: MessageRow[]): Message[] {
   const compacted: MessageRow[] = []
 
   for (const message of messages) {
@@ -661,6 +661,12 @@ function compactCodexMessages(messages: MessageRow[]): Message[] {
     const currentType = currentMetadata?.type
 
     if (!previousType && !currentType && message.role === 'assistant') {
+      previous.content += message.content
+      previous.created_at = message.created_at
+      continue
+    }
+
+    if (previousType === 'thinking' && currentType === 'thinking' && message.role === 'assistant') {
       previous.content += message.content
       previous.created_at = message.created_at
       continue
@@ -686,21 +692,23 @@ function compactCodexMessages(messages: MessageRow[]): Message[] {
 }
 
 function shouldCompactMessagesForThread(threadId: string): boolean {
-  return getThreadProvider(threadId) === 'codex'
+  const provider = getThreadProvider(threadId)
+  return provider === 'codex' || provider === 'pi'
 }
 
 function shouldCompactMessagesForSession(sessionId: string): boolean {
   const row = getDb()
     .prepare('SELECT t.provider FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?')
     .get(sessionId) as { provider: string | null } | undefined
-  return (row?.provider ?? 'claude-code') === 'codex'
+  const provider = row?.provider ?? 'claude-code'
+  return provider === 'codex' || provider === 'pi'
 }
 
 export function listMessages(threadId: string): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC')
     .all(threadId) as MessageRow[]
-  return shouldCompactMessagesForThread(threadId) ? compactCodexMessages(rows) : rows as Message[]
+  return shouldCompactMessagesForThread(threadId) ? compactStreamingMessages(rows) : rows as Message[]
 }
 
 export function insertMessage(
@@ -732,7 +740,7 @@ export function listMessagesBySession(sessionId: string): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC')
     .all(sessionId) as MessageRow[]
-  return shouldCompactMessagesForSession(sessionId) ? compactCodexMessages(rows) : rows as Message[]
+  return shouldCompactMessagesForSession(sessionId) ? compactStreamingMessages(rows) : rows as Message[]
 }
 
 /**

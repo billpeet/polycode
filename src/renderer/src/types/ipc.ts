@@ -129,6 +129,7 @@ export interface WindowApi {
   invoke(channel: 'dialog:open-files'): Promise<string[]>
   invoke(channel: 'shell:copyPath', dirPath: string): Promise<void>
   invoke(channel: 'shell:openInExplorer', dirPath: string): Promise<void>
+  invoke(channel: 'shell:openInVsCode', dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'shell:revealInExplorer', filePath: string): Promise<void>
   invoke(channel: 'shell:openInTerminal', dirPath: string, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'process:kill', target: string, type: 'pid' | 'port', threadId?: string): Promise<{ ok: boolean; error?: string }>

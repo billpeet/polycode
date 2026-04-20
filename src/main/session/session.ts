@@ -799,7 +799,8 @@ export class Session {
         // Persist accumulated totals and latest context window snapshot
         const inputTokens = (event.metadata?.input_tokens as number) ?? 0
         const outputTokens = (event.metadata?.output_tokens as number) ?? 0
-        updateThreadUsage(this.threadId, inputTokens, outputTokens, inputTokens)
+        const contextWindow = (event.metadata?.context_window as number | undefined) ?? null
+        updateThreadUsage(this.threadId, inputTokens, outputTokens, contextWindow)
         break
       }
     }

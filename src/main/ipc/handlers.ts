@@ -1,6 +1,7 @@
 import { spawn, exec, execFile } from 'child_process'
 import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
+import { pathToFileURL } from 'url'
 import { homedir } from 'os'
 import { listPlanFiles, readPlanFile } from '../plans'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
@@ -112,6 +113,53 @@ function runExecFile(cmd: string, args: string[]): Promise<string> {
 function getPowerShellExe(): string {
   const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
   return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+}
+
+async function commandExists(cmd: string): Promise<boolean> {
+  try {
+    if (process.platform === 'win32') {
+      const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+      const whereExe = `${sysRoot}\\System32\\where.exe`
+      await runExecFile(whereExe, [cmd])
+      return true
+    }
+    await runExecFile('which', [cmd])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function encodeUriPath(path: string): string {
+  return path
+    .split('/')
+    .map((segment, index) => (index === 0 && segment === '' ? '' : encodeURIComponent(segment)))
+    .join('/')
+}
+
+function getVsCodeFolderUri(dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): string {
+  if (wsl) {
+    const wslPath = /^[A-Za-z]:[/\\]/.test(dirPath) ? windowsPathToWsl(dirPath) : dirPath
+    return `vscode-remote://wsl+${encodeURIComponent(wsl.distro)}${encodeUriPath(wslPath)}`
+  }
+  if (ssh) {
+    const remotePath = dirPath.replace(/\\/g, '/')
+    return `vscode-remote://ssh-remote+${encodeURIComponent(ssh.host)}${encodeUriPath(remotePath.startsWith('/') ? remotePath : `/${remotePath}`)}`
+  }
+  return pathToFileURL(dirPath).toString()
+}
+
+async function openFolderInVsCode(dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  const folderUri = getVsCodeFolderUri(dirPath, ssh, wsl)
+  const candidates = process.platform === 'win32' ? ['code.cmd', 'code'] : ['code']
+
+  for (const candidate of candidates) {
+    if (!(await commandExists(candidate))) continue
+    spawn(candidate, ['--folder-uri', folderUri], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref()
+    return
+  }
+
+  await shell.openExternal(folderUri)
 }
 
 /** Get SSH config from the thread's linked repo location. */
@@ -1230,6 +1278,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('shell:openInExplorer', (_event, dirPath: string) => {
     shell.openPath(dirPath)
+  })
+
+  ipcMain.handle('shell:openInVsCode', async (_event, dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+    await openFolderInVsCode(dirPath, ssh, wsl)
   })
 
   // Reveal a specific file in the native file manager (Explorer / Finder), highlighting it.

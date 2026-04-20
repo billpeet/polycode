@@ -31,6 +31,20 @@ type CodexStreamState = {
   lastAgentTextById: Map<string, string>
 }
 
+function asFiniteNumber(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function normalizeCodexContextWindowUsage(usage: Record<string, unknown> | null | undefined): number {
+  if (!usage) return 0
+  const inputTokens = asFiniteNumber(usage.input_tokens ?? usage.inputTokens) ?? 0
+  const cachedInputTokens = asFiniteNumber(usage.cached_input_tokens ?? usage.cachedInputTokens) ?? 0
+  const outputTokens = asFiniteNumber(usage.output_tokens ?? usage.outputTokens) ?? 0
+  const usedTokens = inputTokens + cachedInputTokens + outputTokens
+  const maxTokens = asFiniteNumber(usage.model_context_window ?? usage.modelContextWindow)
+  return maxTokens && maxTokens > 0 ? Math.min(usedTokens, maxTokens) : usedTokens
+}
+
 /**
  * Given a raw command string from a Codex command_execution item, return a
  * display-friendly name and the inner command to show in the UI.
@@ -262,18 +276,23 @@ export function parseCodexSdkEvent(
       break
     }
 
-    case 'turn.completed':
-      if (event.usage && (event.usage.input_tokens || event.usage.output_tokens)) {
+    case 'turn.completed': {
+      const inputTokens = event.usage?.input_tokens ?? 0
+      const outputTokens = event.usage?.output_tokens ?? 0
+      const contextWindow = normalizeCodexContextWindowUsage(event.usage as Record<string, unknown> | undefined)
+      if (inputTokens || outputTokens || contextWindow) {
         events.push({
           type: 'usage',
           content: '',
           metadata: {
-            input_tokens: event.usage.input_tokens ?? 0,
-            output_tokens: event.usage.output_tokens ?? 0,
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            context_window: contextWindow,
           },
         })
       }
       break
+    }
 
     case 'turn.failed':
       events.push({ type: 'error', content: event.error.message || 'Unknown Codex error' })
@@ -477,13 +496,15 @@ export function parseCodexAppServerNotification(
       const usage = (turn?.usage as Record<string, unknown> | undefined) ?? (params?.usage as Record<string, unknown> | undefined)
       const inputTokens = Number(usage?.inputTokens ?? usage?.input_tokens ?? 0)
       const outputTokens = Number(usage?.outputTokens ?? usage?.output_tokens ?? 0)
-      if (inputTokens || outputTokens) {
+      const contextWindow = normalizeCodexContextWindowUsage(usage)
+      if (inputTokens || outputTokens || contextWindow) {
         events.push({
           type: 'usage',
           content: '',
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
+            context_window: contextWindow,
           },
         })
       }

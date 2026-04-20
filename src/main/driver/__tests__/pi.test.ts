@@ -24,15 +24,29 @@ function feed(driver: PiDriver, jsonl: string): OutputEvent[] {
 
 describe('buildPiArgs', () => {
   it('builds a new session command', () => {
-    expect(buildPiArgs(null, undefined, 'hello')).toEqual([
-      '--mode', 'json', 'hello',
+    expect(buildPiArgs(null, undefined)).toEqual([
+      '--mode', 'json',
     ])
   })
 
   it('builds a resume command with model selection', () => {
-    expect(buildPiArgs('abc123', 'openai/gpt-5.4', 'continue')).toEqual([
-      '--mode', 'json', '--session', 'abc123', '--model', 'openai/gpt-5.4', 'continue',
+    expect(buildPiArgs('abc123', 'openai-codex/gpt-5.4')).toEqual([
+      '--mode', 'json', '--session', 'abc123', '--model', 'openai-codex/gpt-5.4',
     ])
+  })
+})
+
+describe('PiDriver command transport', () => {
+  it('sends the prompt via stdin instead of argv', () => {
+    const driver = makeDriver({ model: 'openai-codex/gpt-5.4' })
+    const command = (driver as any).buildCommand('line 1\nline 2', 'local', {})
+
+    expect(command).toEqual({
+      binary: 'pi',
+      args: ['--mode', 'json', '--model', 'openai-codex/gpt-5.4'],
+      workDir: '/tmp/test',
+      stdinContent: 'line 1\nline 2',
+    })
   })
 })
 
@@ -119,7 +133,7 @@ describe('PiDriver event parsing', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 12, output_tokens: 4 },
+        metadata: { input_tokens: 12, output_tokens: 4, context_window: 16 },
       } satisfies OutputEvent,
     ])
   })
@@ -187,7 +201,7 @@ describe('PiDriver JSONL buffering', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 8, output_tokens: 2 },
+        metadata: { input_tokens: 8, output_tokens: 2, context_window: 10 },
       } satisfies OutputEvent,
     ])
   })

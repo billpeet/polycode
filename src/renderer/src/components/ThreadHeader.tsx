@@ -10,6 +10,7 @@ import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT } from '../types/ipc'
 import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
+import { Tooltip } from './ui/tooltip'
 
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
 
@@ -67,6 +68,85 @@ function formatTokenCount(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
   return String(n)
+}
+
+function formatContextUsageTooltip(usedTokens: number, maxTokens: number, inputTokens: number, outputTokens: number) {
+  const usedPercentage = Math.max(0, Math.min(100, (usedTokens / maxTokens) * 100))
+  const remainingTokens = Math.max(0, maxTokens - usedTokens)
+
+  return (
+    <div className="space-y-1 whitespace-normal">
+      <div className="text-[11px] font-semibold uppercase tracking-[0.08em]" style={{ color: 'var(--color-text-muted)' }}>
+        Context window
+      </div>
+      <div className="text-sm">
+        {Math.round(usedPercentage)}% used · {usedTokens.toLocaleString()} / {maxTokens.toLocaleString()} tokens
+      </div>
+      <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+        Remaining: {remainingTokens.toLocaleString()} tokens
+      </div>
+      <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+        Input: {inputTokens.toLocaleString()} · Output: {outputTokens.toLocaleString()}
+      </div>
+    </div>
+  )
+}
+
+function ContextWindowMeter({ usedTokens, maxTokens, inputTokens, outputTokens }: { usedTokens: number; maxTokens: number; inputTokens: number; outputTokens: number }) {
+  const usedPercentage = Math.max(0, Math.min(100, (usedTokens / maxTokens) * 100))
+  const radius = 9.75
+  const circumference = 2 * Math.PI * radius
+  const dashOffset = circumference - (usedPercentage / 100) * circumference
+
+  return (
+    <Tooltip
+      content={formatContextUsageTooltip(usedTokens, maxTokens, inputTokens, outputTokens)}
+      contentClassName="max-w-xs whitespace-normal"
+      side="top"
+    >
+      <span className="relative inline-flex h-6 w-6 items-center justify-center" aria-label="Context window usage">
+        <svg
+          viewBox="0 0 24 24"
+          className="absolute inset-0 h-full w-full"
+          style={{ transform: 'rotate(-90deg)' }}
+          aria-hidden="true"
+        >
+          <circle
+            cx="12"
+            cy="12"
+            r={radius}
+            fill="none"
+            stroke="color-mix(in srgb, var(--color-text-muted) 35%, transparent)"
+            strokeWidth="3"
+          />
+          <circle
+            cx="12"
+            cy="12"
+            r={radius}
+            fill="none"
+            stroke="var(--color-text-muted)"
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={circumference}
+            strokeDashoffset={dashOffset}
+            style={{ transition: 'stroke-dashoffset 0.3s ease' }}
+          />
+        </svg>
+        <span
+          className="relative flex h-[15px] w-[15px] items-center justify-center rounded-full"
+          style={{
+            background: 'var(--color-bg)',
+            color: 'var(--color-text-muted)',
+            fontSize: '0.42rem',
+            fontWeight: 600,
+            lineHeight: 1,
+          }}
+        >
+          {Math.round(usedPercentage)}
+        </span>
+      </span>
+    </Tooltip>
+  )
 }
 
 interface Props {
@@ -314,6 +394,26 @@ export default function ThreadHeader({ threadId }: Props) {
                   (location?.connection_type === 'local' && thread?.use_wsl && thread.wsl_distro)
                     ? { distro: thread.wsl_distro }
                     : null
+                const sshConfig = location?.connection_type === 'ssh' ? (location.ssh ?? null) : null
+                window.api.invoke('shell:openInVsCode', locationPath, sshConfig, wslConfig)
+              }}
+              className="rounded p-0.5 hover:opacity-70 transition-opacity"
+              style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
+              title="Open in VS Code"
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11.5 2.5L6 6.5v3L11.5 13.5V2.5z" />
+                <path d="M6 6.5L3 4.5v7l3-2" />
+                <path d="M11.5 2.5l2 1v9l-2 1" />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                const wslConfig =
+                  location?.connection_type === 'wsl' ? (location.wsl ?? null) :
+                  (location?.connection_type === 'local' && thread?.use_wsl && thread.wsl_distro)
+                    ? { distro: thread.wsl_distro }
+                    : null
                 window.api.invoke('shell:openInTerminal', locationPath, wslConfig)
               }}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
@@ -357,46 +457,42 @@ export default function ThreadHeader({ threadId }: Props) {
         {usage && (() => {
           const model = thread?.model ?? 'claude-opus-4-7'
           const contextLimit = MODEL_CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
-          const contextPct = Math.min(usage.context_window / contextLimit, 1)
-          const barColor = contextPct < 0.5 ? '#4ade80' : contextPct < 0.8 ? '#facc15' : '#f87171'
           return (
             <span
               className="flex items-center gap-2 text-xs flex-shrink-0"
               style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace' }}
             >
-              <span
-                title={`Input: ${usage.input_tokens.toLocaleString()} tokens | Output: ${usage.output_tokens.toLocaleString()} tokens`}
+              <Tooltip
+                content={`Input: ${usage.input_tokens.toLocaleString()} tokens · Output: ${usage.output_tokens.toLocaleString()} tokens`}
+                side="top"
               >
-                ↓{formatTokenCount(usage.input_tokens)} ↑{formatTokenCount(usage.output_tokens)}
-              </span>
-              {usage.context_window > 0 && (
-                <span
-                  className="flex items-center gap-1"
-                  title={`Context: ${usage.context_window.toLocaleString()} / ${contextLimit.toLocaleString()} tokens (${Math.round(contextPct * 100)}%)`}
-                >
-                  <span
-                    style={{
-                      width: 60,
-                      height: 4,
-                      borderRadius: 2,
-                      background: 'var(--color-border)',
-                      overflow: 'hidden',
-                      display: 'inline-block',
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: 'block',
-                        width: `${Math.max(contextPct * 100, 1)}%`,
-                        height: '100%',
-                        borderRadius: 2,
-                        background: barColor,
-                        transition: 'width 0.3s, background 0.3s',
-                      }}
-                    />
-                  </span>
-                  <span style={{ fontSize: '0.6rem' }}>{Math.round(contextPct * 100)}%</span>
+                <span>
+                  ↓{formatTokenCount(usage.input_tokens)} ↑{formatTokenCount(usage.output_tokens)}
                 </span>
+              </Tooltip>
+              {usage.context_window > 0 && (
+                <>
+                  <ContextWindowMeter
+                    usedTokens={usage.context_window}
+                    maxTokens={contextLimit}
+                    inputTokens={usage.input_tokens}
+                    outputTokens={usage.output_tokens}
+                  />
+                  <Tooltip
+                    content={formatContextUsageTooltip(
+                      usage.context_window,
+                      contextLimit,
+                      usage.input_tokens,
+                      usage.output_tokens,
+                    )}
+                    contentClassName="max-w-xs whitespace-normal"
+                    side="top"
+                  >
+                    <span>
+                      {formatTokenCount(usage.context_window)}/{formatTokenCount(contextLimit)} ctx
+                    </span>
+                  </Tooltip>
+                </>
               )}
             </span>
           )

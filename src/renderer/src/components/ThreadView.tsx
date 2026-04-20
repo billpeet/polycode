@@ -142,8 +142,9 @@ export default function ThreadView({ threadId }: Props) {
       if (event.type === 'usage' && event.metadata) {
         const input = (event.metadata.input_tokens as number) ?? 0
         const output = (event.metadata.output_tokens as number) ?? 0
-        if (input || output) {
-          useThreadStore.getState().addUsage(threadId, input, output, input)
+        const contextWindow = (event.metadata.context_window as number | undefined) ?? null
+        if (input || output || contextWindow) {
+          useThreadStore.getState().addUsage(threadId, input, output, contextWindow)
         }
       }
 

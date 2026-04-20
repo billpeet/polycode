@@ -34,6 +34,21 @@ function appendOrMergeMessage(messages: Message[], incoming: Message, event: Out
     return [...messages, incoming]
   }
 
+  if (event.type === 'thinking') {
+    const previousType = previousMetadata?.type
+    if (previousType === 'thinking') {
+      return [
+        ...messages.slice(0, -1),
+        {
+          ...previous,
+          content: previous.content + incoming.content,
+          created_at: incoming.created_at,
+        },
+      ]
+    }
+    return [...messages, incoming]
+  }
+
   if (event.type === 'tool_result') {
     const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
     const nextToolUseId = typeof nextMetadata?.tool_use_id === 'string' ? nextMetadata.tool_use_id : null

@@ -185,7 +185,7 @@ describe('parseCodexSdkEvent', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 10, output_tokens: 3 },
+        metadata: { input_tokens: 10, output_tokens: 3, context_window: 17 },
       } satisfies OutputEvent,
     ])
   })
@@ -220,7 +220,7 @@ describe('parseCodexAppServerNotification', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 12, output_tokens: 4 },
+        metadata: { input_tokens: 12, output_tokens: 4, context_window: 16 },
       } satisfies OutputEvent,
     ])
   })

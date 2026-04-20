@@ -473,15 +473,30 @@ export class ClaudeDriver implements CLIDriver {
   }
 
   private collectResultMessage(message: SDKResultMessage, events: OutputEvent[]): void {
-    if (message.usage && (message.usage.input_tokens || message.usage.output_tokens)) {
-      events.push({
-        type: 'usage',
-        content: '',
-        metadata: {
-          input_tokens: message.usage.input_tokens ?? 0,
-          output_tokens: message.usage.output_tokens ?? 0,
-        },
-      })
+    if (message.usage) {
+      const inputTokens = message.usage.input_tokens ?? 0
+      const outputTokens = message.usage.output_tokens ?? 0
+      const cacheCreationInputTokens = message.usage.cache_creation_input_tokens ?? 0
+      const cacheReadInputTokens = message.usage.cache_read_input_tokens ?? 0
+      const usedContextWindow = inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens
+      const maxContextWindow = Math.max(
+        0,
+        ...Object.values(message.modelUsage ?? {}).map((usage) => usage?.contextWindow ?? 0)
+      )
+      const contextWindow =
+        maxContextWindow > 0 ? Math.min(usedContextWindow, maxContextWindow) : usedContextWindow
+
+      if (inputTokens || outputTokens || contextWindow) {
+        events.push({
+          type: 'usage',
+          content: '',
+          metadata: {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            context_window: contextWindow,
+          },
+        })
+      }
     }
 
     if (message.subtype !== 'success') {
