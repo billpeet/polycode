@@ -1,6 +1,14 @@
 import { spawn } from 'child_process'
 import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult } from '../../shared/types'
-import { shellEscape, LOAD_NODE_MANAGERS, buildSshBaseArgs, augmentWindowsPath } from '../driver/runner'
+import {
+  shellEscape,
+  LOAD_NODE_MANAGERS,
+  FIX_HOME,
+  RESOLVE_CODEX_BIN_SOFT,
+  buildSshBaseArgs,
+  augmentWindowsPath,
+  resolveClaudeCodeExecutable,
+} from '../driver/runner'
 
 interface SpawnResult {
   output: string
@@ -13,13 +21,23 @@ type CacheEntry<T> = {
 }
 
 const VERSION_CHECK_TTL_MS = 60_000
+const NEGATIVE_VERSION_CHECK_TTL_MS = 5_000
 const LATEST_VERSION_TTL_MS = 15 * 60_000
 const HEALTH_RESULT_TTL_MS = 60_000
+const NEGATIVE_HEALTH_RESULT_TTL_MS = 5_000
 
 const cliCache = new Map<string, CacheEntry<unknown>>()
 const cliInFlight = new Map<string, Promise<unknown>>()
 
 function readWithCache<T>(key: string, ttlMs: number, fn: () => Promise<T>): Promise<T> {
+  return readWithDynamicCache(key, fn, () => ttlMs)
+}
+
+function readWithDynamicCache<T>(
+  key: string,
+  fn: () => Promise<T>,
+  getTtlMs: (value: T) => number,
+): Promise<T> {
   const now = Date.now()
   const cached = cliCache.get(key) as CacheEntry<T> | undefined
   if (cached && cached.expiresAt > now) {
@@ -35,7 +53,7 @@ function readWithCache<T>(key: string, ttlMs: number, fn: () => Promise<T>): Pro
     .then((value) => {
       cliCache.set(key, {
         value,
-        expiresAt: Date.now() + ttlMs,
+        expiresAt: Date.now() + getTtlMs(value),
       })
       return value
     })
@@ -77,6 +95,36 @@ function getHealthCacheKey(
 
 function getLatestVersionCacheKey(packageName: string): string {
   return `latest:${packageName}`
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function hasUsableVersionCheck(result: SpawnResult): boolean {
+  return result.exitCode === 0 || extractVersion(result.output) !== null
+}
+
+function resolveLocalExecutable(cmd: string, env: NodeJS.ProcessEnv): { cmd: string; argsPrefix: string[]; shell: boolean } {
+  if (process.platform !== 'win32') {
+    return { cmd, argsPrefix: [], shell: false }
+  }
+
+  if (cmd === 'claude') {
+    return { cmd: resolveClaudeCodeExecutable(env), argsPrefix: [], shell: false }
+  }
+
+  return { cmd, argsPrefix: [], shell: true }
+}
+
+function buildPosixVersionCheck(provider: Provider, cmd: string): string {
+  const commonPreamble = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}`
+
+  if (provider === 'codex') {
+    return `${commonPreamble}; ${RESOLVE_CODEX_BIN_SOFT}; [ -n "$CODEX_BIN" ] && "$CODEX_BIN" --version 2>&1 || exit 127`
+  }
+
+  return `${commonPreamble}; CMD_BIN="$(command -v ${cmd} 2>/dev/null || true)"; case "$CMD_BIN" in /mnt/c/*) CMD_BIN="";; esac; [ -z "$CMD_BIN" ] && for _C in "$HOME/.local/bin/${cmd}" "$HOME/.npm/bin/${cmd}" "$HOME/.npm-global/bin/${cmd}" "$HOME/.volta/bin/${cmd}" "$HOME/.bun/bin/${cmd}" "$HOME/bin/${cmd}"; do [ -x "$_C" ] && CMD_BIN="$_C" && break; done; [ -n "$CMD_BIN" ] && "$CMD_BIN" --version 2>&1 || exit 127`
 }
 
 export function invalidateCliHealthCache(
@@ -185,38 +233,54 @@ function buildSshArgs(ssh: SshConfig): string[] {
   return args
 }
 
+async function runVersionCheckUncached(
+  provider: Provider,
+  connectionType: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<SpawnResult> {
+  const info = PROVIDER_INFO[provider]
+
+  if (connectionType === 'ssh' && ssh) {
+    const innerCmd = buildPosixVersionCheck(provider, info.cmd)
+    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+    return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 20000 })
+  }
+
+  if (connectionType === 'wsl' && wsl) {
+    const innerCmd = buildPosixVersionCheck(provider, info.cmd)
+    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], { timeout: 20000 })
+  }
+
+  const env = process.platform === 'win32' ? augmentWindowsPath() : process.env
+  const resolved = resolveLocalExecutable(info.cmd, env)
+  return runProcess(resolved.cmd, [...resolved.argsPrefix, '--version'], {
+    env,
+    shell: resolved.shell,
+    timeout: 10000,
+  })
+}
+
 async function runVersionCheck(
   provider: Provider,
   connectionType: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<SpawnResult> {
-  return readWithCache(
+  return readWithDynamicCache(
     getVersionCacheKey(provider, connectionType, ssh, wsl),
-    VERSION_CHECK_TTL_MS,
     async () => {
-  const info = PROVIDER_INFO[provider]
-  const versionCmd = `${info.cmd} --version 2>&1`
+      let result = await runVersionCheckUncached(provider, connectionType, ssh, wsl)
 
-  if (connectionType === 'ssh' && ssh) {
-    // LOAD_NODE_MANAGERS adds common tool dirs to PATH (.bashrc skips them in
-    // non-interactive shells due to `case $- in *i*)` guard).
-    const innerCmd = `${LOAD_NODE_MANAGERS}; ${versionCmd}`
-    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-    return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 20000 })
-  }
+      // Retry once when the command looks missing or PATH/bootstrap was transiently incomplete.
+      if (!hasUsableVersionCheck(result)) {
+        await delay(250)
+        result = await runVersionCheckUncached(provider, connectionType, ssh, wsl)
+      }
 
-  if (connectionType === 'wsl' && wsl) {
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', versionCmd], { timeout: 20000 })
-  }
-
-  // Local
-  return runProcess(info.cmd, ['--version'], {
-    env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
-    shell: process.platform === 'win32',
-    timeout: 10000,
-  })
-    }
+      return result
+    },
+    (result) => hasUsableVersionCheck(result) ? VERSION_CHECK_TTL_MS : NEGATIVE_VERSION_CHECK_TTL_MS,
   )
 }
 
@@ -238,13 +302,14 @@ async function runUpdate(
   }
 
   if (connectionType === 'ssh' && ssh) {
-    const innerCmd = `${LOAD_NODE_MANAGERS}; ${buildUpdateShellCmd()}`
+    const innerCmd = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${buildUpdateShellCmd()}`
     const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
     return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 120000 })
   }
 
   if (connectionType === 'wsl' && wsl) {
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', buildUpdateShellCmd()], { timeout: 120000 })
+    const innerCmd = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${buildUpdateShellCmd()}`
+    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], { timeout: 120000 })
   }
 
   // Local
@@ -269,9 +334,8 @@ export async function checkCliHealth(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<CliHealthResult> {
-  return readWithCache(
+  return readWithDynamicCache(
     getHealthCacheKey(provider, connectionType, ssh, wsl),
-    HEALTH_RESULT_TTL_MS,
     async () => {
       const info = PROVIDER_INFO[provider]
 
@@ -281,11 +345,11 @@ export async function checkCliHealth(
       ])
 
       const currentVersion = extractVersion(versionResult.output)
-      const installed = currentVersion !== null
-      const upToDate = installed && latestVersion ? isUpToDate(currentVersion, latestVersion) : null
-
+      const installed = currentVersion !== null || versionResult.exitCode === 0
+      const upToDate = installed && currentVersion && latestVersion ? isUpToDate(currentVersion, latestVersion) : null
       return { installed, currentVersion, latestVersion, upToDate }
     },
+    (result) => result.installed ? HEALTH_RESULT_TTL_MS : NEGATIVE_HEALTH_RESULT_TTL_MS,
   )
 }
 

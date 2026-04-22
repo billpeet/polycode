@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocationStore } from '../stores/locations'
 import { useProjectStore } from '../stores/projects'
 import { Provider, PROVIDERS, SshConfig, WslConfig, CliHealthResult, CliUpdateResult } from '../types/ipc'
@@ -86,11 +86,13 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
 
   const [selectedEnvIdx, setSelectedEnvIdx] = useState(0)
   const [statuses, setStatuses] = useState<Record<Provider, ProviderStatus>>(() => createEmptyStatuses())
+  const checkSeq = useRef(0)
 
   const selectedEnv = environmentOptions[selectedEnvIdx] ?? environmentOptions[0]
 
   const checkAll = useCallback(async () => {
     const env = environmentOptions[selectedEnvIdx] ?? environmentOptions[0]
+    const seq = ++checkSeq.current
 
     // Reset all to loading
     setStatuses(createEmptyStatuses({ loading: true }))
@@ -106,11 +108,13 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
             env.ssh ?? null,
             env.wsl ?? null,
           )
+          if (checkSeq.current !== seq) return
           setStatuses((prev) => ({
             ...prev,
             [provider]: { ...EMPTY_STATUS, result },
           }))
         } catch (err) {
+          if (checkSeq.current !== seq) return
           setStatuses((prev) => ({
             ...prev,
             [provider]: { ...EMPTY_STATUS, error: String(err) },

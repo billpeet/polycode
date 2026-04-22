@@ -679,7 +679,10 @@ export class Session {
         if (this.suppressAssistantTextForPermissionTurn) {
           break
         }
-        if (event.content.trim() && this.activeSessionId) {
+        // Preserve whitespace-only streaming chunks (for example "\n\n" or a leading
+        // space before a list item). Dropping them corrupts markdown once the renderer
+        // re-fetches the persisted messages after stream completion.
+        if (event.content.length > 0 && this.activeSessionId) {
           insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
         }
         break

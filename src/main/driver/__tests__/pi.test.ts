@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect, mock } from 'bun:test'
 import { PiDriver, buildPiArgs } from '../pi'
 import type { OutputEvent } from '../../../shared/types'
 import type { DriverOptions } from '../types'
@@ -15,60 +15,85 @@ function parse(driver: PiDriver, data: Record<string, unknown>): OutputEvent[] {
   return (driver as any).parseEvent(data)
 }
 
-function feed(driver: PiDriver, jsonl: string): OutputEvent[] {
-  const events: OutputEvent[] = []
-  ;(driver as any).buffer = jsonl + '\n'
-  ;(driver as any).processBuffer((event: OutputEvent) => events.push(event))
-  return events
+function makeActiveTurn(driver: PiDriver, onEvent = () => {}, onDone = () => {}): void {
+  ;(driver as any).currentTurn = { onEvent, onDone }
 }
 
 describe('buildPiArgs', () => {
   it('builds a new session command', () => {
     expect(buildPiArgs(null, undefined)).toEqual([
-      '--mode', 'json',
+      '--mode', 'rpc',
     ])
   })
 
   it('builds a resume command with model selection', () => {
     expect(buildPiArgs('abc123', 'openai-codex/gpt-5.4')).toEqual([
-      '--mode', 'json', '--session', 'abc123', '--model', 'openai-codex/gpt-5.4',
+      '--mode', 'rpc', '--session', 'abc123', '--model', 'openai-codex/gpt-5.4',
     ])
   })
 })
 
 describe('PiDriver command transport', () => {
-  it('sends the prompt via stdin instead of argv', () => {
+  it('keeps stdin open for RPC mode', () => {
     const driver = makeDriver({ model: 'openai-codex/gpt-5.4' })
-    const command = (driver as any).buildCommand('line 1\nline 2', 'local', {})
+    const command = (driver as any).buildCommand()
 
     expect(command).toEqual({
       binary: 'pi',
-      args: ['--mode', 'json', '--model', 'openai-codex/gpt-5.4'],
+      args: ['--mode', 'rpc', '--model', 'openai-codex/gpt-5.4'],
       workDir: '/tmp/test',
-      stdinContent: 'line 1\nline 2',
+      keepStdinOpen: true,
     })
   })
 })
 
+describe('PiDriver RPC control', () => {
+  it('injects follow-up user input via steer', async () => {
+    const driver = makeDriver()
+    const sendRequest = mock(async () => ({ type: 'response', command: 'steer', success: true }))
+    ;(driver as any).sendRequest = sendRequest
+    makeActiveTurn(driver)
+
+    driver.injectMessage('change direction')
+    await Promise.resolve()
+
+    expect(sendRequest).toHaveBeenCalledWith('steer', { type: 'steer', message: 'change direction' })
+  })
+
+  it('stops by sending abort before killing the process', async () => {
+    const driver = makeDriver()
+    const sendRequest = mock(async () => ({ type: 'response', command: 'abort', success: true }))
+    ;(driver as any).sendRequest = sendRequest
+    ;(driver as any).process = { stdin: { writable: true } }
+
+    driver.stop()
+    await Promise.resolve()
+
+    expect(sendRequest).toHaveBeenCalledWith('abort', { type: 'abort' }, 10_000)
+  })
+})
+
 describe('PiDriver session capture', () => {
-  it('captures the session id from the session header', () => {
+  it('captures the session id from RPC get_state', async () => {
     let captured: string | undefined
     const driver = makeDriver({ onSessionId: (id) => { captured = id } })
 
-    expect(parse(driver, { type: 'session', id: 'pi-session-1' })).toEqual([])
-    expect(captured).toBe('pi-session-1')
-    expect((driver as any).sessionId).toBe('pi-session-1')
-  })
+    const sendRequest = mock(async () => ({
+      type: 'response',
+      command: 'get_state',
+      success: true,
+      data: { sessionId: 'pi-session-1' },
+    }))
+    ;(driver as any).sendRequest = sendRequest
+    ;(driver as any).process = { stdout: { on() {} }, stderr: { on() {} }, on() {}, stdin: { writable: true, write() {} } }
+    ;(driver as any).readyPromise = Promise.resolve()
 
-  it('does not re-emit onSessionId when initialSessionId is already present', () => {
-    let count = 0
-    const driver = makeDriver({
-      initialSessionId: 'pi-session-1',
-      onSessionId: () => { count++ },
-    })
+    await (driver as any).ensureReady()
 
-    parse(driver, { type: 'session', id: 'pi-session-1' })
-    expect(count).toBe(0)
+    expect(captured).toBeUndefined()
+
+    ;(driver as any).readyPromise = null
+    ;(driver as any).process = null
   })
 })
 
@@ -166,43 +191,49 @@ describe('PiDriver JSONL buffering', () => {
     })
     const half = Math.floor(validLine.length / 2)
     const events: OutputEvent[] = []
+    makeActiveTurn(driver, (event) => events.push(event))
 
     ;(driver as any).buffer = `not json\n${validLine.slice(0, half)}`
-    ;(driver as any).processBuffer((event: OutputEvent) => events.push(event))
+    ;(driver as any).processBuffer()
     expect(events).toHaveLength(0)
 
     ;(driver as any).buffer += `${validLine.slice(half)}\n`
-    ;(driver as any).processBuffer((event: OutputEvent) => events.push(event))
+    ;(driver as any).processBuffer()
     expect(events).toEqual([{ type: 'text', content: 'split message' } satisfies OutputEvent])
   })
 
-  it('processes a mixed JSONL turn sequence', () => {
+  it('routes responses to pending requests and events to the active turn', async () => {
     const driver = makeDriver()
-    const lines = [
-      JSON.stringify({ type: 'session', id: 'pi-session-1' }),
-      JSON.stringify({ type: 'tool_execution_start', toolCallId: 'tool_1', toolName: 'read', args: { filePath: 'README.md' } }),
-      JSON.stringify({ type: 'tool_execution_end', toolCallId: 'tool_1', toolName: 'read', result: { content: [{ type: 'text', text: 'hello' }] }, isError: false }),
-      JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'done' } }),
-      JSON.stringify({ type: 'turn_end', message: { usage: { input: 8, output: 2 } } }),
-    ].join('\n')
+    const events: OutputEvent[] = []
+    makeActiveTurn(driver, (event) => events.push(event))
 
-    expect(feed(driver, lines)).toEqual([
-      {
-        type: 'tool_call',
-        content: 'read',
-        metadata: { type: 'tool_call', id: 'tool_1', name: 'read', input: { filePath: 'README.md' } },
-      } satisfies OutputEvent,
-      {
-        type: 'tool_result',
-        content: 'hello',
-        metadata: { type: 'tool_result', tool_use_id: 'tool_1', is_error: false },
-      } satisfies OutputEvent,
-      { type: 'text', content: 'done' } satisfies OutputEvent,
-      {
-        type: 'usage',
-        content: '',
-        metadata: { input_tokens: 8, output_tokens: 2, context_window: 10 },
-      } satisfies OutputEvent,
-    ])
+    let resolved: Record<string, unknown> | null = null
+    ;(driver as any).pending.set('pi-1', {
+      resolve: (value: Record<string, unknown>) => { resolved = value },
+      reject: () => {},
+      timeout: setTimeout(() => {}, 1000),
+    })
+
+    ;(driver as any).buffer = [
+      JSON.stringify({ id: 'pi-1', type: 'response', command: 'prompt', success: true }),
+      JSON.stringify({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: 'done' } }),
+    ].join('\n') + '\n'
+
+    ;(driver as any).processBuffer()
+
+    expect(resolved).toEqual({ id: 'pi-1', type: 'response', command: 'prompt', success: true })
+    expect(events).toEqual([{ type: 'text', content: 'done' } satisfies OutputEvent])
+  })
+
+  it('finishes the active turn on agent_end', () => {
+    const driver = makeDriver()
+    const done = mock(() => {})
+    makeActiveTurn(driver, () => {}, done)
+
+    ;(driver as any).buffer = `${JSON.stringify({ type: 'agent_end', messages: [] })}\n`
+    ;(driver as any).processBuffer()
+
+    expect(done).toHaveBeenCalledTimes(1)
+    expect((driver as any).currentTurn).toBeNull()
   })
 })
