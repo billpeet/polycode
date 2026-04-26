@@ -185,6 +185,7 @@ function runMigrations(database: Database.Database): void {
   // Plus/Pro subscription models ("openai-codex/..."). Polycode's initial
   // Pi catalog used the API-key IDs, which breaks /login-based auth.
   const stalePiModels: Record<string, string> = {
+    'openai/gpt-5.5': 'openai-codex/gpt-5.5',
     'openai/gpt-5.4': 'openai-codex/gpt-5.4',
     'openai/gpt-5.4-mini': 'openai-codex/gpt-5.4-mini',
   }

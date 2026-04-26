@@ -33,13 +33,13 @@ describe('buildCodexArgs', () => {
   })
 
   it('builds a resume command with yolo mode', () => {
-    expect(buildCodexArgs('session-123', 'gpt-5.3-codex', 'continue', true)).toEqual([
+    expect(buildCodexArgs('session-123', 'gpt-5.5', 'continue', true)).toEqual([
       'exec',
       '--json',
       'resume',
       '--dangerously-bypass-approvals-and-sandbox',
       '-c',
-      'model=gpt-5.3-codex',
+      'model=gpt-5.5',
       'session-123',
       'continue',
     ])

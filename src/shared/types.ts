@@ -54,6 +54,7 @@ export const ANTHROPIC_MODELS = [
 export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
 
 export const OPENAI_MODELS = [
+  { id: 'gpt-5.5', label: 'GPT-5.5' },
   { id: 'gpt-5.4', label: 'GPT-5.4' },
   { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
   { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
@@ -84,6 +85,7 @@ export const OPENCODE_MODELS = [
 export type OpenCodeModelId = typeof OPENCODE_MODELS[number]['id']
 
 export const PI_MODELS = [
+  { id: 'openai-codex/gpt-5.5', label: 'GPT-5.5' },
   { id: 'openai-codex/gpt-5.4', label: 'GPT-5.4' },
   { id: 'openai-codex/gpt-5.4-mini', label: 'GPT-5.4 Mini' },
   { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7' },
@@ -175,6 +177,7 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'claude-opus-4-5': 200_000,
   'claude-sonnet-4-5': 200_000,
   'claude-haiku-4-5': 200_000,
+  'gpt-5.5': 200_000,
   'gpt-5.4': 200_000,
   'gpt-5.3-codex': 200_000,
   'gpt-5.3-codex-spark': 200_000,
@@ -185,6 +188,7 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'anthropic/claude-sonnet-4-5': 200_000,
   'anthropic/claude-haiku-4-5': 200_000,
   'openai/gpt-4o': 128_000,
+  'openai-codex/gpt-5.5': 200_000,
   'openai-codex/gpt-5.4': 200_000,
   'openai-codex/gpt-5.4-mini': 200_000,
   'anthropic/claude-opus-4-7': 200_000,

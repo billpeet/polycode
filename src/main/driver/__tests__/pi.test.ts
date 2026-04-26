@@ -27,20 +27,20 @@ describe('buildPiArgs', () => {
   })
 
   it('builds a resume command with model selection', () => {
-    expect(buildPiArgs('abc123', 'openai-codex/gpt-5.4')).toEqual([
-      '--mode', 'rpc', '--session', 'abc123', '--model', 'openai-codex/gpt-5.4',
+    expect(buildPiArgs('abc123', 'openai-codex/gpt-5.5')).toEqual([
+      '--mode', 'rpc', '--session', 'abc123', '--model', 'openai-codex/gpt-5.5',
     ])
   })
 })
 
 describe('PiDriver command transport', () => {
   it('keeps stdin open for RPC mode', () => {
-    const driver = makeDriver({ model: 'openai-codex/gpt-5.4' })
+    const driver = makeDriver({ model: 'openai-codex/gpt-5.5' })
     const command = (driver as any).buildCommand()
 
     expect(command).toEqual({
       binary: 'pi',
-      args: ['--mode', 'rpc', '--model', 'openai-codex/gpt-5.4'],
+      args: ['--mode', 'rpc', '--model', 'openai-codex/gpt-5.5'],
       workDir: '/tmp/test',
       keepStdinOpen: true,
     })
