@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -298,11 +298,17 @@ export function getLocationByPath(path: string): RepoLocation | null {
 
 // ── Threads ───────────────────────────────────────────────────────────────────
 
+const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+
+function normalizeReasoningLevel(level: string | null | undefined): ReasoningLevel {
+  return VALID_REASONING_LEVELS.includes(level as ReasoningLevel) ? level as ReasoningLevel : 'off'
+}
+
 function rowToThread(r: ThreadRow): Thread {
   // Validate provider/model pairing — fix mismatches caused by stale data
   const provider = (r.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'pi' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
+  const model = provider === 'codex' || provider === 'pi' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
   return {
     id: r.id,
     project_id: r.project_id,
@@ -310,6 +316,7 @@ function rowToThread(r: ThreadRow): Thread {
     name: r.name,
     provider,
     model,
+    reasoning_level: normalizeReasoningLevel(r.reasoning_level),
     status: r.status as Thread['status'],
     archived: r.archived === 1,
     input_tokens: r.input_tokens ?? 0,
@@ -379,6 +386,7 @@ export function createThread(projectId: string, name: string, locationId: string
     name,
     provider,
     model,
+    reasoning_level: 'off',
     status: 'idle',
     archived: 0,
     input_tokens: 0,
@@ -395,7 +403,7 @@ export function createThread(projectId: string, name: string, locationId: string
   }
   getDb()
     .prepare(
-      'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, yolo_mode, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, yolo_mode, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       thread.id,
@@ -404,6 +412,7 @@ export function createThread(projectId: string, name: string, locationId: string
       thread.name,
       thread.provider,
       thread.model,
+      thread.reasoning_level,
       thread.status,
       thread.yolo_mode,
       thread.git_branch,
@@ -425,6 +434,12 @@ export function updateThreadProviderAndModel(id: string, provider: string, model
   getDb()
     .prepare('UPDATE threads SET provider = ?, model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
     .run(provider, model, now, now, id)
+}
+
+export function updateThreadReasoningLevel(id: string, reasoningLevel: string): void {
+  getDb()
+    .prepare('UPDATE threads SET reasoning_level = ?, updated_at = ? WHERE id = ?')
+    .run(normalizeReasoningLevel(reasoningLevel), new Date().toISOString(), id)
 }
 
 export function updateThreadYoloMode(id: string, yoloMode: boolean): void {
@@ -519,6 +534,13 @@ export function getThreadProvider(threadId: string): string {
   return row?.provider ?? 'claude-code'
 }
 
+export function getThreadReasoningLevel(threadId: string): ReasoningLevel {
+  const row = getDb()
+    .prepare('SELECT reasoning_level FROM threads WHERE id = ?')
+    .get(threadId) as { reasoning_level: string | null } | undefined
+  return normalizeReasoningLevel(row?.reasoning_level)
+}
+
 export function getThreadSessionId(threadId: string): string | null {
   const row = getDb()
     .prepare('SELECT claude_session_id FROM threads WHERE id = ?')
@@ -547,7 +569,7 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
   // Validate the pair before returning it
   const provider = (row.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'pi' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
+  const model = provider === 'codex' || provider === 'pi' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
   return { provider, model }
 }
 
@@ -1059,6 +1081,7 @@ export function importThread(
     name,
     provider,
     model,
+    reasoning_level: 'off',
     status: 'idle',
     archived: 0,
     input_tokens: 0,
@@ -1075,7 +1098,7 @@ export function importThread(
   }
 
   db.prepare(
-    'INSERT INTO threads (id, project_id, location_id, name, provider, model, status, claude_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, claude_session_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
   ).run(
     thread.id,
     thread.project_id,
@@ -1083,6 +1106,7 @@ export function importThread(
     thread.name,
     thread.provider,
     thread.model,
+    thread.reasoning_level,
     thread.status,
     claudeSessionId,
     thread.created_at,

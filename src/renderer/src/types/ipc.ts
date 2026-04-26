@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, ReasoningLevel } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, Provider, ReasoningLevel, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -50,6 +50,7 @@ export interface WindowApi {
   invoke(channel: 'threads:unarchive', id: string): Promise<void>
   invoke(channel: 'threads:updateModel', id: string, model: string): Promise<void>
   invoke(channel: 'threads:updateProviderAndModel', id: string, provider: string, model: string): Promise<void>
+  invoke(channel: 'threads:updateReasoningLevel', id: string, reasoningLevel: ReasoningLevel): Promise<void>
   invoke(channel: 'threads:setUnread', threadId: string, unread: boolean): Promise<void>
   invoke(channel: 'threads:setYolo', threadId: string, yoloMode: boolean): Promise<void>
   invoke(channel: 'threads:setWsl', threadId: string, useWsl: boolean, wslDistro: string | null): Promise<void>
@@ -163,6 +164,7 @@ export interface WindowApi {
   invoke(channel: 'slash-commands:delete', id: string): Promise<void>
   invoke(channel: 'cli:health', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliHealthResult>
   invoke(channel: 'cli:update', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliUpdateResult>
+  invoke(channel: 'models:codexAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'models:piAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'terminal:spawn', threadId: string, cols: number, rows: number): Promise<string>
   invoke(channel: 'terminal:kill', terminalId: string): Promise<void>

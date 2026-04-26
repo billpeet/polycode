@@ -1,6 +1,6 @@
 import * as Sentry from '@sentry/electron/main'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
-import { OutputEvent } from '../../shared/types'
+import { OutputEvent, ReasoningLevel } from '../../shared/types'
 import { createRunner, SpawnCommand } from './runner'
 
 type JsonRpcLikeResponse = {
@@ -21,10 +21,12 @@ type PendingRequest = {
 export function buildPiArgs(
   sessionId: string | null,
   model: string | undefined,
+  reasoningLevel?: ReasoningLevel,
 ): string[] {
   const args: string[] = ['--mode', 'rpc']
   if (sessionId) args.push('--session', sessionId)
   if (model) args.push('--model', model)
+  if (reasoningLevel) args.push('--thinking', reasoningLevel)
   return args
 }
 
@@ -140,7 +142,7 @@ export class PiDriver implements CLIDriver {
   private buildCommand(): SpawnCommand {
     return {
       binary: 'pi',
-      args: buildPiArgs(this.sessionId, this.options.model),
+      args: buildPiArgs(this.sessionId, this.options.model, this.options.reasoningLevel),
       workDir: this.options.workingDir,
       keepStdinOpen: true,
     }
@@ -148,6 +150,9 @@ export class PiDriver implements CLIDriver {
 
   private async startPrompt(content: string): Promise<void> {
     await this.ensureReady()
+    if (this.options.reasoningLevel) {
+      await this.sendRequest('set_thinking_level', { type: 'set_thinking_level', level: this.options.reasoningLevel })
+    }
     await this.sendRequest('prompt', { type: 'prompt', message: content })
   }
 

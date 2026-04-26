@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Thread, PROVIDERS, Provider, ModelOption, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
+import { Thread, PROVIDERS, Provider, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
 import { PlanIcon, YoloIcon, formatElapsed } from './icons'
 
@@ -15,6 +15,7 @@ interface ComposerToolbarProps {
   setWsl: (threadId: string, useWsl: boolean, distro: string | null) => void
   setProviderAndModel: (threadId: string, provider: Provider, model: string) => void
   setModel: (threadId: string, model: string) => void
+  setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => void
   elapsedSeconds: number
 }
 
@@ -30,11 +31,29 @@ export default function ComposerToolbar({
   setWsl,
   setProviderAndModel,
   setModel,
+  setReasoningLevel,
   elapsedSeconds,
 }: ComposerToolbarProps) {
   const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
+  const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
   const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
+
+  useEffect(() => {
+    if (currentProvider !== 'codex') return
+
+    let cancelled = false
+    setLiveCodexModels([])
+    window.api.invoke('models:codexAvailable', threadId)
+      .then((models) => {
+        if (!cancelled && models.length > 0) setLiveCodexModels(models)
+      })
+      .catch(() => {
+        // Keep static fallback models when codex is unavailable or unauthenticated.
+      })
+
+    return () => { cancelled = true }
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
   useEffect(() => {
     if (currentProvider !== 'pi') return
@@ -53,13 +72,29 @@ export default function ComposerToolbar({
   }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
   const modelOptions = useMemo(() => {
-    const baseModels = currentProvider === 'pi' && livePiModels.length > 0
-      ? livePiModels
-      : getModelsForProvider(currentProvider)
+    const baseModels = currentProvider === 'codex' && liveCodexModels.length > 0
+      ? liveCodexModels
+      : currentProvider === 'pi' && livePiModels.length > 0
+        ? livePiModels
+        : getModelsForProvider(currentProvider)
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]
-  }, [currentProvider, currentThread?.model, livePiModels])
+  }, [currentProvider, currentThread?.model, liveCodexModels, livePiModels])
+
+  const selectedModel = useMemo(
+    () => modelOptions.find((model) => model.id === currentThread?.model),
+    [modelOptions, currentThread?.model]
+  )
+  const reasoningOptions = selectedModel?.reasoningLevels?.length
+    ? selectedModel.reasoningLevels
+    : selectedModel?.reasoning
+      ? ['off', 'minimal', 'low', 'medium', 'high'] as ReasoningLevel[]
+      : ['off'] as ReasoningLevel[]
+  const currentReasoningLevel = reasoningOptions.includes(currentThread?.reasoning_level ?? 'off')
+    ? currentThread?.reasoning_level ?? 'off'
+    : reasoningOptions[0]
+  const showReasoningSelector = currentProvider === 'pi'
 
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -159,10 +194,12 @@ export default function ComposerToolbar({
           onChange={(e) => {
             const provider = e.target.value as Provider
             const staticDefault = getDefaultModelForProvider(provider)
-            const defaultModel = provider === 'pi' && livePiModels.length > 0
-              ? (livePiModels.some((model) => model.id === staticDefault) ? staticDefault : livePiModels[0].id)
+            const liveModels = provider === 'codex' ? liveCodexModels : provider === 'pi' ? livePiModels : []
+            const defaultModel = liveModels.length > 0
+              ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
               : staticDefault
             setProviderAndModel(threadId, provider, defaultModel)
+            if (provider !== 'pi') setReasoningLevel(threadId, 'off')
           }}
           disabled={isProcessing}
           className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
@@ -183,7 +220,17 @@ export default function ComposerToolbar({
       </span>
       <select
         value={currentThread?.model ?? getDefaultModelForProvider(currentProvider)}
-        onChange={(e) => setModel(threadId, e.target.value)}
+        onChange={(e) => {
+          const nextModel = e.target.value
+          setModel(threadId, nextModel)
+          const model = modelOptions.find((m) => m.id === nextModel)
+          const levels = model?.reasoningLevels?.length
+            ? model.reasoningLevels
+            : model?.reasoning
+              ? ['off', 'minimal', 'low', 'medium', 'high'] as ReasoningLevel[]
+              : ['off'] as ReasoningLevel[]
+          if (!levels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, levels[0])
+        }}
         disabled={isProcessing}
         className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
         style={{
@@ -200,6 +247,28 @@ export default function ComposerToolbar({
           </option>
         ))}
       </select>
+
+      {showReasoningSelector && (
+        <select
+          value={currentReasoningLevel}
+          onChange={(e) => setReasoningLevel(threadId, e.target.value as ReasoningLevel)}
+          disabled={isProcessing || reasoningOptions.length <= 1}
+          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
+          style={{
+            color: 'var(--color-text-muted)',
+            borderColor: 'var(--color-border)',
+            background: 'var(--color-surface)',
+            opacity: isProcessing || reasoningOptions.length <= 1 ? 0.4 : 1,
+          }}
+          title="Select Pi reasoning level"
+        >
+          {reasoningOptions.map((level) => (
+            <option key={level} value={level} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+              {level === 'off' ? 'Reasoning off' : `Reasoning ${level}`}
+            </option>
+          ))}
+        </select>
+      )}
 
       {isProcessing && (
         <>

@@ -85,20 +85,24 @@ export const OPENCODE_MODELS = [
 export type OpenCodeModelId = typeof OPENCODE_MODELS[number]['id']
 
 export const PI_MODELS = [
-  { id: 'openai-codex/gpt-5.5', label: 'GPT-5.5' },
-  { id: 'openai-codex/gpt-5.4', label: 'GPT-5.4' },
-  { id: 'openai-codex/gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-  { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7' },
-  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
-  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-] as const
+  { id: 'openai-codex/gpt-5.5', label: 'GPT-5.5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'openai-codex/gpt-5.4', label: 'GPT-5.4', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'openai-codex/gpt-5.4-mini', label: 'GPT-5.4 Mini', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
+  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
+] as const satisfies readonly ModelOption[]
 
 export type PiModelId = typeof PI_MODELS[number]['id']
+
+export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
 
 export interface ModelOption {
   id: string
   label: string
   contextWindow?: number
+  reasoning?: boolean
+  reasoningLevels?: ReasoningLevel[]
 }
 
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi'
@@ -133,6 +137,7 @@ export interface Thread {
   is_pending?: boolean
   provider: string
   model: string
+  reasoning_level: ReasoningLevel
   status: ThreadStatus
   archived: boolean
   input_tokens: number

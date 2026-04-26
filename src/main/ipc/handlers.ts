@@ -34,6 +34,7 @@ import {
   updateThreadName,
   updateThreadModel,
   updateThreadProviderAndModel,
+  updateThreadReasoningLevel,
   updateThreadYoloMode,
   updateThreadStatus,
   updateThreadUnread,
@@ -70,6 +71,7 @@ import {
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
+import { listCodexAvailableModels } from '../codex-models'
 import { listPiAvailableModels } from '../pi-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
@@ -555,6 +557,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('threads:updateProviderAndModel', (_event, id: string, provider: string, model: string) => {
     sessionManager.remove(id)
     return updateThreadProviderAndModel(id, provider, model)
+  })
+
+  ipcMain.handle('threads:updateReasoningLevel', (_event, id: string, reasoningLevel: string) => {
+    sessionManager.remove(id)
+    return updateThreadReasoningLevel(id, reasoningLevel)
   })
 
   ipcMain.handle('threads:setUnread', (_event, threadId: string, unread: boolean) => {
@@ -1476,6 +1483,18 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     const result = await updateCli(provider, connectionType, ssh, wsl)
     invalidateCliHealthCache(provider, connectionType, ssh, wsl)
     return result
+  })
+
+  ipcMain.handle('models:codexAvailable', (_event, threadId?: string | null) => {
+    if (!threadId || !threadExists(threadId)) {
+      return listCodexAvailableModels()
+    }
+
+    return listCodexAvailableModels({
+      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
+      ssh: getSshConfigForThread(threadId),
+      wsl: getWslConfigForThread(threadId),
+    })
   })
 
   ipcMain.handle('models:piAvailable', (_event, threadId?: string | null) => {

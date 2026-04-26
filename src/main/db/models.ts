@@ -45,6 +45,7 @@ export interface ThreadRow {
   name: string
   provider: string
   model: string
+  reasoning_level: string
   status: string
   archived: number
   input_tokens: number

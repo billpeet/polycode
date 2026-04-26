@@ -1,5 +1,5 @@
 import { homedir } from 'os'
-import { SshConfig, WslConfig } from '../shared/types'
+import { ReasoningLevel, SshConfig, WslConfig } from '../shared/types'
 import { createRunner } from './driver/runner'
 
 export interface PiAvailableModelOption {
@@ -27,6 +27,9 @@ type PiModel = {
   name?: unknown
   provider?: unknown
   contextWindow?: unknown
+  reasoning?: unknown
+  reasoningLevels?: unknown
+  availableThinkingLevels?: unknown
 }
 
 const SUCCESS_TTL_MS = 60 * 60_000
@@ -43,9 +46,47 @@ function cacheKey(ssh?: SshConfig | null, wsl?: WslConfig | null): string {
   return 'local'
 }
 
+const REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+
+function isReasoningLevel(value: unknown): value is ReasoningLevel {
+  return typeof value === 'string' && REASONING_LEVELS.includes(value as ReasoningLevel)
+}
+
 function normalizeLabel(provider: string, id: string, name?: string): string {
   if (name && name !== id) return name
   return `${provider}/${id}`
+}
+
+function supportsXhighReasoning(provider: string, id: string): boolean {
+  return (
+    id.includes('gpt-5.2') ||
+    id.includes('gpt-5.3') ||
+    id.includes('gpt-5.4') ||
+    id.includes('gpt-5.5') ||
+    id.includes('deepseek-v4-pro') ||
+    id.includes('opus-4-6') ||
+    id.includes('opus-4.6') ||
+    id.includes('opus-4-7') ||
+    id.includes('opus-4.7') ||
+    `${provider}/${id}`.includes('gpt-5.2') ||
+    `${provider}/${id}`.includes('gpt-5.3') ||
+    `${provider}/${id}`.includes('gpt-5.4') ||
+    `${provider}/${id}`.includes('gpt-5.5')
+  )
+}
+
+function normalizeReasoningLevels(model: PiModel): ReasoningLevel[] {
+  const rawLevels = Array.isArray(model.reasoningLevels)
+    ? model.reasoningLevels
+    : Array.isArray(model.availableThinkingLevels)
+      ? model.availableThinkingLevels
+      : null
+  const levels = rawLevels?.filter(isReasoningLevel)
+  if (levels && levels.length > 0) return levels.includes('off') ? levels : ['off', ...levels]
+  if (model.reasoning !== true || typeof model.id !== 'string' || typeof model.provider !== 'string') return ['off']
+  return supportsXhighReasoning(model.provider, model.id)
+    ? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+    : ['off', 'minimal', 'low', 'medium', 'high']
 }
 
 function normalizeModels(data: unknown): PiAvailableModelOption[] {
@@ -57,9 +98,12 @@ function normalizeModels(data: unknown): PiAvailableModelOption[] {
       const model = raw as PiModel
       if (typeof model.id !== 'string' || typeof model.provider !== 'string') return null
       const contextWindow = typeof model.contextWindow === 'number' ? model.contextWindow : undefined
+      const reasoningLevels = normalizeReasoningLevels(model)
       return {
         id: `${model.provider}/${model.id}`,
         label: normalizeLabel(model.provider, model.id, typeof model.name === 'string' ? model.name : undefined),
+        reasoning: model.reasoning === true,
+        reasoningLevels,
         ...(contextWindow ? { contextWindow } : {}),
       }
     })

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question, PermissionRequest, TokenUsage } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question, PermissionRequest, TokenUsage, ReasoningLevel } from '../types/ipc'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 
@@ -63,6 +63,7 @@ interface ThreadStore {
   rename: (threadId: string, name: string) => Promise<void>
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
+  setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => Promise<void>
   setYolo: (threadId: string, yoloMode: boolean) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string) => Promise<void>
@@ -167,6 +168,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       is_pending: true,
       provider: sourceThread?.provider ?? 'claude-code',
       model: sourceThread?.model ?? 'claude-opus-4-7',
+      reasoning_level: sourceThread?.reasoning_level ?? 'off',
       status: 'idle',
       archived: false,
       input_tokens: 0,
@@ -202,16 +204,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         (
           thread.use_wsl !== sourceThread.use_wsl ||
           thread.wsl_distro !== sourceThread.wsl_distro ||
-          thread.yolo_mode !== sourceThread.yolo_mode
+          thread.yolo_mode !== sourceThread.yolo_mode ||
+          thread.reasoning_level !== sourceThread.reasoning_level
         )
       ) {
         await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
         await window.api.invoke('threads:setYolo', thread.id, sourceThread.yolo_mode)
+        await window.api.invoke('threads:updateReasoningLevel', thread.id, sourceThread.reasoning_level)
         thread = {
           ...thread,
           use_wsl: sourceThread.use_wsl,
           wsl_distro: sourceThread.wsl_distro,
           yolo_mode: sourceThread.yolo_mode,
+          reasoning_level: sourceThread.reasoning_level,
         }
       }
 
@@ -554,6 +559,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
         updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, provider, model } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
+  setReasoningLevel: async (threadId, reasoningLevel) => {
+    await window.api.invoke('threads:updateReasoningLevel', threadId, reasoningLevel)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, reasoning_level: reasoningLevel } : t))
       }
       return { byProject: updated }
     })

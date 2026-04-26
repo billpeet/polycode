@@ -166,6 +166,12 @@ function runMigrations(database: Database.Database): void {
     database.exec('ALTER TABLE threads ADD COLUMN unread INTEGER NOT NULL DEFAULT 0')
   }
 
+  // ── Per-thread reasoning level ───────────────────────────────────────────
+  const threadColsReasoning = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsReasoning.some((c) => c.name === 'reasoning_level')) {
+    database.exec("ALTER TABLE threads ADD COLUMN reasoning_level TEXT NOT NULL DEFAULT 'off'")
+  }
+
   // ── Remap stale Codex model IDs to current ones ───────────────────────────
   // Old placeholder models (o4-mini, o3, gpt-4o, gpt-4.1) were never valid
   // Codex CLI models. Migrate any threads still referencing them.

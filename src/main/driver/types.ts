@@ -1,4 +1,4 @@
-import { OutputEvent, SshConfig, WslConfig } from '../../shared/types'
+import { OutputEvent, ReasoningLevel, SshConfig, WslConfig } from '../../shared/types'
 
 export interface MessageOptions {
   planMode?: boolean
@@ -34,6 +34,7 @@ export interface DriverOptions {
   workingDir: string
   threadId: string
   model?: string
+  reasoningLevel?: ReasoningLevel
   yoloMode?: boolean
   initialSessionId?: string | null
   onSessionId?: (sessionId: string) => void

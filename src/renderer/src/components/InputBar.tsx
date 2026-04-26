@@ -132,6 +132,7 @@ export default function InputBar({ threadId }: Props) {
   // Provider / model / WSL selectors (moved from ThreadHeader)
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
   const setModel = useThreadStore((s) => s.setModel)
+  const setReasoningLevel = useThreadStore((s) => s.setReasoningLevel)
   const setYolo = useThreadStore((s) => s.setYolo)
   const setWsl = useThreadStore((s) => s.setWsl)
 
@@ -764,6 +765,7 @@ export default function InputBar({ threadId }: Props) {
           setWsl={setWsl}
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}
+          setReasoningLevel={setReasoningLevel}
           elapsedSeconds={elapsedSeconds}
         />
 
