@@ -1,29 +1,47 @@
 # PolyCode
 
-A desktop app for orchestrating multiple AI coding agent sessions (Claude Code, Codex, OpenCode) across projects, with git integration, markdown rendering, and SQLite persistence.
+PolyCode is an Electron desktop app for orchestrating multiple AI coding-agent sessions across projects. It provides a React UI around local or remote CLI agents, with streaming output, SQLite persistence, git tooling, terminals, project commands, todos, plans, and integrations.
 
-Built with Electron, React, and TypeScript.
+Built with Electron, React, TypeScript, Vite, Tailwind CSS, Zustand, and Bun.
 
 ## Features
 
-- **Multi-session management** — run multiple agent threads per project simultaneously
-- **Multi-provider support** — Claude Code CLI, Codex CLI, and OpenCode CLI
-- **Session persistence** — resumes conversations across app restarts
-- **Streaming output** — real-time token-by-token rendering with tool call collapsibles
-- **Markdown + syntax highlighting** — rendered via `marked` + `highlight.js`
-- **Auto-titling** — threads are automatically named based on conversation content
-- **Git integration** — tracks modified files per thread
-- **Remote execution** — SSH tunnel support for running agents on remote machines
-- **Toast notifications** — alerts on completion and errors
+- **Multi-session management** — run and switch between multiple agent threads per project.
+- **Multi-provider support** — Claude Code, Codex, OpenCode, and Pi.
+- **Provider/model selection** — choose supported models per thread and preserve recent choices.
+- **Session persistence** — stores projects, threads, sessions, messages, token usage, and settings in SQLite.
+- **Streaming output** — real-time assistant output with structured tool-call, thinking, question, and permission blocks.
+- **Markdown rendering** — sanitized markdown with syntax highlighting.
+- **Plans and todos** — plan panes and TodoWrite-derived todo tracking.
+- **Git integration** — status, branches, pull, stash, commit log, changed-file tracking, and hosting-provider helpers.
+- **Project locations** — local, SSH, and WSL repo locations, including location pools.
+- **Integrated terminals and commands** — per-project command runners, logs, ports, and xterm-based terminals.
+- **Slash commands and attachments** — reusable prompts plus supported message attachments.
+- **CLI health checks and updates** — checks installed agent CLIs locally, over SSH, or in WSL.
+- **Integrations** — YouTrack UI support plus main-process GitHub/Azure DevOps helpers.
+- **Notifications and logging** — toast notifications, thread logs, command logs, and Sentry integration.
+- **Auto-update packaging** — Windows NSIS installer and GitHub release publishing via `electron-builder`.
+
+## Supported agent CLIs
+
+Install one or more of these and make sure they are available on your `PATH` in the environment where PolyCode runs:
+
+| Provider | CLI command | Package / project |
+|---|---:|---|
+| Claude Code | `claude` | [`@anthropic-ai/claude-code`](https://claude.ai/code) |
+| Codex | `codex` | [`@openai/codex`](https://github.com/openai/codex) |
+| OpenCode | `opencode` | [`opencode-ai`](https://opencode.ai/) |
+| Pi | `pi` | [`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) |
+
+PolyCode can also check and update these CLIs from the app for local, SSH, and WSL locations.
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) (package manager and runtime)
-- [Node.js](https://nodejs.org/) 18+
-- One or more supported CLI agents installed and on your `PATH`:
-  - [Claude Code](https://claude.ai/code) (`claude`)
-  - [Codex CLI](https://github.com/openai/codex) (`codex`)
-  - [OpenCode](https://opencode.ai/) (`opencode`)
+- [Bun](https://bun.sh/) for installing dependencies and running scripts.
+- [Node.js](https://nodejs.org/) 20+ recommended.
+- At least one supported agent CLI installed and authenticated.
+- Git, if you want git status/branch/stash/commit features.
+- Optional: WSL and/or SSH access for remote execution locations.
 
 ## Installation
 
@@ -36,39 +54,75 @@ bun install
 ## Usage
 
 ```bash
-bun run dev          # Start dev server with hot-reload (Vite + Electron)
-bun run build        # Production build into out/
-bun run start:prod   # Build + run isolated prod instance (separate DB, no DevTools)
+bun run dev          # Start Electron + Vite dev server with hot reload
+bun run build        # Build production assets into out/
+bun run preview      # Run electron-vite preview
+bun run start        # Run Electron from the built main entry
+bun run start:prod   # Build + run an isolated production-like instance
+bun run test         # Run Bun tests for main driver tests
+bun run dist         # Build a Windows NSIS installer
+bun run dist:publish # Build and publish a Windows release via electron-builder
 ```
 
-The production instance stores its database in `%APPDATA%/polycode-electron-prod` (Windows), keeping it separate from any running dev instance.
+`bun run start:prod` sets `NODE_ENV=production` and uses a separate Windows user data directory, `%APPDATA%/polycode-electron-prod`, so it does not share state with a development instance.
 
 ## Architecture
 
-PolyCode has three layers:
+PolyCode has three main layers:
 
 | Layer | Location | Description |
 |---|---|---|
-| Main process | `src/main/` | Node.js — spawns CLI subprocesses, owns SQLite DB, manages sessions |
-| Renderer | `src/renderer/src/` | React + Zustand SPA |
-| Shared types | `src/shared/types.ts` | Types used across both processes |
+| Main process | `src/main/` | Node/Electron process that owns SQLite, spawns agent CLIs, runs git/terminal/command operations, manages sessions, and exposes IPC handlers. |
+| Preload | `src/preload/` | Electron `contextBridge` that exposes the safe `window.api` IPC surface to the renderer. |
+| Renderer | `src/renderer/src/` | React + Zustand SPA for projects, threads, messages, terminals, git panels, commands, todos, plans, settings, and integrations. |
+| Shared types | `src/shared/types.ts` | TypeScript types, providers, model catalogs, thread/message/session shapes, and shared IPC payload types. |
 
-The renderer communicates with the main process exclusively via `window.api` (Electron contextBridge). Streaming events are pushed from main to renderer over typed IPC channels.
+The renderer does not use Node APIs directly. It communicates with the main process through:
 
-See [`SPEC.md`](SPEC.md) for the full technical specification including IPC channels, database schema, and roadmap.
+```ts
+window.api.invoke(channel, ...args) // request/response
+window.api.on(channel, callback)    // pushed events, including streaming thread output
+window.api.send(channel, ...args)   // fire-and-forget
+```
 
-## Tech Stack
+Streaming events are pushed from main to renderer over channels such as `thread:output:{threadId}`, `thread:status:{threadId}`, and `thread:complete:{threadId}`.
 
-| | |
+## Important source areas
+
+```txt
+src/main/db/              SQLite schema, migrations, and queries
+src/main/driver/          Agent CLI drivers: Claude, Codex, OpenCode, Pi
+src/main/session/         Thread/session lifecycle management
+src/main/ipc/             Main-process IPC handlers
+src/main/terminal/        Terminal session management
+src/main/commands/        Project command runner management
+src/main/health/          CLI health/update checks
+src/renderer/src/stores/  Zustand stores
+src/renderer/src/components/ React UI components
+src/shared/types.ts       Shared models, providers, and event types
+```
+
+## Data storage
+
+PolyCode stores its SQLite database as `polycode.db` in Electron's `userData` directory. The schema is migration-based and includes projects, repo locations, location pools, threads, sessions, messages, commands, slash commands, settings, YouTrack servers, and related app data.
+
+SQLite runs with WAL mode and foreign keys enabled.
+
+## Tech stack
+
+| Area | Technology |
 |---|---|
 | Shell | Electron 33 |
-| Build | electron-vite 3 (Vite 6) |
+| Build | electron-vite 5 + Vite 8 |
 | UI | React 19 + TypeScript 5 |
 | Styling | Tailwind CSS v4 |
+| State | Zustand 5 |
 | Database | better-sqlite3 |
-| State | Zustand |
-| Markdown | marked + DOMPurify + highlight.js |
-| Package manager | Bun |
+| Terminal | node-pty + xterm.js |
+| Markdown/code highlighting | marked + DOMPurify + Shiki |
+| Packaging/updating | electron-builder + electron-updater |
+| Error reporting | Sentry Electron + Sentry React |
+| Package manager/runtime | Bun |
 
 ## License
 
