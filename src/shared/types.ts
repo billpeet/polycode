@@ -95,6 +95,12 @@ export const PI_MODELS = [
 
 export type PiModelId = typeof PI_MODELS[number]['id']
 
+export interface ModelOption {
+  id: string
+  label: string
+  contextWindow?: number
+}
+
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi'
 
 export const PROVIDERS = [

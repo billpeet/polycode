@@ -87,7 +87,7 @@ async function handleCreateThread(
   const resolvedProvider = (typeof provider === 'string' ? provider : defaultProvider) as Provider
   const validModels = getModelsForProvider(resolvedProvider).map((m) => m.id)
   const resolvedModel =
-    typeof model === 'string' && validModels.includes(model)
+    typeof model === 'string' && (resolvedProvider === 'pi' || validModels.includes(model))
       ? model
       : typeof model === 'string'
         ? getDefaultModelForProvider(resolvedProvider)

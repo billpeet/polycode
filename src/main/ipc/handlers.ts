@@ -70,6 +70,7 @@ import {
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
+import { listPiAvailableModels } from '../pi-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
@@ -1475,6 +1476,18 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     const result = await updateCli(provider, connectionType, ssh, wsl)
     invalidateCliHealthCache(provider, connectionType, ssh, wsl)
     return result
+  })
+
+  ipcMain.handle('models:piAvailable', (_event, threadId?: string | null) => {
+    if (!threadId || !threadExists(threadId)) {
+      return listPiAvailableModels()
+    }
+
+    return listPiAvailableModels({
+      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
+      ssh: getSshConfigForThread(threadId),
+      wsl: getWslConfigForThread(threadId),
+    })
   })
 
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────

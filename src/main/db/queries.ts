@@ -302,7 +302,7 @@ function rowToThread(r: ThreadRow): Thread {
   // Validate provider/model pairing — fix mismatches caused by stale data
   const provider = (r.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
+  const model = provider === 'pi' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
   return {
     id: r.id,
     project_id: r.project_id,
@@ -547,7 +547,7 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
   // Validate the pair before returning it
   const provider = (row.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
+  const model = provider === 'pi' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
   return { provider, model }
 }
 

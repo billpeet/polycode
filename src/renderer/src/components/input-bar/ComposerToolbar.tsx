@@ -1,4 +1,5 @@
-import { Thread, PROVIDERS, Provider, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
+import { useEffect, useMemo, useState } from 'react'
+import { Thread, PROVIDERS, Provider, ModelOption, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
 import { PlanIcon, YoloIcon, formatElapsed } from './icons'
 
@@ -32,6 +33,33 @@ export default function ComposerToolbar({
   elapsedSeconds,
 }: ComposerToolbarProps) {
   const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
+  const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
+  const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
+
+  useEffect(() => {
+    if (currentProvider !== 'pi') return
+
+    let cancelled = false
+    setLivePiModels([])
+    window.api.invoke('models:piAvailable', threadId)
+      .then((models) => {
+        if (!cancelled && models.length > 0) setLivePiModels(models)
+      })
+      .catch(() => {
+        // Keep static fallback models when pi is unavailable or unauthenticated.
+      })
+
+    return () => { cancelled = true }
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
+
+  const modelOptions = useMemo(() => {
+    const baseModels = currentProvider === 'pi' && livePiModels.length > 0
+      ? livePiModels
+      : getModelsForProvider(currentProvider)
+    const currentModel = currentThread?.model
+    if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
+    return [{ id: currentModel, label: currentModel }, ...baseModels]
+  }, [currentProvider, currentThread?.model, livePiModels])
 
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -130,7 +158,10 @@ export default function ComposerToolbar({
           value={currentThread?.provider ?? 'claude-code'}
           onChange={(e) => {
             const provider = e.target.value as Provider
-            const defaultModel = getDefaultModelForProvider(provider)
+            const staticDefault = getDefaultModelForProvider(provider)
+            const defaultModel = provider === 'pi' && livePiModels.length > 0
+              ? (livePiModels.some((model) => model.id === staticDefault) ? staticDefault : livePiModels[0].id)
+              : staticDefault
             setProviderAndModel(threadId, provider, defaultModel)
           }}
           disabled={isProcessing}
@@ -151,7 +182,7 @@ export default function ComposerToolbar({
         </select>
       </span>
       <select
-        value={currentThread?.model ?? getDefaultModelForProvider((currentThread?.provider ?? 'claude-code') as Provider)}
+        value={currentThread?.model ?? getDefaultModelForProvider(currentProvider)}
         onChange={(e) => setModel(threadId, e.target.value)}
         disabled={isProcessing}
         className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
@@ -163,7 +194,7 @@ export default function ComposerToolbar({
         }}
         title="Select model"
       >
-        {getModelsForProvider((currentThread?.provider ?? 'claude-code') as Provider).map((m) => (
+        {modelOptions.map((m) => (
           <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
             {m.label}
           </option>
