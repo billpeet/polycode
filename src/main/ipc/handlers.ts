@@ -71,8 +71,10 @@ import {
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
+import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
 import { listPiAvailableModels } from '../pi-models'
+import { listOpenCodeAvailableModels } from '../opencode-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
@@ -1485,12 +1487,36 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     return result
   })
 
+  ipcMain.handle('models:claudeAvailable', (_event, threadId?: string | null) => {
+    if (!threadId || !threadExists(threadId)) {
+      return listClaudeAvailableModels()
+    }
+
+    return listClaudeAvailableModels({
+      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
+      ssh: getSshConfigForThread(threadId),
+      wsl: getWslConfigForThread(threadId),
+    })
+  })
+
   ipcMain.handle('models:codexAvailable', (_event, threadId?: string | null) => {
     if (!threadId || !threadExists(threadId)) {
       return listCodexAvailableModels()
     }
 
     return listCodexAvailableModels({
+      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
+      ssh: getSshConfigForThread(threadId),
+      wsl: getWslConfigForThread(threadId),
+    })
+  })
+
+  ipcMain.handle('models:opencodeAvailable', (_event, threadId?: string | null) => {
+    if (!threadId || !threadExists(threadId)) {
+      return listOpenCodeAvailableModels()
+    }
+
+    return listOpenCodeAvailableModels({
       cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
       ssh: getSshConfigForThread(threadId),
       wsl: getWslConfigForThread(threadId),

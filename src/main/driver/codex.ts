@@ -7,7 +7,7 @@ import type {
 } from '@openai/codex-sdk'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
-import { OutputEvent } from '../../shared/types'
+import { OutputEvent, ReasoningLevel } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
 import { BaseDriver } from './base'
 import { augmentWindowsPath } from './runner'
@@ -517,6 +517,11 @@ export function parseCodexAppServerNotification(
   return events
 }
 
+function codexReasoningLevelToEffort(level: ReasoningLevel | undefined): string | undefined {
+  if (!level) return undefined
+  return level === 'off' ? 'none' : level
+}
+
 function buildSdkThreadOptions(options: DriverOptions, yoloMode: boolean): CodexThreadOptions {
   return {
     model: options.model,
@@ -575,12 +580,15 @@ export function buildCodexArgs(
   codexThreadId: string | null,
   model: string | undefined,
   content: string,
-  yoloMode = false
+  yoloMode = false,
+  reasoningLevel?: ReasoningLevel
 ): string[] {
   const args: string[] = ['exec', '--json']
   if (codexThreadId) args.push('resume')
   args.push(yoloMode ? '--dangerously-bypass-approvals-and-sandbox' : '--full-auto')
   if (model) args.push('-c', `model=${model}`)
+  const effort = codexReasoningLevelToEffort(reasoningLevel)
+  if (effort) args.push('-c', `model_reasoning_effort=${effort}`)
   if (codexThreadId) args.push(codexThreadId)
   args.push(content)
   return args
@@ -618,7 +626,8 @@ class CodexCliDriver extends BaseDriver {
         this.codexThreadId,
         this.options.model,
         content,
-        options?.yoloMode ?? this.options.yoloMode ?? false
+        options?.yoloMode ?? this.options.yoloMode ?? false,
+        this.options.reasoningLevel
       ),
       workDir: this.options.workingDir,
     }
@@ -848,6 +857,7 @@ class CodexAppServerDriver implements CLIDriver {
         threadId: this.codexThreadId,
         input: [{ type: 'text', text: content, text_elements: [] }],
         ...(this.options.model ? { model: this.options.model } : {}),
+        ...(codexReasoningLevelToEffort(this.options.reasoningLevel) ? { effort: codexReasoningLevelToEffort(this.options.reasoningLevel) } : {}),
         sandbox: (options?.yoloMode ?? this.options.yoloMode ?? false) ? 'danger-full-access' : 'workspace-write',
       })
       const record = response && typeof response === 'object' ? response as Record<string, unknown> : {}

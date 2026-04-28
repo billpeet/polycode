@@ -164,7 +164,9 @@ export interface WindowApi {
   invoke(channel: 'slash-commands:delete', id: string): Promise<void>
   invoke(channel: 'cli:health', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliHealthResult>
   invoke(channel: 'cli:update', provider: Provider, connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<CliUpdateResult>
+  invoke(channel: 'models:claudeAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'models:codexAvailable', threadId?: string | null): Promise<ModelOption[]>
+  invoke(channel: 'models:opencodeAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'models:piAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'terminal:spawn', threadId: string, cols: number, rows: number): Promise<string>
   invoke(channel: 'terminal:kill', terminalId: string): Promise<void>

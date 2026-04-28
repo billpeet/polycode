@@ -31,6 +31,7 @@ function prettyJson(value: unknown): string {
 function getInputSummary(toolName: string, input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
   const inp = input as Record<string, unknown>
+  const normalizedToolName = toolName.toLowerCase()
 
   // Task/Agent (subagent): show the description
   if ((toolName === 'Task' || toolName === 'Agent') && typeof inp.description === 'string') {
@@ -50,10 +51,14 @@ function getInputSummary(toolName: string, input: unknown): string | null {
     return display + suffix
   }
 
-  // Write: just show the file path — content is shown in the expanded body
-  if (toolName === 'Write' && typeof inp.file_path === 'string') {
-    const fp = inp.file_path as string
-    return fp.length > 120 ? '…' + fp.slice(-120) : fp
+  // Edit/Write: just show the file path — content/diff is shown in the expanded body
+  if ((normalizedToolName === 'edit' || normalizedToolName === 'write') && (typeof inp.file_path === 'string' || typeof inp.path === 'string')) {
+    const fp = (typeof inp.file_path === 'string' ? inp.file_path : inp.path) as string
+    const suffix = normalizedToolName === 'edit' && Array.isArray(inp.edits) && inp.edits.length > 1
+      ? ` (${inp.edits.length} blocks)`
+      : ''
+    const display = fp.length > 120 ? '…' + fp.slice(-120) : fp
+    return display + suffix
   }
 
   // FileChange: show first file path (or count if multiple)
@@ -169,24 +174,54 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
     )
   }
 
-  // Edit: show inline diff view (old_string → new_string)
-  if (toolName === 'Edit' && inp && typeof inp.file_path === 'string') {
+  const normalizedToolName = toolName.toLowerCase()
+  const filePath = inp && (typeof inp.file_path === 'string' || typeof inp.path === 'string')
+    ? (typeof inp.file_path === 'string' ? inp.file_path : inp.path) as string
+    : undefined
+
+  // Edit: show inline diff view. Claude uses file_path/old_string/new_string;
+  // Pi uses path plus edits[] with oldText/newText blocks.
+  if (normalizedToolName === 'edit' && inp && filePath) {
+    const edits = Array.isArray(inp.edits)
+      ? inp.edits.filter((edit): edit is Record<string, unknown> => Boolean(edit) && typeof edit === 'object')
+      : []
+
+    if (edits.length > 0) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+          {edits.map((edit, i) => (
+            <div key={i}>
+              {edits.length > 1 && (
+                <div style={{ ...labelStyle, marginBottom: '0.3rem' }}>Edit {i + 1} of {edits.length}</div>
+              )}
+              <EditDiffView
+                toolName="Edit"
+                filePath={filePath}
+                oldString={typeof edit.oldText === 'string' ? edit.oldText : typeof edit.old_string === 'string' ? edit.old_string : undefined}
+                newString={typeof edit.newText === 'string' ? edit.newText : typeof edit.new_string === 'string' ? edit.new_string : ''}
+              />
+            </div>
+          ))}
+        </div>
+      )
+    }
+
     return (
       <EditDiffView
         toolName="Edit"
-        filePath={inp.file_path as string}
-        oldString={typeof inp.old_string === 'string' ? inp.old_string : undefined}
-        newString={typeof inp.new_string === 'string' ? inp.new_string : ''}
+        filePath={filePath}
+        oldString={typeof inp.old_string === 'string' ? inp.old_string : typeof inp.oldText === 'string' ? inp.oldText : undefined}
+        newString={typeof inp.new_string === 'string' ? inp.new_string : typeof inp.newText === 'string' ? inp.newText : ''}
       />
     )
   }
 
   // Write: show inline diff view (full file as added)
-  if (toolName === 'Write' && inp && typeof inp.file_path === 'string') {
+  if (normalizedToolName === 'write' && inp && filePath) {
     return (
       <EditDiffView
         toolName="Write"
-        filePath={inp.file_path as string}
+        filePath={filePath}
         newString={typeof inp.content === 'string' ? inp.content : ''}
       />
     )

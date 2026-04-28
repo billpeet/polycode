@@ -164,7 +164,7 @@ body,
 
 .prose-content li {
   margin: 0.2em 0;
-  white-space: pre-line;
+  white-space: normal;
 }
 
 .prose-content ul li::marker {

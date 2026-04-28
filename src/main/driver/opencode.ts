@@ -1,5 +1,5 @@
 import { DriverOptions, MessageOptions } from './types'
-import { OutputEvent } from '../../shared/types'
+import { OutputEvent, ReasoningLevel } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
 import { BaseDriver } from './base'
 
@@ -12,11 +12,13 @@ import { BaseDriver } from './base'
  */
 export function buildOpenCodeArgs(
   sessionId: string | null,
-  model: string | undefined
+  model: string | undefined,
+  reasoningLevel?: ReasoningLevel,
 ): string[] {
   const args: string[] = ['run', '--format', 'json']
   if (sessionId) args.push('--session', sessionId)
   if (model) args.push('--model', model)
+  if (reasoningLevel && reasoningLevel !== 'off') args.push('--variant', reasoningLevel)
   return args
 }
 
@@ -42,7 +44,7 @@ export class OpenCodeDriver extends BaseDriver {
     // No preamble needed (opencode is typically installed as a standalone binary).
     return {
       binary: 'opencode',
-      args: buildOpenCodeArgs(this.sessionId, this.options.model),
+      args: buildOpenCodeArgs(this.sessionId, this.options.model, this.options.reasoningLevel),
       workDir: this.options.workingDir,
       stdinContent: content,
     }

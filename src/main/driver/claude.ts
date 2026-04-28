@@ -9,7 +9,7 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
-import { OutputEvent } from '../../shared/types'
+import { OutputEvent, ReasoningLevel } from '../../shared/types'
 import { augmentWindowsPath, expandHomePath, resolveClaudeCodeExecutable } from './runner'
 
 type PendingTurn = {
@@ -27,6 +27,14 @@ type PendingQuestionDecision = {
   originalQuestions: unknown[]
   resolve: (result: PermissionResult) => void
   reject: (error: Error) => void
+}
+
+type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+function reasoningLevelToClaudeEffort(level?: ReasoningLevel): ClaudeEffort | undefined {
+  if (!level || level === 'off') return undefined
+  if (level === 'minimal') return 'low'
+  return level
 }
 
 class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
@@ -237,8 +245,10 @@ export class ClaudeDriver implements CLIDriver {
     const sdk = await getSdk()
     const env = process.platform === 'win32' ? augmentWindowsPath(process.env) : process.env
     const workingDir = expandHomePath(this.options.workingDir)
+    const effort = reasoningLevelToClaudeEffort(this.options.reasoningLevel)
     const queryOptions = {
       model: this.options.model,
+      effort,
       cwd: workingDir,
       pathToClaudeCodeExecutable: resolveClaudeCodeExecutable(env),
       env,
@@ -250,7 +260,7 @@ export class ClaudeDriver implements CLIDriver {
       // The SDK accepts these setting sources even though older typings omit them.
       // Without them, user/project skills and plugins are not surfaced consistently.
       settingSources: ['user', 'project', 'local'],
-    } as Parameters<typeof sdk.query>[0]['options'] & { settingSources: string[] }
+    } as Parameters<typeof sdk.query>[0]['options'] & { settingSources: string[]; effort?: ClaudeEffort }
     this.promptQueue = new AsyncMessageQueue()
     this.query = sdk.query({
       prompt: this.promptQueue,

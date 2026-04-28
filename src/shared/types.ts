@@ -43,25 +43,25 @@ export interface Project {
 }
 
 export const ANTHROPIC_MODELS = [
-  { id: 'claude-opus-4-7', label: 'Opus 4.7' },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6' },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
-  { id: 'claude-opus-4-5', label: 'Opus 4.5' },
-  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5' },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
-] as const
+  { id: 'claude-opus-4-7', label: 'Opus 4.7', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'claude-opus-4-5', label: 'Opus 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'] },
+] as const satisfies readonly ModelOption[]
 
 export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
 
 export const OPENAI_MODELS = [
-  { id: 'gpt-5.5', label: 'GPT-5.5' },
-  { id: 'gpt-5.4', label: 'GPT-5.4' },
-  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex' },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' },
-  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
-  { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex' },
-  { id: 'codex-mini-latest', label: 'Codex Mini' },
-] as const
+  { id: 'gpt-5.5', label: 'GPT-5.5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.4', label: 'GPT-5.4', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
+  { id: 'codex-mini-latest', label: 'Codex Mini', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
+] as const satisfies readonly ModelOption[]
 
 export type OpenAIModelId = typeof OPENAI_MODELS[number]['id']
 
@@ -95,7 +95,7 @@ export const PI_MODELS = [
 
 export type PiModelId = typeof PI_MODELS[number]['id']
 
-export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh'
+export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export interface ModelOption {
   id: string

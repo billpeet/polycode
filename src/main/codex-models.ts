@@ -1,10 +1,12 @@
 import { homedir } from 'os'
-import { SshConfig, WslConfig } from '../shared/types'
+import { ReasoningLevel, SshConfig, WslConfig } from '../shared/types'
 import { createRunner } from './driver/runner'
 
 export interface CodexAvailableModelOption {
   id: string
   label: string
+  reasoning?: boolean
+  reasoningLevels?: ReasoningLevel[]
 }
 
 type CacheEntry = {
@@ -18,10 +20,20 @@ type JsonRpcMessage = {
   error?: { message?: string } | string
 }
 
+type CodexReasoningEffortOption = {
+  reasoningEffort?: unknown
+  reasoning_effort?: unknown
+  effort?: unknown
+}
+
 type CodexModel = {
   id?: unknown
   model?: unknown
   displayName?: unknown
+  defaultReasoningEffort?: unknown
+  default_reasoning_effort?: unknown
+  supportedReasoningEfforts?: unknown
+  supported_reasoning_efforts?: unknown
   hidden?: unknown
   isDefault?: unknown
 }
@@ -38,6 +50,45 @@ function cacheKey(ssh?: SshConfig | null, wsl?: WslConfig | null): string {
   if (ssh) return `ssh:${ssh.user}@${ssh.host}:${ssh.port ?? 22}:${ssh.keyPath ?? ''}`
   if (wsl) return `wsl:${wsl.distro}`
   return 'local'
+}
+
+const REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+
+function normalizeReasoningLevel(value: unknown): ReasoningLevel | null {
+  if (value === 'none') return 'off'
+  return typeof value === 'string' && REASONING_LEVELS.includes(value as ReasoningLevel) ? value as ReasoningLevel : null
+}
+
+function supportsXhighReasoning(id: string): boolean {
+  return id.includes('gpt-5.2') || id.includes('gpt-5.3') || id.includes('gpt-5.4') || id.includes('gpt-5.5')
+}
+
+function staticReasoningLevelsForModel(id: string): ReasoningLevel[] {
+  return supportsXhighReasoning(id)
+    ? ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+    : ['off', 'minimal', 'low', 'medium', 'high']
+}
+
+function normalizeReasoningLevels(model: CodexModel, id: string): ReasoningLevel[] {
+  const rawOptions = Array.isArray(model.supportedReasoningEfforts)
+    ? model.supportedReasoningEfforts
+    : Array.isArray(model.supported_reasoning_efforts)
+      ? model.supported_reasoning_efforts
+      : null
+
+  const levels = rawOptions
+    ?.map((raw) => {
+      const option = raw as CodexReasoningEffortOption
+      return normalizeReasoningLevel(option.reasoningEffort ?? option.reasoning_effort ?? option.effort ?? raw)
+    })
+    .filter((level): level is ReasoningLevel => level !== null)
+
+  if (levels && levels.length > 0) return Array.from(new Set(['off' as ReasoningLevel, ...levels]))
+
+  const defaultLevel = normalizeReasoningLevel(model.defaultReasoningEffort ?? model.default_reasoning_effort)
+  if (defaultLevel) return Array.from(new Set(['off' as ReasoningLevel, defaultLevel]))
+
+  return staticReasoningLevelsForModel(id)
 }
 
 function normalizeModels(result: unknown): CodexAvailableModelOption[] {
@@ -59,6 +110,8 @@ function normalizeModels(result: unknown): CodexAvailableModelOption[] {
       return {
         id,
         label: displayName,
+        reasoning: true,
+        reasoningLevels: normalizeReasoningLevels(model, id),
         isDefault: model.isDefault === true,
       }
     })

@@ -36,8 +36,26 @@ export default function ComposerToolbar({
 }: ComposerToolbarProps) {
   const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
+  const [liveClaudeModels, setLiveClaudeModels] = useState<ModelOption[]>([])
   const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
+  const [liveOpenCodeModels, setLiveOpenCodeModels] = useState<ModelOption[]>([])
   const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
+
+  useEffect(() => {
+    if (currentProvider !== 'claude-code') return
+
+    let cancelled = false
+    setLiveClaudeModels([])
+    window.api.invoke('models:claudeAvailable', threadId)
+      .then((models) => {
+        if (!cancelled && models.length > 0) setLiveClaudeModels(models)
+      })
+      .catch(() => {
+        // Keep static fallback models when Claude Code is unavailable or unauthenticated.
+      })
+
+    return () => { cancelled = true }
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
   useEffect(() => {
     if (currentProvider !== 'codex') return
@@ -50,6 +68,22 @@ export default function ComposerToolbar({
       })
       .catch(() => {
         // Keep static fallback models when codex is unavailable or unauthenticated.
+      })
+
+    return () => { cancelled = true }
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
+
+  useEffect(() => {
+    if (currentProvider !== 'opencode') return
+
+    let cancelled = false
+    setLiveOpenCodeModels([])
+    window.api.invoke('models:opencodeAvailable', threadId)
+      .then((models) => {
+        if (!cancelled && models.length > 0) setLiveOpenCodeModels(models)
+      })
+      .catch(() => {
+        // Keep static fallback models when opencode is unavailable or unauthenticated.
       })
 
     return () => { cancelled = true }
@@ -72,29 +106,34 @@ export default function ComposerToolbar({
   }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
   const modelOptions = useMemo(() => {
-    const baseModels = currentProvider === 'codex' && liveCodexModels.length > 0
-      ? liveCodexModels
-      : currentProvider === 'pi' && livePiModels.length > 0
-        ? livePiModels
-        : getModelsForProvider(currentProvider)
+    const baseModels = currentProvider === 'claude-code' && liveClaudeModels.length > 0
+      ? liveClaudeModels
+      : currentProvider === 'codex' && liveCodexModels.length > 0
+        ? liveCodexModels
+        : currentProvider === 'opencode' && liveOpenCodeModels.length > 0
+          ? liveOpenCodeModels
+          : currentProvider === 'pi' && livePiModels.length > 0
+            ? livePiModels
+            : getModelsForProvider(currentProvider)
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]
-  }, [currentProvider, currentThread?.model, liveCodexModels, livePiModels])
+  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels])
 
   const selectedModel = useMemo(
     () => modelOptions.find((model) => model.id === currentThread?.model),
     [modelOptions, currentThread?.model]
   )
-  const reasoningOptions = selectedModel?.reasoningLevels?.length
-    ? selectedModel.reasoningLevels
-    : selectedModel?.reasoning
-      ? ['off', 'minimal', 'low', 'medium', 'high'] as ReasoningLevel[]
-      : ['off'] as ReasoningLevel[]
+  const getReasoningLevels = (model?: ModelOption): ReasoningLevel[] => {
+    if (model?.reasoningLevels?.length) return model.reasoningLevels
+    if (model?.reasoning) return ['off', 'minimal', 'low', 'medium', 'high']
+    return ['off']
+  }
+  const reasoningOptions = getReasoningLevels(selectedModel)
   const currentReasoningLevel = reasoningOptions.includes(currentThread?.reasoning_level ?? 'off')
     ? currentThread?.reasoning_level ?? 'off'
     : reasoningOptions[0]
-  const showReasoningSelector = currentProvider === 'pi'
+  const showReasoningSelector = currentProvider === 'pi' || currentProvider === 'codex' || currentProvider === 'claude-code' || currentProvider === 'opencode'
 
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -194,12 +233,13 @@ export default function ComposerToolbar({
           onChange={(e) => {
             const provider = e.target.value as Provider
             const staticDefault = getDefaultModelForProvider(provider)
-            const liveModels = provider === 'codex' ? liveCodexModels : provider === 'pi' ? livePiModels : []
+            const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : []
             const defaultModel = liveModels.length > 0
               ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
               : staticDefault
             setProviderAndModel(threadId, provider, defaultModel)
-            if (provider !== 'pi') setReasoningLevel(threadId, 'off')
+            const defaultReasoningLevels = getReasoningLevels(liveModels.find((model) => model.id === defaultModel) ?? getModelsForProvider(provider).find((model) => model.id === defaultModel))
+            if (!defaultReasoningLevels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, defaultReasoningLevels[0])
           }}
           disabled={isProcessing}
           className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
@@ -223,12 +263,7 @@ export default function ComposerToolbar({
         onChange={(e) => {
           const nextModel = e.target.value
           setModel(threadId, nextModel)
-          const model = modelOptions.find((m) => m.id === nextModel)
-          const levels = model?.reasoningLevels?.length
-            ? model.reasoningLevels
-            : model?.reasoning
-              ? ['off', 'minimal', 'low', 'medium', 'high'] as ReasoningLevel[]
-              : ['off'] as ReasoningLevel[]
+          const levels = getReasoningLevels(modelOptions.find((m) => m.id === nextModel))
           if (!levels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, levels[0])
         }}
         disabled={isProcessing}
@@ -260,11 +295,11 @@ export default function ComposerToolbar({
             background: 'var(--color-surface)',
             opacity: isProcessing || reasoningOptions.length <= 1 ? 0.4 : 1,
           }}
-          title="Select Pi reasoning level"
+          title={`Select ${currentProvider === 'claude-code' ? 'Claude effort' : currentProvider === 'codex' ? 'Codex reasoning' : currentProvider === 'opencode' ? 'OpenCode reasoning' : 'Pi reasoning'} level`}
         >
           {reasoningOptions.map((level) => (
             <option key={level} value={level} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {level === 'off' ? 'Reasoning off' : `Reasoning ${level}`}
+              {level === 'off' ? (currentProvider === 'claude-code' ? 'Effort default' : currentProvider === 'opencode' ? 'Reasoning default' : 'Reasoning off') : `${currentProvider === 'claude-code' ? 'Effort' : 'Reasoning'} ${level}`}
             </option>
           ))}
         </select>
