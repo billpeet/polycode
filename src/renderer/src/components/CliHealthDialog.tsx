@@ -39,6 +39,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   'codex': 'Codex',
   'opencode': 'OpenCode',
   'pi': 'Pi',
+  'cursor': 'Cursor',
 }
 
 interface PanelProps {

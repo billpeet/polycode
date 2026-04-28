@@ -34,7 +34,7 @@ export default function ComposerToolbar({
   setReasoningLevel,
   elapsedSeconds,
 }: ComposerToolbarProps) {
-  const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
+  const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex' || currentThread?.provider === 'cursor'
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
   const [liveClaudeModels, setLiveClaudeModels] = useState<ModelOption[]>([])
   const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
@@ -133,7 +133,7 @@ export default function ComposerToolbar({
   const currentReasoningLevel = reasoningOptions.includes(currentThread?.reasoning_level ?? 'off')
     ? currentThread?.reasoning_level ?? 'off'
     : reasoningOptions[0]
-  const showReasoningSelector = currentProvider === 'pi' || currentProvider === 'codex' || currentProvider === 'claude-code' || currentProvider === 'opencode'
+  const showReasoningSelector = currentProvider === 'pi' || currentProvider === 'codex' || currentProvider === 'claude-code' || currentProvider === 'opencode' || currentProvider === 'cursor'
 
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>

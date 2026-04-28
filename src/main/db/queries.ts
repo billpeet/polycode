@@ -308,7 +308,7 @@ function rowToThread(r: ThreadRow): Thread {
   // Validate provider/model pairing — fix mismatches caused by stale data
   const provider = (r.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'codex' || provider === 'pi' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
+  const model = provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
   return {
     id: r.id,
     project_id: r.project_id,
@@ -569,7 +569,7 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
   // Validate the pair before returning it
   const provider = (row.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'codex' || provider === 'pi' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
+  const model = provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
   return { provider, model }
 }
 
@@ -715,7 +715,7 @@ function compactStreamingMessages(messages: MessageRow[]): Message[] {
 
 function shouldCompactMessagesForThread(threadId: string): boolean {
   const provider = getThreadProvider(threadId)
-  return provider === 'codex' || provider === 'pi'
+  return provider === 'codex' || provider === 'pi' || provider === 'cursor'
 }
 
 function shouldCompactMessagesForSession(sessionId: string): boolean {
@@ -723,7 +723,7 @@ function shouldCompactMessagesForSession(sessionId: string): boolean {
     .prepare('SELECT t.provider FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?')
     .get(sessionId) as { provider: string | null } | undefined
   const provider = row?.provider ?? 'claude-code'
-  return provider === 'codex' || provider === 'pi'
+  return provider === 'codex' || provider === 'pi' || provider === 'cursor'
 }
 
 export function listMessages(threadId: string): Message[] {

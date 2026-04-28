@@ -105,19 +105,28 @@ export interface ModelOption {
   reasoningLevels?: ReasoningLevel[]
 }
 
-export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi'
+export const CURSOR_MODELS = [
+  { id: 'default', label: 'Default' },
+  { id: 'auto', label: 'Auto' },
+] as const satisfies readonly ModelOption[]
+
+export type CursorModelId = typeof CURSOR_MODELS[number]['id']
+
+export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor'
 
 export const PROVIDERS = [
   { id: 'claude-code' as Provider, label: 'Claude Code' },
   { id: 'codex' as Provider, label: 'Codex' },
   { id: 'opencode' as Provider, label: 'OpenCode' },
   { id: 'pi' as Provider, label: 'Pi' },
+  { id: 'cursor' as Provider, label: 'Cursor' },
 ] as const
 
 export function getModelsForProvider(provider: Provider) {
   if (provider === 'codex') return OPENAI_MODELS
   if (provider === 'opencode') return OPENCODE_MODELS
   if (provider === 'pi') return PI_MODELS
+  if (provider === 'cursor') return CURSOR_MODELS
   return ANTHROPIC_MODELS
 }
 
@@ -125,6 +134,7 @@ export function getDefaultModelForProvider(provider: Provider): string {
   if (provider === 'codex') return OPENAI_MODELS[0].id
   if (provider === 'opencode') return OPENCODE_MODELS[0].id
   if (provider === 'pi') return PI_MODELS[0].id
+  if (provider === 'cursor') return CURSOR_MODELS[0].id
   return ANTHROPIC_MODELS[0].id
 }
 
@@ -210,6 +220,8 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'opencode/minimax-m2.5-free': 40_960,
   'opencode/trinity-large-preview-free': 128_000,
   'opencode/kimi-k2.5-free': 131_072,
+  'default': 200_000,
+  'auto': 200_000,
 }
 
 export const DEFAULT_CONTEXT_LIMIT = 200_000

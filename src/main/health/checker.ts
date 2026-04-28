@@ -124,7 +124,10 @@ function buildPosixVersionCheck(provider: Provider, cmd: string): string {
     return `${commonPreamble}; ${RESOLVE_CODEX_BIN_SOFT}; [ -n "$CODEX_BIN" ] && "$CODEX_BIN" --version 2>&1 || exit 127`
   }
 
-  return `${commonPreamble}; CMD_BIN="$(command -v ${cmd} 2>/dev/null || true)"; case "$CMD_BIN" in /mnt/c/*) CMD_BIN="";; esac; [ -z "$CMD_BIN" ] && for _C in "$HOME/.local/bin/${cmd}" "$HOME/.npm/bin/${cmd}" "$HOME/.npm-global/bin/${cmd}" "$HOME/.volta/bin/${cmd}" "$HOME/.bun/bin/${cmd}" "$HOME/bin/${cmd}"; do [ -x "$_C" ] && CMD_BIN="$_C" && break; done; [ -n "$CMD_BIN" ] && "$CMD_BIN" --version 2>&1 || exit 127`
+  const invocation = provider === 'cursor'
+    ? `"$CMD_BIN" about --format json 2>&1 || "$CMD_BIN" about 2>&1 || "$CMD_BIN" --version 2>&1`
+    : `"$CMD_BIN" --version 2>&1`
+  return `${commonPreamble}; CMD_BIN="$(command -v ${cmd} 2>/dev/null || true)"; case "$CMD_BIN" in /mnt/c/*) CMD_BIN="";; esac; [ -z "$CMD_BIN" ] && for _C in "$HOME/.local/bin/${cmd}" "$HOME/.npm/bin/${cmd}" "$HOME/.npm-global/bin/${cmd}" "$HOME/.volta/bin/${cmd}" "$HOME/.bun/bin/${cmd}" "$HOME/bin/${cmd}"; do [ -x "$_C" ] && CMD_BIN="$_C" && break; done; [ -n "$CMD_BIN" ] && { ${invocation}; } || exit 127`
 }
 
 export function invalidateCliHealthCache(
@@ -224,6 +227,7 @@ const PROVIDER_INFO: Record<Provider, {
   'codex':       { cmd: 'codex',   package: '@openai/codex',             updatePkg: '@openai/codex@latest' },
   'opencode':    { cmd: 'opencode', package: 'opencode-ai',              updatePkg: 'opencode-ai@latest' },
   'pi':          { cmd: 'pi',      package: '@mariozechner/pi-coding-agent', updatePkg: '@mariozechner/pi-coding-agent@latest' },
+  'cursor':      { cmd: 'agent',   package: '@cursor/agent',              updateCmd: ['agent', 'update'] },
 }
 
 function buildSshArgs(ssh: SshConfig): string[] {
@@ -254,7 +258,8 @@ async function runVersionCheckUncached(
 
   const env = process.platform === 'win32' ? augmentWindowsPath() : process.env
   const resolved = resolveLocalExecutable(info.cmd, env)
-  return runProcess(resolved.cmd, [...resolved.argsPrefix, '--version'], {
+  const args = provider === 'cursor' ? ['about', '--format', 'json'] : ['--version']
+  return runProcess(resolved.cmd, [...resolved.argsPrefix, ...args], {
     env,
     shell: resolved.shell,
     timeout: 10000,

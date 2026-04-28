@@ -53,8 +53,19 @@ const TOOL_GROUP_KEY: Record<string, string> = {
   WebFetch: 'web-access',
 }
 
-function getToolGroupKey(toolName: string): string {
-  return TOOL_GROUP_KEY[toolName] ?? toolName
+function canonicalToolName(toolName: string, metadata?: Record<string, unknown> | null): string {
+  const lower = toolName.toLowerCase()
+  const kind = typeof metadata?.kind === 'string' ? metadata.kind.toLowerCase() : ''
+  if (lower === 'grep' || kind === 'search') return 'Grep'
+  if (lower === 'read file' || kind === 'read') return 'Read'
+  if (lower === 'edit file' || kind === 'edit') return 'Edit'
+  if (lower === 'terminal' || kind === 'execute') return 'Bash'
+  return toolName
+}
+
+function getToolGroupKey(toolName: string, metadata?: Record<string, unknown> | null): string {
+  const canonical = canonicalToolName(toolName, metadata)
+  return TOOL_GROUP_KEY[canonical] ?? canonical
 }
 
 function getEntryStatus(entry: MessageEntry): string {
@@ -124,14 +135,14 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
       continue
     }
     const toolName = (entry.metadata?.name as string) ?? entry.message.content
-    const groupKey = getToolGroupKey(toolName)
+    const groupKey = getToolGroupKey(toolName, entry.metadata)
     const entryStatus = getEntryStatus(entry)
     // Find the run of consecutive tool entries that share the same group key and status
     let j = i + 1
     while (
       j < flat.length &&
       (flat[j].metadata?.type === 'tool_call' || flat[j].metadata?.type === 'tool_use') &&
-      getToolGroupKey((flat[j].metadata?.name as string) ?? flat[j].message.content) === groupKey &&
+      getToolGroupKey((flat[j].metadata?.name as string) ?? flat[j].message.content, flat[j].metadata) === groupKey &&
       getEntryStatus(flat[j]) === entryStatus
     ) {
       j++
@@ -140,8 +151,8 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
     if (runLength > GROUP_THRESHOLD) {
       const groupEntries = flat.slice(i, j)
       // For mixed groups (different tools sharing a group key), use the group key as display name
-      const uniqueTools = new Set(groupEntries.map((e) => (e.metadata?.name as string) ?? e.message.content))
-      const displayName = uniqueTools.size > 1 ? groupKey : toolName
+      const uniqueTools = new Set(groupEntries.map((e) => canonicalToolName((e.metadata?.name as string) ?? e.message.content, e.metadata)))
+      const displayName = uniqueTools.size > 1 ? groupKey : canonicalToolName(toolName, entry.metadata)
       grouped.push({
         kind: 'group',
         key: `group-${entry.key}`,

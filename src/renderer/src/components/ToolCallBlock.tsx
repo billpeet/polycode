@@ -28,6 +28,35 @@ function prettyJson(value: unknown): string {
   return String(value ?? '')
 }
 
+function canonicalToolName(toolName: string, metadata?: Record<string, unknown> | null): string {
+  const lower = toolName.toLowerCase()
+  const kind = typeof metadata?.kind === 'string' ? metadata.kind.toLowerCase() : ''
+  if (lower === 'grep' || kind === 'search') return 'Grep'
+  if (lower === 'read file' || kind === 'read') return 'Read'
+  if (lower === 'edit file' || kind === 'edit') return 'Edit'
+  if (lower === 'terminal' || kind === 'execute') return 'Bash'
+  return toolName
+}
+
+function getResultSummary(resultMetadata: Record<string, unknown> | null): string | null {
+  if (!resultMetadata) return null
+  const content = resultMetadata.content
+  if (Array.isArray(content)) {
+    const diff = content.map((item) => item && typeof item === 'object' ? item as Record<string, unknown> : null)
+      .find((item) => item?.type === 'diff' && typeof item.path === 'string')
+    if (typeof diff?.path === 'string') {
+      return diff.path.length > 120 ? '…' + diff.path.slice(-120) : diff.path
+    }
+  }
+  const rawOutput = resultMetadata.rawOutput
+  if (rawOutput && typeof rawOutput === 'object') {
+    const out = rawOutput as Record<string, unknown>
+    if (typeof out.totalMatches === 'number') return `${out.totalMatches} match${out.totalMatches === 1 ? '' : 'es'}${out.truncated ? ' (truncated)' : ''}`
+    if (typeof out.exitCode === 'number') return `exit ${out.exitCode}`
+  }
+  return null
+}
+
 function getInputSummary(toolName: string, input: unknown): string | null {
   if (!input || typeof input !== 'object') return null
   const inp = input as Record<string, unknown>
@@ -39,7 +68,7 @@ function getInputSummary(toolName: string, input: unknown): string | null {
   }
 
   // Read: show file path + optional range annotation
-  if (toolName === 'Read' && typeof inp.file_path === 'string') {
+  if ((toolName === 'Read' || toolName === 'Read File') && typeof inp.file_path === 'string') {
     const fp = inp.file_path as string
     const offset = inp.offset != null ? Number(inp.offset) : null
     const limit = inp.limit != null ? Number(inp.limit) : null
@@ -52,7 +81,7 @@ function getInputSummary(toolName: string, input: unknown): string | null {
   }
 
   // Edit/Write: just show the file path — content/diff is shown in the expanded body
-  if ((normalizedToolName === 'edit' || normalizedToolName === 'write') && (typeof inp.file_path === 'string' || typeof inp.path === 'string')) {
+  if ((normalizedToolName === 'edit' || normalizedToolName === 'edit file' || normalizedToolName === 'write') && (typeof inp.file_path === 'string' || typeof inp.path === 'string')) {
     const fp = (typeof inp.file_path === 'string' ? inp.file_path : inp.path) as string
     const suffix = normalizedToolName === 'edit' && Array.isArray(inp.edits) && inp.edits.length > 1
       ? ` (${inp.edits.length} blocks)`
@@ -89,6 +118,41 @@ function getInputSummary(toolName: string, input: unknown): string | null {
 }
 
 const CLAUDE_LINE_RE = /^ *(\d+)→(.*)$/
+
+function getRawOutputText(rawOutput: unknown): string | null {
+  if (!rawOutput || typeof rawOutput !== 'object') return null
+  const out = rawOutput as Record<string, unknown>
+  if (typeof out.stdout === 'string' || typeof out.stderr === 'string') {
+    const parts: string[] = []
+    if (typeof out.stdout === 'string' && out.stdout.trim()) parts.push(out.stdout.trimEnd())
+    if (typeof out.stderr === 'string' && out.stderr.trim()) parts.push(out.stderr.trimEnd())
+    if (typeof out.exitCode === 'number') parts.push(`exit code: ${out.exitCode}`)
+    return parts.join('\n\n')
+  }
+  if (typeof out.totalMatches === 'number') {
+    return `${out.totalMatches} match${out.totalMatches === 1 ? '' : 'es'}${out.truncated ? ' (truncated)' : ''}`
+  }
+  return prettyJson(rawOutput)
+}
+
+function hasMeaningfulInput(input: unknown): boolean {
+  if (!input || typeof input !== 'object') return input !== undefined && input !== null && String(input).length > 0
+  return Object.keys(input as Record<string, unknown>).length > 0
+}
+
+function extractDiffBlocks(resultMetadata: Record<string, unknown> | null): Array<{ path: string; oldText?: string; newText: string }> {
+  const content = resultMetadata?.content
+  if (!Array.isArray(content)) return []
+  return content.flatMap((item) => {
+    const rec = item && typeof item === 'object' ? item as Record<string, unknown> : null
+    if (rec?.type !== 'diff' || typeof rec.path !== 'string') return []
+    return [{
+      path: rec.path,
+      oldText: typeof rec.oldText === 'string' ? rec.oldText : undefined,
+      newText: typeof rec.newText === 'string' ? rec.newText : '',
+    }]
+  })
+}
 
 function BodyContent({ text }: { text: string }) {
   const clean = useMemo(() => stripAnsi(text), [text])
@@ -181,7 +245,7 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
 
   // Edit: show inline diff view. Claude uses file_path/old_string/new_string;
   // Pi uses path plus edits[] with oldText/newText blocks.
-  if (normalizedToolName === 'edit' && inp && filePath) {
+  if ((normalizedToolName === 'edit' || normalizedToolName === 'edit file') && inp && filePath) {
     const edits = Array.isArray(inp.edits)
       ? inp.edits.filter((edit): edit is Record<string, unknown> => Boolean(edit) && typeof edit === 'object')
       : []
@@ -228,7 +292,7 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
   }
 
   // Read: show file path + range if partial
-  if (toolName === 'Read' && inp && typeof inp.file_path === 'string') {
+  if ((toolName === 'Read' || toolName === 'Read File') && inp && typeof inp.file_path === 'string') {
     const offset = inp.offset != null ? Number(inp.offset) : null
     const limit = inp.limit != null ? Number(inp.limit) : null
     return (
@@ -287,14 +351,15 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
 export default function ToolCallBlock({ message, metadata, result, resultMetadata }: Props) {
   const [expanded, setExpanded] = useState(false)
 
-  const toolName = (metadata?.name as string) ?? message.content
+  const rawToolName = (metadata?.name as string) ?? message.content
+  const toolName = canonicalToolName(rawToolName, metadata)
   const input = metadata?.input as Record<string, unknown> | undefined
   // For Task/Agent tool calls with a subagent_type, display the subagent type as the name
   const displayName =
     (toolName === 'Task' || toolName === 'Agent') && typeof input?.subagent_type === 'string'
       ? input.subagent_type
       : toolName
-  const inputSummary = getInputSummary(toolName, metadata?.input)
+  const inputSummary = getInputSummary(toolName, metadata?.input) ?? getResultSummary(resultMetadata)
   const isCancelled = resultMetadata?.cancelled === true
   const isError = !isCancelled && resultMetadata?.is_error === true
   const isPending = result === null
@@ -320,10 +385,17 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
   const icon = isPending ? null : isCancelled ? '—' : isError ? '✗' : '✓'
   const iconColor = isPending ? 'var(--color-claude)' : isCancelled ? '#6b7280' : isError ? '#f87171' : '#4ade80'
 
+  const diffBlocks = extractDiffBlocks(resultMetadata)
+  const rawOutputText = getRawOutputText(resultMetadata?.rawOutput)
+  const showInput = hasMeaningfulInput(metadata?.input)
   const resultBody = result
-    ? typeof resultMetadata?.content === 'string'
-      ? resultMetadata.content
-      : prettyJson(result.content)
+    ? diffBlocks.length > 0
+      ? null
+      : rawOutputText ?? (typeof resultMetadata?.content === 'string'
+        ? resultMetadata.content
+        : result.content.trim().length > 0
+          ? result.content
+          : 'Completed')
     : null
 
   return (
@@ -377,15 +449,36 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
       {expanded && (
         <div style={{ padding: '0 0.75rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           {/* Input args */}
-          <div>
-            <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
-              Input
+          {showInput && (
+            <div>
+              <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+                Input
+              </div>
+              <InputBody toolName={toolName} input={metadata?.input} />
             </div>
-            <InputBody toolName={toolName} input={metadata?.input} />
-          </div>
+          )}
 
           {/* Result (once available) */}
-          {resultBody !== null && !isCancelled && (
+          {diffBlocks.length > 0 && !isCancelled && (
+            <div>
+              <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+                {isError ? 'Error' : 'Changes'}
+              </div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                {diffBlocks.map((diff, i) => (
+                  <EditDiffView
+                    key={`${diff.path}-${i}`}
+                    toolName="Edit"
+                    filePath={diff.path}
+                    oldString={diff.oldText}
+                    newString={diff.newText}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {resultBody !== null && diffBlocks.length === 0 && !isCancelled && (
             <div>
               <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
                 {isError ? 'Error' : 'Output'}
