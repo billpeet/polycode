@@ -62,9 +62,10 @@ function decodeAttr(encoded: string): string {
 
 interface Props {
   content: string
+  className?: string
 }
 
-export default function MarkdownContent({ content }: Props) {
+export default function MarkdownContent({ content, className = '' }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
 
@@ -116,7 +117,7 @@ export default function MarkdownContent({ content }: Props) {
   return (
     <div
       ref={ref}
-      className="prose-content max-w-none"
+      className={`prose-content max-w-none ${className}`.trim()}
     />
   )
 }

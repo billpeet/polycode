@@ -26,14 +26,19 @@ interface FilesStore {
   expandedPaths: Set<string>
   loadingPaths: Set<string>
 
-  // Selected file preview
+  // Selected file preview (scoped by location; legacy fields mirror the current location)
   selectedFilePath: string | null
   fileContent: FileContent | null
   loadingContent: boolean
+  selectedFilePathByLocation: Record<string, string | null>
+  fileContentByLocation: Record<string, FileContent | null>
+  loadingContentByLocation: Record<string, boolean>
 
-  // Diff view
+  // Diff view (scoped by location; legacy fields mirror the current location)
   diffView: DiffView | null
   loadingDiff: boolean
+  diffViewByLocation: Record<string, DiffView | null>
+  loadingDiffByLocation: Record<string, boolean>
 
   // Actions
   fetchDirectory: (dirPath: string) => Promise<void>
@@ -51,6 +56,16 @@ interface FilesStore {
   switchDiffToFile: () => void
 }
 
+function getCurrentLocationId(): string | null {
+  const threadState = useThreadStore.getState()
+  if (!threadState.selectedThreadId) return null
+  for (const threads of Object.values(threadState.byProject)) {
+    const thread = threads.find((candidate) => candidate.id === threadState.selectedThreadId)
+    if (thread) return thread.location_id ?? null
+  }
+  return null
+}
+
 export const useFilesStore = create<FilesStore>((set, get) => ({
   entriesByPath: {},
   expandedPaths: new Set<string>(),
@@ -58,8 +73,13 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   selectedFilePath: null,
   fileContent: null,
   loadingContent: false,
+  selectedFilePathByLocation: {},
+  fileContentByLocation: {},
+  loadingContentByLocation: {},
   diffView: null,
   loadingDiff: false,
+  diffViewByLocation: {},
+  loadingDiffByLocation: {},
 
   fetchDirectory: async (dirPath: string) => {
     const { loadingPaths } = get()
@@ -124,102 +144,135 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   },
 
   selectFile: (filePath: string | null) => {
+    const locationId = getCurrentLocationId()
     if (!filePath) {
-      set({ selectedFilePath: null, fileContent: null })
+      set((s) => ({
+        selectedFilePath: null,
+        fileContent: null,
+        selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+        fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
+      }))
       return
     }
-    set({ selectedFilePath: filePath, fileContent: null })
-    const thread = Object.values(useThreadStore.getState().byProject)
-      .flat()
-      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
-    if (thread?.location_id) {
-      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
+    set((s) => ({
+      selectedFilePath: filePath,
+      fileContent: null,
+      diffView: null,
+      selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: filePath } : s.selectedFilePathByLocation,
+      fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
+      diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
+    }))
+    if (locationId) {
+      useUiStore.getState().setLocationAuxTab(locationId, 'file')
     }
     get().fetchFileContent(filePath)
   },
 
   fetchFileContent: async (filePath: string) => {
-    set({ loadingContent: true })
+    const locationId = getCurrentLocationId()
+    set((s) => ({
+      loadingContent: true,
+      loadingContentByLocation: locationId ? { ...s.loadingContentByLocation, [locationId]: true } : s.loadingContentByLocation,
+    }))
     try {
       const result = await window.api.invoke('files:read', filePath) as { content: string; truncated: boolean } | null
-      // Only update if this is still the selected file
-      if (get().selectedFilePath === filePath) {
-        set({
+      if (get().selectedFilePathByLocation[locationId ?? ''] === filePath || get().selectedFilePath === filePath) {
+        set((s) => ({
           fileContent: result,
           loadingContent: false,
-        })
+          fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: result } : s.fileContentByLocation,
+          loadingContentByLocation: locationId ? { ...s.loadingContentByLocation, [locationId]: false } : s.loadingContentByLocation,
+        }))
       }
     } catch {
-      set({ loadingContent: false })
+      set((s) => ({
+        loadingContent: false,
+        loadingContentByLocation: locationId ? { ...s.loadingContentByLocation, [locationId]: false } : s.loadingContentByLocation,
+      }))
     }
   },
 
   clearSelection: () => {
-    set({ selectedFilePath: null, fileContent: null, diffView: null })
+    const locationId = getCurrentLocationId()
+    set((s) => ({
+      selectedFilePath: null,
+      fileContent: null,
+      diffView: null,
+      selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
+      diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
+    }))
   },
 
   refreshSelectedFile: async () => {
-    const { selectedFilePath } = get()
+    const locationId = getCurrentLocationId()
+    const selectedFilePath = (locationId && get().selectedFilePathByLocation[locationId]) || get().selectedFilePath
     if (!selectedFilePath) return
     await get().fetchFileContent(selectedFilePath)
   },
 
   selectDiff: async (repoPath: string, filePath: string, staged: boolean) => {
-    set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
-    const thread = Object.values(useThreadStore.getState().byProject)
-      .flat()
-      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
-    if (thread?.location_id) {
-      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
-    }
+    const locationId = getCurrentLocationId()
+    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null,
+      diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
+      loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation,
+      selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
+    }))
+    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'file')
     try {
       const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
-      set({ diffView: { repoPath, filePath, diff, staged, kind: 'working' }, loadingDiff: false })
+      const next = { repoPath, filePath, diff, staged, kind: 'working' as const }
+      set((s) => ({ diffView: next, loadingDiff: false, diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: next } : s.diffViewByLocation, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     } catch {
-      set({ loadingDiff: false })
+      set((s) => ({ loadingDiff: false, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     }
   },
 
   selectCompareDiffToMain: async (repoPath, filePath) => {
-    set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
-    const thread = Object.values(useThreadStore.getState().byProject)
-      .flat()
-      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
-    if (thread?.location_id) {
-      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
-    }
+    const locationId = getCurrentLocationId()
+    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null,
+      diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
+      loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation,
+      selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
+    }))
+    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'file')
     try {
       const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
-      set({ diffView: { repoPath, filePath, diff, staged: false, kind: 'compareToMain' }, loadingDiff: false })
+      const next = { repoPath, filePath, diff, staged: false, kind: 'compareToMain' as const }
+      set((s) => ({ diffView: next, loadingDiff: false, diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: next } : s.diffViewByLocation, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     } catch {
-      set({ loadingDiff: false })
+      set((s) => ({ loadingDiff: false, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     }
   },
 
   selectCommitDiff: async (repoPath, commitSha, commitShortSha, filePath) => {
-    set({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null })
-    const thread = Object.values(useThreadStore.getState().byProject)
-      .flat()
-      .find((candidate) => candidate.id === useThreadStore.getState().selectedThreadId)
-    if (thread?.location_id) {
-      useUiStore.getState().setLocationAuxTab(thread.location_id, 'file')
-    }
+    const locationId = getCurrentLocationId()
+    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null,
+      diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
+      loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation,
+      selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
+    }))
+    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'file')
     try {
       const diff = await window.api.invoke('git:commitDiff', repoPath, commitSha, filePath) as string
-      // Abort if the user clicked a different diff before this one resolved.
-      const current = get().diffView
+      const current = locationId ? get().diffViewByLocation[locationId] : get().diffView
       if (current && current.filePath === filePath && current.commitSha && current.commitSha !== commitSha) return
-      set({ diffView: { repoPath, filePath, diff, staged: false, kind: 'commit', commitSha, commitShortSha }, loadingDiff: false })
+      const next = { repoPath, filePath, diff, staged: false, kind: 'commit' as const, commitSha, commitShortSha }
+      set((s) => ({ diffView: next, loadingDiff: false, diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: next } : s.diffViewByLocation, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     } catch {
-      set({ loadingDiff: false })
+      set((s) => ({ loadingDiff: false, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     }
   },
 
   refreshDiff: async () => {
-    const current = get().diffView
+    const locationId = getCurrentLocationId()
+    const current = (locationId && get().diffViewByLocation[locationId]) || get().diffView
     if (!current) return
 
-    set({ loadingDiff: true })
+    set((s) => ({ loadingDiff: true, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation }))
     try {
       let diff = ''
       if (current.kind === 'commit' && current.commitSha) {
@@ -230,7 +283,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
         diff = await window.api.invoke('git:diff', current.repoPath, current.filePath, current.staged) as string
       }
 
-      const latest = get().diffView
+      const latest = (locationId && get().diffViewByLocation[locationId]) || get().diffView
       if (
         !latest ||
         latest.repoPath !== current.repoPath ||
@@ -239,18 +292,23 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
         latest.commitSha !== current.commitSha ||
         latest.staged !== current.staged
       ) {
-        set({ loadingDiff: false })
+        set((s) => ({ loadingDiff: false, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
         return
       }
 
-      set({ diffView: { ...latest, diff }, loadingDiff: false })
+      const next = { ...latest, diff }
+      set((s) => ({ diffView: next, loadingDiff: false, diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: next } : s.diffViewByLocation, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     } catch {
-      set({ loadingDiff: false })
+      set((s) => ({ loadingDiff: false, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     }
   },
 
   clearDiff: () => {
-    set({ diffView: null })
+    const locationId = getCurrentLocationId()
+    set((s) => ({
+      diffView: null,
+      diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
+    }))
   },
 
   switchDiffToFile: () => {

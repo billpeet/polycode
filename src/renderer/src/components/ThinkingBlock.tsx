@@ -42,8 +42,8 @@ export default function ThinkingBlock({ message }: Props) {
             Thinking
           </span>
           {!expanded && (
-            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontFamily: 'var(--font-mono)', opacity: 0.75 }}>
-              {preview}
+            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', opacity: 0.75 }}>
+              <MarkdownContent content={preview} className="thinking-markdown thinking-markdown-preview" />
             </span>
           )}
         </span>
@@ -58,7 +58,7 @@ export default function ThinkingBlock({ message }: Props) {
 
       {expanded && (
         <div style={{ padding: '0 0.75rem 0.75rem', opacity: 0.85 }}>
-          <MarkdownContent content={text} />
+          <MarkdownContent content={text} className="thinking-markdown" />
         </div>
       )}
     </div>

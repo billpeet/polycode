@@ -84,10 +84,6 @@ function useResize(defaultWidth: number) {
 // ─── SecondPanel ──────────────────────────────────────────────────────────────
 
 export default function SecondPanel({ threadId }: { threadId: string }) {
-  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
-  const diffView = useFilesStore((s) => s.diffView)
-  const loadingDiff = useFilesStore((s) => s.loadingDiff)
-
   const currentLocationId = useThreadStore((s) => {
     if (!s.selectedThreadId) return null
     for (const threads of Object.values(s.byProject)) {
@@ -96,6 +92,10 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     }
     return null
   })
+
+  const selectedFilePath = useFilesStore((s) => currentLocationId ? (s.selectedFilePathByLocation[currentLocationId] ?? null) : s.selectedFilePath)
+  const diffView = useFilesStore((s) => currentLocationId ? (s.diffViewByLocation[currentLocationId] ?? null) : s.diffView)
+  const loadingDiff = useFilesStore((s) => currentLocationId ? (s.loadingDiffByLocation[currentLocationId] ?? false) : s.loadingDiff)
 
   const isTerminalOpen = useTerminalStore((s) =>
     currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false

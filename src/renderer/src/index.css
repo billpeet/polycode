@@ -340,6 +340,51 @@ body,
   color: inherit;
 }
 
+/* ── Thinking markdown: basic formatting without large headings ───────────── */
+
+.prose-content.thinking-markdown {
+  color: var(--color-text-muted);
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.prose-content.thinking-markdown h1,
+.prose-content.thinking-markdown h2,
+.prose-content.thinking-markdown h3,
+.prose-content.thinking-markdown h4,
+.prose-content.thinking-markdown h5,
+.prose-content.thinking-markdown h6 {
+  color: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  margin: 0.5em 0 0.25em;
+}
+
+.prose-content.thinking-markdown p,
+.prose-content.thinking-markdown ul,
+.prose-content.thinking-markdown ol,
+.prose-content.thinking-markdown blockquote,
+.prose-content.thinking-markdown .code-block-wrapper {
+  margin-top: 0.35em;
+  margin-bottom: 0.35em;
+}
+
+.prose-content.thinking-markdown-preview {
+  display: inline;
+  font-family: var(--font-mono);
+}
+
+.prose-content.thinking-markdown-preview p,
+.prose-content.thinking-markdown-preview h1,
+.prose-content.thinking-markdown-preview h2,
+.prose-content.thinking-markdown-preview h3,
+.prose-content.thinking-markdown-preview h4,
+.prose-content.thinking-markdown-preview h5,
+.prose-content.thinking-markdown-preview h6 {
+  display: inline;
+  margin: 0;
+}
+
 /* ── Input bar styles ──────────────────────────────────────────────────────── */
 
 /* Send button hover/active states */

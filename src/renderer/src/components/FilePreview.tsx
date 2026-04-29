@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useFilesStore } from '../stores/files'
+import { useThreadStore } from '../stores/threads'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { getHighlighter, onReady } from '../lib/shiki'
@@ -396,9 +397,21 @@ function DiffPreview({ diff, filePath }: { diff: string; filePath?: string }) {
 
 // ─── DiffPane (inner content, no outer wrapper) ───────────────────────────────
 
+function useCurrentLocationId() {
+  return useThreadStore((s) => {
+    if (!s.selectedThreadId) return null
+    for (const threads of Object.values(s.byProject)) {
+      const t = threads.find((t) => t.id === s.selectedThreadId)
+      if (t) return t.location_id ?? null
+    }
+    return null
+  })
+}
+
 export function DiffPane() {
-  const diffView = useFilesStore((s) => s.diffView)
-  const loadingDiff = useFilesStore((s) => s.loadingDiff)
+  const currentLocationId = useCurrentLocationId()
+  const diffView = useFilesStore((s) => currentLocationId ? (s.diffViewByLocation[currentLocationId] ?? null) : s.diffView)
+  const loadingDiff = useFilesStore((s) => currentLocationId ? (s.loadingDiffByLocation[currentLocationId] ?? false) : s.loadingDiff)
   const clearDiff = useFilesStore((s) => s.clearDiff)
   const switchDiffToFile = useFilesStore((s) => s.switchDiffToFile)
   const refreshDiff = useFilesStore((s) => s.refreshDiff)
@@ -515,9 +528,10 @@ export function DiffPane() {
 // ─── FilePane (inner content, no outer wrapper) ───────────────────────────────
 
 export function FilePane() {
-  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
-  const fileContent = useFilesStore((s) => s.fileContent)
-  const loadingContent = useFilesStore((s) => s.loadingContent)
+  const currentLocationId = useCurrentLocationId()
+  const selectedFilePath = useFilesStore((s) => currentLocationId ? (s.selectedFilePathByLocation[currentLocationId] ?? null) : s.selectedFilePath)
+  const fileContent = useFilesStore((s) => currentLocationId ? (s.fileContentByLocation[currentLocationId] ?? null) : s.fileContent)
+  const loadingContent = useFilesStore((s) => currentLocationId ? (s.loadingContentByLocation[currentLocationId] ?? false) : s.loadingContent)
   const clearSelection = useFilesStore((s) => s.clearSelection)
   const refreshSelectedFile = useFilesStore((s) => s.refreshSelectedFile)
 

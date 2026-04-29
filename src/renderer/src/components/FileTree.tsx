@@ -47,18 +47,20 @@ function FileTreeItem({
   depth = 0,
   threadId,
   projectPath,
+  locationId,
 }: {
   entry: FileEntry
   depth?: number
   threadId: string
   projectPath: string
+  locationId: string | null
 }) {
   const expandedPaths = useFilesStore((s) => s.expandedPaths)
   const loadingPaths = useFilesStore((s) => s.loadingPaths)
   const entriesByPath = useFilesStore((s) => s.entriesByPath)
   const toggleExpanded = useFilesStore((s) => s.toggleExpanded)
   const selectFile = useFilesStore((s) => s.selectFile)
-  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
+  const selectedFilePath = useFilesStore((s) => locationId ? (s.selectedFilePathByLocation[locationId] ?? null) : s.selectedFilePath)
   const draftByThread = useThreadStore((s) => s.draftByThread)
   const setDraft = useThreadStore((s) => s.setDraft)
   const [isHovered, setIsHovered] = useState(false)
@@ -166,7 +168,7 @@ function FileTreeItem({
       {entry.isDirectory && isExpanded && children.length > 0 && (
         <div>
           {children.map((child) => (
-            <FileTreeItem key={child.path} entry={child} depth={depth + 1} threadId={threadId} projectPath={projectPath} />
+            <FileTreeItem key={child.path} entry={child} depth={depth + 1} threadId={threadId} projectPath={projectPath} locationId={locationId} />
           ))}
         </div>
       )}
@@ -178,13 +180,15 @@ function SearchResultItem({
   entry,
   projectPath,
   threadId,
+  locationId,
 }: {
   entry: FileEntry
   projectPath: string
   threadId: string
+  locationId: string | null
 }) {
   const selectFile = useFilesStore((s) => s.selectFile)
-  const selectedFilePath = useFilesStore((s) => s.selectedFilePath)
+  const selectedFilePath = useFilesStore((s) => locationId ? (s.selectedFilePathByLocation[locationId] ?? null) : s.selectedFilePath)
   const draftByThread = useThreadStore((s) => s.draftByThread)
   const setDraft = useThreadStore((s) => s.setDraft)
   const [isHovered, setIsHovered] = useState(false)
@@ -423,7 +427,7 @@ export default function FileTree({ threadId }: { threadId: string }) {
             </div>
           ) : (
             searchResults.map((entry) => (
-              <SearchResultItem key={entry.path} entry={entry} projectPath={projectPath} threadId={threadId} />
+              <SearchResultItem key={entry.path} entry={entry} projectPath={projectPath} threadId={threadId} locationId={location?.id ?? null} />
             ))
           )
         ) : rootEntries.length === 0 ? (
@@ -432,7 +436,7 @@ export default function FileTree({ threadId }: { threadId: string }) {
           </div>
         ) : (
           rootEntries.map((entry) => (
-            <FileTreeItem key={entry.path} entry={entry} threadId={threadId} projectPath={projectPath} />
+            <FileTreeItem key={entry.path} entry={entry} threadId={threadId} projectPath={projectPath} locationId={location?.id ?? null} />
           ))
         )}
       </div>
