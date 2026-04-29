@@ -36,7 +36,15 @@ export default function EditDiffView({ oldString, newString, filePath, toolName 
   }, [displayName, newString, lang])
 
   return (
-    <div className="pierre-diff-wrapper" style={{ borderRadius: 6, overflow: 'hidden' }}>
+    <div
+      className="pierre-diff-wrapper"
+      style={{
+        borderRadius: 6,
+        maxHeight: 480,
+        maxWidth: '100%',
+        overflow: 'auto',
+      }}
+    >
       <MultiFileDiff
         oldFile={oldFile}
         newFile={newFile}
@@ -46,7 +54,7 @@ export default function EditDiffView({ oldString, newString, filePath, toolName 
           disableFileHeader: false,
           overflow: 'wrap',
         }}
-        style={{ fontSize: '0.72rem', maxHeight: 480 }}
+        style={{ fontSize: '0.72rem' }}
       />
     </div>
   )
