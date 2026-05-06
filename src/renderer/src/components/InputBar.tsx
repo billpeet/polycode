@@ -7,6 +7,7 @@ import { useToastStore } from '../stores/toast'
 import { useSessionStore } from '../stores/sessions'
 import {
   Question,
+  QuestionAnswerValue,
   PermissionRequest,
   SearchableFile,
   PendingAttachment,
@@ -60,7 +61,7 @@ export default function InputBar({ threadId }: Props) {
   const [isFocused, setIsFocused] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [questions, setQuestions] = useState<Question[]>([])
-  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, string>>({})
+  const [selectedAnswers, setSelectedAnswers] = useState<Record<string, QuestionAnswerValue>>({})
   const [questionComments, setQuestionComments] = useState<Record<string, string>>({})
   const [generalComment, setGeneralComment] = useState('')
   const [permissions, setPermissions] = useState<PermissionRequest[]>([])

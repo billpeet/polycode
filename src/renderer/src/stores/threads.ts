@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question, PermissionRequest, TokenUsage, ReasoningLevel } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, ReasoningLevel } from '../types/ipc'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 
@@ -73,7 +73,7 @@ interface ThreadStore {
   approvePlan: (threadId: string) => Promise<void>
   rejectPlan: (threadId: string) => Promise<void>
   getQuestions: (threadId: string) => Promise<Question[]>
-  answerQuestion: (threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string) => Promise<void>
+  answerQuestion: (threadId: string, answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string>, generalComment: string) => Promise<void>
   getPermissions: (threadId: string) => Promise<PermissionRequest[]>
   approvePermissions: (threadId: string, requestId?: string) => Promise<void>
   denyPermissions: (threadId: string, requestId?: string) => Promise<void>

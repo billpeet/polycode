@@ -69,6 +69,7 @@ export class PiDriver implements CLIDriver {
   private readyPromise: Promise<void> | null = null
   private stopRequested = false
   private abortRequested = false
+  private restartAfterTurn = false
 
   constructor(private readonly options: DriverOptions) {
     if (options.initialSessionId) {
@@ -280,7 +281,27 @@ export class PiDriver implements CLIDriver {
   private handleEvent(data: Record<string, unknown>): void {
     if (!this.currentTurn) return
 
-    for (const event of this.parseEvent(data)) {
+    if (data.type === 'compaction_end' && typeof data.errorMessage !== 'string') {
+      // Pi's Codex adapter keeps provider/WebSocket state in the long-running RPC
+      // process. After compaction the session file contains the compacted context,
+      // but a reused provider connection may still be anchored to the pre-compaction
+      // context and fail the next request with context_length_exceeded. Restart the
+      // RPC process after the current turn so the next prompt resumes the compacted
+      // Pi session from disk with fresh provider state.
+      this.restartAfterTurn = true
+    }
+
+    const events = this.parseEvent(data)
+    if (events.some((event) => event.type === 'error')) {
+      // Provider failures such as "WebSocket closed 1006" can leave Pi's long-lived
+      // RPC process believing the agent turn is still active even after it emits
+      // agent_end/turn_end. Reusing that process makes the next prompt fail with
+      // "Agent is already processing", so always reopen Pi for the next turn after
+      // a surfaced execution error.
+      this.restartAfterTurn = true
+    }
+
+    for (const event of events) {
       this.currentTurn.onEvent(event)
     }
 
@@ -401,13 +422,14 @@ export class PiDriver implements CLIDriver {
     const turn = this.currentTurn
     this.currentTurn = null
 
-    if (error || this.stopRequested) {
+    if (error || this.stopRequested || this.restartAfterTurn) {
       this.cleanupProcess()
     }
 
     turn.onDone(this.stopRequested ? undefined : error)
     this.stopRequested = false
     this.abortRequested = false
+    this.restartAfterTurn = false
   }
 
   private failPending(error: Error): void {

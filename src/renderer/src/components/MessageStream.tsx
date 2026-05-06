@@ -314,17 +314,31 @@ export default function MessageStream({ threadId, sessionId }: Props) {
     return () => observer.disconnect()
   }, [nonVirtualizedEntries])
 
-  // Back up virtualizer ResizeObserver-driven measurements into the persistent cache.
-  // This runs on every render so that if TanStack corrects a size via its internal
-  // ResizeObserver, we capture it before a future measure() call wipes itemSizeCache.
-  useEffect(() => {
-    for (const item of rowVirtualizer.getVirtualItems()) {
-      const entry = entries[item.index]
-      if (entry) {
-        heightCache.set(entry.key, item.size)
-      }
+  // Force a fresh measurement pass after switching threads/sessions or loading a
+  // different message set. Some rows (notably long markdown/code blocks) can be
+  // mounted with estimates first; measuring on the next frame avoids stale starts.
+  useLayoutEffect(() => {
+    const frame = requestAnimationFrame(() => rowVirtualizer.measure())
+    return () => cancelAnimationFrame(frame)
+  }, [rowVirtualizer, threadId, sessionId, entries.length, virtualizedRowCount])
+
+  const measureVirtualRow = useCallback((node: HTMLDivElement | null) => {
+    if (!node) return
+    rowVirtualizer.measureElement(node)
+
+    const key = node.dataset.entryKey
+    if (!key) return
+
+    // Persist only real DOM measurements. Do not copy virtualizer item sizes into
+    // heightCache: those can still be estimates, and caching an underestimate is
+    // what causes long rows to overlap following rows after a thread switch.
+    const cacheHeight = () => {
+      const height = node.getBoundingClientRect().height
+      if (height > 0) heightCache.set(key, height)
     }
-  })
+    cacheHeight()
+    requestAnimationFrame(cacheHeight)
+  }, [rowVirtualizer])
 
   function handleScroll(): void {
     const el = containerRef.current
@@ -366,7 +380,8 @@ export default function MessageStream({ threadId, sessionId }: Props) {
                 <div
                   key={`v:${entry.key}`}
                   data-index={virtualRow.index}
-                  ref={rowVirtualizer.measureElement}
+                  data-entry-key={entry.key}
+                  ref={measureVirtualRow}
                   className="absolute left-0 top-0 w-full pb-2"
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >

@@ -69,7 +69,7 @@ import {
   getSetting,
   setSetting,
 } from '../db/queries'
-import { SshConfig, WslConfig, ConnectionType, Provider } from '../../shared/types'
+import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -658,7 +658,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return session?.getPendingQuestions() ?? []
   })
 
-  ipcMain.handle('threads:answerQuestion', (_event, threadId: string, answers: Record<string, string>, questionComments: Record<string, string>, generalComment: string) => {
+  ipcMain.handle('threads:answerQuestion', (_event, threadId: string, answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string>, generalComment: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
       session.answerQuestion(answers, questionComments, generalComment)

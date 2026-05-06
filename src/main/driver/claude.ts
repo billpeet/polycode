@@ -24,6 +24,7 @@ type PendingPermissionDecision = {
 }
 
 type PendingQuestionDecision = {
+  input: Record<string, unknown>
   originalQuestions: unknown[]
   resolve: (result: PermissionResult) => void
   reject: (error: Error) => void
@@ -211,6 +212,7 @@ export class ClaudeDriver implements CLIDriver {
         question.resolve({
           behavior: 'allow',
           updatedInput: {
+            ...question.input,
             questions: question.originalQuestions,
             answers: {},
           },
@@ -232,6 +234,7 @@ export class ClaudeDriver implements CLIDriver {
     pending.resolve({
       behavior: 'allow',
       updatedInput: {
+        ...pending.input,
         questions: pending.originalQuestions,
         answers,
         ...(message ? { message } : {}),
@@ -329,6 +332,7 @@ export class ClaudeDriver implements CLIDriver {
 
       return await new Promise<PermissionResult>((resolve, reject) => {
         this.pendingQuestionDecisions.set(requestId, {
+          input,
           originalQuestions: Array.isArray(input.questions) ? input.questions : [],
           resolve,
           reject,

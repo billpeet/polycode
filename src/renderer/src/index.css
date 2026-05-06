@@ -346,6 +346,9 @@ body,
   color: var(--color-text-muted);
   font-size: inherit;
   line-height: inherit;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
 }
 
 .prose-content.thinking-markdown h1,
@@ -367,6 +370,17 @@ body,
 .prose-content.thinking-markdown .code-block-wrapper {
   margin-top: 0.35em;
   margin-bottom: 0.35em;
+}
+
+.prose-content.thinking-markdown .code-block-wrapper,
+.prose-content.thinking-markdown pre,
+.prose-content.thinking-markdown table {
+  max-width: 100%;
+}
+
+.prose-content.thinking-markdown table {
+  display: block;
+  overflow-x: auto;
 }
 
 .prose-content.thinking-markdown-preview {

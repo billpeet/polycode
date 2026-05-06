@@ -236,4 +236,48 @@ describe('PiDriver JSONL buffering', () => {
     expect(done).toHaveBeenCalledTimes(1)
     expect((driver as any).currentTurn).toBeNull()
   })
+
+  it('restarts the Pi RPC process after successful compaction', () => {
+    const driver = makeDriver()
+    const done = mock(() => {})
+    const cleanupProcess = mock(() => {})
+    ;(driver as any).cleanupProcess = cleanupProcess
+    makeActiveTurn(driver, () => {}, done)
+
+    ;(driver as any).buffer = [
+      JSON.stringify({ type: 'compaction_end', reason: 'threshold', aborted: false, result: { summary: 'compacted' } }),
+      JSON.stringify({ type: 'agent_end', messages: [] }),
+    ].join('\n') + '\n'
+    ;(driver as any).processBuffer()
+
+    expect(cleanupProcess).toHaveBeenCalledTimes(1)
+    expect(done).toHaveBeenCalledTimes(1)
+    expect((driver as any).restartAfterTurn).toBe(false)
+  })
+
+  it('restarts the Pi RPC process after surfaced provider errors', () => {
+    const driver = makeDriver()
+    const done = mock(() => {})
+    const cleanupProcess = mock(() => {})
+    const events: OutputEvent[] = []
+    ;(driver as any).cleanupProcess = cleanupProcess
+    makeActiveTurn(driver, (event) => events.push(event), done)
+
+    ;(driver as any).buffer = [
+      JSON.stringify({
+        type: 'message_update',
+        assistantMessageEvent: {
+          type: 'error',
+          error: { errorMessage: 'WebSocket closed 1006' },
+        },
+      }),
+      JSON.stringify({ type: 'agent_end', messages: [] }),
+    ].join('\n') + '\n'
+    ;(driver as any).processBuffer()
+
+    expect(events).toEqual([{ type: 'error', content: 'WebSocket closed 1006' } satisfies OutputEvent])
+    expect(cleanupProcess).toHaveBeenCalledTimes(1)
+    expect(done).toHaveBeenCalledTimes(1)
+    expect((driver as any).restartAfterTurn).toBe(false)
+  })
 })

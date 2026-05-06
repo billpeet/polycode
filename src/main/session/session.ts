@@ -7,7 +7,7 @@ import { OpenCodeDriver } from '../driver/opencode'
 import { PiDriver } from '../driver/pi'
 import { CursorDriver } from '../driver/cursor'
 import { CLIDriver } from '../driver/types'
-import { OutputEvent, ThreadStatus, SendOptions, Question, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider } from '../../shared/types'
+import { OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 import {
@@ -525,7 +525,7 @@ export class Session {
   }
 
   /** Answer pending question and continue execution */
-  answerQuestion(answers: Record<string, string>, questionComments: Record<string, string> = {}, generalComment = ''): void {
+  answerQuestion(answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string> = {}, generalComment = ''): void {
     if (!this.questionPending || !this.activeSessionId) return
 
     const driver = this.drivers.get(this.activeSessionId)
@@ -540,18 +540,20 @@ export class Session {
     const answerLines: string[] = []
 
     for (const q of questions) {
-      const answer = answers[q.question]
-      const comment = questionComments[q.question]?.trim()
-      if (!answer && !comment) continue
+      const key = q.id ?? q.question
+      const answer = answers[key] ?? answers[q.question]
+      const comment = (questionComments[key] ?? questionComments[q.question])?.trim()
+      if ((!answer || (Array.isArray(answer) && answer.length === 0)) && !comment) continue
+      const answerTextForQuestion = Array.isArray(answer) ? answer.join(', ') : answer
 
       // Display block
       qaLines.push(`**${q.header}**: ${q.question}`)
-      if (answer) qaLines.push(`→ ${answer}`)
+      if (answerTextForQuestion) qaLines.push(`→ ${answerTextForQuestion}`)
       if (comment) qaLines.push(`  ↳ ${comment}`)
       qaLines.push('')
 
       // Claude text
-      let claudeLine = answer ? `${q.question}: ${answer}` : `${q.question}: (no selection)`
+      let claudeLine = answerTextForQuestion ? `${q.question}: ${answerTextForQuestion}` : `${q.question}: (no selection)`
       if (comment) claudeLine += `\n  (clarification: ${comment})`
       answerLines.push(claudeLine)
     }
@@ -582,17 +584,24 @@ export class Session {
 
     if (questionRequestId && driver.answerQuestion) {
       const structuredAnswers: Record<string, unknown> = {}
+      const trimmedGeneralComment = generalComment.trim()
+      let generalCommentAttached = false
       for (const q of questions) {
-        const key = q.id ?? q.question
-        const answer = answers[key] ?? answers[q.question]
-        const comment = questionComments[key] ?? questionComments[q.question]
-        if (answer) structuredAnswers[key] = answer
-        if (comment?.trim()) structuredAnswers[`${key}_comment`] = comment.trim()
+        const uiKey = q.id ?? q.question
+        const answer = answers[uiKey] ?? answers[q.question]
+        const comment = questionComments[uiKey] ?? questionComments[q.question]
+        const answerKey = q.question
+        const answerValue = Array.isArray(answer) ? answer.join(', ') : answer
+        const notes = [comment?.trim(), !generalCommentAttached ? trimmedGeneralComment : ''].filter(Boolean).join('\n')
+        if (answerValue || notes) {
+          structuredAnswers[answerKey] = notes ? `${answerValue || '(no selection)'}\nNotes: ${notes}` : answerValue
+          generalCommentAttached ||= !!trimmedGeneralComment
+        }
       }
-      if (generalComment?.trim()) {
-        structuredAnswers.general_comment = generalComment.trim()
+      if (trimmedGeneralComment && !generalCommentAttached) {
+        structuredAnswers['Additional comments'] = trimmedGeneralComment
       }
-      driver.answerQuestion(questionRequestId, structuredAnswers, generalComment.trim() || undefined)
+      driver.answerQuestion(questionRequestId, structuredAnswers, undefined)
     } else {
       driver.sendMessage(
         answerText,

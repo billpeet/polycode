@@ -150,10 +150,10 @@ export function QuestionBanner({
   onSubmit,
 }: {
   questions: Question[]
-  selectedAnswers: Record<string, string>
+  selectedAnswers: Record<string, string | string[]>
   questionComments: Record<string, string>
   generalComment: string
-  setSelectedAnswers: Dispatch<SetStateAction<Record<string, string>>>
+  setSelectedAnswers: Dispatch<SetStateAction<Record<string, string | string[]>>>
   setQuestionComments: Dispatch<SetStateAction<Record<string, string>>>
   setGeneralComment: Dispatch<SetStateAction<string>>
   onSubmit: () => void
@@ -196,15 +196,23 @@ export function QuestionBanner({
           </div>
           <div className="flex flex-wrap gap-2">
             {q.options.map((opt, optIndex) => {
-              const isSelected = selectedAnswers[questionKey] === opt.label
+              const currentAnswer = selectedAnswers[questionKey]
+              const isSelected = Array.isArray(currentAnswer) ? currentAnswer.includes(opt.label) : currentAnswer === opt.label
               return (
                 <button
                   key={optIndex}
                   onClick={() =>
-                    setSelectedAnswers((prev) => ({
-                      ...prev,
-                      [questionKey]: prev[questionKey] === opt.label ? '' : opt.label,
-                    }))
+                    setSelectedAnswers((prev) => {
+                      const current = prev[questionKey]
+                      if (!q.multiSelect) {
+                        return { ...prev, [questionKey]: current === opt.label ? '' : opt.label }
+                      }
+                      const currentList = Array.isArray(current) ? current : (current ? [current] : [])
+                      const nextList = currentList.includes(opt.label)
+                        ? currentList.filter((label) => label !== opt.label)
+                        : [...currentList, opt.label]
+                      return { ...prev, [questionKey]: nextList }
+                    })
                   }
                   className="rounded-lg px-3 py-2 text-left transition-all"
                   style={{

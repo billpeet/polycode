@@ -383,6 +383,8 @@ export interface Question {
   options: QuestionOption[]
 }
 
+export type QuestionAnswerValue = string | string[]
+
 /** The full AskUserQuestion payload */
 export interface UserQuestion {
   questions: Question[]
