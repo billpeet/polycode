@@ -53,15 +53,20 @@ const IGNORED_DIRS = new Set([
   'dist', 'build', 'out', '.vscode', '.idea', 'coverage', '.nyc_output',
 ])
 
+function shouldSkipEntry(name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return IGNORED_DIRS.has(name)
+  return name.startsWith('.') && !name.startsWith('.env')
+}
+
 /**
  * List directory entries on a remote host.
  * Returns the same shape as the local `listDirectory`.
  */
 export async function sshListDirectory(ssh: SshConfig, dirPath: string): Promise<FileEntry[]> {
   // List entries with type prefix: "d\tname" or "f\tname"
-  // Uses find at depth 1 to get type info, skipping hidden files
+  // Uses find at depth 1 to get type info.
   const target = cdTarget(dirPath)
-  const cmd = `find ${target} -maxdepth 1 -mindepth 1 \\( -name '.*' ! -name '.env' \\) -prune -o -print0 2>/dev/null` +
+  const cmd = `find ${target} -maxdepth 1 -mindepth 1 -print0 2>/dev/null` +
     ` | xargs -0 -I{} sh -c 'if [ -d "{}" ]; then echo "d\t$(basename "{}")"; else echo "f\t$(basename "{}")"; fi'`
 
   let output: string
@@ -84,7 +89,7 @@ export async function sshListDirectory(ssh: SshConfig, dirPath: string): Promise
     if (!name) continue
 
     const isDirectory = type === 'd'
-    if (isDirectory && IGNORED_DIRS.has(name)) continue
+    if (shouldSkipEntry(name, isDirectory)) continue
 
     // Build remote path — handle trailing slash
     const entryPath = dirPath.endsWith('/') ? dirPath + name : dirPath + '/' + name
@@ -136,12 +141,15 @@ export async function sshListAllFiles(ssh: SshConfig, rootPath: string): Promise
 
   // Build find exclusions
   const excludes = Array.from(IGNORED_DIRS)
-    .map(d => `-name ${shellEscape(d)} -prune`)
+    .map(d => `-name ${shellEscape(d)}`)
     .join(' -o ')
 
-  // Find files and directories, excluding ignored dirs and hidden files, limit output
+  // Find files and directories, excluding ignored dirs and hidden files, limit output.
+  // Dot-directories such as .claude and .agents are included unless explicitly ignored.
   // -printf '%y\t%p\n' outputs type char ('f' or 'd') then tab then full path
-  const cmd = `find ${target} -mindepth 1 \\( ${excludes} \\) -prune -o \\( \\( -type f -o -type d \\) ! -name '.*' -printf '%y\\t%p\\n' \\) 2>/dev/null | head -n ${MAX_SEARCH_FILES}`
+  const cmd = `find ${target} -mindepth 1 \\( -type d \\( ${excludes} \\) -prune \\) -o ` +
+    `\\( -type d -printf '%y\\t%p\\n' -o -type f \\( ! -name '.*' -o -name '.env*' \\) -printf '%y\\t%p\\n' \\) ` +
+    `2>/dev/null | head -n ${MAX_SEARCH_FILES}`
 
   let output: string
   try {

@@ -20,15 +20,18 @@ const IGNORED_DIRS = new Set([
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
 
+function shouldSkipEntry(entry: fs.Dirent): boolean {
+  if (entry.isDirectory()) return IGNORED_DIRS.has(entry.name)
+  return entry.name.startsWith('.') && !entry.name.startsWith('.env')
+}
+
 export function listDirectory(dirPath: string): FileEntry[] {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true })
     const result: FileEntry[] = []
 
     for (const entry of entries) {
-      // Skip hidden files and ignored directories
-      if (entry.name.startsWith('.') && entry.name !== '.env') continue
-      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue
+      if (shouldSkipEntry(entry)) continue
 
       const fullPath = path.join(dirPath, entry.name)
       result.push({
@@ -68,14 +71,11 @@ export function listAllFiles(rootPath: string): SearchableFile[] {
       for (const entry of entries) {
         if (results.length >= MAX_SEARCH_FILES) break
 
-        // Skip hidden files (except .env-like files)
-        if (entry.name.startsWith('.') && !entry.name.startsWith('.env')) continue
+        if (shouldSkipEntry(entry)) continue
 
         const fullPath = path.join(dirPath, entry.name)
 
         if (entry.isDirectory()) {
-          // Skip ignored directories
-          if (IGNORED_DIRS.has(entry.name)) continue
           const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')
           results.push({
             path: fullPath,

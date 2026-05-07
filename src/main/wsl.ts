@@ -95,6 +95,11 @@ const IGNORED_DIRS = new Set([
   'dist', 'build', 'out', '.vscode', '.idea', 'coverage', '.nyc_output',
 ])
 
+function shouldSkipEntry(entry: fs.Dirent): boolean {
+  if (entry.isDirectory()) return IGNORED_DIRS.has(entry.name)
+  return entry.name.startsWith('.') && !entry.name.startsWith('.env')
+}
+
 /**
  * List directory entries inside a WSL distribution.
  * Accesses the WSL filesystem via \\wsl.localhost UNC path.
@@ -107,8 +112,7 @@ export function wslListDirectory(wsl: WslConfig, dirPath: string): FileEntry[] {
     const result: FileEntry[] = []
 
     for (const entry of entries) {
-      if (entry.name.startsWith('.') && entry.name !== '.env') continue
-      if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue
+      if (shouldSkipEntry(entry)) continue
 
       const entryPath = dirPath.endsWith('/') ? dirPath + entry.name : dirPath + '/' + entry.name
       result.push({ name: entry.name, path: entryPath, isDirectory: entry.isDirectory() })
@@ -167,13 +171,12 @@ export function wslListAllFiles(wsl: WslConfig, rootPath: string): SearchableFil
 
       for (const entry of entries) {
         if (results.length >= MAX_SEARCH_FILES) break
-        if (entry.name.startsWith('.') && !entry.name.startsWith('.env')) continue
+        if (shouldSkipEntry(entry)) continue
 
         const entryLinuxPath = linuxDir.endsWith('/') ? linuxDir + entry.name : linuxDir + '/' + entry.name
         const entryUncPath = path.join(uncDir, entry.name)
 
         if (entry.isDirectory()) {
-          if (IGNORED_DIRS.has(entry.name)) continue
           const relativePath = entryLinuxPath.startsWith(rootPath + '/')
             ? entryLinuxPath.slice(rootPath.length + 1)
             : entryLinuxPath.startsWith(rootPath)
