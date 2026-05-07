@@ -253,10 +253,12 @@ export default function InputBar({ threadId }: Props) {
     el.style.height = `${Math.min(el.scrollHeight, 200)}px`
   }, [value])
 
-  // Fetch slash commands whenever the active project changes
+  // Fetch slash commands and harness skills whenever the active project/provider/location changes
   useEffect(() => {
-    fetchSlashCommands(threadProjectId ?? null)
-  }, [threadProjectId, fetchSlashCommands])
+    const provider = (currentThread?.provider ?? 'claude-code') as Provider
+    const cwd = location?.connection_type === 'local' ? location.path : null
+    fetchSlashCommands(threadProjectId ?? null, provider, cwd)
+  }, [threadProjectId, currentThread?.provider, location?.connection_type, location?.path, fetchSlashCommands])
 
   async function handleSend(): Promise<void> {
     // Guard against concurrent sends (e.g. rapid Enter presses before React re-renders)

@@ -95,6 +95,7 @@ import {
 import { getThreadLogs } from '../thread-logger'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
+import { listDetectedSkills } from '../skills'
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
 
@@ -1255,7 +1256,25 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Slash Commands ─────────────────────────────────────────────────────────
 
   ipcMain.handle('slash-commands:list', (_event, projectId?: string | null) => {
-    return listSlashCommands(projectId)
+    return listSlashCommands(projectId).map((c) => ({ ...c, kind: 'command' as const }))
+  })
+
+  ipcMain.handle('skills:list', (_event, provider: Provider, cwd?: string | null) => {
+    return listDetectedSkills(provider, cwd ?? null).map((s, index) => ({
+      id: s.id,
+      project_id: s.scope === 'project' ? 'project' : null,
+      name: s.name,
+      description: s.description,
+      prompt: s.invocation,
+      sort_order: index,
+      created_at: '',
+      updated_at: '',
+      kind: 'skill' as const,
+      scope: s.scope,
+      harness: s.harness,
+      path: s.path,
+      invocation: s.invocation,
+    }))
   })
 
   ipcMain.handle('slash-commands:create', (_event, projectId: string | null, name: string, description: string | null, prompt: string) => {

@@ -159,6 +159,7 @@ export interface WindowApi {
   invoke(channel: 'youtrack:search', url: string, token: string, query: string): Promise<YouTrackIssue[]>
   invoke(channel: 'youtrack:test', url: string, token: string): Promise<{ ok: boolean; error?: string }>
   invoke(channel: 'slash-commands:list', projectId?: string | null): Promise<SlashCommand[]>
+  invoke(channel: 'skills:list', provider: Provider, cwd?: string | null): Promise<SlashCommand[]>
   invoke(channel: 'slash-commands:create', projectId: string | null, name: string, description: string | null, prompt: string): Promise<SlashCommand>
   invoke(channel: 'slash-commands:update', id: string, name: string, description: string | null, prompt: string): Promise<void>
   invoke(channel: 'slash-commands:delete', id: string): Promise<void>

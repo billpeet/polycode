@@ -1,5 +1,6 @@
 import { existsSync } from 'fs'
 import { homedir } from 'os'
+import { spawnSync } from 'child_process'
 import path from 'path'
 import { SshConfig } from '../../../shared/types'
 
@@ -36,6 +37,35 @@ function uniqPaths(values: Array<string | null | undefined>): string[] {
   return result
 }
 
+function readRegistryPath(scope: 'user' | 'machine'): string {
+  if (process.platform !== 'win32') return ''
+
+  const key = scope === 'user'
+    ? 'HKCU\\Environment'
+    : 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'
+
+  try {
+    const result = spawnSync('reg', ['query', key, '/v', 'Path'], {
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+    if (result.status !== 0 || !result.stdout) return ''
+
+    const line = result.stdout
+      .split(/\r?\n/)
+      .find((entry) => /^\s*Path\s+REG_/.test(entry))
+    if (!line) return ''
+
+    return line.replace(/^\s*Path\s+REG_\w+\s+/, '').trim()
+  } catch {
+    return ''
+  }
+}
+
+function expandWindowsEnvVars(value: string, env: NodeJS.ProcessEnv): string {
+  return value.replace(/%([^%]+)%/g, (match, name: string) => env[name] ?? env[name.toUpperCase()] ?? env[name.toLowerCase()] ?? match)
+}
+
 /**
  * Build a Windows child-process env with common user install dirs prepended to PATH.
  * This makes Electron-launched subprocesses reliably find tools like bun/claude/npm
@@ -50,14 +80,25 @@ export function augmentWindowsPath(env: NodeJS.ProcessEnv = process.env): NodeJS
   const appData = env.APPDATA
   const localAppData = env.LOCALAPPDATA
   const programFiles = env.ProgramFiles
+  const programData = env.ProgramData
+  const chocolateyInstall = env.ChocolateyInstall
+
+  const registryPath = [readRegistryPath('user'), readRegistryPath('machine')]
+    .filter(Boolean)
+    .map((value) => expandWindowsEnvVars(value, env))
+    .join(path.delimiter)
 
   const candidateDirs = [
     userProfile ? path.join(userProfile, '.bun', 'bin') : null,
     userProfile ? path.join(userProfile, '.local', 'bin') : null,
+    userProfile ? path.join(userProfile, '.cargo', 'bin') : null,
     userProfile ? path.join(userProfile, 'scoop', 'shims') : null,
     appData ? path.join(appData, 'npm') : null,
     localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
+    chocolateyInstall ? path.join(chocolateyInstall, 'bin') : null,
+    programData ? path.join(programData, 'chocolatey', 'bin') : null,
     programFiles ? path.join(programFiles, 'nodejs') : null,
+    programFiles ? path.join(programFiles, 'Git', 'usr', 'bin') : null,
   ]
 
   const seen = new Set<string>()
@@ -69,12 +110,13 @@ export function augmentWindowsPath(env: NodeJS.ProcessEnv = process.env): NodeJS
     seen.add(key)
     parts.push(dir)
   }
-  for (const dir of currentPath.split(path.delimiter)) {
+  for (const dir of `${currentPath}${path.delimiter}${registryPath}`.split(path.delimiter)) {
     if (!dir) continue
-    const key = dir.toLowerCase()
+    const expanded = expandWindowsEnvVars(dir, env)
+    const key = expanded.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
-    parts.push(dir)
+    parts.push(expanded)
   }
 
   const nextPath = parts.join(path.delimiter)

@@ -1,12 +1,12 @@
 import { create } from 'zustand'
-import { SlashCommand } from '../types/ipc'
+import { Provider, SlashCommand } from '../types/ipc'
 
 interface SlashCommandStore {
   /** Commands keyed by scope: projectId or 'global' */
   commandsByScope: Record<string, SlashCommand[]>
 
   /** Fetch commands for the given projectId (includes global). Pass null for global-only. */
-  fetch: (projectId?: string | null) => Promise<void>
+  fetch: (projectId?: string | null, provider?: Provider | null, cwd?: string | null) => Promise<void>
 
   create: (projectId: string | null, name: string, description: string | null, prompt: string) => Promise<SlashCommand>
   update: (id: string, name: string, description: string | null, prompt: string) => Promise<void>
@@ -16,10 +16,11 @@ interface SlashCommandStore {
 export const useSlashCommandStore = create<SlashCommandStore>((set) => ({
   commandsByScope: {},
 
-  fetch: async (projectId) => {
+  fetch: async (projectId, provider, cwd) => {
     const commands = await window.api.invoke('slash-commands:list', projectId ?? null)
+    const skills = provider ? await window.api.invoke('skills:list', provider, cwd ?? null) : []
     const key = projectId ?? 'global'
-    set((s) => ({ commandsByScope: { ...s.commandsByScope, [key]: commands } }))
+    set((s) => ({ commandsByScope: { ...s.commandsByScope, [key]: [...skills, ...commands] } }))
   },
 
   create: async (projectId, name, description, prompt) => {

@@ -519,6 +519,11 @@ export interface SlashCommand {
   sort_order: number
   created_at: string
   updated_at: string
+  kind?: 'command' | 'skill'
+  scope?: 'global' | 'project' | 'admin' | 'system'
+  harness?: Provider | 'gemini'
+  path?: string
+  invocation?: string
 }
 
 // ── Thread Log Entries ─────────────────────────────────────────────────────────

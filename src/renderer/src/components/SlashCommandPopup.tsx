@@ -100,12 +100,13 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
         className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
         style={{ color: 'var(--color-text-muted)', borderBottom: '1px solid var(--color-border)' }}
       >
-        Slash Commands
+        Commands & Skills
       </div>
       {results.map((result, index) => {
         const cmd = result.item
         const isSelected = index === selectedIndex
         const isGlobal = cmd.project_id === null
+        const isSkill = cmd.kind === 'skill'
 
         return (
           <div
@@ -123,8 +124,19 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
                 className="font-mono text-xs font-medium"
                 style={{ color: 'var(--color-claude)' }}
               >
-                /{cmd.name}
+                {cmd.invocation ?? `/${cmd.name}`}
               </span>
+              {isSkill && (
+                <span
+                  className="rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+                  style={{
+                    background: 'rgba(255,255,255,0.06)',
+                    color: 'var(--color-text-muted)',
+                  }}
+                >
+                  {cmd.harness} skill
+                </span>
+              )}
               {isGlobal && (
                 <span
                   className="rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
