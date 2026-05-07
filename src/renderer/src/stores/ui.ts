@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type RightPanelTab = 'tasks' | 'files' | 'commands'
-export type LocationAuxTab = 'file' | 'command' | 'terminal' | null
+export type LocationAuxTab = 'diff' | 'file' | 'command' | 'terminal' | null
 
 interface UiStore {
   todoPanelOpenByThread: Record<string, boolean>
@@ -14,6 +14,7 @@ interface UiStore {
   setRightPanelTab: (tab: RightPanelTab) => void
 
   locationAuxTabByLocation: Record<string, Exclude<LocationAuxTab, null>>
+  locationAuxTabRequestByLocation: Record<string, number>
   setLocationAuxTab: (locationId: string, tab: Exclude<LocationAuxTab, null>) => void
   clearLocationAuxTab: (locationId: string) => void
 }
@@ -40,14 +41,21 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setRightPanelTab: (tab) => set({ rightPanelTab: tab }),
 
   locationAuxTabByLocation: {},
+  locationAuxTabRequestByLocation: {},
   setLocationAuxTab: (locationId, tab) =>
     set((s) => ({
       locationAuxTabByLocation: { ...s.locationAuxTabByLocation, [locationId]: tab },
+      locationAuxTabRequestByLocation: {
+        ...s.locationAuxTabRequestByLocation,
+        [locationId]: (s.locationAuxTabRequestByLocation[locationId] ?? 0) + 1,
+      },
     })),
   clearLocationAuxTab: (locationId) =>
     set((s) => {
       const next = { ...s.locationAuxTabByLocation }
+      const nextRequests = { ...s.locationAuxTabRequestByLocation }
       delete next[locationId]
-      return { locationAuxTabByLocation: next }
+      delete nextRequests[locationId]
+      return { locationAuxTabByLocation: next, locationAuxTabRequestByLocation: nextRequests }
     }),
 }))

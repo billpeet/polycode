@@ -4,6 +4,8 @@ import { useTerminalStore } from '../stores/terminal'
 import { useCommandStore } from '../stores/commands'
 import { useThreadStore } from '../stores/threads'
 import { usePlanStore } from '../stores/plans'
+import { useUiStore } from '../stores/ui'
+import type { LocationAuxTab } from '../stores/ui'
 import { DiffPane, FilePane } from './FilePreview'
 import TerminalContent from './Terminal'
 import CommandLogsContent from './CommandLogs'
@@ -19,6 +21,11 @@ const TAB_LABELS: Record<Tab, string> = {
   terminal: 'Terminal',
   commands: 'Command Logs',
   plan: 'Plan',
+}
+
+function toPanelTab(tab: LocationAuxTab): Tab | null {
+  if (tab === 'command') return 'commands'
+  return tab
 }
 
 // ─── Resize handle ────────────────────────────────────────────────────────────
@@ -110,6 +117,12 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
 
   const planVisible = usePlanStore((s) => s.visibleByThread[threadId] ?? false)
   const hasPlan = usePlanStore((s) => !!s.planByThread[threadId])
+  const requestedAuxTab = useUiStore((s) =>
+    currentLocationId ? (s.locationAuxTabByLocation[currentLocationId] ?? null) : null
+  )
+  const requestedAuxTabVersion = useUiStore((s) =>
+    currentLocationId ? (s.locationAuxTabRequestByLocation[currentLocationId] ?? 0) : 0
+  )
 
   const hasDiff = !!(diffView || loadingDiff)
   const hasFile = !!selectedFilePath
@@ -157,6 +170,18 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     if (showPlan && !prevShowPlan.current) setActiveTab('plan')
     prevShowPlan.current = showPlan
   }, [showPlan])
+
+  useEffect(() => {
+    const requestedTab = toPanelTab(requestedAuxTab)
+    if (!requestedTab) return
+    const isAvailable =
+      requestedTab === 'diff' ? hasDiff
+      : requestedTab === 'file' ? hasFile
+      : requestedTab === 'terminal' ? hasTerminal
+      : requestedTab === 'commands' ? hasCommands
+      : false
+    if (isAvailable) setActiveTab(requestedTab)
+  }, [requestedAuxTab, requestedAuxTabVersion, hasDiff, hasFile, hasTerminal, hasCommands, showPlan])
 
   const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
 

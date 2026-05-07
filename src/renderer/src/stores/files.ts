@@ -219,7 +219,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
     }))
-    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'file')
+    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
     try {
       const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
       const next = { repoPath, filePath, diff, staged, kind: 'working' as const }
@@ -237,7 +237,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
     }))
-    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'file')
+    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
     try {
       const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
       const next = { repoPath, filePath, diff, staged: false, kind: 'compareToMain' as const }
@@ -255,7 +255,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
     }))
-    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'file')
+    if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
     try {
       const diff = await window.api.invoke('git:commitDiff', repoPath, commitSha, filePath) as string
       const current = locationId ? get().diffViewByLocation[locationId] : get().diffView
