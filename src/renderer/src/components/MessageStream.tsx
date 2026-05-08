@@ -59,6 +59,7 @@ function canonicalToolName(toolName: string, metadata?: Record<string, unknown> 
   if (lower === 'grep' || kind === 'search') return 'Grep'
   if (lower === 'read file' || kind === 'read') return 'Read'
   if (lower === 'edit file' || kind === 'edit') return 'Edit'
+  if (lower === 'bash') return 'Bash'
   if (lower === 'terminal' || kind === 'execute') return 'Bash'
   return toolName
 }

@@ -34,6 +34,7 @@ function canonicalToolName(toolName: string, metadata?: Record<string, unknown> 
   if (lower === 'grep' || kind === 'search') return 'Grep'
   if (lower === 'read file' || kind === 'read') return 'Read'
   if (lower === 'edit file' || kind === 'edit') return 'Edit'
+  if (lower === 'bash') return 'Bash'
   if (lower === 'terminal' || kind === 'execute') return 'Bash'
   return toolName
 }
@@ -242,6 +243,26 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
   const filePath = inp && (typeof inp.file_path === 'string' || typeof inp.path === 'string')
     ? (typeof inp.file_path === 'string' ? inp.file_path : inp.path) as string
     : undefined
+
+  // Shell commands: show the command as shell content and scalar options as separate fields.
+  if ((normalizedToolName === 'bash' || normalizedToolName === 'shell') && inp && typeof inp.command === 'string') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
+        <div>
+          <div style={labelStyle}>Command</div>
+          <BodyContent text={inp.command} />
+        </div>
+        {inp.timeout !== undefined && inp.timeout !== null && (
+          <div>
+            <div style={labelStyle}>Timeout</div>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
+              {String(inp.timeout)}
+            </div>
+          </div>
+        )}
+      </div>
+    )
+  }
 
   // Edit: show inline diff view. Claude uses file_path/old_string/new_string;
   // Pi uses path plus edits[] with oldText/newText blocks.
