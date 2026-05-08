@@ -187,7 +187,7 @@ export default function InputBar({ threadId }: Props) {
   const isPlanPending = status === 'plan_pending'
   const isQuestionPending = status === 'question_pending'
   const isPermissionPending = status === 'permission_pending'
-  const supportsLiveInput = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
+  const supportsLiveInput = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex' || currentThread?.provider === 'pi'
   const hasContent = value.trim().length > 0 || attachments.length > 0
   // Can send when idle and has content, location path exists, and CLI is available
   const canSend = !isPendingThread && !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
@@ -304,7 +304,7 @@ export default function InputBar({ threadId }: Props) {
         finalContent = finalContent ? `${mentions}\n\n${trimmed}` : mentions
       }
 
-      // Claude/Codex support live input while the provider is still running.
+      // Claude, Codex, and Pi support live input while the provider is still running.
       if (canInject) {
         const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
         if (activeSessionId) {
