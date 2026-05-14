@@ -188,6 +188,9 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
     if (!installed) {
       return <span style={{ color: '#f87171' }}>Not installed</span>
     }
+    if (!currentVersion) {
+      return <span style={{ color: 'var(--color-text-muted)' }}>Available</span>
+    }
     if (upToDate === true) {
       return (
         <span style={{ color: '#4ade80' }}>

@@ -130,6 +130,11 @@ function buildPosixVersionCheck(provider: Provider, cmd: string): string {
   return `${commonPreamble}; CMD_BIN="$(command -v ${cmd} 2>/dev/null || true)"; case "$CMD_BIN" in /mnt/c/*) CMD_BIN="";; esac; [ -z "$CMD_BIN" ] && for _C in "$HOME/.local/bin/${cmd}" "$HOME/.npm/bin/${cmd}" "$HOME/.npm-global/bin/${cmd}" "$HOME/.volta/bin/${cmd}" "$HOME/.bun/bin/${cmd}" "$HOME/bin/${cmd}"; do [ -x "$_C" ] && CMD_BIN="$_C" && break; done; [ -n "$CMD_BIN" ] && { ${invocation}; } || exit 127`
 }
 
+function buildPosixPresenceCheck(cmd: string): string {
+  const commonPreamble = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}`
+  return `${commonPreamble}; CMD_BIN="$(command -v ${cmd} 2>/dev/null || true)"; case "$CMD_BIN" in /mnt/c/*) CMD_BIN="";; esac; [ -z "$CMD_BIN" ] && for _C in "$HOME/.local/bin/${cmd}" "$HOME/.npm/bin/${cmd}" "$HOME/.npm-global/bin/${cmd}" "$HOME/.volta/bin/${cmd}" "$HOME/.bun/bin/${cmd}" "$HOME/bin/${cmd}"; do [ -x "$_C" ] && CMD_BIN="$_C" && break; done; [ -n "$CMD_BIN" ] && printf '%s\\n' "$CMD_BIN" || exit 127`
+}
+
 export function invalidateCliHealthCache(
   provider: Provider,
   connectionType: string,
@@ -266,6 +271,36 @@ async function runVersionCheckUncached(
   })
 }
 
+async function runPresenceCheckUncached(
+  provider: Provider,
+  connectionType: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<SpawnResult> {
+  const info = PROVIDER_INFO[provider]
+
+  if (connectionType === 'ssh' && ssh) {
+    const innerCmd = buildPosixPresenceCheck(info.cmd)
+    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+    return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 5000 })
+  }
+
+  if (connectionType === 'wsl' && wsl) {
+    const innerCmd = buildPosixPresenceCheck(info.cmd)
+    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], { timeout: 5000 })
+  }
+
+  const env = process.platform === 'win32' ? augmentWindowsPath() : process.env
+  if (process.platform === 'win32') {
+    return runProcess('where', [info.cmd], { env, shell: true, timeout: 5000 })
+  }
+
+  return runProcess('sh', ['-lc', `command -v ${shellEscape(info.cmd)}`], {
+    env,
+    timeout: 5000,
+  })
+}
+
 async function runVersionCheck(
   provider: Provider,
   connectionType: string,
@@ -343,6 +378,16 @@ export async function checkCliHealth(
     getHealthCacheKey(provider, connectionType, ssh, wsl),
     async () => {
       const info = PROVIDER_INFO[provider]
+
+      if (provider === 'pi') {
+        const result = await runPresenceCheckUncached(provider, connectionType, ssh, wsl)
+        return {
+          installed: result.exitCode === 0,
+          currentVersion: null,
+          latestVersion: null,
+          upToDate: null,
+        }
+      }
 
       const [versionResult, latestVersion] = await Promise.all([
         runVersionCheck(provider, connectionType, ssh, wsl),

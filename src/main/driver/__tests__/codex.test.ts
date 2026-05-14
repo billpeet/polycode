@@ -279,6 +279,65 @@ describe('parseCodexAppServerNotification', () => {
       } satisfies OutputEvent,
     ])
   })
+
+  it('renders imageView notifications as image view tool events', () => {
+    const started = parseCodexAppServerNotification(
+      'item/started',
+      {
+        item: {
+          id: 'image_1',
+          type: 'imageView',
+          path: 'C:\\tmp\\screenshot.png',
+          caption: 'Screenshot',
+        },
+      },
+      state,
+    )
+    const completed = parseCodexAppServerNotification(
+      'item/completed',
+      {
+        item: {
+          id: 'image_1',
+          type: 'imageView',
+          path: 'C:\\tmp\\screenshot.png',
+          caption: 'Screenshot',
+        },
+      },
+      state,
+    )
+
+    expect(started).toEqual([
+      {
+        type: 'tool_call',
+        content: 'C:\\tmp\\screenshot.png',
+        metadata: {
+          id: 'image_1',
+          type: 'tool_call',
+          name: 'ImageView',
+          path: 'C:\\tmp\\screenshot.png',
+          caption: 'Screenshot',
+          input: {
+            path: 'C:\\tmp\\screenshot.png',
+            url: undefined,
+            caption: 'Screenshot',
+          },
+        },
+      } satisfies OutputEvent,
+    ])
+    expect(completed).toEqual([
+      {
+        type: 'tool_result',
+        content: '',
+        metadata: {
+          id: 'image_1',
+          type: 'tool_result',
+          tool_use_id: 'image_1',
+          path: 'C:\\tmp\\screenshot.png',
+          caption: 'Screenshot',
+        },
+      } satisfies OutputEvent,
+    ])
+  })
 })
 
 describe('CodexDriver transport selection', () => {

@@ -22,7 +22,15 @@ type ContextCompactionItem = {
   type: 'context_compaction'
 }
 
-type CodexThreadItem = ThreadItem | ContextCompactionItem
+type ImageViewItem = {
+  id: string
+  type: 'image_view'
+  path?: string
+  url?: string
+  caption?: string
+}
+
+type CodexThreadItem = ThreadItem | ContextCompactionItem | ImageViewItem
 
 type CodexStreamState = {
   streamedItemIds: Set<string>
@@ -124,6 +132,14 @@ function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
     }
   }
 
+  if (item.type === 'image_view') {
+    const target = item.path ?? item.url ?? item.caption ?? 'image'
+    return {
+      content: target.length > 120 ? '...' + target.slice(-117) : target,
+      metadata: { ...item, type: 'tool_call', name: 'ImageView', input: { path: item.path, url: item.url, caption: item.caption } },
+    }
+  }
+
   return {
     content: item.type,
     metadata: { ...item, type: 'tool_call' },
@@ -179,6 +195,7 @@ function buildToolResult(item: CodexThreadItem): OutputEvent | null {
     case 'web_search':
     case 'todo_list':
     case 'context_compaction':
+    case 'image_view':
       return {
         type: 'tool_result',
         content: item.type === 'context_compaction' ? 'Conversation history compacted.' : '',
@@ -393,6 +410,18 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
         id,
         type: 'context_compaction',
       }
+    case 'imageView': {
+      const pathValue = raw.path ?? raw.filePath
+      const urlValue = raw.url ?? raw.imageUrl
+      const captionValue = raw.caption ?? raw.alt
+      return {
+        id,
+        type: 'image_view',
+        ...(typeof pathValue === 'string' ? { path: pathValue } : {}),
+        ...(typeof urlValue === 'string' ? { url: urlValue } : {}),
+        ...(typeof captionValue === 'string' ? { caption: captionValue } : {}),
+      }
+    }
     case 'error':
       return {
         id,
