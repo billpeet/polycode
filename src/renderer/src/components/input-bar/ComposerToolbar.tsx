@@ -40,6 +40,7 @@ export default function ComposerToolbar({
   const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
   const [liveOpenCodeModels, setLiveOpenCodeModels] = useState<ModelOption[]>([])
   const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
+  const [liveCursorModels, setLiveCursorModels] = useState<ModelOption[]>([])
 
   useEffect(() => {
     if (currentProvider !== 'claude-code') return
@@ -105,6 +106,22 @@ export default function ComposerToolbar({
     return () => { cancelled = true }
   }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
+  useEffect(() => {
+    if (currentProvider !== 'cursor') return
+
+    let cancelled = false
+    setLiveCursorModels([])
+    window.api.invoke('models:cursorAvailable', threadId)
+      .then((models) => {
+        if (!cancelled && models.length > 0) setLiveCursorModels(models)
+      })
+      .catch(() => {
+        // Keep static fallback models when Cursor is unavailable or unauthenticated.
+      })
+
+    return () => { cancelled = true }
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
+
   const modelOptions = useMemo(() => {
     const baseModels = currentProvider === 'claude-code' && liveClaudeModels.length > 0
       ? liveClaudeModels
@@ -114,11 +131,13 @@ export default function ComposerToolbar({
           ? liveOpenCodeModels
           : currentProvider === 'pi' && livePiModels.length > 0
             ? livePiModels
-            : getModelsForProvider(currentProvider)
+            : currentProvider === 'cursor' && liveCursorModels.length > 0
+              ? liveCursorModels
+              : getModelsForProvider(currentProvider)
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]
-  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels])
+  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels])
 
   const selectedModel = useMemo(
     () => modelOptions.find((model) => model.id === currentThread?.model),
@@ -233,7 +252,7 @@ export default function ComposerToolbar({
           onChange={(e) => {
             const provider = e.target.value as Provider
             const staticDefault = getDefaultModelForProvider(provider)
-            const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : []
+            const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : []
             const defaultModel = liveModels.length > 0
               ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
               : staticDefault

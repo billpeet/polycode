@@ -169,6 +169,7 @@ export interface WindowApi {
   invoke(channel: 'models:codexAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'models:opencodeAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'models:piAvailable', threadId?: string | null): Promise<ModelOption[]>
+  invoke(channel: 'models:cursorAvailable', threadId?: string | null): Promise<ModelOption[]>
   invoke(channel: 'terminal:spawn', threadId: string, cols: number, rows: number): Promise<string>
   invoke(channel: 'terminal:kill', terminalId: string): Promise<void>
   invoke(channel: 'terminal:getBuffer', terminalId: string): Promise<string>

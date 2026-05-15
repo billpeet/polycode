@@ -75,6 +75,7 @@ import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
 import { listPiAvailableModels } from '../pi-models'
 import { listOpenCodeAvailableModels } from '../opencode-models'
+import { listCursorAvailableModels } from '../cursor-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
@@ -1548,6 +1549,18 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     }
 
     return listPiAvailableModels({
+      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
+      ssh: getSshConfigForThread(threadId),
+      wsl: getWslConfigForThread(threadId),
+    })
+  })
+
+  ipcMain.handle('models:cursorAvailable', (_event, threadId?: string | null) => {
+    if (!threadId || !threadExists(threadId)) {
+      return listCursorAvailableModels()
+    }
+
+    return listCursorAvailableModels({
       cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
       ssh: getSshConfigForThread(threadId),
       wsl: getWslConfigForThread(threadId),
