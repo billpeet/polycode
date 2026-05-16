@@ -641,13 +641,14 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     return () => window.clearTimeout(timeoutId)
   }, [projectPath, collapsed, fetchGit])
 
+  const threadStatus = thread?.status
   useEffect(() => {
     if (!threadId || collapsed) return
     const timeoutId = window.setTimeout(() => {
       fetchModifiedFiles(threadId)
     }, 300)
     return () => window.clearTimeout(timeoutId)
-  }, [threadId, collapsed, fetchModifiedFiles])
+  }, [threadId, threadStatus, collapsed, fetchModifiedFiles])
 
   useEffect(() => {
     if (gitStatus && !createPrTitleEdited) setCreatePrTitle(`Merge ${gitStatus.branch} into ${createPrTarget}`)
@@ -739,7 +740,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
 
   const stagedFiles = gitStatus?.files.filter((file) => file.staged) ?? []
   const unstagedFiles = gitStatus?.files.filter((file) => !file.staged) ?? []
-  const threadRelPaths = new Set(modifiedFiles.map((file) => projectPath ? file.replace(projectPath + '/', '').replace(projectPath + '\\', '') : file))
+  const threadRelPaths = new Set(modifiedFiles.map((file) => {
+    if (!projectPath) return file
+    // Strip project path prefix (handles both / and \ separators)
+    const stripped = file.replace(projectPath + '/', '').replace(projectPath + '\\', '')
+    // Normalize to forward slashes so it matches git status paths
+    return stripped.replace(/\\/g, '/')
+  }))
   const threadUnstagedFiles = unstagedFiles.filter((file) => threadRelPaths.has(file.path))
   const otherUnstagedFiles = unstagedFiles.filter((file) => !threadRelPaths.has(file.path))
   const showThreadSplit = threadUnstagedFiles.length > 0 && stagedFiles.length === 0
