@@ -39,35 +39,67 @@ export function readPlanFile(filePath: string): string | null {
 
 export function startPlanWatcher(win: BrowserWindow): void {
   if (!existsSync(PLANS_DIR)) {
-    mkdirSync(PLANS_DIR, { recursive: true })
+    try {
+      mkdirSync(PLANS_DIR, { recursive: true })
+    } catch (error) {
+      console.warn('[plans] failed to create plans directory', { path: PLANS_DIR, error })
+      return
+    }
   }
 
   // Per-filename debounce to avoid dropping events when multiple plans are written simultaneously
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
-  watcher = watch(PLANS_DIR, (_eventType, filename) => {
-    if (!filename || !filename.endsWith('.md')) return
+  try {
+    watcher = watch(PLANS_DIR, (_eventType, filename) => {
+      if (!filename || !filename.endsWith('.md')) return
 
-    const existing = debounceTimers.get(filename)
-    if (existing) clearTimeout(existing)
-    debounceTimers.set(filename, setTimeout(() => {
-      debounceTimers.delete(filename)
-      const fullPath = join(PLANS_DIR, filename)
-      if (!existsSync(fullPath)) return
-      try {
-        const content = readFileSync(fullPath, 'utf-8')
-        const stat = statSync(fullPath)
-        win.webContents.send('plan-file:changed', {
-          name: filename,
-          path: fullPath,
-          content,
-          modifiedAt: stat.mtimeMs,
+      const existing = debounceTimers.get(filename)
+      if (existing) clearTimeout(existing)
+      debounceTimers.set(filename, setTimeout(() => {
+        debounceTimers.delete(filename)
+        const fullPath = join(PLANS_DIR, filename)
+        if (!existsSync(fullPath)) return
+        try {
+          const content = readFileSync(fullPath, 'utf-8')
+          const stat = statSync(fullPath)
+          win.webContents.send('plan-file:changed', {
+            name: filename,
+            path: fullPath,
+            content,
+            modifiedAt: stat.mtimeMs,
+          })
+        } catch {
+          // File may have been deleted between check and read
+        }
+      }, 200))
+    })
+
+    watcher.on('error', (error: NodeJS.ErrnoException) => {
+      for (const timer of debounceTimers.values()) clearTimeout(timer)
+      debounceTimers.clear()
+      watcher?.close()
+      watcher = null
+
+      if (error.code === 'EPERM' || error.code === 'ENOENT') {
+        console.warn('[plans] watcher stopped', {
+          path: PLANS_DIR,
+          code: error.code,
+          message: error.message,
         })
-      } catch {
-        // File may have been deleted between check and read
+        return
       }
-    }, 200))
-  })
+
+      console.error('[plans] watcher failed', {
+        path: PLANS_DIR,
+        code: error.code,
+        message: error.message,
+        stack: error.stack,
+      })
+    })
+  } catch (error) {
+    console.warn('[plans] failed to start watcher', { path: PLANS_DIR, error })
+  }
 }
 
 export function stopPlanWatcher(): void {

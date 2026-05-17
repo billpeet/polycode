@@ -79,6 +79,14 @@ function appendLogLine(source: LogSource, level: LogLevel, timestamp: string, me
   }
 }
 
+export function writeMainLog(level: LogLevel, ...args: unknown[]): void {
+  appendLogLine('main', level, new Date().toISOString(), args.map(serializeArg))
+}
+
+export function writeFatalLog(kind: string, error: unknown): void {
+  writeMainLog('error', `[fatal] ${kind}`, error)
+}
+
 export function installAppLogger(): void {
   if (installed) return
   installed = true

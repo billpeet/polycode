@@ -15,7 +15,7 @@ import { stopAllFileWatches } from './file-watch'
 import { getSetting } from './db/queries'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
-import { installAppLogger, writeRendererLog } from './app-logger'
+import { installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
@@ -44,6 +44,28 @@ ipcMain.on('log:write', (_event, payload: unknown) => {
   })
 })
 
+let fatalDialogShown = false
+
+function reportFatalProcessError(kind: string, error: unknown): void {
+  writeFatalLog(kind, error)
+
+  if (!isDev) {
+    Sentry.captureException(error, {
+      level: 'fatal',
+      tags: { source: kind },
+    })
+  }
+
+  if (fatalDialogShown || !app.isReady()) return
+  fatalDialogShown = true
+
+  const message = error instanceof Error ? error.message : String(error)
+  dialog.showErrorBox(
+    'PolyCode hit an unexpected error',
+    `${message}\n\nDetails were written to the app logs.`
+  )
+}
+
 // EPIPE errors from network streams (e.g. electron-updater downloading latest.yml)
 // can escape electron-updater's own error handler and surface as uncaught exceptions.
 // They are not fatal — absorb them and let Sentry record them at warning level.
@@ -53,7 +75,18 @@ process.on('uncaughtException', (err: NodeJS.ErrnoException) => {
     if (!isDev) Sentry.captureException(err, { level: 'warning', tags: { source: 'epipe' } })
     return
   }
-  throw err
+
+  if (err.code === 'EPERM' && /\bwatch\b/i.test(err.message)) {
+    console.warn('[main] EPERM from filesystem watcher (ignored):', err.message)
+    if (!isDev) Sentry.captureException(err, { level: 'warning', tags: { source: 'fs-watch' } })
+    return
+  }
+
+  reportFatalProcessError('uncaughtException', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  reportFatalProcessError('unhandledRejection', reason)
 })
 
 if (!isDev) {
