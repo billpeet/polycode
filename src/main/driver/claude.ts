@@ -271,7 +271,14 @@ export class ClaudeDriver implements CLIDriver {
     })
 
     this.streamTask = this.consumeStream().catch((error) => {
-      this.finishTurn(error instanceof Error ? error : new Error(String(error)))
+      const turnError = error instanceof Error ? error : new Error(String(error))
+      console.error('[ClaudeDriver] stream failed', {
+        threadId: this.options.threadId,
+        sessionId: this.sessionId,
+        message: turnError.message,
+        stack: turnError.stack,
+      })
+      this.finishTurn(turnError)
     })
   }
 
@@ -541,6 +548,14 @@ export class ClaudeDriver implements CLIDriver {
     if (!this.currentTurn) return
     const turn = this.currentTurn
     this.currentTurn = null
-    turn.onDone(error)
+    try {
+      turn.onDone(error)
+    } catch (callbackError) {
+      console.error('[ClaudeDriver] onDone callback failed', {
+        threadId: this.options.threadId,
+        sessionId: this.sessionId,
+        error: callbackError,
+      })
+    }
   }
 }

@@ -10,6 +10,12 @@ interface FileWatchEntry {
 
 const watchers = new Map<string, FileWatchEntry>()
 
+function closeWatchEntry(filePath: string, entry: FileWatchEntry): void {
+  if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
+  entry.watcher.close()
+  watchers.delete(filePath)
+}
+
 export function startFileWatch(win: BrowserWindow, filePath: string): boolean {
   const existing = watchers.get(filePath)
   if (existing) {
@@ -38,7 +44,7 @@ export function startFileWatch(win: BrowserWindow, filePath: string): boolean {
           const exists = existsSync(filePath)
           win.webContents.send('files:changed', {
             path: filePath,
-            modifiedAt: exists ? statSync(filePath).mtimeMs : Date.now(),
+            modifiedAt: exists ? safeMtimeMs(filePath) : Date.now(),
             deleted: !exists,
           })
         }
@@ -46,8 +52,35 @@ export function startFileWatch(win: BrowserWindow, filePath: string): boolean {
     })
 
     watchers.set(filePath, { watcher, refCount: 1, debounceTimer: null })
+    watcher.on('error', (error: NodeJS.ErrnoException) => {
+      const current = watchers.get(filePath)
+      if (current) closeWatchEntry(filePath, current)
+
+      if (error.code === 'EPERM' || error.code === 'ENOENT') {
+        console.warn('[file-watch] watcher stopped', {
+          filePath,
+          parentDir,
+          code: error.code,
+          message: error.message,
+        })
+        return
+      }
+
+      console.error('[file-watch] watcher failed', {
+        filePath,
+        parentDir,
+        code: error.code,
+        message: error.message,
+        stack: error.stack,
+      })
+    })
     return true
-  } catch {
+  } catch (error) {
+    console.warn('[file-watch] failed to start watcher', {
+      filePath,
+      parentDir,
+      error,
+    })
     return false
   }
 }
@@ -59,15 +92,19 @@ export function stopFileWatch(filePath: string): void {
   existing.refCount -= 1
   if (existing.refCount > 0) return
 
-  if (existing.debounceTimer) clearTimeout(existing.debounceTimer)
-  existing.watcher.close()
-  watchers.delete(filePath)
+  closeWatchEntry(filePath, existing)
 }
 
 export function stopAllFileWatches(): void {
   for (const [filePath, entry] of watchers) {
-    if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
-    entry.watcher.close()
-    watchers.delete(filePath)
+    closeWatchEntry(filePath, entry)
+  }
+}
+
+function safeMtimeMs(filePath: string): number {
+  try {
+    return statSync(filePath).mtimeMs
+  } catch {
+    return Date.now()
   }
 }

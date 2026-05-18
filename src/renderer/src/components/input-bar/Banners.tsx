@@ -160,7 +160,7 @@ export function QuestionBanner({
 }) {
   return (
     <div
-      className="mb-3 rounded-xl px-4 py-3"
+      className="mb-3 max-h-[min(60vh,32rem)] overflow-y-auto rounded-xl px-4 py-3"
       style={{
         background: 'linear-gradient(135deg, rgba(99, 179, 237, 0.15) 0%, rgba(99, 179, 237, 0.08) 100%)',
         border: '1px solid rgba(99, 179, 237, 0.3)',
@@ -170,7 +170,7 @@ export function QuestionBanner({
         <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'rgba(99, 179, 237, 0.2)' }}>
           <QuestionIcon className="text-blue-400" />
         </div>
-        <div>
+        <div className="min-w-0">
           <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
             Claude needs your input
           </div>
@@ -186,11 +186,11 @@ export function QuestionBanner({
             const questionKey = q.id ?? q.question
             return (
               <>
-          <div className="mb-2 flex items-center gap-2">
+          <div className="mb-2 flex items-start gap-2">
             <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: 'rgba(99, 179, 237, 0.2)', color: '#63b3ed' }}>
               {q.header}
             </span>
-            <span className="text-sm" style={{ color: 'var(--color-text)' }}>
+            <span className="min-w-0 break-words text-sm" style={{ color: 'var(--color-text)' }}>
               {q.question}
             </span>
           </div>
@@ -214,16 +214,16 @@ export function QuestionBanner({
                       return { ...prev, [questionKey]: nextList }
                     })
                   }
-                  className="rounded-lg px-3 py-2 text-left transition-all"
+                  className="min-w-0 rounded-lg px-3 py-2 text-left transition-all"
                   style={{
                     background: isSelected ? 'rgba(99, 179, 237, 0.2)' : 'var(--color-surface)',
                     border: `1px solid ${isSelected ? 'rgba(99, 179, 237, 0.5)' : 'var(--color-border)'}`,
                   }}
                 >
-                  <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
+                  <div className="break-words text-sm font-medium" style={{ color: 'var(--color-text)' }}>
                     {opt.label}
                   </div>
-                  <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  <div className="break-words text-xs" style={{ color: 'var(--color-text-muted)' }}>
                     {opt.description}
                   </div>
                 </button>
