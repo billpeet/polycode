@@ -110,12 +110,21 @@ export default function ThreadView({ threadId }: Props) {
         appendEvent(threadId, event)
       }
 
-      // Intercept TodoWrite/todo_list tool calls and update the todo store
+      // Intercept TodoWrite/todo_list/TaskCreate/TaskUpdate tool calls and update the todo store
       if (event.type === 'tool_call') {
         if (event.metadata?.name === 'TodoWrite') {
           const input = event.metadata.input as { todos?: Todo[] } | undefined
           if (Array.isArray(input?.todos)) {
             useTodoStore.getState().setTodos(threadId, input.todos as Todo[])
+          }
+        } else if (event.metadata?.name === 'TaskCreate') {
+          useTodoStore.getState().addTask(threadId, (event.metadata.input as Record<string, unknown> | undefined) ?? {})
+        } else if (event.metadata?.name === 'TaskUpdate') {
+          const input = (event.metadata.input as Record<string, unknown> | undefined) ?? {}
+          const taskId = typeof input.taskId === 'string' ? input.taskId : undefined
+          const status = input.status as Todo['status'] | undefined
+          if (taskId && (status === 'pending' || status === 'in_progress' || status === 'completed')) {
+            useTodoStore.getState().updateTask(threadId, taskId, status)
           }
         } else if (event.content === 'todo_list') {
           const items = event.metadata?.items as { text: string; completed: boolean }[] | undefined
