@@ -289,6 +289,26 @@ export class ClaudeDriver implements CLIDriver {
     if (this.options.model) {
       await this.query.setModel(this.options.model)
     }
+    await this.applyFastMode(this.currentMessageOptions.fastMode ?? false)
+  }
+
+  /**
+   * Toggle Claude Code's fast mode for the upcoming turn. Fast mode is exposed
+   * through the CLI's `fastMode` user setting; the SDK applies runtime setting
+   * changes via the `apply_flag_settings` control request (the same mechanism
+   * the `/fast` slash command uses). The typed Query interface omits this
+   * method, so we access it dynamically. Unsupported models/accounts ignore it.
+   */
+  private async applyFastMode(enabled: boolean): Promise<void> {
+    const query = this.query as unknown as {
+      applyFlagSettings?: (settings: Record<string, unknown>) => Promise<void>
+    }
+    if (typeof query.applyFlagSettings !== 'function') return
+    try {
+      await query.applyFlagSettings({ fastMode: enabled })
+    } catch (error) {
+      console.warn('[ClaudeDriver] failed to apply fast mode setting', error)
+    }
   }
 
   private resolvePermissionMode(options?: MessageOptions): PermissionMode {

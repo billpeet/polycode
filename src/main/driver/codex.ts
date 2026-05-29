@@ -546,6 +546,9 @@ export function parseCodexAppServerNotification(
   return events
 }
 
+/** Codex service tier used for fast mode (priority processing). */
+export const CODEX_FAST_SERVICE_TIER = 'fast'
+
 function codexReasoningLevelToEffort(level: ReasoningLevel | undefined): string | undefined {
   if (!level) return undefined
   return level === 'off' ? 'none' : level
@@ -610,7 +613,8 @@ export function buildCodexArgs(
   model: string | undefined,
   content: string,
   yoloMode = false,
-  reasoningLevel?: ReasoningLevel
+  reasoningLevel?: ReasoningLevel,
+  fastMode = false
 ): string[] {
   const args: string[] = ['exec', '--json']
   if (codexThreadId) args.push('resume')
@@ -618,6 +622,9 @@ export function buildCodexArgs(
   if (model) args.push('-c', `model=${model}`)
   const effort = codexReasoningLevelToEffort(reasoningLevel)
   if (effort) args.push('-c', `model_reasoning_effort=${effort}`)
+  // Fast mode maps to Codex's priority service tier: faster responses that
+  // consume usage limits more quickly. Default tier is left untouched when off.
+  if (fastMode) args.push('-c', `service_tier=${CODEX_FAST_SERVICE_TIER}`)
   if (codexThreadId) args.push(codexThreadId)
   args.push(content)
   return args
@@ -656,7 +663,8 @@ class CodexCliDriver extends BaseDriver {
         this.options.model,
         content,
         options?.yoloMode ?? this.options.yoloMode ?? false,
-        this.options.reasoningLevel
+        this.options.reasoningLevel,
+        options?.fastMode ?? false
       ),
       workDir: this.options.workingDir,
     }
@@ -887,6 +895,7 @@ class CodexAppServerDriver implements CLIDriver {
         input: [{ type: 'text', text: content, text_elements: [] }],
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(codexReasoningLevelToEffort(this.options.reasoningLevel) ? { effort: codexReasoningLevelToEffort(this.options.reasoningLevel) } : {}),
+        ...(options?.fastMode ? { serviceTier: CODEX_FAST_SERVICE_TIER } : {}),
         sandbox: (options?.yoloMode ?? this.options.yoloMode ?? false) ? 'danger-full-access' : 'workspace-write',
       })
       const record = response && typeof response === 'object' ? response as Record<string, unknown> : {}

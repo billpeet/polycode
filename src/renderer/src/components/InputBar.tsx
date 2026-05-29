@@ -97,6 +97,8 @@ export default function InputBar({ threadId }: Props) {
   const setDraft = useThreadStore((s) => s.setDraft)
   const planMode = useThreadStore((s) => s.planModeByThread[threadId] ?? false)
   const setPlanMode = useThreadStore((s) => s.setPlanMode)
+  const fastMode = useThreadStore((s) => s.fastModeByThread[threadId] ?? false)
+  const setFastMode = useThreadStore((s) => s.setFastMode)
   const queueMessage = useThreadStore((s) => s.queueMessage)
   const queuedMessage = useThreadStore((s) => s.queuedMessageByThread[threadId] ?? null)
   const appendUserMessage = useMessageStore((s) => s.appendUserMessage)
@@ -272,6 +274,7 @@ export default function InputBar({ threadId }: Props) {
     // Snapshot state before any async work
     const currentAttachments = attachments
     const currentPlanMode = planMode
+    const currentFastMode = fastMode
 
     // Clear input immediately so the UI feels responsive before async work completes
     setDraft(threadId, '')
@@ -312,14 +315,14 @@ export default function InputBar({ threadId }: Props) {
         } else {
           appendUserMessage(threadId, finalContent)
         }
-        await send(threadId, finalContent, { planMode: currentPlanMode })
+        await send(threadId, finalContent, { planMode: currentPlanMode, fastMode: currentFastMode })
         if (currentPlanMode) setPlanMode(threadId, false)
         return
       }
 
       // Providers without live input support still queue the message.
       if (isProcessing) {
-        queueMessage(threadId, finalContent, currentPlanMode)
+        queueMessage(threadId, finalContent, currentPlanMode, currentFastMode)
         if (currentPlanMode) setPlanMode(threadId, false)
         return
       }
@@ -331,7 +334,7 @@ export default function InputBar({ threadId }: Props) {
       } else {
         appendUserMessage(threadId, finalContent)
       }
-      await send(threadId, finalContent, { planMode: currentPlanMode })
+      await send(threadId, finalContent, { planMode: currentPlanMode, fastMode: currentFastMode })
       if (currentPlanMode) setPlanMode(threadId, false)
     } finally {
       sendingRef.current = false
@@ -760,6 +763,8 @@ export default function InputBar({ threadId }: Props) {
           threadId={threadId}
           planMode={planMode}
           setPlanMode={setPlanMode}
+          fastMode={fastMode}
+          setFastMode={setFastMode}
           isProcessing={isProcessing}
           isLocalLocation={isLocalLocation}
           currentThread={currentThread}

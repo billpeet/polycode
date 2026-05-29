@@ -619,7 +619,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return sessionManager.get(threadId)?.getPid() ?? null
   })
 
-  ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean }) => {
+  ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean; fastMode?: boolean }) => {
     if (!threadExists(threadId)) {
       sessionManager.remove(threadId)
       console.warn('[handlers] threads:send for missing thread — ignoring', threadId)

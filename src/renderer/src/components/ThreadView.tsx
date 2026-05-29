@@ -248,7 +248,7 @@ export default function ThreadView({ threadId }: Props) {
         useThreadStore.getState().send(
           threadId,
           queuedMessage.content,
-          { planMode: queuedMessage.planMode }
+          { planMode: queuedMessage.planMode, fastMode: queuedMessage.fastMode }
         )
         // Skip completion toast since we're continuing with queued message
         return

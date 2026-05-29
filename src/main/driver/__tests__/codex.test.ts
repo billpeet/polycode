@@ -44,6 +44,30 @@ describe('buildCodexArgs', () => {
       'continue',
     ])
   })
+
+  it('adds the priority service tier when fast mode is enabled', () => {
+    expect(buildCodexArgs(null, 'gpt-5.5', 'go fast', false, 'medium', true)).toEqual([
+      'exec',
+      '--json',
+      '--full-auto',
+      '-c',
+      'model=gpt-5.5',
+      '-c',
+      'model_reasoning_effort=medium',
+      '-c',
+      'service_tier=fast',
+      'go fast',
+    ])
+  })
+
+  it('omits the service tier when fast mode is disabled', () => {
+    expect(buildCodexArgs(null, undefined, 'normal', false, undefined, false)).toEqual([
+      'exec',
+      '--json',
+      '--full-auto',
+      'normal',
+    ])
+  })
 })
 
 describe('winQuote', () => {

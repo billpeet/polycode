@@ -57,7 +57,7 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
         appendUserMessage(threadId, msg.content)
       }
 
-      await send(threadId, msg.content, { planMode: msg.planMode })
+      await send(threadId, msg.content, { planMode: msg.planMode, fastMode: msg.fastMode })
     }, 100)
   }
 
@@ -87,6 +87,14 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
               style={{ background: 'rgba(232, 123, 95, 0.2)', color: 'var(--color-claude)' }}
             >
               Plan
+            </span>
+          )}
+          {queuedMessage.fastMode && (
+            <span
+              className="rounded px-1.5 py-0.5 text-xs font-medium"
+              style={{ background: 'rgba(255, 106, 0, 0.2)', color: '#ff6a00' }}
+            >
+              Fast
             </span>
           )}
         </div>

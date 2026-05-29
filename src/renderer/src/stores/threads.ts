@@ -18,6 +18,7 @@ function removeThreadFromList(threads: Thread[], threadId: string): Thread[] {
 export interface QueuedMessage {
   content: string
   planMode: boolean
+  fastMode: boolean
 }
 
 interface ThreadStore {
@@ -36,6 +37,8 @@ interface ThreadStore {
   draftByThread: Record<string, string>
   /** plan mode toggle keyed by thread ID */
   planModeByThread: Record<string, boolean>
+  /** fast mode toggle keyed by thread ID */
+  fastModeByThread: Record<string, boolean>
   /** queued message keyed by thread ID (sent when current session completes) */
   queuedMessageByThread: Record<string, QueuedMessage | null>
   /** accumulated token usage keyed by thread ID */
@@ -79,7 +82,8 @@ interface ThreadStore {
   denyPermissions: (threadId: string, requestId?: string) => Promise<void>
   setDraft: (threadId: string, draft: string) => void
   setPlanMode: (threadId: string, planMode: boolean) => void
-  queueMessage: (threadId: string, content: string, planMode: boolean) => void
+  setFastMode: (threadId: string, fastMode: boolean) => void
+  queueMessage: (threadId: string, content: string, planMode: boolean, fastMode: boolean) => void
   clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
   addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window?: number | null) => void
@@ -97,6 +101,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   expandedArchivedProjectId: null,
   draftByThread: {},
   planModeByThread: {},
+  fastModeByThread: {},
   queuedMessageByThread: {},
   usageByThread: {},
   runStartedAtByThread: {},
@@ -223,6 +228,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       set((s) => {
         const draft = s.draftByThread[optimisticId]
         const planMode = s.planModeByThread[optimisticId]
+        const fastMode = s.fastModeByThread[optimisticId]
         const queuedMessage = s.queuedMessageByThread[optimisticId]
         const usage = s.usageByThread[optimisticId]
         const runStartedAt = s.runStartedAtByThread[optimisticId]
@@ -235,6 +241,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         const nextPlanModeByThread = { ...s.planModeByThread }
         if (planMode !== undefined) nextPlanModeByThread[thread.id] = planMode
         delete nextPlanModeByThread[optimisticId]
+
+        const nextFastModeByThread = { ...s.fastModeByThread }
+        if (fastMode !== undefined) nextFastModeByThread[thread.id] = fastMode
+        delete nextFastModeByThread[optimisticId]
 
         const nextQueuedByThread = { ...s.queuedMessageByThread }
         if (queuedMessage !== undefined) nextQueuedByThread[thread.id] = queuedMessage
@@ -271,6 +281,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           pendingThreadIdByLocation: nextPendingThreadIdByLocation,
           draftByThread: nextDraftByThread,
           planModeByThread: nextPlanModeByThread,
+          fastModeByThread: nextFastModeByThread,
           queuedMessageByThread: nextQueuedByThread,
           usageByThread: nextUsageByThread,
           runStartedAtByThread: nextRunStartedAtByThread,
@@ -295,6 +306,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         const nextPlanModeByThread = { ...s.planModeByThread }
         delete nextPlanModeByThread[optimisticId]
 
+        const nextFastModeByThread = { ...s.fastModeByThread }
+        delete nextFastModeByThread[optimisticId]
+
         const nextQueuedByThread = { ...s.queuedMessageByThread }
         delete nextQueuedByThread[optimisticId]
 
@@ -317,6 +331,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           pendingThreadIdByLocation: nextPendingThreadIdByLocation,
           draftByThread: nextDraftByThread,
           planModeByThread: nextPlanModeByThread,
+          fastModeByThread: nextFastModeByThread,
           queuedMessageByThread: nextQueuedByThread,
           usageByThread: nextUsageByThread,
           runStartedAtByThread: nextRunStartedAtByThread,
@@ -339,6 +354,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedQueue[id]
       const updatedPlanMode = { ...s.planModeByThread }
       delete updatedPlanMode[id]
+      const updatedFastMode = { ...s.fastModeByThread }
+      delete updatedFastMode[id]
       const updatedRunStartedAt = { ...s.runStartedAtByThread }
       delete updatedRunStartedAt[id]
       const updatedPid = { ...s.pidByThread }
@@ -357,6 +374,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         unreadByThread: updatedUnread,
         queuedMessageByThread: updatedQueue,
         planModeByThread: updatedPlanMode,
+        fastModeByThread: updatedFastMode,
         runStartedAtByThread: updatedRunStartedAt,
         pidByThread: updatedPid,
       }
@@ -378,6 +396,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       delete updatedQueue[id]
       const updatedPlanMode = { ...s.planModeByThread }
       delete updatedPlanMode[id]
+      const updatedFastMode = { ...s.fastModeByThread }
+      delete updatedFastMode[id]
       const updatedRunStartedAt = { ...s.runStartedAtByThread }
       delete updatedRunStartedAt[id]
       const updatedPid = { ...s.pidByThread }
@@ -392,6 +412,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         unreadByThread: updatedUnread,
         queuedMessageByThread: updatedQueue,
         planModeByThread: updatedPlanMode,
+        fastModeByThread: updatedFastMode,
         runStartedAtByThread: updatedRunStartedAt,
         pidByThread: updatedPid,
       }
@@ -421,6 +442,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         unreadByThread: snapshot.unreadByThread,
         queuedMessageByThread: snapshot.queuedMessageByThread,
         planModeByThread: snapshot.planModeByThread,
+        fastModeByThread: snapshot.fastModeByThread,
         runStartedAtByThread: snapshot.runStartedAtByThread,
         pidByThread: snapshot.pidByThread,
       })
@@ -690,9 +712,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   setPlanMode: (threadId, planMode) =>
     set((s) => ({ planModeByThread: { ...s.planModeByThread, [threadId]: planMode } })),
 
-  queueMessage: (threadId, content, planMode) =>
+  setFastMode: (threadId, fastMode) =>
+    set((s) => ({ fastModeByThread: { ...s.fastModeByThread, [threadId]: fastMode } })),
+
+  queueMessage: (threadId, content, planMode, fastMode) =>
     set((s) => ({
-      queuedMessageByThread: { ...s.queuedMessageByThread, [threadId]: { content, planMode } }
+      queuedMessageByThread: { ...s.queuedMessageByThread, [threadId]: { content, planMode, fastMode } }
     })),
 
   clearQueue: (threadId) =>

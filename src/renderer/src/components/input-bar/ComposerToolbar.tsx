@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { Thread, PROVIDERS, Provider, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
-import { PlanIcon, YoloIcon, formatElapsed } from './icons'
+import { PlanIcon, YoloIcon, FastIcon, formatElapsed } from './icons'
 
 function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -16,6 +16,8 @@ interface ComposerToolbarProps {
   threadId: string
   planMode: boolean
   setPlanMode: (threadId: string, value: boolean) => void
+  fastMode: boolean
+  setFastMode: (threadId: string, value: boolean) => void
   isProcessing: boolean
   isLocalLocation: boolean | undefined
   currentThread: Thread | undefined
@@ -32,6 +34,8 @@ export default function ComposerToolbar({
   threadId,
   planMode,
   setPlanMode,
+  fastMode,
+  setFastMode,
   isProcessing,
   isLocalLocation,
   currentThread,
@@ -44,6 +48,8 @@ export default function ComposerToolbar({
   elapsedSeconds,
 }: ComposerToolbarProps) {
   const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex' || currentThread?.provider === 'cursor'
+  // Fast mode (priority processing) is currently supported by Claude Code and Codex.
+  const supportsFastMode = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
   const [liveClaudeModels, setLiveClaudeModels] = useState<ModelOption[]>([])
   const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
@@ -181,6 +187,27 @@ export default function ComposerToolbar({
         Plan
       </button>
       <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+      {supportsFastMode && (
+        <>
+          <button
+            onClick={() => setFastMode(threadId, !fastMode)}
+            disabled={isProcessing}
+            title={fastMode
+              ? 'Fast mode: ON - priority processing for faster responses (uses session limits faster)'
+              : 'Fast mode: OFF - standard processing speed'}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
+            style={{
+              background: fastMode ? 'rgba(255, 106, 0, 0.15)' : 'transparent',
+              color: fastMode ? '#ff6a00' : 'var(--color-text-muted)',
+              border: `1px solid ${fastMode ? 'rgba(255, 106, 0, 0.3)' : 'transparent'}`,
+            }}
+          >
+            <FastIcon />
+            Fast
+          </button>
+          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+        </>
+      )}
       {supportsYolo && currentThread && (
         <>
           <button

@@ -3,6 +3,10 @@ import { OutputEvent, ReasoningLevel, SshConfig, WslConfig } from '../../shared/
 export interface MessageOptions {
   planMode?: boolean
   yoloMode?: boolean
+  /** When true, request the provider's "fast" / priority processing tier
+   *  (faster responses, consumes session/usage limits more quickly).
+   *  Drivers that don't support a fast tier ignore this flag. */
+  fastMode?: boolean
 }
 
 export interface CLIDriver {

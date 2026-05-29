@@ -180,7 +180,7 @@ export class Session {
           content: content.slice(0, 500),
         })
         insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId)
-        driver.injectMessage(content, { planMode: options?.planMode, yoloMode: getThreadYoloMode(this.threadId) })
+        driver.injectMessage(content, { planMode: options?.planMode, fastMode: options?.fastMode, yoloMode: getThreadYoloMode(this.threadId) })
       } else {
         console.warn('[Session] sendMessage called while driver is already running — ignoring for thread', this.threadId)
       }
@@ -231,7 +231,7 @@ export class Session {
         content,
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        { planMode: options?.planMode, yoloMode: getThreadYoloMode(this.threadId) }
+        { planMode: options?.planMode, fastMode: options?.fastMode, yoloMode: getThreadYoloMode(this.threadId) }
       )
     }
 

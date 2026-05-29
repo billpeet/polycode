@@ -368,6 +368,8 @@ export interface GitHubPullRequest {
 /** Options passed when sending a message to a thread */
 export interface SendOptions {
   planMode?: boolean
+  /** Request the provider's fast / priority processing tier for this message. */
+  fastMode?: boolean
 }
 
 /** A question option from AskUserQuestion tool */
