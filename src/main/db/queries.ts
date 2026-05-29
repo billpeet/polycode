@@ -377,7 +377,7 @@ export function unarchiveThread(id: string): void {
     .run(new Date().toISOString(), id)
 }
 
-export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-7', gitBranch: string | null = null): Thread {
+export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-8', gitBranch: string | null = null): Thread {
   const now = new Date().toISOString()
   const thread: ThreadRow = {
     id: uuidv4(),
@@ -524,7 +524,7 @@ export function getThreadModel(threadId: string): string {
   const row = getDb()
     .prepare('SELECT model FROM threads WHERE id = ?')
     .get(threadId) as { model: string | null } | undefined
-  return row?.model ?? 'claude-opus-4-7'
+  return row?.model ?? 'claude-opus-4-8'
 }
 
 export function getThreadProvider(threadId: string): string {
@@ -564,7 +564,7 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
     )
     .get(projectId) as { provider: string; model: string } | undefined
 
-  if (!row) return { provider: 'claude-code', model: 'claude-opus-4-7' }
+  if (!row) return { provider: 'claude-code', model: 'claude-opus-4-8' }
 
   // Validate the pair before returning it
   const provider = (row.provider ?? 'claude-code') as Provider

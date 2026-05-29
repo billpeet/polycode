@@ -455,7 +455,7 @@ export default function ThreadHeader({ threadId }: Props) {
 
         {/* Token usage + context window */}
         {usage && (() => {
-          const model = thread?.model ?? 'claude-opus-4-7'
+          const model = thread?.model ?? 'claude-opus-4-8'
           const contextLimit = MODEL_CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
           return (
             <span

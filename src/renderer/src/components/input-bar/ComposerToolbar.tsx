@@ -3,6 +3,15 @@ import { Thread, PROVIDERS, Provider, ModelOption, ReasoningLevel, getDefaultMod
 import CliHealthIndicator from './CliHealthIndicator'
 import { PlanIcon, YoloIcon, formatElapsed } from './icons'
 
+function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
+  const seen = new Set<string>()
+  return [...primary, ...fallback].filter((model) => {
+    if (seen.has(model.id)) return false
+    seen.add(model.id)
+    return true
+  })
+}
+
 interface ComposerToolbarProps {
   threadId: string
   planMode: boolean
@@ -123,8 +132,9 @@ export default function ComposerToolbar({
   }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
   const modelOptions = useMemo(() => {
+    const staticModels = getModelsForProvider(currentProvider)
     const baseModels = currentProvider === 'claude-code' && liveClaudeModels.length > 0
-      ? liveClaudeModels
+      ? mergeModelOptions(staticModels, liveClaudeModels)
       : currentProvider === 'codex' && liveCodexModels.length > 0
         ? liveCodexModels
         : currentProvider === 'opencode' && liveOpenCodeModels.length > 0
@@ -133,7 +143,7 @@ export default function ComposerToolbar({
             ? livePiModels
             : currentProvider === 'cursor' && liveCursorModels.length > 0
               ? liveCursorModels
-              : getModelsForProvider(currentProvider)
+              : staticModels
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]

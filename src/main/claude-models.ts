@@ -41,7 +41,7 @@ function isClaudeEffortLevel(value: unknown): value is ReasoningLevel {
 }
 
 function fallbackEffortLevelsForModel(id: string): ReasoningLevel[] {
-  if (id.includes('opus-4-7') || id.includes('opus-4.7') || id.includes('opus-4-6') || id.includes('opus-4.6')) {
+  if (id.includes('opus-4-8') || id.includes('opus-4.8') || id.includes('opus-4-7') || id.includes('opus-4.7') || id.includes('opus-4-6') || id.includes('opus-4.6')) {
     return ['off', 'low', 'medium', 'high', 'xhigh', 'max']
   }
   if (id.includes('haiku')) return ['off', 'low', 'medium', 'high']

@@ -167,7 +167,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       name,
       is_pending: true,
       provider: sourceThread?.provider ?? 'claude-code',
-      model: sourceThread?.model ?? 'claude-opus-4-7',
+      model: sourceThread?.model ?? 'claude-opus-4-8',
       reasoning_level: sourceThread?.reasoning_level ?? 'off',
       status: 'idle',
       archived: false,

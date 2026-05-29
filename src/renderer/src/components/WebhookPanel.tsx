@@ -157,7 +157,7 @@ export function WebhookPanel({ hideHeader }: Props) {
   "project": "my-project",   // required
   "location": "dev-server",  // optional (label or pool name)
   "provider": "claude-code", // optional
-  "model": "claude-opus-4-7",// optional
+  "model": "claude-opus-4-8",// optional
   "name": "Task name",       // optional
   "message": "Do the thing"  // optional — starts the thread
 }`}</pre>
