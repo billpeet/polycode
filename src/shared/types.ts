@@ -43,6 +43,7 @@ export interface Project {
 }
 
 export const ANTHROPIC_MODELS = [
+  { id: 'claude-fable-5[1m]', label: 'Fable 5', contextWindow: 1_000_000 },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-7', label: 'Opus 4.7', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-6', label: 'Opus 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
@@ -193,6 +194,7 @@ export interface TokenUsage {
 }
 
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
+  'claude-fable-5[1m]': 1_000_000,
   'claude-opus-4-8': 200_000,
   'claude-opus-4-7': 200_000,
   'claude-opus-4-6': 200_000,

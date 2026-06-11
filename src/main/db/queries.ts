@@ -298,7 +298,7 @@ export function getLocationByPath(path: string): RepoLocation | null {
 
 // ── Threads ───────────────────────────────────────────────────────────────────
 
-const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 function normalizeReasoningLevel(level: string | null | undefined): ReasoningLevel {
   return VALID_REASONING_LEVELS.includes(level as ReasoningLevel) ? level as ReasoningLevel : 'off'
@@ -308,7 +308,7 @@ function rowToThread(r: ThreadRow): Thread {
   // Validate provider/model pairing — fix mismatches caused by stale data
   const provider = (r.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
+  const model = provider === 'claude-code' || provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
   return {
     id: r.id,
     project_id: r.project_id,
@@ -569,7 +569,7 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
   // Validate the pair before returning it
   const provider = (row.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
+  const model = provider === 'claude-code' || provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
   return { provider, model }
 }
 

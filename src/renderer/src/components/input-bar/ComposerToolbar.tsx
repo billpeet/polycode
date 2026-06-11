@@ -140,7 +140,7 @@ export default function ComposerToolbar({
   const modelOptions = useMemo(() => {
     const staticModels = getModelsForProvider(currentProvider)
     const baseModels = currentProvider === 'claude-code' && liveClaudeModels.length > 0
-      ? mergeModelOptions(staticModels, liveClaudeModels)
+      ? mergeModelOptions(liveClaudeModels, staticModels)
       : currentProvider === 'codex' && liveCodexModels.length > 0
         ? liveCodexModels
         : currentProvider === 'opencode' && liveOpenCodeModels.length > 0
