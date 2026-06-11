@@ -14,6 +14,7 @@ export interface LocationFormSectionProps {
   location?: RepoLocation
   pools: LocationPool[]
   gitUrl?: string | null
+  defaultCloneMode?: boolean
   onSaved: () => void
   onCancel: () => void
 }

@@ -3,7 +3,7 @@ import { useLocationStore } from '../../stores/locations'
 import { ConnectionType, SshConfig, WslConfig } from '../../types/ipc'
 import { LocationFormSectionProps } from './types'
 
-export default function LocationFormSection({ projectId, location, pools, gitUrl, onSaved, onCancel }: LocationFormSectionProps) {
+export default function LocationFormSection({ projectId, location, pools, gitUrl, defaultCloneMode, onSaved, onCancel }: LocationFormSectionProps) {
   const createLocation = useLocationStore((s) => s.create)
   const updateLocation = useLocationStore((s) => s.update)
 
@@ -20,7 +20,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
   const [error, setError] = useState('')
   const [testing, setTesting] = useState(false)
   const [testResult, setTestResult] = useState<'success' | 'fail' | null>(null)
-  const [cloneMode, setCloneMode] = useState(false)
+  const [cloneMode, setCloneMode] = useState(defaultCloneMode ?? false)
   const [baseDir, setBaseDir] = useState('~/source')
   const [suggestedPath, setSuggestedPath] = useState('')
   const [cloneLabel, setCloneLabel] = useState('')

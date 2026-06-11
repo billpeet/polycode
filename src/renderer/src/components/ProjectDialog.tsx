@@ -5,7 +5,9 @@ import { useCommandStore } from '../stores/commands'
 import { LocationPool, RepoLocation } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { CommandsSection, LocationsSection, PoolsSection } from './project-dialog/EditSections'
+import LocationFormSection from './project-dialog/LocationFormSection'
 import { LocationFormState, ProjectDialogProps } from './project-dialog/types'
+import { Project } from '../types/ipc'
 
 const EMPTY: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -16,6 +18,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const [gitUrl, setGitUrl] = useState(project?.git_url ?? '')
   const [error, setError] = useState('')
   const [projectSaved, setProjectSaved] = useState(false)
+  const [createdProject, setCreatedProject] = useState<Project | null>(null)
   const [locationForm, setLocationForm] = useState<LocationFormState>({ mode: 'none' })
   const [deleteConfirm, setDeleteConfirm] = useState<RepoLocation | null>(null)
   const [newPoolName, setNewPoolName] = useState('')
@@ -56,12 +59,16 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
         setTimeout(() => setProjectSaved(false), 2000)
       } else {
         const created = await createProject(name.trim(), gitUrl.trim() || null)
-        onClose()
-        onCreated?.(created)
+        setCreatedProject(created)
       }
     } catch (err) {
       setError(String(err))
     }
+  }
+
+  function finishCreate(): void {
+    onClose()
+    if (createdProject) onCreated?.(createdProject)
   }
 
   async function handleDeleteLocation(loc: RepoLocation): Promise<void> {
@@ -99,9 +106,24 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-4 text-base font-semibold" style={{ color: 'var(--color-text)' }}>
-          {isEdit ? 'Edit Project' : 'New Project'}
+          {isEdit ? 'Edit Project' : createdProject ? 'Add First Location' : 'New Project'}
         </h2>
 
+        {createdProject ? (
+          <>
+            <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              Project <span style={{ color: 'var(--color-text)' }}>{createdProject.name}</span> created. Add or clone its first location, or skip for now.
+            </p>
+            <LocationFormSection
+              projectId={createdProject.id}
+              pools={EMPTY_POOLS}
+              gitUrl={createdProject.git_url}
+              defaultCloneMode={!!createdProject.git_url}
+              onSaved={finishCreate}
+              onCancel={finishCreate}
+            />
+          </>
+        ) : (
         <form onSubmit={handleProjectSubmit} className="space-y-3">
           <div>
             <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Name</label>
@@ -143,6 +165,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
             </button>
           </div>
         </form>
+        )}
 
         {isEdit && project && (
           <>
