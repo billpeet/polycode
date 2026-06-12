@@ -1,8 +1,8 @@
 import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
-import { autoUpdater } from 'electron-updater'
 import * as Sentry from '@sentry/electron/main'
+import { initUpdater } from './updater'
 import { initDb, closeDb } from './db/index'
 import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
@@ -237,17 +237,7 @@ app.whenReady().then(() => {
     token: getSetting('webhook:token') ?? '',
   }, win)
 
-  if (!isDev) {
-    autoUpdater.allowPrerelease = true
-    autoUpdater.on('error', (err) => {
-      Sentry.captureException(err)
-      console.error('Auto-updater error:', err.message)
-    })
-    autoUpdater.on('update-downloaded', () => {
-      win.webContents.send('app:update-downloaded')
-    })
-    autoUpdater.checkForUpdatesAndNotify()
-  }
+  initUpdater(() => win)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

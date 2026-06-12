@@ -1,6 +1,6 @@
 {
   "name": "polycode-electron",
-  "version": "0.13.0",
+  "version": "0.14.0",
   "description": "Desktop app for orchestrating multiple Claude Code sessions",
   "main": "out/main/index.js",
   "author": "billpeet",
@@ -87,10 +87,14 @@
       "output": "release"
     },
     "win": {
-      "target": [{
-        "target": "nsis",
-        "arch": ["x64"]
-      }],
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
       "icon": "resources/icon.ico"
     },
     "nsis": {

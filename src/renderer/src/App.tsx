@@ -6,12 +6,12 @@ import RightPanel from './components/RightPanel'
 import SecondPanel from './components/SecondPanel'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
+import { UpdateBanner } from './components/UpdateBanner'
 import { SidebarProvider } from './components/ui/sidebar-context'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useLocationStore } from './stores/locations'
 import { useUiStore } from './stores/ui'
-import { useToastStore } from './stores/toast'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 import './stores/plans' // Initialize plan file watcher listener
@@ -129,29 +129,6 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [selectedProjectId])
 
-  // Update available notification
-  useEffect(() => {
-    return window.api.on('app:update-downloaded', () => {
-      useToastStore.getState().add({
-        type: 'info',
-        message: 'Update ready — restart PolyCode to install.',
-        duration: 0,
-        actionLabel: 'Restart now',
-        onAction: async () => {
-          try {
-            await window.api.invoke('app:install-update')
-          } catch (err) {
-            useToastStore.getState().add({
-              type: 'error',
-              message: err instanceof Error ? err.message : 'Failed to restart for update.',
-              duration: 0,
-            })
-          }
-        },
-      })
-    })
-  }, [])
-
   // 4. Persist selections whenever they change
   useEffect(() => {
     if (selectedProjectId) {
@@ -199,6 +176,7 @@ export default function App() {
       <SidebarProvider>
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
         <TitleBar />
+        <UpdateBanner />
         <div className="flex flex-1 overflow-hidden">
           <Profiler id="Sidebar" onRender={reportReactCommit}>
             <Sidebar />

@@ -5,7 +5,7 @@ import { pathToFileURL } from 'url'
 import { homedir } from 'os'
 import { listPlanFiles, readPlanFile } from '../plans'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
-import { autoUpdater } from 'electron-updater'
+import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import {
   listProjects,
   listArchivedProjects,
@@ -1479,8 +1479,17 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
 
   // ── Auto-updater ───────────────────────────────────────────────────────────
 
-  ipcMain.handle('app:install-update', () => {
-    autoUpdater.quitAndInstall()
+  ipcMain.handle('update:check', () => {
+    checkForUpdates()
+    return getUpdateState()
+  })
+
+  ipcMain.handle('update:apply', () => {
+    return { success: applyUpdate() }
+  })
+
+  ipcMain.handle('update:get-state', () => {
+    return getUpdateState()
   })
 
   // ── CLI health & updates ────────────────────────────────────────────────────

@@ -2,72 +2,20 @@ name: Release
 
 on:
   push:
-    tags:
-      - 'v*'
-  schedule:
-    # Every night at 2:00 AM UTC
-    - cron: '0 2 * * *'
+    branches:
+      - master
   workflow_dispatch:
-    inputs:
-      force:
-        description: 'Force nightly build even if no new commits'
-        type: boolean
-        default: false
 
 permissions:
   contents: write
 
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  check-changes:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Check for commits since last release
-        id: check
-        run: |
-          if [ "${{ github.event.inputs.force }}" = "true" ]; then
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-            echo "Forced build requested"
-            exit 0
-          fi
-
-          # Check nightly-latest first (updated after every nightly build),
-          # then fall back to the latest versioned release tag.
-          # Note: we must NOT match 'v*' broadly because electron-builder
-          # creates v*-nightly.* tags, which would cause the next nightly
-          # to see 0 new commits and skip.
-          if git rev-parse "nightly-latest" >/dev/null 2>&1; then
-            LATEST_TAG="nightly-latest"
-          else
-            LATEST_TAG=$(git tag --sort=-v:refname --list 'v[0-9]*' | grep -v 'nightly' | head -n1)
-          fi
-
-          if [ -z "$LATEST_TAG" ]; then
-            echo "No previous release found, building"
-            echo "should_build=true" >> "$GITHUB_OUTPUT"
-          else
-            COMMITS=$(git rev-list "${LATEST_TAG}..HEAD" --count)
-            echo "Commits since ${LATEST_TAG}: ${COMMITS}"
-            if [ "$COMMITS" -gt 0 ]; then
-              echo "should_build=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "should_build=false" >> "$GITHUB_OUTPUT"
-              echo "No new commits, skipping build"
-            fi
-          fi
-
   build-windows:
     runs-on: windows-latest
-    needs: [check-changes]
-    if: |
-      always() &&
-      (needs.check-changes.result == 'skipped' || needs.check-changes.outputs.should_build == 'true')
     steps:
       - uses: actions/checkout@v4
 
@@ -83,25 +31,17 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "${{ github.ref_type }}" == "tag" ]]; then
-            # Tagged release: use the tag version
-            VERSION="${{ github.ref_name }}"
-            VERSION="${VERSION#v}"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "is_nightly=false" >> "$GITHUB_OUTPUT"
-            echo "Tagged release: $VERSION"
-          else
-            # Nightly: use package.json version + nightly suffix
-            BASE=$(node -p "require('./package.json').version")
-            DATE=$(date -u +%Y%m%d)
-            VERSION="${BASE}-nightly.${DATE}"
-            echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-            echo "is_nightly=true" >> "$GITHUB_OUTPUT"
-            echo "Nightly build: $VERSION"
-          fi
+          # Auto-incrementing version: major.minor from package.json + run number.
+          # Bump major/minor in package.json to reset the series; the run number
+          # is monotonically increasing so versions never collide.
+          BASE=$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")
+          VERSION="${BASE}.${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
 
       - name: Set package.json version
-        run: node -e "const p=require('./package.json');p.version='${{ steps.version.outputs.version }}';require('fs').writeFileSync('package.json',JSON.stringify(p,null,2)+'\n')"
+        shell: bash
+        run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
 
       - name: Install dependencies
         run: bun install
@@ -114,20 +54,3 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
-
-      - name: Mark nightly as pre-release
-        if: steps.version.outputs.is_nightly == 'true'
-        shell: bash
-        run: |
-          # electron-builder creates a release from the version tag;
-          # mark it as a pre-release so it's visually distinct on GitHub
-          gh release edit "v${{ steps.version.outputs.version }}" --prerelease || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Tag nightly for change detection
-        if: steps.version.outputs.is_nightly == 'true'
-        shell: bash
-        run: |
-          git tag -f "nightly-latest"
-          git push -f origin "nightly-latest" || true

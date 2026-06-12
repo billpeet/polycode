@@ -540,3 +540,17 @@ export interface ThreadLogEntry {
   content?: string
   metadata?: unknown
 }
+
+// ── Auto-update ────────────────────────────────────────────────────────────────
+
+export interface UpdateState {
+  available: boolean
+  ready: boolean
+  checking: boolean
+  downloading: boolean
+  /** Download progress percentage (0-100) */
+  progress?: number
+  error?: string
+  /** The version available for download / ready to install */
+  version?: string
+}
