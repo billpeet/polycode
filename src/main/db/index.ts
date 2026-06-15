@@ -226,6 +226,8 @@ function runMigrations(database: Database.Database): void {
         project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
         pool_id TEXT REFERENCES location_pools(id) ON DELETE SET NULL,
         checked_out INTEGER NOT NULL DEFAULT 0,
+        parent_location_id TEXT REFERENCES repo_locations(id) ON DELETE SET NULL,
+        is_worktree INTEGER NOT NULL DEFAULT 0,
         label TEXT NOT NULL,
         connection_type TEXT NOT NULL DEFAULT 'local',
         path TEXT NOT NULL,
@@ -246,6 +248,12 @@ function runMigrations(database: Database.Database): void {
   }
   if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'checked_out')) {
     database.exec('ALTER TABLE repo_locations ADD COLUMN checked_out INTEGER NOT NULL DEFAULT 0')
+  }
+  if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'parent_location_id')) {
+    database.exec('ALTER TABLE repo_locations ADD COLUMN parent_location_id TEXT REFERENCES repo_locations(id) ON DELETE SET NULL')
+  }
+  if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'is_worktree')) {
+    database.exec('ALTER TABLE repo_locations ADD COLUMN is_worktree INTEGER NOT NULL DEFAULT 0')
   }
 
   // ── git_url column on projects ──────────────────────────────────────────────
@@ -272,6 +280,7 @@ function runMigrations(database: Database.Database): void {
         name TEXT NOT NULL,
         command TEXT NOT NULL,
         cwd TEXT,
+        run_on_worktree_create INTEGER NOT NULL DEFAULT 0,
         sort_order INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
@@ -283,6 +292,9 @@ function runMigrations(database: Database.Database): void {
   const projectCommandsCols = database.pragma('table_info(project_commands)') as Array<{ name: string }>
   if (projectCommandsCols.length > 0 && !projectCommandsCols.some((c) => c.name === 'shell')) {
     database.exec('ALTER TABLE project_commands ADD COLUMN shell TEXT')
+  }
+  if (projectCommandsCols.length > 0 && !projectCommandsCols.some((c) => c.name === 'run_on_worktree_create')) {
+    database.exec('ALTER TABLE project_commands ADD COLUMN run_on_worktree_create INTEGER NOT NULL DEFAULT 0')
   }
 
   // ── archived_at column on projects ────────────────────────────────────────

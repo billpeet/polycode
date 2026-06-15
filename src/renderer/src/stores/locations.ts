@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { RepoLocation, SshConfig, WslConfig, ConnectionType, LocationPool } from '../types/ipc'
+import { useThreadStore } from './threads'
 
 interface LocationStore {
   byProject: Record<string, RepoLocation[]>
@@ -12,6 +13,8 @@ interface LocationStore {
   create: (projectId: string, label: string, connectionType: ConnectionType, path: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => Promise<RepoLocation>
   update: (id: string, projectId: string, label: string, connectionType: ConnectionType, path: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => Promise<void>
   remove: (id: string, projectId: string) => Promise<void>
+  createWorktree: (parentLocationId: string, projectId: string, label?: string | null) => Promise<RepoLocation>
+  removeWorktree: (id: string, projectId: string) => Promise<void>
   checkout: (id: string, projectId: string) => Promise<void>
   returnToPool: (id: string, projectId: string) => Promise<void>
 }
@@ -99,6 +102,68 @@ export const useLocationStore = create<LocationStore>((set) => ({
 
   remove: async (id, projectId) => {
     await window.api.invoke('locations:delete', id)
+    set((s) => ({
+      byProject: {
+        ...s.byProject,
+        [projectId]: (s.byProject[projectId] ?? []).filter((l) => l.id !== id)
+      }
+    }))
+  },
+
+  createWorktree: async (parentLocationId, projectId, label) => {
+    const location = await window.api.invoke('locations:createWorktree', parentLocationId, label ?? null)
+    set((s) => ({
+      byProject: {
+        ...s.byProject,
+        [projectId]: [...(s.byProject[projectId] ?? []), location]
+      }
+    }))
+    return location
+  },
+
+  removeWorktree: async (id, projectId) => {
+    const activeThreads = useThreadStore.getState().byProject[projectId] ?? []
+    const worktreeThreadIds = new Set(activeThreads.filter((thread) => thread.location_id === id).map((thread) => thread.id))
+    await window.api.invoke('locations:removeWorktree', id)
+    if (worktreeThreadIds.size > 0) {
+      useThreadStore.setState((s) => {
+        const removedThreads = (s.byProject[projectId] ?? []).filter((thread) => worktreeThreadIds.has(thread.id))
+        const nextStatusMap = { ...s.statusMap }
+        const nextUnreadByThread = { ...s.unreadByThread }
+        const nextQueuedByThread = { ...s.queuedMessageByThread }
+        const nextPlanModeByThread = { ...s.planModeByThread }
+        const nextFastModeByThread = { ...s.fastModeByThread }
+        const nextRunStartedAtByThread = { ...s.runStartedAtByThread }
+        const nextPidByThread = { ...s.pidByThread }
+        for (const threadId of worktreeThreadIds) {
+          delete nextStatusMap[threadId]
+          delete nextUnreadByThread[threadId]
+          delete nextQueuedByThread[threadId]
+          delete nextPlanModeByThread[threadId]
+          delete nextFastModeByThread[threadId]
+          delete nextRunStartedAtByThread[threadId]
+          delete nextPidByThread[threadId]
+        }
+        return {
+          byProject: {
+            ...s.byProject,
+            [projectId]: (s.byProject[projectId] ?? []).filter((thread) => !worktreeThreadIds.has(thread.id))
+          },
+          archivedCountByProject: {
+            ...s.archivedCountByProject,
+            [projectId]: (s.archivedCountByProject[projectId] ?? 0) + removedThreads.filter((thread) => thread.has_messages).length
+          },
+          selectedThreadId: s.selectedThreadId && worktreeThreadIds.has(s.selectedThreadId) ? null : s.selectedThreadId,
+          statusMap: nextStatusMap,
+          unreadByThread: nextUnreadByThread,
+          queuedMessageByThread: nextQueuedByThread,
+          planModeByThread: nextPlanModeByThread,
+          fastModeByThread: nextFastModeByThread,
+          runStartedAtByThread: nextRunStartedAtByThread,
+          pidByThread: nextPidByThread,
+        }
+      })
+    }
     set((s) => ({
       byProject: {
         ...s.byProject,

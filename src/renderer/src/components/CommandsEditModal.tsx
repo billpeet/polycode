@@ -63,6 +63,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
   const [editCmdCommand, setEditCmdCommand] = useState('')
   const [editCmdCwd, setEditCmdCwd] = useState('')
   const [editCmdShell, setEditCmdShell] = useState<string | null>(null)
+  const [editCmdRunOnWorktreeCreate, setEditCmdRunOnWorktreeCreate] = useState(false)
   const [editCmdError, setEditCmdError] = useState('')
 
   // Add state
@@ -70,6 +71,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
   const [newCmdCommand, setNewCmdCommand] = useState('')
   const [newCmdCwd, setNewCmdCwd] = useState('')
   const [newCmdShell, setNewCmdShell] = useState<string | null>(null)
+  const [newCmdRunOnWorktreeCreate, setNewCmdRunOnWorktreeCreate] = useState(false)
   const [cmdError, setCmdError] = useState('')
 
   useEffect(() => {
@@ -129,6 +131,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
     setNewCmdCommand(s.command)
     setNewCmdCwd('')
     setNewCmdShell(null)
+    setNewCmdRunOnWorktreeCreate(false)
   }
 
   return (
@@ -225,6 +228,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                           setEditCmdCommand(cmd.command)
                           setEditCmdCwd(cmd.cwd ?? '')
                           setEditCmdShell(cmd.shell ?? null)
+                          setEditCmdRunOnWorktreeCreate(cmd.run_on_worktree_create)
                           setEditCmdError('')
                         }
                       }}
@@ -306,6 +310,14 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                           ))}
                         </div>
                       </div>
+                      <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                        <input
+                          type="checkbox"
+                          checked={editCmdRunOnWorktreeCreate}
+                          onChange={(e) => setEditCmdRunOnWorktreeCreate(e.target.checked)}
+                        />
+                        Run automatically on new worktrees
+                      </label>
                       {editCmdError && <p className="text-xs" style={{ color: '#f87171' }}>{editCmdError}</p>}
                       <div className="flex justify-end gap-2 pt-0.5">
                         <button
@@ -323,7 +335,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                             if (!project || !editCmdName.trim() || !editCmdCommand.trim()) return
                             setEditCmdError('')
                             try {
-                              await updateCommand(cmd.id, project.id, editCmdName.trim(), editCmdCommand.trim(), editCmdCwd.trim() || null, editCmdShell)
+                              await updateCommand(cmd.id, project.id, editCmdName.trim(), editCmdCommand.trim(), editCmdCwd.trim() || null, editCmdShell, editCmdRunOnWorktreeCreate)
                               setEditingCmdId(null)
                             } catch (err) {
                               setEditCmdError(String(err))
@@ -436,6 +448,14 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                 ))}
               </div>
             </div>
+            <label className="flex items-center gap-2 text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              <input
+                type="checkbox"
+                checked={newCmdRunOnWorktreeCreate}
+                onChange={(e) => setNewCmdRunOnWorktreeCreate(e.target.checked)}
+              />
+              Run automatically on new worktrees
+            </label>
             {cmdError && <p className="text-xs" style={{ color: '#f87171' }}>{cmdError}</p>}
             <div className="flex justify-end">
               <button
@@ -445,11 +465,12 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                   if (!project || !newCmdName.trim() || !newCmdCommand.trim()) return
                   setCmdError('')
                   try {
-                    await createCommand(project.id, newCmdName.trim(), newCmdCommand.trim(), newCmdCwd.trim() || null, newCmdShell)
+                    await createCommand(project.id, newCmdName.trim(), newCmdCommand.trim(), newCmdCwd.trim() || null, newCmdShell, newCmdRunOnWorktreeCreate)
                     setNewCmdName('')
                     setNewCmdCommand('')
                     setNewCmdCwd('')
                     setNewCmdShell(null)
+                    setNewCmdRunOnWorktreeCreate(false)
                   } catch (err) {
                     setCmdError(String(err))
                   }

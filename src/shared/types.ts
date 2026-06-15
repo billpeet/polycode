@@ -16,6 +16,8 @@ export interface RepoLocation {
   project_id: string
   pool_id: string | null
   checked_out: boolean
+  parent_location_id: string | null
+  is_worktree: boolean
   label: string
   connection_type: ConnectionType
   path: string
@@ -486,6 +488,7 @@ export interface ProjectCommand {
   cwd: string | null
   /** Shell to use for local execution: null = platform default, 'powershell' = PowerShell */
   shell: string | null
+  run_on_worktree_create: boolean
   sort_order: number
   created_at: string
   updated_at: string

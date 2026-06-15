@@ -79,6 +79,8 @@ export default function Sidebar() {
   const fetchPools = useLocationStore((s) => s.fetchPools)
   const checkoutLocation = useLocationStore((s) => s.checkout)
   const returnLocationToPool = useLocationStore((s) => s.returnToPool)
+  const createWorktreeLocation = useLocationStore((s) => s.createWorktree)
+  const removeWorktreeLocation = useLocationStore((s) => s.removeWorktree)
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
   const commandByProject = useCommandStore((s) => s.byProject)
@@ -289,6 +291,23 @@ export default function Sidebar() {
     window.dispatchEvent(new Event('focus-input'))
   }
 
+  async function handleNewWorktreeThread(projectId: string, parentLocationId: string): Promise<void> {
+    const location = await createWorktreeLocation(parentLocationId, projectId)
+    await handleNewThread(projectId, location.id)
+  }
+
+  async function handleRemoveWorktree(location: RepoLocation, projectId: string): Promise<void> {
+    const projectThreads = useThreadStore.getState().byProject[projectId] ?? []
+    const hasRunningThread = projectThreads.some((thread) =>
+      thread.location_id === location.id &&
+      (useThreadStore.getState().statusMap[thread.id] === 'running' || useThreadStore.getState().statusMap[thread.id] === 'stopping')
+    )
+    if (hasRunningThread) return
+    if (!window.confirm(`Remove worktree "${location.label}"?\n\n${location.path}`)) return
+    await removeWorktreeLocation(location.id, projectId)
+    await fetchThreads(projectId)
+  }
+
   async function handleDeleteProject(projectId: string): Promise<void> {
     await removeProject(projectId)
     setConfirmDelete(null)
@@ -448,6 +467,8 @@ export default function Sidebar() {
       onCheckoutLocation={checkoutLocation}
       onReturnLocationToPool={returnLocationToPool}
       onNewThread={handleNewThread}
+      onNewWorktreeThread={handleNewWorktreeThread}
+      onRemoveWorktree={handleRemoveWorktree}
       onSelectThread={selectThread}
       onArchiveThread={handleArchiveThread}
       onUnarchiveThread={handleUnarchiveThread}

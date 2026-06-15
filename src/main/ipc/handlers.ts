@@ -1,6 +1,6 @@
 import { spawn, exec, execFile } from 'child_process'
-import { existsSync, mkdirSync } from 'fs'
-import { join } from 'path'
+import { existsSync, mkdirSync, rmSync } from 'fs'
+import { basename, dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
 import { listPlanFiles, readPlanFile } from '../plans'
@@ -20,13 +20,16 @@ import {
   updateLocationPool,
   deleteLocationPool,
   createLocation,
+  createWorktreeLocation,
   updateLocation,
   deleteLocation,
+  getLocationById,
   checkoutLocation,
   returnLocationToPool,
   getLocationForThread,
   getLocationByPath,
   listThreads,
+  listActiveThreadsForLocation,
   listArchivedThreads,
   archivedThreadCount,
   createThread,
@@ -268,6 +271,69 @@ function invalidateRepoGitCache(repoPath: string): void {
   invalidateGitCache(repoPath, ssh, wsl)
 }
 
+function sanitizeWorktreeSegment(value: string): string {
+  const cleaned = value.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return cleaned || `worktree-${Date.now()}`
+}
+
+function runGit(args: string[], cwd: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const proc = spawn('git', args, {
+      cwd,
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
+    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+    proc.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout)
+        return
+      }
+      reject(new Error(stderr.trim() || `git exited with code ${code}`))
+    })
+    proc.on('error', (err) => reject(new Error(`Failed to run git: ${err.message}`)))
+  })
+}
+
+function isNotRegisteredWorktreeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('is not a working tree') || message.includes('is not a git repository')
+}
+
+async function createLocalWorktree(parentLocationId: string, label?: string | null): Promise<ReturnType<typeof createWorktreeLocation>> {
+  const parent = getLocationById(parentLocationId)
+  if (!parent) throw new Error('Parent location not found')
+  if (parent.connection_type !== 'local') throw new Error('Worktree creation is currently supported for local locations only.')
+  if (parent.is_worktree) throw new Error('Create new worktrees from the main checkout location.')
+  if (!existsSync(parent.path)) throw new Error(`Directory not found: "${parent.path}"`)
+
+  const currentBranch = (await runGit(['branch', '--show-current'], parent.path)).trim()
+  const baseName = sanitizeWorktreeSegment(label || currentBranch || 'worktree')
+  const repoName = sanitizeWorktreeSegment(basename(parent.path))
+  const worktreesRoot = join(dirname(parent.path), `${repoName}-worktrees`)
+  mkdirSync(worktreesRoot, { recursive: true })
+
+  let worktreePath = join(worktreesRoot, baseName)
+  let suffix = 2
+  while (existsSync(worktreePath)) {
+    worktreePath = join(worktreesRoot, `${baseName}-${suffix}`)
+    suffix += 1
+  }
+
+  const branchName = `polycode/${baseName}-${Date.now().toString(36)}`
+  await runGit(['worktree', 'add', '-b', branchName, worktreePath, 'HEAD'], parent.path)
+  const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
+
+  for (const command of listCommands(parent.project_id).filter((cmd) => cmd.run_on_worktree_create)) {
+    void commandManager.start(command.id, location.id)
+  }
+
+  return location
+}
+
 let cachedWslDistros: { expiresAt: number; value: string[] } | null = null
 
 export function registerIpcHandlers(window: BrowserWindow): void {
@@ -322,6 +388,47 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('locations:delete', (_event, id: string) => {
     return deleteLocation(id)
+  })
+
+  ipcMain.handle('locations:createWorktree', (_event, parentLocationId: string, label?: string | null) => {
+    return createLocalWorktree(parentLocationId, label)
+  })
+
+  ipcMain.handle('locations:removeWorktree', async (_event, id: string) => {
+    const location = getLocationById(id)
+    if (!location) return
+    if (!location.is_worktree) throw new Error('Location is not a worktree.')
+    if (location.connection_type !== 'local') throw new Error('Worktree removal is currently supported for local locations only.')
+    for (const thread of listActiveThreadsForLocation(location.id)) {
+      sessionManager.remove(thread.id)
+      if (thread.has_messages) {
+        archiveThread(thread.id)
+      } else {
+        deleteThread(thread.id)
+      }
+    }
+    const parent = location.parent_location_id ? getLocationById(location.parent_location_id) : null
+    const gitCwd = parent?.path && existsSync(parent.path) ? parent.path : location.path
+    try {
+      await runGit(['worktree', 'remove', '--force', location.path], gitCwd)
+    } catch (error) {
+      if (!isNotRegisteredWorktreeError(error)) throw error
+      if (parent?.path && existsSync(parent.path)) {
+        await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
+      }
+      if (existsSync(location.path)) {
+        try {
+          rmSync(location.path, { recursive: true, force: true })
+        } catch (removeError) {
+          const code = removeError && typeof removeError === 'object' && 'code' in removeError
+            ? String((removeError as { code?: unknown }).code)
+            : ''
+          if (code !== 'EBUSY' && code !== 'EPERM') throw removeError
+          console.warn(`[worktree] Could not remove locked worktree directory "${location.path}"; removing PolyCode location only.`)
+        }
+      }
+    }
+    deleteLocation(id)
   })
 
   ipcMain.handle('locations:checkout', (_event, id: string) => {
@@ -1169,12 +1276,12 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listCommands(projectId)
   })
 
-  ipcMain.handle('commands:create', (_event, projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null) => {
-    return createCommand(projectId, name, command, cwd, shell)
+  ipcMain.handle('commands:create', (_event, projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
+    return createCommand(projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false)
   })
 
-  ipcMain.handle('commands:update', (_event, id: string, name: string, command: string, cwd?: string | null, shell?: string | null) => {
-    return updateCommand(id, name, command, cwd, shell)
+  ipcMain.handle('commands:update', (_event, id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
+    return updateCommand(id, name, command, cwd, shell, runOnWorktreeCreate ?? false)
   })
 
   ipcMain.handle('commands:delete', (_event, id: string) => {

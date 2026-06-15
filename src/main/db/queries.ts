@@ -92,6 +92,8 @@ function rowToLocation(row: RepoLocationRow): RepoLocation {
     project_id: row.project_id,
     pool_id: row.pool_id ?? null,
     checked_out: row.checked_out === 1,
+    parent_location_id: row.parent_location_id ?? null,
+    is_worktree: row.is_worktree === 1,
     label: row.label,
     connection_type: row.connection_type as ConnectionType,
     path: row.path,
@@ -122,7 +124,7 @@ export function createLocation(
   const id = uuidv4()
   getDb()
     .prepare(
-      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       id, projectId, poolId ?? null, label, connectionType, locationPath,
@@ -135,6 +137,8 @@ export function createLocation(
     project_id: projectId,
     pool_id: poolId ?? null,
     checked_out: false,
+    parent_location_id: null,
+    is_worktree: false,
     label,
     connection_type: connectionType,
     path: locationPath,
@@ -176,6 +180,49 @@ export function getLocationById(id: string): RepoLocation | null {
     .prepare('SELECT * FROM repo_locations WHERE id = ?')
     .get(id) as RepoLocationRow | undefined
   return row ? rowToLocation(row) : null
+}
+
+export function createWorktreeLocation(
+  parentLocation: RepoLocation,
+  label: string,
+  locationPath: string
+): RepoLocation {
+  const now = new Date().toISOString()
+  const id = uuidv4()
+  getDb()
+    .prepare(
+      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, NULL, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(
+      id,
+      parentLocation.project_id,
+      parentLocation.id,
+      label,
+      parentLocation.connection_type,
+      locationPath,
+      parentLocation.ssh?.host ?? null,
+      parentLocation.ssh?.user ?? null,
+      parentLocation.ssh?.port ?? null,
+      parentLocation.ssh?.keyPath ?? null,
+      parentLocation.wsl?.distro ?? null,
+      now,
+      now
+    )
+  return {
+    id,
+    project_id: parentLocation.project_id,
+    pool_id: null,
+    checked_out: false,
+    parent_location_id: parentLocation.id,
+    is_worktree: true,
+    label,
+    connection_type: parentLocation.connection_type,
+    path: locationPath,
+    ssh: parentLocation.ssh ?? null,
+    wsl: parentLocation.wsl ?? null,
+    created_at: now,
+    updated_at: now,
+  }
 }
 
 export function getLocationForThread(threadId: string): RepoLocation | null {
@@ -339,6 +386,15 @@ export function listThreads(projectId: string): Thread[] {
       'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 ORDER BY t.updated_at DESC'
     )
     .all(projectId) as ThreadRow[]
+  return rows.map(rowToThread)
+}
+
+export function listActiveThreadsForLocation(locationId: string): Thread[] {
+  const rows = getDb()
+    .prepare(
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.location_id = ? AND t.archived = 0 ORDER BY t.updated_at DESC'
+    )
+    .all(locationId) as ThreadRow[]
   return rows.map(rowToThread)
 }
 
@@ -909,6 +965,7 @@ function rowToCommand(row: ProjectCommandRow): ProjectCommand {
     command: row.command,
     cwd: row.cwd ?? null,
     shell: row.shell ?? null,
+    run_on_worktree_create: row.run_on_worktree_create === 1,
     sort_order: row.sort_order,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -922,7 +979,7 @@ export function listCommands(projectId: string): ProjectCommand[] {
   return rows.map(rowToCommand)
 }
 
-export function createCommand(projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null): ProjectCommand {
+export function createCommand(projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate = false): ProjectCommand {
   const now = new Date().toISOString()
   const id = uuidv4()
   const countRow = getDb()
@@ -934,13 +991,16 @@ export function createCommand(projectId: string, name: string, command: string, 
       'INSERT INTO project_commands (id, project_id, name, command, cwd, shell, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(id, projectId, name, command, cwd ?? null, shell ?? null, sortOrder, now, now)
-  return { id, project_id: projectId, name, command, cwd: cwd ?? null, shell: shell ?? null, sort_order: sortOrder, created_at: now, updated_at: now }
+  if (runOnWorktreeCreate) {
+    getDb().prepare('UPDATE project_commands SET run_on_worktree_create = 1 WHERE id = ?').run(id)
+  }
+  return { id, project_id: projectId, name, command, cwd: cwd ?? null, shell: shell ?? null, run_on_worktree_create: runOnWorktreeCreate, sort_order: sortOrder, created_at: now, updated_at: now }
 }
 
-export function updateCommand(id: string, name: string, command: string, cwd?: string | null, shell?: string | null): void {
+export function updateCommand(id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate = false): void {
   getDb()
-    .prepare('UPDATE project_commands SET name = ?, command = ?, cwd = ?, shell = ?, updated_at = ? WHERE id = ?')
-    .run(name, command, cwd ?? null, shell ?? null, new Date().toISOString(), id)
+    .prepare('UPDATE project_commands SET name = ?, command = ?, cwd = ?, shell = ?, run_on_worktree_create = ?, updated_at = ? WHERE id = ?')
+    .run(name, command, cwd ?? null, shell ?? null, runOnWorktreeCreate ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function deleteCommand(id: string): void {

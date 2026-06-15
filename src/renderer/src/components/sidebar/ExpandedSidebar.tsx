@@ -46,6 +46,8 @@ interface ExpandedSidebarProps {
   onCheckoutLocation: (locationId: string, projectId: string) => void | Promise<void>
   onReturnLocationToPool: (locationId: string, projectId: string) => void | Promise<void>
   onNewThread: (projectId: string, locationId: string) => void | Promise<void>
+  onNewWorktreeThread: (projectId: string, parentLocationId: string) => void | Promise<void>
+  onRemoveWorktree: (location: RepoLocation, projectId: string) => void | Promise<void>
   onSelectThread: (threadId: string) => void
   onArchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
   onUnarchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
@@ -91,6 +93,8 @@ export default function ExpandedSidebar({
   onCheckoutLocation,
   onReturnLocationToPool,
   onNewThread,
+  onNewWorktreeThread,
+  onRemoveWorktree,
   onSelectThread,
   onArchiveThread,
   onUnarchiveThread,
@@ -382,6 +386,8 @@ export default function ExpandedSidebar({
                                 unreadByThread={unreadByThread}
                                 onToggleLocationCollapsed={onToggleLocationCollapsed}
                                 onNewThread={onNewThread}
+                                onNewWorktreeThread={onNewWorktreeThread}
+                                onRemoveWorktree={onRemoveWorktree}
                                 onCheckoutLocation={onCheckoutLocation}
                                 onReturnLocationToPool={onReturnLocationToPool}
                                 onSelectThread={onSelectThread}
@@ -405,6 +411,8 @@ export default function ExpandedSidebar({
                                 unreadByThread={unreadByThread}
                                 onToggleLocationCollapsed={onToggleLocationCollapsed}
                                 onNewThread={onNewThread}
+                                onNewWorktreeThread={onNewWorktreeThread}
+                                onRemoveWorktree={onRemoveWorktree}
                                 onCheckoutLocation={onCheckoutLocation}
                                 onReturnLocationToPool={onReturnLocationToPool}
                                 onSelectThread={onSelectThread}
@@ -432,6 +440,8 @@ export default function ExpandedSidebar({
                             unreadByThread={unreadByThread}
                             onToggleLocationCollapsed={onToggleLocationCollapsed}
                             onNewThread={onNewThread}
+                            onNewWorktreeThread={onNewWorktreeThread}
+                            onRemoveWorktree={onRemoveWorktree}
                             onCheckoutLocation={onCheckoutLocation}
                             onReturnLocationToPool={onReturnLocationToPool}
                             onSelectThread={onSelectThread}
@@ -456,6 +466,8 @@ export default function ExpandedSidebar({
                           unreadByThread={unreadByThread}
                           onToggleLocationCollapsed={onToggleLocationCollapsed}
                           onNewThread={onNewThread}
+                          onNewWorktreeThread={onNewWorktreeThread}
+                          onRemoveWorktree={onRemoveWorktree}
                           onCheckoutLocation={onCheckoutLocation}
                           onReturnLocationToPool={onReturnLocationToPool}
                           onSelectThread={onSelectThread}

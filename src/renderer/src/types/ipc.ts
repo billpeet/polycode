@@ -16,6 +16,8 @@ export interface WindowApi {
   invoke(channel: 'locations:create', projectId: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<RepoLocation>
   invoke(channel: 'locations:update', id: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void>
   invoke(channel: 'locations:delete', id: string): Promise<void>
+  invoke(channel: 'locations:createWorktree', parentLocationId: string, label?: string | null): Promise<RepoLocation>
+  invoke(channel: 'locations:removeWorktree', id: string): Promise<void>
   invoke(channel: 'locations:checkout', id: string): Promise<void>
   invoke(channel: 'locations:returnToPool', id: string): Promise<void>
   invoke(channel: 'location-pools:list', projectId: string): Promise<LocationPool[]>
@@ -144,8 +146,8 @@ export interface WindowApi {
   invoke(channel: 'update:apply'): Promise<{ success: boolean }>
   invoke(channel: 'update:get-state'): Promise<UpdateState>
   invoke(channel: 'commands:list', projectId: string): Promise<ProjectCommand[]>
-  invoke(channel: 'commands:create', projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null): Promise<ProjectCommand>
-  invoke(channel: 'commands:update', id: string, name: string, command: string, cwd?: string | null, shell?: string | null): Promise<void>
+  invoke(channel: 'commands:create', projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean): Promise<ProjectCommand>
+  invoke(channel: 'commands:update', id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean): Promise<void>
   invoke(channel: 'commands:delete', id: string): Promise<void>
   invoke(channel: 'commands:start', commandId: string, locationId: string): Promise<void>
   invoke(channel: 'commands:stop', commandId: string, locationId: string): Promise<void>

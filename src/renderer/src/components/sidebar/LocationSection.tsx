@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight } from 'lucide-react'
+import { ChevronDown, ChevronRight, GitBranchPlus, Trash2 } from 'lucide-react'
 import { RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import ThreadRow from './ThreadRow'
 import { ConnectionBadge } from './shared'
@@ -17,6 +17,8 @@ interface LocationSectionProps {
   unreadByThread: Record<string, boolean | undefined>
   onToggleLocationCollapsed: (locationId: string) => void
   onNewThread: (projectId: string, locationId: string) => void | Promise<void>
+  onNewWorktreeThread: (projectId: string, parentLocationId: string) => void | Promise<void>
+  onRemoveWorktree: (location: RepoLocation, projectId: string) => void | Promise<void>
   onCheckoutLocation: (locationId: string, projectId: string) => void | Promise<void>
   onReturnLocationToPool: (locationId: string, projectId: string) => void | Promise<void>
   onSelectThread: (threadId: string) => void
@@ -37,6 +39,8 @@ export default function LocationSection({
   unreadByThread,
   onToggleLocationCollapsed,
   onNewThread,
+  onNewWorktreeThread,
+  onRemoveWorktree,
   onCheckoutLocation,
   onReturnLocationToPool,
   onSelectThread,
@@ -68,6 +72,14 @@ export default function LocationSection({
             : <ChevronRight size={10} className="mr-1 flex-shrink-0 opacity-50" />
           }
           <span className="truncate opacity-70">{location.label}</span>
+          {location.is_worktree && (
+            <span
+              className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
+              style={{ background: 'rgba(96, 165, 250, 0.15)', color: '#60a5fa' }}
+            >
+              worktree
+            </span>
+          )}
           {branchByLocation[location.id] && (
             <span className="ml-1 flex-shrink-0 text-[9px] opacity-50">
               ({branchByLocation[location.id]})
@@ -128,16 +140,41 @@ export default function LocationSection({
             )}
           </div>
         )}
+        {location.is_worktree && (
+          <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+            <button
+              onClick={() => onRemoveWorktree(location, projectId)}
+              className="rounded p-1 hover:bg-white/10"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Remove worktree"
+            >
+              <Trash2 size={11} />
+            </button>
+          </div>
+        )}
       </div>
 
       {isLocationExpanded && isCheckedOut && (
-        <button
-          onClick={() => onNewThread(projectId, location.id)}
-          className="flex w-full items-center pl-10 pr-2 py-0.5 text-left text-[10px] opacity-40 transition-opacity hover:opacity-80"
-          style={{ color: 'var(--color-text-muted)' }}
-        >
-          + New thread
-        </button>
+        <div className="flex items-center pl-10 pr-2 py-0.5 gap-2">
+          <button
+            onClick={() => onNewThread(projectId, location.id)}
+            className="text-left text-[10px] opacity-40 transition-opacity hover:opacity-80"
+            style={{ color: 'var(--color-text-muted)' }}
+          >
+            + New thread
+          </button>
+          {!location.is_worktree && location.connection_type === 'local' && (
+            <button
+              onClick={() => onNewWorktreeThread(projectId, location.id)}
+              className="inline-flex items-center gap-1 text-left text-[10px] opacity-40 transition-opacity hover:opacity-80"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Create a new worktree and thread"
+            >
+              <GitBranchPlus size={10} />
+              Worktree
+            </button>
+          )}
+        </div>
       )}
 
       {isLocationExpanded && (() => {

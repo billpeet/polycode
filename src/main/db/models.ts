@@ -18,6 +18,8 @@ export interface RepoLocationRow {
   project_id: string
   pool_id: string | null
   checked_out: number
+  parent_location_id: string | null
+  is_worktree: number
   label: string
   connection_type: string
   path: string
@@ -89,6 +91,7 @@ export interface ProjectCommandRow {
   command: string
   cwd: string | null
   shell: string | null
+  run_on_worktree_create: number
   sort_order: number
   created_at: string
   updated_at: string
