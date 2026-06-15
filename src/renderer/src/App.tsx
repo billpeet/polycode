@@ -14,6 +14,9 @@ import { useLocationStore } from './stores/locations'
 import { useUiStore } from './stores/ui'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
+import { useFavouritesStore, formatFavourite, Favourite } from './stores/favourites'
+import { Provider } from './types/ipc'
+import { useToastStore } from './stores/toast'
 import './stores/plans' // Initialize plan file watcher listener
 import { reportReactCommit } from './lib/perf'
 
@@ -46,6 +49,7 @@ export default function App() {
   )
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
+  const loadFavourites = useFavouritesStore((s) => s.load)
 
   // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
@@ -54,6 +58,7 @@ export default function App() {
       window.api.invoke('settings:get', SETTING_THREAD_KEY),
       fetchProjects(),
       fetchYouTrackServers(),
+      loadFavourites(),
     ]).then(([savedProjectId, savedThreadId]) => {
       if (!savedProjectId) return
       const project = useProjectStore.getState().projects.find((p) => p.id === savedProjectId)
@@ -90,6 +95,42 @@ export default function App() {
           } catch {
             // Fall through to the platform handler if clipboard access is denied.
           }
+        }
+        return
+      }
+
+      // Ctrl+1..9 loads a favourite combo; Ctrl+Shift+1..9 saves the current one.
+      const digitMatch = /^Digit([1-9])$/.exec(e.code)
+      if (digitMatch) {
+        e.preventDefault()
+        const slot = Number(digitMatch[1])
+        const threadStore = useThreadStore.getState()
+        const tid = threadStore.selectedThreadId
+        const thread = tid
+          ? Object.values(threadStore.byProject).flat().find((t) => t.id === tid)
+          : undefined
+        if (!thread) {
+          useToastStore.getState().add({ type: 'info', message: 'Select a thread first' })
+          return
+        }
+
+        if (e.shiftKey) {
+          const fav: Favourite = {
+            provider: thread.provider as Provider,
+            model: thread.model,
+            reasoningLevel: thread.reasoning_level ?? 'off',
+          }
+          await useFavouritesStore.getState().save(slot, fav)
+          useToastStore.getState().add({ type: 'success', message: `Saved favourite ${slot}: ${formatFavourite(fav)}` })
+        } else {
+          const fav = useFavouritesStore.getState().bySlot[slot]
+          if (!fav) {
+            useToastStore.getState().add({ type: 'info', message: `Favourite ${slot} is empty (Ctrl+Shift+${slot} to save)` })
+            return
+          }
+          await threadStore.setProviderAndModel(thread.id, fav.provider, fav.model)
+          await threadStore.setReasoningLevel(thread.id, fav.reasoningLevel)
+          useToastStore.getState().add({ type: 'success', message: `Loaded favourite ${slot}: ${formatFavourite(fav)}` })
         }
         return
       }
