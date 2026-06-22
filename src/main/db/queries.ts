@@ -94,6 +94,7 @@ function rowToLocation(row: RepoLocationRow): RepoLocation {
     checked_out: row.checked_out === 1,
     parent_location_id: row.parent_location_id ?? null,
     is_worktree: row.is_worktree === 1,
+    worktree_id: row.worktree_id ?? null,
     label: row.label,
     connection_type: row.connection_type as ConnectionType,
     path: row.path,
@@ -124,7 +125,7 @@ export function createLocation(
   const id = uuidv4()
   getDb()
     .prepare(
-      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, 0, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, worktree_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, 0, NULL, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       id, projectId, poolId ?? null, label, connectionType, locationPath,
@@ -139,6 +140,7 @@ export function createLocation(
     checked_out: false,
     parent_location_id: null,
     is_worktree: false,
+    worktree_id: null,
     label,
     connection_type: connectionType,
     path: locationPath,
@@ -185,18 +187,21 @@ export function getLocationById(id: string): RepoLocation | null {
 export function createWorktreeLocation(
   parentLocation: RepoLocation,
   label: string,
-  locationPath: string
+  locationPath: string,
+  worktreeId?: number
 ): RepoLocation {
   const now = new Date().toISOString()
   const id = uuidv4()
+  const assignedWorktreeId = worktreeId ?? getNextWorktreeId(parentLocation.id)
   getDb()
     .prepare(
-      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, NULL, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, worktree_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, NULL, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       id,
       parentLocation.project_id,
       parentLocation.id,
+      assignedWorktreeId,
       label,
       parentLocation.connection_type,
       locationPath,
@@ -215,6 +220,7 @@ export function createWorktreeLocation(
     checked_out: false,
     parent_location_id: parentLocation.id,
     is_worktree: true,
+    worktree_id: assignedWorktreeId,
     label,
     connection_type: parentLocation.connection_type,
     path: locationPath,
@@ -223,6 +229,16 @@ export function createWorktreeLocation(
     created_at: now,
     updated_at: now,
   }
+}
+
+export function getNextWorktreeId(parentLocationId: string): number {
+  const rows = getDb()
+    .prepare('SELECT worktree_id FROM repo_locations WHERE parent_location_id = ? AND is_worktree = 1 AND worktree_id IS NOT NULL ORDER BY worktree_id ASC')
+    .all(parentLocationId) as Array<{ worktree_id: number }>
+  const used = new Set(rows.map((row) => row.worktree_id).filter((id) => Number.isInteger(id) && id > 0))
+  let next = 1
+  while (used.has(next)) next += 1
+  return next
 }
 
 export function getLocationForThread(threadId: string): RepoLocation | null {

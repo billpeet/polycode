@@ -20,6 +20,7 @@ export interface RepoLocationRow {
   checked_out: number
   parent_location_id: string | null
   is_worktree: number
+  worktree_id: number | null
   label: string
   connection_type: string
   path: string

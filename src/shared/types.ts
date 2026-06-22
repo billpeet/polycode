@@ -18,6 +18,7 @@ export interface RepoLocation {
   checked_out: boolean
   parent_location_id: string | null
   is_worktree: boolean
+  worktree_id: number | null
   label: string
   connection_type: ConnectionType
   path: string

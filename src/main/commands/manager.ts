@@ -179,6 +179,10 @@ class CommandManager {
 
     const location = getLocationById(locationId)
     const connectionType = location?.connection_type ?? 'local'
+    const commandEnv = this.buildCommandEnv(location)
+    const remoteEnvPrefix = location?.is_worktree && location.worktree_id != null
+      ? `export WORKTREE_ID=${location.worktree_id}; `
+      : 'unset WORKTREE_ID; '
 
     // Resolve cwd: if cmdDef.cwd is relative, join it with the location path.
     // For local connections use path.join (Windows-aware); for WSL/SSH use POSIX join.
@@ -227,21 +231,23 @@ class CommandManager {
       // bash -ilc (interactive + login) ensures .bashrc runs in full, giving
       // the user's real PATH instead of Windows tools bleeding in via /mnt/c/.
       const workDir = cwd ?? '~'
-      const innerCmd = `cd ${cdTarget(workDir)} && ${cmdDef.command}`
+      const innerCmd = `${remoteEnvPrefix}cd ${cdTarget(workDir)} && ${cmdDef.command}`
       proc = spawn('wsl', ['-d', location.wsl.distro, '--', 'bash', '-ilc', innerCmd], {
         shell: false,
+        env: commandEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } else if (connectionType === 'ssh' && location?.ssh) {
       // ── SSH spawn ──────────────────────────────────────────────────────────
       const ssh = location.ssh
       const workDir = cwd ?? '~'
-      const innerCmd = `${LOAD_NODE_MANAGERS}; cd ${cdTarget(workDir)} && ${cmdDef.command}`
+      const innerCmd = `${LOAD_NODE_MANAGERS}; ${remoteEnvPrefix}cd ${cdTarget(workDir)} && ${cmdDef.command}`
       const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
       const sshArgs = buildSshBaseArgs(ssh)
       sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
       proc = spawn('ssh', sshArgs, {
         shell: false,
+        env: commandEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } else if (cmdDef.shell === 'powershell') {
@@ -257,7 +263,7 @@ class CommandManager {
       proc = spawn(psExe, ['-NonInteractive', '-Command', cmdDef.command], {
         shell: false,
         cwd,
-        env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
+        env: commandEnv,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
     } else {
@@ -270,13 +276,14 @@ class CommandManager {
         proc = spawn(cmdExe, ['/d', '/s', '/c', cmdDef.command], {
           shell: false,
           cwd,
-          env: augmentWindowsPath(),
+          env: commandEnv,
           stdio: ['ignore', 'pipe', 'pipe'],
         })
       } else {
         proc = spawn('/bin/sh', ['-c', cmdDef.command], {
           shell: false,
           cwd,
+          env: commandEnv,
           stdio: ['ignore', 'pipe', 'pipe'],
         })
       }
@@ -338,6 +345,15 @@ class CommandManager {
       current.status = 'error'
       this.pushStatus(commandId, locationId, 'error')
     })
+  }
+
+  private buildCommandEnv(location: ReturnType<typeof getLocationById>): NodeJS.ProcessEnv {
+    const env = process.platform === 'win32' ? augmentWindowsPath() : { ...process.env }
+    if (location?.is_worktree && location.worktree_id != null) {
+      return { ...env, WORKTREE_ID: String(location.worktree_id) }
+    }
+    const { WORKTREE_ID: _worktreeId, ...withoutWorktreeId } = env
+    return withoutWorktreeId
   }
 
   stop(commandId: string, locationId: string): Promise<void> {

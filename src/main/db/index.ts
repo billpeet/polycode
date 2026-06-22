@@ -228,6 +228,7 @@ function runMigrations(database: Database.Database): void {
         checked_out INTEGER NOT NULL DEFAULT 0,
         parent_location_id TEXT REFERENCES repo_locations(id) ON DELETE SET NULL,
         is_worktree INTEGER NOT NULL DEFAULT 0,
+        worktree_id INTEGER,
         label TEXT NOT NULL,
         connection_type TEXT NOT NULL DEFAULT 'local',
         path TEXT NOT NULL,
@@ -254,6 +255,22 @@ function runMigrations(database: Database.Database): void {
   }
   if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'is_worktree')) {
     database.exec('ALTER TABLE repo_locations ADD COLUMN is_worktree INTEGER NOT NULL DEFAULT 0')
+  }
+  if (repoLocationCols.length > 0 && !repoLocationCols.some((c) => c.name === 'worktree_id')) {
+    database.exec('ALTER TABLE repo_locations ADD COLUMN worktree_id INTEGER')
+    const worktrees = database
+      .prepare('SELECT id, parent_location_id FROM repo_locations WHERE is_worktree = 1 AND parent_location_id IS NOT NULL ORDER BY parent_location_id ASC, created_at ASC')
+      .all() as Array<{ id: string; parent_location_id: string }>
+    const usedByParent = new Map<string, Set<number>>()
+    const updateWorktreeId = database.prepare('UPDATE repo_locations SET worktree_id = ? WHERE id = ?')
+    for (const worktree of worktrees) {
+      const used = usedByParent.get(worktree.parent_location_id) ?? new Set<number>()
+      let next = 1
+      while (used.has(next)) next += 1
+      used.add(next)
+      usedByParent.set(worktree.parent_location_id, used)
+      updateWorktreeId.run(next, worktree.id)
+    }
   }
 
   // ── git_url column on projects ──────────────────────────────────────────────
