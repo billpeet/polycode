@@ -236,7 +236,7 @@ export function getNextWorktreeId(parentLocationId: string): number {
     .prepare('SELECT worktree_id FROM repo_locations WHERE parent_location_id = ? AND is_worktree = 1 AND worktree_id IS NOT NULL ORDER BY worktree_id ASC')
     .all(parentLocationId) as Array<{ worktree_id: number }>
   const used = new Set(rows.map((row) => row.worktree_id).filter((id) => Number.isInteger(id) && id > 0))
-  let next = 1
+  let next = 2
   while (used.has(next)) next += 1
   return next
 }

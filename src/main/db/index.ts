@@ -265,7 +265,7 @@ function runMigrations(database: Database.Database): void {
     const updateWorktreeId = database.prepare('UPDATE repo_locations SET worktree_id = ? WHERE id = ?')
     for (const worktree of worktrees) {
       const used = usedByParent.get(worktree.parent_location_id) ?? new Set<number>()
-      let next = 1
+      let next = 2
       while (used.has(next)) next += 1
       used.add(next)
       usedByParent.set(worktree.parent_location_id, used)
