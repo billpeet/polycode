@@ -99,6 +99,8 @@ export interface WindowApi {
   invoke(channel: 'git:commitFiles', repoPath: string, sha: string): Promise<GitFileChange[]>
   invoke(channel: 'git:commitDiff', repoPath: string, sha: string, filePath: string): Promise<string>
   invoke(channel: 'git:branches', repoPath: string): Promise<GitBranches>
+  invoke(channel: 'git:watchStart', repoPath: string): Promise<boolean>
+  invoke(channel: 'git:watchStop', repoPath: string): Promise<void>
   invoke(channel: 'git:checkout', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:createBranch', repoPath: string, name: string, base: string, pullFirst: boolean): Promise<void>
   invoke(channel: 'git:merge', repoPath: string, source: string): Promise<{ conflicts: string[] }>

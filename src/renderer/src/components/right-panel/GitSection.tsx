@@ -230,7 +230,17 @@ function FileGroup({
   )
 }
 
-function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { projectPath: string; currentBranch: string; hasPendingChanges: boolean }) {
+function BranchControls({
+  projectPath,
+  currentBranch,
+  hasPendingChanges,
+  onGitOperationComplete,
+}: {
+  projectPath: string
+  currentBranch: string
+  hasPendingChanges: boolean
+  onGitOperationComplete?: () => void
+}) {
   const [open, setOpen] = useState(false)
   const [repoLinkCacheByPath, setRepoLinkCacheByPath] = useState<Record<string, RepoLinkCacheEntry>>({})
   const [mode, setMode] = useState<BranchMode>('switch')
@@ -330,6 +340,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
       } else {
         addToast({ type: 'success', message: `Switched to ${selectedBranch}`, duration: 3000 })
       }
+      onGitOperationComplete?.()
       setSelectedBranch(null)
       setMergeFromMaster(false)
       setOpen(false)
@@ -346,6 +357,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
     try {
       await createBranchAction(projectPath, newName.trim(), baseBranch, pullFirst)
       addToast({ type: 'success', message: `Created and switched to ${newName.trim()}`, duration: 3000 })
+      onGitOperationComplete?.()
       setNewName('')
       setOpen(false)
     } catch (err) {
@@ -404,6 +416,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
     try {
       await mergeAction(projectPath, mergeSource)
       addToast({ type: 'success', message: `Merged ${mergeSource} into ${currentBranch}`, duration: 3000 })
+      onGitOperationComplete?.()
       setMergeSource('')
       setOpen(false)
     } catch (err) {
@@ -448,6 +461,7 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
                 try {
                   await pullOriginAction(projectPath)
                   addToast({ type: 'success', message: 'Pulled from origin successfully', duration: 3000 })
+                  onGitOperationComplete?.()
                 } catch (err) {
                   reportGitError(err, 'Pull from origin failed')
                 }
@@ -808,10 +822,10 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     }
   }, [projectPath, gitStatus, isNotRepo])
 
-  const refreshCompareToMain = useCallback(async () => {
+  const refreshCompareToMain = useCallback(async (opts?: { force?: boolean }) => {
     if (!projectPath || !gitStatus || isNotRepo) return
     const currentBranch = gitStatus.branch
-    const showLoading = !compareCacheByPath[projectPath]?.loadedBranches[currentBranch]
+    const showLoading = opts?.force || !compareCacheByPath[projectPath]?.loadedBranches[currentBranch]
     if (showLoading) setCompareLoadingByPath((cache) => ({ ...cache, [projectPath]: true }))
     try {
       const result = await window.api.invoke('git:compareToMain', projectPath) as GitCompareResult
@@ -838,6 +852,17 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       if (showLoading) setCompareLoadingByPath((cache) => ({ ...cache, [projectPath]: false }))
     }
   }, [projectPath, gitStatus, isNotRepo, compareCacheByPath])
+
+  const refreshCompareAfterGitOperation = useCallback(() => {
+    if (!projectPath) return
+    setCompareCacheByPath((cache) => {
+      const { [projectPath]: _removed, ...rest } = cache
+      return rest
+    })
+    window.setTimeout(() => {
+      void refreshCompareToMain({ force: true })
+    }, 0)
+  }, [projectPath, refreshCompareToMain])
 
   useEffect(() => {
     if (!projectPath || collapsed || !gitStatus || isNotRepo) return
@@ -900,10 +925,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         await amendCommitAction(projectPath, msgToSend)
         setAmendMode(false)
         addToast({ type: 'success', message: 'Amended last commit', duration: 3000 })
+        refreshCompareAfterGitOperation()
       } else {
         if (stagedFiles.length === 0) await stageAllFiles(projectPath)
         await commitGit(projectPath, commitMsg.trim())
         addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
+        refreshCompareAfterGitOperation()
       }
     } catch (err) {
       reportGitError(err, 'Commit failed')
@@ -1072,7 +1099,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         if (!projectPath) return
         void refreshRemoteGit(projectPath)
         void refreshPullRequests()
-        void refreshCompareToMain()
+        void refreshCompareToMain({ force: true })
       }}
       className="rounded p-1 hover:bg-white/10 transition-colors mr-1"
       style={{ color: 'var(--color-text-muted)' }}
@@ -1090,6 +1117,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       await fetchGit(projectPath)
       await refreshPullRequests()
       addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)}`, duration: 3000 })
+      refreshCompareAfterGitOperation()
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to checkout PR branch', duration: 0 })
     } finally {
@@ -1123,6 +1151,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       await pullGit(projectPath)
       await refreshPullRequests()
       addToast({ type: 'success', message: `Switched to ${effectiveDefaultBranch} and pulled latest changes`, duration: 3000 })
+      refreshCompareAfterGitOperation()
     } catch (err) {
       addToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to return to ${effectiveDefaultBranch}`, duration: 0 })
     } finally {
@@ -1141,7 +1170,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     <div className="flex-shrink-0">
       <SectionHeader label="Source Control" collapsed={collapsed} onToggle={onToggle} badge={totalChanges > 0 ? String(totalChanges) : undefined} right={refreshButton} />
       {!collapsed && <>
-        {projectPath && gitStatus && !isNotRepo && <BranchControls projectPath={projectPath} currentBranch={gitStatus.branch} hasPendingChanges={hasPendingChanges} />}
+        {projectPath && gitStatus && !isNotRepo && <BranchControls projectPath={projectPath} currentBranch={gitStatus.branch} hasPendingChanges={hasPendingChanges} onGitOperationComplete={refreshCompareAfterGitOperation} />}
         {projectPath && gitStatus && !isNotRepo && <div className="px-3 py-2.5" style={{ borderBottom: '1px solid var(--color-border)' }}>
           <div className="flex items-center justify-between mb-2">
             <button onClick={() => setPrsCollapsed((value) => !value)} className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-white/10 transition-colors" style={{ color: 'var(--color-text-muted)' }} title={prsCollapsed ? 'Expand pull requests' : 'Collapse pull requests'}>
@@ -1195,6 +1224,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                     } else {
                       addToast({ type: 'success', message: 'Pulled successfully', duration: 3000 })
                     }
+                    refreshCompareAfterGitOperation()
                   } catch (err) {
                     reportGitError(err, 'Pull failed')
                   }
@@ -1207,7 +1237,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                 {isPulling ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z" /></svg>}
                 Pull{gitStatus.behind > 0 ? ` ↓${gitStatus.behind}` : ''}
               </button>
-              <button onClick={async () => { if (!projectPath) return; try { await pushGit(projectPath); addToast({ type: 'success', message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully', duration: 3000 }) } catch (err) { reportGitError(err, 'Push failed') } }} disabled={isPushing} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: !gitStatus.hasUpstream ? 'rgba(232, 123, 95, 0.12)' : 'var(--color-surface-2)', border: !gitStatus.hasUpstream ? '1px solid rgba(232, 123, 95, 0.4)' : '1px solid var(--color-border)', color: !gitStatus.hasUpstream ? 'var(--color-claude)' : gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)' }} title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin (--force-with-lease)` : 'Push to remote (--force-with-lease, safe after amend/rebase)'}>{isPushing ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4l4 4H9.5v4h-3V8H4l4-4z" /></svg>}{isPushing ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…') : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}</button>
+              <button onClick={async () => { if (!projectPath) return; try { await pushGit(projectPath); addToast({ type: 'success', message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully', duration: 3000 }); refreshCompareAfterGitOperation() } catch (err) { reportGitError(err, 'Push failed') } }} disabled={isPushing} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: !gitStatus.hasUpstream ? 'rgba(232, 123, 95, 0.12)' : 'var(--color-surface-2)', border: !gitStatus.hasUpstream ? '1px solid rgba(232, 123, 95, 0.4)' : '1px solid var(--color-border)', color: !gitStatus.hasUpstream ? 'var(--color-claude)' : gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)' }} title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin (--force-with-lease)` : 'Push to remote (--force-with-lease, safe after amend/rebase)'}>{isPushing ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4l4 4H9.5v4h-3V8H4l4-4z" /></svg>}{isPushing ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…') : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}</button>
             </div>
           </>}
         </div>

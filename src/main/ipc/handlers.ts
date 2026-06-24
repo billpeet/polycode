@@ -1135,9 +1135,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return createPullRequest(repoPath, payload, ssh, wsl)
   })
 
-  ipcMain.handle('azdo:pr:checkout', (_event, repoPath: string, prId: number) => {
+  ipcMain.handle('azdo:pr:checkout', async (_event, repoPath: string, prId: number) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
+    const result = await checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
   ipcMain.handle('azdo:pr:webUrl', (_event, repoPath: string) => {
@@ -1177,9 +1179,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return createGitHubPullRequest(repoPath, payload, ssh, wsl)
   })
 
-  ipcMain.handle('gh:pr:checkout', (_event, repoPath: string, prId: number) => {
+  ipcMain.handle('gh:pr:checkout', async (_event, repoPath: string, prId: number) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
+    const result = await checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
+    invalidateRepoGitCache(repoPath)
+    return result
   })
 
   ipcMain.handle('gh:pr:webUrl', (_event, repoPath: string) => {
