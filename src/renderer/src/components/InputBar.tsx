@@ -30,6 +30,7 @@ import QueuedMessageBanner from './QueuedMessageBanner'
 import ComposerToolbar from './input-bar/ComposerToolbar'
 import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PermissionBanner, PlanBanner, QuestionBanner } from './input-bar/Banners'
 import { PaperclipIcon, QueueIcon, SendIcon, StopIcon } from './input-bar/icons'
+import { formatErrorDetails } from '../lib/errorDetails'
 
 interface Props {
   threadId: string
@@ -540,19 +541,54 @@ export default function InputBar({ threadId }: Props) {
   async function addAttachment(file: File): Promise<void> {
     // Validate type
     if (!Object.keys(SUPPORTED_ATTACHMENT_TYPES).includes(file.type)) {
-      addToast({ message: `Unsupported file type: ${file.type}`, type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Unsupported Attachment',
+        message: `Unsupported file type: ${file.type || 'unknown'}`,
+        details: formatErrorDetails({
+          action: 'attachment:add',
+          threadId,
+          fileName: file.name,
+          mimeType: file.type || null,
+          size: file.size,
+          supportedTypes: Object.keys(SUPPORTED_ATTACHMENT_TYPES),
+        }),
+      })
       return
     }
 
     // Validate size
     if (file.size > MAX_ATTACHMENT_SIZE) {
-      addToast({ message: `File too large: ${file.name} (max 5MB)`, type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Attachment Too Large',
+        message: `File too large: ${file.name} (max 5MB)`,
+        details: formatErrorDetails({
+          action: 'attachment:add',
+          threadId,
+          fileName: file.name,
+          mimeType: file.type || null,
+          size: file.size,
+          maxSize: MAX_ATTACHMENT_SIZE,
+        }),
+      })
       return
     }
 
     // Validate count
     if (attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
-      addToast({ message: `Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message`, type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Attachment Limit Reached',
+        message: `Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message`,
+        details: formatErrorDetails({
+          action: 'attachment:add',
+          threadId,
+          currentCount: attachments.length,
+          maxCount: MAX_ATTACHMENTS_PER_MESSAGE,
+          fileName: file.name,
+        }),
+      })
       return
     }
 
@@ -575,25 +611,65 @@ export default function InputBar({ threadId }: Props) {
   async function addAttachmentFromPath(filePath: string): Promise<void> {
     const info = await window.api.invoke('attachments:getFileInfo', filePath)
     if (!info) {
-      addToast({ message: 'Could not read file', type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Attachment Read Failed',
+        message: 'Could not read file',
+        details: formatErrorDetails({ action: 'attachments:getFileInfo', threadId, filePath }),
+      })
       return
     }
 
     // Validate type
     if (!Object.keys(SUPPORTED_ATTACHMENT_TYPES).includes(info.mimeType)) {
-      addToast({ message: `Unsupported file type: ${info.mimeType}`, type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Unsupported Attachment',
+        message: `Unsupported file type: ${info.mimeType}`,
+        details: formatErrorDetails({
+          action: 'attachment:addFromPath',
+          threadId,
+          filePath,
+          mimeType: info.mimeType,
+          size: info.size,
+          supportedTypes: Object.keys(SUPPORTED_ATTACHMENT_TYPES),
+        }),
+      })
       return
     }
 
     // Validate size
     if (info.size > MAX_ATTACHMENT_SIZE) {
-      addToast({ message: 'File too large (max 5MB)', type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Attachment Too Large',
+        message: 'File too large (max 5MB)',
+        details: formatErrorDetails({
+          action: 'attachment:addFromPath',
+          threadId,
+          filePath,
+          mimeType: info.mimeType,
+          size: info.size,
+          maxSize: MAX_ATTACHMENT_SIZE,
+        }),
+      })
       return
     }
 
     // Validate count
     if (attachments.length >= MAX_ATTACHMENTS_PER_MESSAGE) {
-      addToast({ message: `Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message`, type: 'error' })
+      addToast({
+        type: 'error',
+        title: 'Attachment Limit Reached',
+        message: `Maximum ${MAX_ATTACHMENTS_PER_MESSAGE} attachments per message`,
+        details: formatErrorDetails({
+          action: 'attachment:addFromPath',
+          threadId,
+          currentCount: attachments.length,
+          maxCount: MAX_ATTACHMENTS_PER_MESSAGE,
+          filePath,
+        }),
+      })
       return
     }
 
@@ -640,7 +716,17 @@ export default function InputBar({ threadId }: Props) {
         e.preventDefault()
         const file = item.getAsFile()
         if (file) {
-          await addAttachment(file)
+          try {
+            await addAttachment(file)
+          } catch (err) {
+            addToast({
+              type: 'error',
+              title: 'Paste Attachment Failed',
+              message: err instanceof Error ? err.message : 'Failed to add pasted attachment',
+              details: formatErrorDetails({ action: 'attachment:paste', threadId, mimeType: file.type, fileName: file.name, size: file.size }, err),
+              duration: 0,
+            })
+          }
         }
         return
       }
@@ -667,14 +753,34 @@ export default function InputBar({ threadId }: Props) {
 
     const files = Array.from(e.dataTransfer.files)
     for (const file of files) {
-      await addAttachment(file)
+      try {
+        await addAttachment(file)
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Drop Attachment Failed',
+          message: err instanceof Error ? err.message : 'Failed to add dropped attachment',
+          details: formatErrorDetails({ action: 'attachment:drop', threadId, fileName: file.name, mimeType: file.type, size: file.size }, err),
+          duration: 0,
+        })
+      }
     }
   }
 
   async function handleFilePick(): Promise<void> {
     const paths = await window.api.invoke('dialog:open-files')
     for (const filePath of paths) {
-      await addAttachmentFromPath(filePath)
+      try {
+        await addAttachmentFromPath(filePath)
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Attachment Failed',
+          message: err instanceof Error ? err.message : 'Failed to add attachment',
+          details: formatErrorDetails({ action: 'attachment:filePicker', threadId, filePath }, err),
+          duration: 0,
+        })
+      }
     }
   }
 

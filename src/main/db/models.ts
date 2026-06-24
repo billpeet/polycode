@@ -3,6 +3,7 @@ export interface ProjectRow {
   name: string
   path: string
   git_url: string | null
+  allow_main_branch_commits: number
   ssh_host: string | null
   ssh_user: string | null
   ssh_port: number | null

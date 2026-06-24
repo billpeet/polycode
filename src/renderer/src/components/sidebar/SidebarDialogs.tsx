@@ -42,6 +42,7 @@ interface SidebarDialogsProps {
   selectedProjectId: string | null
   selectedProjectName?: string
   onCloseProjectDialog: () => void
+  onProjectCreated: (project: Project) => void
   onCloseLocationDialog: (projectId: string) => void
   onCloseConfirmDelete: () => void
   onDeleteProject: (projectId: string) => void | Promise<void>
@@ -57,6 +58,7 @@ export default function SidebarDialogs({
   selectedProjectId,
   selectedProjectName,
   onCloseProjectDialog,
+  onProjectCreated,
   onCloseLocationDialog,
   onCloseConfirmDelete,
   onDeleteProject,
@@ -70,6 +72,7 @@ export default function SidebarDialogs({
           mode={projectDialog.mode}
           project={projectDialog.mode === 'edit' ? projectDialog.project : undefined}
           onClose={onCloseProjectDialog}
+          onCreated={onProjectCreated}
         />
       )}
 

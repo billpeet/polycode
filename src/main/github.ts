@@ -1,5 +1,9 @@
 import { execFile, spawn } from 'child_process'
 import { promisify } from 'util'
+import { promises as fsPromises } from 'fs'
+import { tmpdir } from 'os'
+import * as path from 'path'
+import { randomUUID } from 'crypto'
 import { GitHubPullRequest, SshConfig, WslConfig } from '../shared/types'
 import { augmentWindowsPath, winQuote } from './driver/runner'
 import { sshExec } from './ssh'
@@ -234,16 +238,35 @@ export async function createGitHubPullRequest(
     throw new Error('Cannot create pull request from detached HEAD')
   }
 
+  const body = payload.description?.trim() || ''
+
+  // Pass the body via a temp file for local runs. On Windows, runLocal executes gh through
+  // cmd.exe (shell:true) with a joined command string, and a multi-line --body value gets
+  // truncated at the first newline. `--body-file` sidesteps all shell quoting. SSH/WSL run
+  // through bash single-quotes (newline-safe), so they keep the inline --body.
+  const useBodyFile = !!body && !ssh && !wsl
+  let bodyFile: string | null = null
+  if (useBodyFile) {
+    bodyFile = path.join(tmpdir(), `polycode-pr-body-${process.pid}-${randomUUID()}.md`)
+    await fsPromises.writeFile(bodyFile, body, 'utf8')
+  }
+
   const createArgs = [
     'pr', 'create',
     '--repo', repo,
     '--head', source,
     '--base', payload.target,
     '--title', payload.title,
-    '--body', payload.description?.trim() || '',
+    ...(bodyFile ? ['--body-file', bodyFile] : ['--body', body]),
   ]
 
-  const createOutput = await runGh(repoPath, createArgs, ssh, wsl)
+  let createOutput: string
+  try {
+    createOutput = await runGh(repoPath, createArgs, ssh, wsl)
+  } finally {
+    if (bodyFile) await fsPromises.unlink(bodyFile).catch(() => undefined)
+  }
+
   const prUrlMatch = createOutput.match(/https:\/\/github\.com\/[^\s]+\/pull\/(\d+)/i)
   const prNumber = prUrlMatch ? parseInt(prUrlMatch[1] ?? '0', 10) : 0
   if (!prNumber) {

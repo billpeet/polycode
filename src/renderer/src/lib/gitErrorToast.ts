@@ -1,6 +1,7 @@
 import { useCallback } from 'react'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
+import { formatErrorDetails } from './errorDetails'
 
 /**
  * Pattern matches the stable substring of the main-process `GitLockedError.message`, plus the raw
@@ -25,12 +26,20 @@ export function useGitErrorReporter(projectPath: string | null | undefined) {
   return useCallback((err: unknown, fallbackMessage: string, duration: number = 0) => {
     const message = err instanceof Error ? err.message : String(err ?? fallbackMessage)
     if (!projectPath || !isRepoLockError(message)) {
-      addToast({ type: 'error', message: message || fallbackMessage, duration })
+      addToast({
+        type: 'error',
+        title: fallbackMessage,
+        message: message || fallbackMessage,
+        details: formatErrorDetails({ action: 'git operation', projectPath, fallbackMessage }, err),
+        duration,
+      })
       return
     }
     addToast({
       type: 'error',
+      title: fallbackMessage,
       message: `${message}\n\nIf no other git process is running, you can forcibly remove the lock file(s).`,
+      details: formatErrorDetails({ action: 'git operation', projectPath, fallbackMessage, lockRecoveryAvailable: true }, err),
       duration: 0,
       actionLabel: 'Force Unlock',
       onAction: async () => {
@@ -49,7 +58,9 @@ export function useGitErrorReporter(projectPath: string | null | undefined) {
         } catch (unlockErr) {
           addToast({
             type: 'error',
+            title: 'Force Unlock Failed',
             message: unlockErr instanceof Error ? unlockErr.message : 'Failed to remove lock files',
+            details: formatErrorDetails({ action: 'git:forceUnlock', projectPath }, unlockErr),
             duration: 0,
           })
         }

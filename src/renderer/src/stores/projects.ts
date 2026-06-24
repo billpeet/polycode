@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Project } from '../types/ipc'
+import { Project, NewProjectSpec } from '../types/ipc'
 
 interface ProjectStore {
   projects: Project[]
@@ -8,8 +8,9 @@ interface ProjectStore {
   expandedProjectIds: Set<string>
   loading: boolean
   fetch: () => Promise<void>
-  create: (name: string, gitUrl?: string | null) => Promise<Project>
-  update: (id: string, name: string, gitUrl?: string | null) => Promise<void>
+  create: (name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => Promise<Project>
+  createFull: (spec: NewProjectSpec) => Promise<Project>
+  update: (id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => Promise<void>
   remove: (id: string) => Promise<void>
   archive: (id: string) => Promise<void>
   unarchive: (id: string) => Promise<void>
@@ -40,17 +41,23 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     }
   },
 
-  create: async (name, gitUrl) => {
-    const project = await window.api.invoke('projects:create', name, gitUrl)
+  create: async (name, gitUrl, allowMainBranchCommits = true) => {
+    const project = await window.api.invoke('projects:create', name, gitUrl, allowMainBranchCommits)
     set((s) => ({ projects: [project, ...s.projects] }))
     return project
   },
 
-  update: async (id, name, gitUrl) => {
-    await window.api.invoke('projects:update', id, name, gitUrl)
+  createFull: async (spec) => {
+    const { project } = await window.api.invoke('projects:createFull', spec)
+    set((s) => ({ projects: [project, ...s.projects] }))
+    return project
+  },
+
+  update: async (id, name, gitUrl, allowMainBranchCommits = true) => {
+    await window.api.invoke('projects:update', id, name, gitUrl, allowMainBranchCommits)
     set((s) => ({
-      projects: s.projects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null } : p),
-      archivedProjects: s.archivedProjects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null } : p),
+      projects: s.projects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
+      archivedProjects: s.archivedProjects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
     }))
   },
 
