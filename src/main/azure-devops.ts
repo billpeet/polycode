@@ -74,6 +74,43 @@ function buildWebUrl(remoteUrl: string, prId: number): string {
   return `${normalized}/pullrequest/${prId}`
 }
 
+function buildPullRequestsWebUrl(remoteUrl: string): string {
+  const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
+
+  // SSH: git@ssh.dev.azure.com:v3/org/project/repo
+  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (sshMatch) return `https://dev.azure.com/${sshMatch[1]}/${sshMatch[2]}/_git/${sshMatch[3]}/pullrequests`
+
+  // SSH: ssh://git@ssh.dev.azure.com/v3/org/project/repo
+  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (sshUrlMatch) return `https://dev.azure.com/${sshUrlMatch[1]}/${sshUrlMatch[2]}/_git/${sshUrlMatch[3]}/pullrequests`
+
+  // SSH: git@vs-ssh.visualstudio.com:v3/org/project/repo
+  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (vsSshMatch) return `https://${vsSshMatch[1]}.visualstudio.com/${vsSshMatch[2]}/_git/${vsSshMatch[3]}/pullrequests`
+
+  // HTTPS: just append /pullrequests to the repo URL
+  return `${normalized}/pullrequests`
+}
+
+function buildRepoWebUrl(remoteUrl: string): string {
+  const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
+
+  // SSH: git@ssh.dev.azure.com:v3/org/project/repo
+  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (sshMatch) return `https://dev.azure.com/${sshMatch[1]}/${sshMatch[2]}/_git/${sshMatch[3]}`
+
+  // SSH: ssh://git@ssh.dev.azure.com/v3/org/project/repo
+  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (sshUrlMatch) return `https://dev.azure.com/${sshUrlMatch[1]}/${sshUrlMatch[2]}/_git/${sshUrlMatch[3]}`
+
+  // SSH: git@vs-ssh.visualstudio.com:v3/org/project/repo
+  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
+  if (vsSshMatch) return `https://${vsSshMatch[1]}.visualstudio.com/${vsSshMatch[2]}/_git/${vsSshMatch[3]}`
+
+  return normalized
+}
+
 function mapPr(pr: AzDevOpsPr, remoteUrl?: string): AzureDevOpsPullRequest {
   const id = pr.pullRequestId ?? 0
   const url = remoteUrl && id ? buildWebUrl(remoteUrl, id) : (pr.url ?? '')
@@ -307,6 +344,24 @@ export async function listOpenPullRequests(
   return raw
     .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
     .filter((pr) => pr.id > 0)
+}
+
+export async function getPullRequestsWebUrl(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  return buildPullRequestsWebUrl(ctx.remoteUrl)
+}
+
+export async function getRepoWebUrl(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  return buildRepoWebUrl(ctx.remoteUrl)
 }
 
 export async function getCurrentBranchPullRequest(

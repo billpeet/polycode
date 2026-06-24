@@ -112,10 +112,14 @@ export interface WindowApi {
   invoke(channel: 'azdo:pr:current', repoPath: string, branch: string): Promise<AzureDevOpsPullRequest | null>
   invoke(channel: 'azdo:pr:create', repoPath: string, payload: { target: string; title: string; description?: string }): Promise<AzureDevOpsPullRequest>
   invoke(channel: 'azdo:pr:checkout', repoPath: string, prId: number): Promise<{ branch: string }>
+  invoke(channel: 'azdo:pr:webUrl', repoPath: string): Promise<string>
+  invoke(channel: 'azdo:repo:webUrl', repoPath: string): Promise<string>
   invoke(channel: 'gh:pr:list', repoPath: string): Promise<GitHubPullRequest[]>
   invoke(channel: 'gh:pr:current', repoPath: string, branch: string): Promise<GitHubPullRequest | null>
   invoke(channel: 'gh:pr:create', repoPath: string, payload: { target: string; title: string; description?: string }): Promise<GitHubPullRequest>
   invoke(channel: 'gh:pr:checkout', repoPath: string, prId: number): Promise<{ branch: string }>
+  invoke(channel: 'gh:pr:webUrl', repoPath: string): Promise<string>
+  invoke(channel: 'gh:repo:webUrl', repoPath: string): Promise<string>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
   invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>

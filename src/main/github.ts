@@ -193,6 +193,24 @@ export async function listOpenGitHubPullRequests(
     .filter((pr) => pr.id > 0)
 }
 
+export async function getGitHubPullRequestsWebUrl(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  return `https://github.com/${ctx.owner}/${ctx.repo}/pulls`
+}
+
+export async function getGitHubRepoWebUrl(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  return `https://github.com/${ctx.owner}/${ctx.repo}`
+}
+
 export async function getCurrentBranchGitHubPullRequest(
   repoPath: string,
   branch: string,

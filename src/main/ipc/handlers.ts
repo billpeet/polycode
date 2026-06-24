@@ -83,8 +83,8 @@ import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff, invalidateGitCache } from '../git'
-import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch } from '../azure-devops'
-import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch } from '../github'
+import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch, getPullRequestsWebUrl, getRepoWebUrl } from '../azure-devops'
+import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch, getGitHubPullRequestsWebUrl, getGitHubRepoWebUrl } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { startFileWatch, stopFileWatch } from '../file-watch'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
@@ -1140,6 +1140,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
   })
 
+  ipcMain.handle('azdo:pr:webUrl', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getPullRequestsWebUrl(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('azdo:repo:webUrl', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getRepoWebUrl(repoPath, ssh, wsl)
+  })
+
   // ── GitHub Pull Requests ──────────────────────────────────────────────────
 
   ipcMain.handle('gh:pr:list', async (_event, repoPath: string) => {
@@ -1170,6 +1180,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('gh:pr:checkout', (_event, repoPath: string, prId: number) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
+  })
+
+  ipcMain.handle('gh:pr:webUrl', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getGitHubPullRequestsWebUrl(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('gh:repo:webUrl', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getGitHubRepoWebUrl(repoPath, ssh, wsl)
   })
 
   // ── Plan files ──────────────────────────────────────────────────────────

@@ -32,6 +32,26 @@ type PullRequestItem = {
   creationDate: string
 }
 
+type RepoLinkCacheEntry = {
+  provider: 'azure' | 'github' | null
+  pageUrl: string | null
+}
+
+type PullRequestCacheEntry = {
+  provider: 'azure' | 'github' | null
+  pageUrl: string | null
+  openPrs: PullRequestItem[]
+  currentByBranch: Record<string, PullRequestItem | null>
+  defaultBranch: string
+  loadedBranches: Record<string, true>
+}
+
+type CompareCacheEntry = {
+  baseRef: string
+  files: GitFileChange[]
+  loadedBranches: Record<string, true>
+}
+
 type BranchMode = 'switch' | 'new' | 'merge' | 'clean'
 
 const EMPTY_FILES: string[] = []
@@ -73,6 +93,22 @@ function DiscardIcon() {
   return (
     <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
       <path d="M8 3a5 5 0 1 1-4.546 7.914.75.75 0 1 0-1.294.76 6.5 6.5 0 1 0-.16-6.164l-.854-.854a.5.5 0 0 0-.854.354v3a.5.5 0 0 0 .5.5h3a.5.5 0 0 0 .354-.854l-.89-.89A4.99 4.99 0 0 1 8 3z" />
+    </svg>
+  )
+}
+
+function PullRequestProviderIcon({ provider }: { provider: 'azure' | 'github' }) {
+  if (provider === 'github') {
+    return (
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+        <path d="M8 0C3.58 0 0 3.64 0 8.13c0 3.59 2.29 6.63 5.47 7.7.4.07.55-.18.55-.39 0-.19-.01-.83-.01-1.51-2.01.38-2.53-.5-2.69-.96-.09-.23-.48-.96-.82-1.15-.28-.15-.68-.52-.01-.53.63-.01 1.08.59 1.23.83.72 1.23 1.87.88 2.33.67.07-.53.28-.88.51-1.08-1.78-.21-3.64-.91-3.64-4.03 0-.89.31-1.62.82-2.19-.08-.2-.36-1.04.08-2.16 0 0 .67-.22 2.2.84A7.44 7.44 0 0 1 8 3.89c.68 0 1.36.09 2 .28 1.52-1.06 2.19-.84 2.19-.84.44 1.12.16 1.96.08 2.16.51.57.82 1.3.82 2.19 0 3.13-1.87 3.82-3.65 4.03.29.25.54.74.54 1.5 0 1.08-.01 1.95-.01 2.22 0 .21.15.46.55.39A8.02 8.02 0 0 0 16 8.13C16 3.64 12.42 0 8 0z" />
+      </svg>
+    )
+  }
+
+  return (
+    <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M9.45 1 3.94 5.6 1.5 3.75v8.5l2.44-1.85L9.45 15l5.05-2.05V3.05L9.45 1zm0 2.3v9.4L5.15 9.1V6.9l4.3-3.6z" />
     </svg>
   )
 }
@@ -196,6 +232,7 @@ function FileGroup({
 
 function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { projectPath: string; currentBranch: string; hasPendingChanges: boolean }) {
   const [open, setOpen] = useState(false)
+  const [repoLinkCacheByPath, setRepoLinkCacheByPath] = useState<Record<string, RepoLinkCacheEntry>>({})
   const [mode, setMode] = useState<BranchMode>('switch')
   const [branchSearch, setBranchSearch] = useState('')
   const [selectedBranch, setSelectedBranch] = useState<string | null>(null)
@@ -227,6 +264,38 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
   const addToast = useToastStore((s) => s.add)
   const reportGitError = useGitErrorReporter(projectPath)
   const isPullingOrigin = pullingByPath[projectPath] ?? false
+  const repoLinkCache = repoLinkCacheByPath[projectPath] ?? null
+  const repoProvider = repoLinkCache?.provider ?? null
+  const repoPageUrl = repoLinkCache?.pageUrl ?? null
+
+  useEffect(() => {
+    if (repoLinkCacheByPath[projectPath]) return
+    let cancelled = false
+    async function loadRepoLink() {
+      try {
+        const provider = await window.api.invoke('git:hostingProvider', projectPath) as 'azure' | 'github' | null
+        if (!provider) {
+          if (!cancelled) {
+            setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider: null, pageUrl: null } }))
+          }
+          return
+        }
+        const pageUrl = provider === 'azure'
+          ? await window.api.invoke('azdo:repo:webUrl', projectPath)
+          : await window.api.invoke('gh:repo:webUrl', projectPath)
+        if (!cancelled) {
+          setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider, pageUrl } }))
+        }
+      } catch {
+        if (!cancelled) {
+          setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider: null, pageUrl: null } }))
+        }
+      }
+    }
+
+    void loadRepoLink()
+    return () => { cancelled = true }
+  }, [projectPath, repoLinkCacheByPath])
 
   function toggleOpen() {
     if (!open) fetchBranches(projectPath)
@@ -353,6 +422,18 @@ function BranchControls({ projectPath, currentBranch, hasPendingChanges }: { pro
           <path d="M11.75 2.5a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0zm.75 1.942a2.25 2.25 0 1 1 0-3.884V4.5a.75.75 0 0 1-.75.75H9.5a.75.75 0 0 0-.75.75v.5c0 .414.336.75.75.75h2.25V7.5a.75.75 0 0 1-.75.75H5.5a2.25 2.25 0 0 1-2.25-2.25v-.5A2.25 2.25 0 0 1 5.5 3.25h4a2.25 2.25 0 0 1 2.25 2.25v.692a2.25 2.25 0 1 1-1.5 0V5.5A.75.75 0 0 0 9.5 4.75h-4A.75.75 0 0 0 4.75 5.5V6a.75.75 0 0 0 .75.75h5a2.25 2.25 0 0 1 2.25 2.25v.692zM4.25 13.5a.75.75 0 1 0 1.5 0 .75.75 0 0 0-1.5 0zm.75 1.942a2.25 2.25 0 1 1 0-3.884V9.75a.75.75 0 0 1 .75-.75h4a.75.75 0 0 0 .75-.75v-.5a.75.75 0 0 0-.75-.75H8.5v-.692a2.25 2.25 0 1 1 1.5 0V7.75A2.25 2.25 0 0 1 7.75 10H5.5a.75.75 0 0 0-.75.75v1.808a2.25 2.25 0 0 1 0 3.884z" />
         </svg>
         <span className="text-xs flex-1 truncate font-mono" style={{ color: 'var(--color-text)' }} title={currentBranch}>{currentBranch}</span>
+        {repoProvider && repoPageUrl && (
+          <a
+            href={repoPageUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="rounded p-1 hover:bg-white/10 transition-colors"
+            style={{ color: 'var(--color-text-muted)', flexShrink: 0 }}
+            title={`Open ${repoProvider === 'azure' ? 'Azure DevOps' : 'GitHub'} repository`}
+          >
+            <PullRequestProviderIcon provider={repoProvider} />
+          </a>
+        )}
         <button onClick={toggleOpen} className="text-[10px] px-1.5 py-0.5 rounded hover:bg-white/10 transition-colors flex items-center gap-1" style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', flexShrink: 0 }}>
           Branches
           <svg width="6" height="6" viewBox="0 0 8 8" fill="currentColor" style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.15s' }}><path d="M0 2l4 4 4-4z" /></svg>
@@ -610,9 +691,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [committing, setCommitting] = useState(false)
   const [amendMode, setAmendMode] = useState(false)
   const [fileMenu, setFileMenu] = useState<{ x: number; y: number; file: GitFileChange } | null>(null)
-  const [openPrs, setOpenPrs] = useState<PullRequestItem[]>([])
-  const [currentPr, setCurrentPr] = useState<PullRequestItem | null>(null)
-  const [prProvider, setPrProvider] = useState<'azure' | 'github' | null>(null)
+  const [prCacheByPath, setPrCacheByPath] = useState<Record<string, PullRequestCacheEntry>>({})
   const [loadingPrs, setLoadingPrs] = useState(false)
   const [prError, setPrError] = useState<string | null>(null)
   const [checkingOutPrId, setCheckingOutPrId] = useState<number | null>(null)
@@ -625,13 +704,20 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [returningToDefault, setReturningToDefault] = useState(false)
   const [prsCollapsed, setPrsCollapsed] = useState(false)
   const [defaultBranch, setDefaultBranch] = useState('main')
-  const [compareBaseRef, setCompareBaseRef] = useState('origin/main')
-  const [compareFiles, setCompareFiles] = useState<GitFileChange[]>([])
-  const [compareLoading, setCompareLoading] = useState(false)
-  const [compareLoadedBranch, setCompareLoadedBranch] = useState<string | null>(null)
-  const [prsLoadedBranch, setPrsLoadedBranch] = useState<string | null>(null)
-  const [prsLoadedProjectPath, setPrsLoadedProjectPath] = useState<string | null>(null)
-  const [compareLoadedProjectPath, setCompareLoadedProjectPath] = useState<string | null>(null)
+  const [compareCacheByPath, setCompareCacheByPath] = useState<Record<string, CompareCacheEntry>>({})
+  const [compareLoadingByPath, setCompareLoadingByPath] = useState<Record<string, boolean>>({})
+  const prCache = projectPath ? (prCacheByPath[projectPath] ?? null) : null
+  const compareCache = projectPath ? (compareCacheByPath[projectPath] ?? null) : null
+  const openPrs = prCache?.openPrs ?? []
+  const currentPr = gitStatus ? (prCache?.currentByBranch[gitStatus.branch] ?? null) : null
+  const prProvider = prCache?.provider ?? null
+  const prPageUrl = prCache?.pageUrl ?? null
+  const effectiveDefaultBranch = prCache?.defaultBranch ?? defaultBranch
+  const prsLoadedForCurrentBranch = !!(projectPath && gitStatus && prCache?.loadedBranches[gitStatus.branch])
+  const compareBaseRef = compareCache?.baseRef ?? 'origin/main'
+  const compareFiles = compareCache?.files ?? []
+  const compareLoading = projectPath ? (compareLoadingByPath[projectPath] ?? false) : false
+  const compareLoadedForCurrentBranch = !!(projectPath && gitStatus && compareCache?.loadedBranches[gitStatus.branch])
 
   useEffect(() => {
     if (!projectPath || collapsed) return
@@ -654,6 +740,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     if (gitStatus && !createPrTitleEdited) setCreatePrTitle(`Merge ${gitStatus.branch} into ${createPrTarget}`)
   }, [gitStatus?.branch, createPrTarget, createPrTitleEdited])
 
+  useEffect(() => {
+    if (prCache?.defaultBranch && !showCreatePr) {
+      setCreatePrTarget(prCache.defaultBranch)
+    }
+  }, [prCache?.defaultBranch, showCreatePr])
+
   const refreshPullRequests = useCallback(async () => {
     if (!projectPath || !gitStatus || isNotRepo) return
     setLoadingPrs(true)
@@ -667,32 +759,50 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       setDefaultBranch(resolvedDefaultBranch)
 
       if (provider === 'azure') {
-        const [prs, current] = await Promise.all([window.api.invoke('azdo:pr:list', projectPath), window.api.invoke('azdo:pr:current', projectPath, gitStatus.branch)])
-        setOpenPrs(prs as PullRequestItem[])
-        setCurrentPr(current as PullRequestItem | null)
-        setPrProvider('azure')
+        const [prs, current, pageUrl] = await Promise.all([window.api.invoke('azdo:pr:list', projectPath), window.api.invoke('azdo:pr:current', projectPath, gitStatus.branch), window.api.invoke('azdo:pr:webUrl', projectPath)])
+        setPrCacheByPath((cache) => ({
+          ...cache,
+          [projectPath]: {
+            provider: 'azure',
+            pageUrl: pageUrl as string,
+            openPrs: prs as PullRequestItem[],
+            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current as PullRequestItem | null },
+            defaultBranch: resolvedDefaultBranch,
+            loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
+          },
+        }))
         setCreatePrTarget(resolvedDefaultBranch)
-        setPrsLoadedBranch(gitStatus.branch)
-        setPrsLoadedProjectPath(projectPath)
         return
       }
 
       if (provider === 'github') {
-        const [prs, current] = await Promise.all([window.api.invoke('gh:pr:list', projectPath), window.api.invoke('gh:pr:current', projectPath, gitStatus.branch)])
-        setOpenPrs(prs as PullRequestItem[])
-        setCurrentPr(current as PullRequestItem | null)
-        setPrProvider('github')
+        const [prs, current, pageUrl] = await Promise.all([window.api.invoke('gh:pr:list', projectPath), window.api.invoke('gh:pr:current', projectPath, gitStatus.branch), window.api.invoke('gh:pr:webUrl', projectPath)])
+        setPrCacheByPath((cache) => ({
+          ...cache,
+          [projectPath]: {
+            provider: 'github',
+            pageUrl: pageUrl as string,
+            openPrs: prs as PullRequestItem[],
+            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current as PullRequestItem | null },
+            defaultBranch: resolvedDefaultBranch,
+            loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
+          },
+        }))
         setCreatePrTarget(resolvedDefaultBranch)
-        setPrsLoadedBranch(gitStatus.branch)
-        setPrsLoadedProjectPath(projectPath)
         return
       }
 
-      setOpenPrs([])
-      setCurrentPr(null)
-      setPrProvider(null)
-      setPrsLoadedBranch(gitStatus.branch)
-      setPrsLoadedProjectPath(projectPath)
+      setPrCacheByPath((cache) => ({
+        ...cache,
+        [projectPath]: {
+          provider: null,
+          pageUrl: null,
+          openPrs: [],
+          currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: null },
+          defaultBranch: resolvedDefaultBranch,
+          loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
+        },
+      }))
     } finally {
       setLoadingPrs(false)
     }
@@ -701,38 +811,51 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const refreshCompareToMain = useCallback(async () => {
     if (!projectPath || !gitStatus || isNotRepo) return
     const currentBranch = gitStatus.branch
-    const showLoading = compareLoadedBranch !== currentBranch
-    if (showLoading) setCompareLoading(true)
+    const showLoading = !compareCacheByPath[projectPath]?.loadedBranches[currentBranch]
+    if (showLoading) setCompareLoadingByPath((cache) => ({ ...cache, [projectPath]: true }))
     try {
       const result = await window.api.invoke('git:compareToMain', projectPath) as GitCompareResult
-      setCompareBaseRef(result.baseRef)
-      setCompareFiles(result.files)
-      setCompareLoadedBranch(currentBranch)
-      setCompareLoadedProjectPath(projectPath)
+      setCompareCacheByPath((cache) => ({
+        ...cache,
+        [projectPath]: {
+          baseRef: result.baseRef,
+          files: result.files,
+          loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [currentBranch]: true },
+        },
+      }))
     } catch {
-      if (showLoading) setCompareFiles([])
+      if (showLoading) {
+        setCompareCacheByPath((cache) => ({
+          ...cache,
+          [projectPath]: {
+            baseRef: cache[projectPath]?.baseRef ?? 'origin/main',
+            files: [],
+            loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [currentBranch]: true },
+          },
+        }))
+      }
     } finally {
-      if (showLoading) setCompareLoading(false)
+      if (showLoading) setCompareLoadingByPath((cache) => ({ ...cache, [projectPath]: false }))
     }
-  }, [projectPath, gitStatus, isNotRepo, compareLoadedBranch])
+  }, [projectPath, gitStatus, isNotRepo, compareCacheByPath])
 
   useEffect(() => {
     if (!projectPath || collapsed || !gitStatus || isNotRepo) return
-    if (prsLoadedProjectPath === projectPath && prsLoadedBranch === gitStatus.branch) return
+    if (prsLoadedForCurrentBranch) return
     const timeoutId = window.setTimeout(() => {
       void refreshPullRequests()
     }, 600)
     return () => window.clearTimeout(timeoutId)
-  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshPullRequests, prsLoadedProjectPath, prsLoadedBranch])
+  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshPullRequests, prsLoadedForCurrentBranch])
 
   useEffect(() => {
     if (!projectPath || collapsed || !gitStatus || isNotRepo) return
-    if (compareLoadedProjectPath === projectPath && compareLoadedBranch === gitStatus.branch) return
+    if (compareLoadedForCurrentBranch) return
     const timeoutId = window.setTimeout(() => {
       void refreshCompareToMain()
     }, 900)
     return () => window.clearTimeout(timeoutId)
-  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshCompareToMain, compareLoadedProjectPath, compareLoadedBranch])
+  }, [projectPath, collapsed, gitStatus, isNotRepo, refreshCompareToMain, compareLoadedForCurrentBranch])
 
   const handleSetCommitMsg = useCallback((msg: string) => {
     if (projectPath) setCommitMsg(projectPath, msg)
@@ -993,26 +1116,26 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   }
 
   async function handleReturnToDefaultBranch() {
-    if (!projectPath || !defaultBranch) return
+    if (!projectPath || !effectiveDefaultBranch) return
     setReturningToDefault(true)
     try {
-      await checkoutGit(projectPath, defaultBranch)
+      await checkoutGit(projectPath, effectiveDefaultBranch)
       await pullGit(projectPath)
       await refreshPullRequests()
-      addToast({ type: 'success', message: `Switched to ${defaultBranch} and pulled latest changes`, duration: 3000 })
+      addToast({ type: 'success', message: `Switched to ${effectiveDefaultBranch} and pulled latest changes`, duration: 3000 })
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to return to ${defaultBranch}`, duration: 0 })
+      addToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to return to ${effectiveDefaultBranch}`, duration: 0 })
     } finally {
       setReturningToDefault(false)
     }
   }
 
   const hasPendingChanges = unstagedFiles.length > 0
-  const showReturnToDefault = !!gitStatus && defaultBranch.trim().length > 0 && gitStatus.branch !== defaultBranch
+  const showReturnToDefault = !!gitStatus && effectiveDefaultBranch.trim().length > 0 && gitStatus.branch !== effectiveDefaultBranch
   const returnToDefaultLabel =
-    defaultBranch === 'master' ? 'Return to master'
-    : defaultBranch === 'main' ? 'Return to main'
-    : `Return to ${defaultBranch}`
+    effectiveDefaultBranch === 'master' ? 'Return to master'
+    : effectiveDefaultBranch === 'main' ? 'Return to main'
+    : `Return to ${effectiveDefaultBranch}`
 
   return (
     <div className="flex-shrink-0">
@@ -1023,9 +1146,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           <div className="flex items-center justify-between mb-2">
             <button onClick={() => setPrsCollapsed((value) => !value)} className="flex items-center gap-1.5 rounded px-1 py-0.5 hover:bg-white/10 transition-colors" style={{ color: 'var(--color-text-muted)' }} title={prsCollapsed ? 'Expand pull requests' : 'Collapse pull requests'}>
               <svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" style={{ transform: prsCollapsed ? 'rotate(-90deg)' : 'rotate(0deg)', transition: 'transform 0.15s', opacity: 0.7 }}><path d="M0 2l4 4 4-4z" /></svg>
-              <span className="text-[11px] font-semibold whitespace-nowrap">Pull Requests {prProvider ? `(${prProvider === 'azure' ? 'Azure DevOps' : 'GitHub'})` : ''}</span>
+              <span className="text-[11px] font-semibold whitespace-nowrap">Pull Requests</span>
             </button>
-            <button onClick={() => void refreshPullRequests()} disabled={loadingPrs} className="shrink-0 whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Refresh pull requests">{loadingPrs ? 'Refreshing…' : 'Refresh'}</button>
+            <div className="flex shrink-0 items-center gap-1">
+              {prPageUrl && <a href={prPageUrl} target="_blank" rel="noreferrer" className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors" style={{ color: 'var(--color-text-muted)' }} title="Open pull requests page">Open</a>}
+              <button onClick={() => void refreshPullRequests()} disabled={loadingPrs} className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Refresh pull requests">{loadingPrs ? 'Refreshing…' : 'Refresh'}</button>
+            </div>
           </div>
           {!prsCollapsed && (prError ? <p className="text-[11px] leading-relaxed" style={{ color: '#f87171' }}>{prError}</p> : <>
             <div className="mb-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
@@ -1034,7 +1160,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             </div>
             <div className="space-y-1 mb-2">{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No open pull requests.</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id} className="rounded px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : 'Checkout'}</button></div>)}</div>
             {!showCreatePr ? <button onClick={() => { setCreatePrTitleEdited(false); setShowCreatePr(true) }} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button> : <div className="space-y-1.5"><input value={createPrTarget} onChange={(e) => setCreatePrTarget(e.target.value)} placeholder="Target branch (e.g. main)" className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} /><input value={createPrTitle} onChange={(e) => { setCreatePrTitle(e.target.value); setCreatePrTitleEdited(true) }} placeholder="PR title" className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} /><textarea value={createPrDescription} onChange={(e) => setCreatePrDescription(e.target.value)} placeholder="Description (optional)" rows={3} className="w-full resize-none rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} /><div className="flex gap-1.5"><button onClick={() => void handleCreatePr()} disabled={creatingPr || !createPrTitle.trim() || !createPrTarget.trim()} className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{creatingPr ? 'Creating…' : 'Create'}</button><button onClick={() => { setShowCreatePr(false); setCreatePrTitleEdited(false) }} disabled={creatingPr} className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}>Cancel</button></div></div>}
-            {showReturnToDefault && <button onClick={() => void handleReturnToDefaultBranch()} disabled={returningToDefault || hasPendingChanges} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} title={hasPendingChanges ? `Commit or stash unstaged changes before switching to ${defaultBranch}` : `Checkout ${defaultBranch} and pull latest changes`}>{returningToDefault ? 'Returning…' : returnToDefaultLabel}</button>}
+            {showReturnToDefault && <button onClick={() => void handleReturnToDefaultBranch()} disabled={returningToDefault || hasPendingChanges} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} title={hasPendingChanges ? `Commit or stash unstaged changes before switching to ${effectiveDefaultBranch}` : `Checkout ${effectiveDefaultBranch} and pull latest changes`}>{returningToDefault ? 'Returning…' : returnToDefaultLabel}</button>}
           </>)}
         </div>}
         <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
