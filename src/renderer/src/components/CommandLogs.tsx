@@ -126,6 +126,20 @@ function CommandLogPanel({
     }
   }, [searchOpen])
 
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      const term = xtermRef.current
+      if (!term || !isTerminalCopyShortcut(event) || !term.hasSelection()) return
+
+      event.preventDefault()
+      event.stopPropagation()
+      void navigator.clipboard.writeText(term.getSelection())
+    }
+
+    window.addEventListener('keydown', onKeyDown, true)
+    return () => window.removeEventListener('keydown', onKeyDown, true)
+  }, [])
+
   // Drive search addon from query
   useEffect(() => {
     if (!searchAddonRef.current) return
