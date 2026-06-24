@@ -197,6 +197,32 @@ export async function listOpenGitHubPullRequests(
     .filter((pr) => pr.id > 0)
 }
 
+async function listGitHubPullRequestsForBranch(
+  repoPath: string,
+  branch: string,
+  state: 'open' | 'merged',
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<GitHubPullRequest[]> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  const repo = `${ctx.owner}/${ctx.repo}`
+  const output = await runGh(repoPath, [
+    'pr', 'list',
+    '--repo', repo,
+    '--state', state,
+    '--head', branch,
+    '--limit', '10',
+    '--json', 'number,title,state,headRefName,baseRefName,author,url,createdAt',
+  ], ssh, wsl)
+
+  const raw = parseJson<unknown>(output, 'Failed to parse pull request list from gh CLI')
+  if (!Array.isArray(raw)) return []
+
+  return raw
+    .map((pr) => mapPr(pr as GhPullRequest))
+    .filter((pr) => pr.id > 0 && pr.sourceBranch === branch)
+}
+
 export async function getGitHubPullRequestsWebUrl(
   repoPath: string,
   ssh?: SshConfig | null,
@@ -221,8 +247,12 @@ export async function getCurrentBranchGitHubPullRequest(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<GitHubPullRequest | null> {
-  const prs = await listOpenGitHubPullRequests(repoPath, ssh, wsl)
-  return prs.find((pr) => pr.sourceBranch === branch) ?? null
+  const openPrs = await listGitHubPullRequestsForBranch(repoPath, branch, 'open', ssh, wsl)
+  const openPr = openPrs[0]
+  if (openPr) return openPr
+
+  const mergedPrs = await listGitHubPullRequestsForBranch(repoPath, branch, 'merged', ssh, wsl)
+  return mergedPrs[0] ?? null
 }
 
 export async function createGitHubPullRequest(

@@ -346,6 +346,39 @@ export async function listOpenPullRequests(
     .filter((pr) => pr.id > 0)
 }
 
+async function listPullRequestsByStatus(
+  repoPath: string,
+  status: 'active' | 'completed',
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<AzureDevOpsPullRequest[]> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  const args = [
+    'pr', 'list',
+    '--repo', ctx.repo,
+    '--status', status,
+    '--top', '50',
+    '--format', 'json',
+  ]
+  if (ctx.project) {
+    args.splice(4, 0, '--project', ctx.project)
+  }
+  const output = await runAzDevOps(repoPath, args, ssh, wsl)
+
+  let raw: unknown
+  try {
+    raw = JSON.parse(output)
+  } catch {
+    throw new Error('Failed to parse pull request list from azdevops CLI')
+  }
+
+  if (!Array.isArray(raw)) return []
+
+  return raw
+    .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
+    .filter((pr) => pr.id > 0)
+}
+
 export async function getPullRequestsWebUrl(
   repoPath: string,
   ssh?: SshConfig | null,
@@ -370,8 +403,12 @@ export async function getCurrentBranchPullRequest(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<AzureDevOpsPullRequest | null> {
-  const prs = await listOpenPullRequests(repoPath, ssh, wsl)
-  return prs.find((pr) => pr.sourceBranch === branch) ?? null
+  const openPrs = await listPullRequestsByStatus(repoPath, 'active', ssh, wsl)
+  const openPr = openPrs.find((pr) => pr.sourceBranch === branch)
+  if (openPr) return openPr
+
+  const completedPrs = await listPullRequestsByStatus(repoPath, 'completed', ssh, wsl)
+  return completedPrs.find((pr) => pr.sourceBranch === branch) ?? null
 }
 
 export async function createPullRequest(
