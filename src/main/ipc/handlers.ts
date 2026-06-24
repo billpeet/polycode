@@ -28,6 +28,7 @@ import {
   returnLocationToPool,
   getLocationForThread,
   getLocationByPath,
+  getProjectById,
   listThreads,
   listActiveThreadsForLocation,
   listArchivedThreads,
@@ -72,7 +73,7 @@ import {
   getSetting,
   setSetting,
 } from '../db/queries'
-import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue } from '../../shared/types'
+import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue, NewProjectSpec } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -82,7 +83,7 @@ import { listCursorAvailableModels } from '../cursor-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff, invalidateGitCache } from '../git'
+import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff, invalidateGitCache } from '../git'
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch, getPullRequestsWebUrl, getRepoWebUrl } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch, getGitHubPullRequestsWebUrl, getGitHubRepoWebUrl } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
@@ -271,6 +272,66 @@ function invalidateRepoGitCache(repoPath: string): void {
   invalidateGitCache(repoPath, ssh, wsl)
 }
 
+/** Expand a leading `~` to the user's home directory. */
+function resolveHome(p: string): string {
+  return p.startsWith('~') ? p.replace(/^~/, homedir()) : p
+}
+
+/** Derive a directory-friendly name from a git URL (last path segment, sans `.git`). */
+function repoNameFromGitUrl(gitUrl: string): string {
+  return gitUrl.replace(/\.git$/i, '').split(/[/\\]/).filter(Boolean).pop() ?? 'repo'
+}
+
+/** Resolve a unique, non-existent path under `baseDir`, appending `-2`, `-3`, … on collision. */
+function suggestUniquePath(baseDir: string, name: string): string {
+  const resolvedBase = resolveHome(baseDir)
+  const candidate = join(resolvedBase, name)
+  if (!existsSync(candidate)) return candidate
+  let n = 2
+  while (existsSync(join(resolvedBase, `${name}-${n}`))) n++
+  return join(resolvedBase, `${name}-${n}`)
+}
+
+/** Run `git clone <gitUrl> <clonePath>`, creating the parent directory first. */
+function cloneRepo(gitUrl: string, clonePath: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    try {
+      mkdirSync(join(clonePath, '..'), { recursive: true })
+    } catch {
+      // parent may already exist
+    }
+
+    const proc = spawn('git', ['clone', gitUrl, clonePath], {
+      shell: false,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    let stderr = ''
+    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
+
+    proc.on('close', (code) => {
+      if (code === 0) resolve()
+      else reject(new Error(stderr.trim() || `git clone exited with code ${code}`))
+    })
+
+    proc.on('error', (err) => {
+      reject(new Error(`Failed to run git: ${err.message}`))
+    })
+  })
+}
+
+async function assertMainBranchCommitAllowed(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  const location = getLocationByPath(repoPath)
+  if (!location) return
+  const project = getProjectById(location.project_id)
+  if (!project || project.allow_main_branch_commits) return
+
+  const status = await getCachedGitStatus(repoPath, ssh, wsl)
+  if (status?.branch === 'main' || status?.branch === 'master') {
+    throw new Error(`Commits are disabled on ${status.branch} for this project`)
+  }
+}
+
 function sanitizeWorktreeSegment(value: string): string {
   const cleaned = value.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
   return cleaned || `worktree-${Date.now()}`
@@ -346,12 +407,55 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listProjects()
   })
 
-  ipcMain.handle('projects:create', (_event, name: string, gitUrl?: string | null) => {
-    return createProject(name, gitUrl)
+  ipcMain.handle('projects:create', (_event, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
+    return createProject(name, gitUrl, allowMainBranchCommits ?? true)
   })
 
-  ipcMain.handle('projects:update', (_event, id: string, name: string, gitUrl?: string | null) => {
-    return updateProject(id, name, gitUrl)
+  // Atomically provision a brand-new project *and* its first local location in one shot.
+  // All filesystem/git work (mkdir + init, clone, remote detection) happens BEFORE any DB
+  // rows are written, so a failure never leaves an orphaned project behind.
+  ipcMain.handle('projects:createFull', async (_event, spec: NewProjectSpec) => {
+    const name = spec.name?.trim()
+    if (!name) throw new Error('Project name is required.')
+    const label = spec.label?.trim() || 'Local'
+    const allow = spec.allowMainBranchCommits ?? true
+    const source = spec.source
+
+    let locationPath: string
+    let gitUrl: string | null = null
+
+    if (source.kind === 'new') {
+      const resolved = resolveHome(source.path?.trim() ?? '')
+      if (!resolved) throw new Error('Directory path is required.')
+      mkdirSync(resolved, { recursive: true })
+      await gitInit(resolved)
+      locationPath = resolved
+    } else if (source.kind === 'existing') {
+      const resolved = resolveHome(source.path?.trim() ?? '')
+      if (!resolved) throw new Error('Directory is required.')
+      if (!existsSync(resolved)) throw new Error(`Directory does not exist: ${resolved}`)
+      locationPath = resolved
+      gitUrl = await getRemoteUrl(resolved).catch(() => null)
+    } else if (source.kind === 'clone') {
+      const url = source.gitUrl?.trim()
+      if (!url) throw new Error('Git URL is required.')
+      // Fall back to the saved default (or ~/source) when no base dir is supplied,
+      // mirroring the UI's own default so a blank/stale setting can't hard-fail the clone.
+      const parentDir = source.parentDir?.trim() || getSetting('default_source_dir')?.trim() || '~/source'
+      locationPath = suggestUniquePath(parentDir, repoNameFromGitUrl(url))
+      await cloneRepo(url, locationPath)
+      gitUrl = url
+    } else {
+      throw new Error('Unknown project source.')
+    }
+
+    const project = createProject(name, gitUrl, allow)
+    const location = createLocation(project.id, label, 'local', locationPath, null, null, null)
+    return { project, location }
+  })
+
+  ipcMain.handle('projects:update', (_event, id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
+    return updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
   })
 
   ipcMain.handle('projects:delete', (_event, id: string) => {
@@ -468,39 +572,9 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return join(resolvedBase, `${repoName}-${n}`)
   })
 
-  ipcMain.handle('locations:clone', (_event, projectId: string, label: string, gitUrl: string, clonePath: string): Promise<unknown> => {
-    return new Promise((resolve, reject) => {
-      try {
-        mkdirSync(join(clonePath, '..'), { recursive: true })
-      } catch {
-        // parent may already exist
-      }
-
-      const proc = spawn('git', ['clone', gitUrl, clonePath], {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-
-      let stderr = ''
-      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-
-      proc.on('close', (code) => {
-        if (code === 0) {
-          try {
-            const location = createLocation(projectId, label, 'local', clonePath, null, null, null)
-            resolve(location)
-          } catch (err) {
-            reject(err)
-          }
-        } else {
-          reject(new Error(stderr.trim() || `git clone exited with code ${code}`))
-        }
-      })
-
-      proc.on('error', (err) => {
-        reject(new Error(`Failed to run git: ${err.message}`))
-      })
-    })
+  ipcMain.handle('locations:clone', async (_event, projectId: string, label: string, gitUrl: string, clonePath: string) => {
+    await cloneRepo(gitUrl, clonePath)
+    return createLocation(projectId, label, 'local', clonePath, null, null, null)
   })
 
   // ── SSH / WSL test ──────────────────────────────────────────────────────────
@@ -863,6 +937,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:commit', async (_event, repoPath: string, message: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
+    await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await commitChanges(repoPath, message, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
@@ -874,6 +949,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   ipcMain.handle('git:amendCommit', async (_event, repoPath: string, message?: string | null) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
+    await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await amendCommit(repoPath, message ?? null, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
@@ -951,6 +1027,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:generateCommitMessageWithContext', (_event, repoPath: string, filePaths: string[], context: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
+  })
+
+  ipcMain.handle('git:generateBranchName', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return generateBranchName(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:generatePullRequestText', (_event, repoPath: string, targetBranch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return generatePullRequestText(repoPath, targetBranch, ssh, wsl)
   })
 
   ipcMain.handle('git:push', async (_event, repoPath: string) => {
@@ -1038,6 +1124,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
   })
 
+  ipcMain.handle('git:compareToBranch', (_event, repoPath: string, targetBranch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToBranchChanges(repoPath, targetBranch, ssh, wsl)
+  })
+
+  ipcMain.handle('git:compareDiffToBranch', (_event, repoPath: string, targetBranch: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToBranchDiff(repoPath, targetBranch, ssh, wsl)
+  })
+
   ipcMain.handle('git:log', (_event, repoPath: string, opts?: { range?: string; limit?: number }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return listCommits(repoPath, opts ?? {}, ssh, wsl)
@@ -1096,6 +1192,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   ipcMain.handle('git:isRepo', (_event, repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return isGitRepoCached(repoPath, ssh, wsl)
+  })
+
+  ipcMain.handle('git:getRemoteUrl', (_event, repoPath: string) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getRemoteUrl(repoPath, ssh, wsl)
   })
 
   ipcMain.handle('git:hostingProvider', (_event, repoPath: string) => {

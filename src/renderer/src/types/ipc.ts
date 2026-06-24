@@ -1,14 +1,15 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, CURSOR_MODELS, CursorModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, ReasoningLevel, QuestionAnswerValue, UpdateState } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, CURSOR_MODELS, CursorModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, ReasoningLevel, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, CursorModelId, Provider, ReasoningLevel, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, QuestionAnswerValue, UpdateState }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, CursorModelId, Provider, ReasoningLevel, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, CURSOR_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
 export interface WindowApi {
   invoke(channel: 'projects:list'): Promise<Project[]>
   invoke(channel: 'projects:listArchived'): Promise<Project[]>
-  invoke(channel: 'projects:create', name: string, gitUrl?: string | null): Promise<Project>
-  invoke(channel: 'projects:update', id: string, name: string, gitUrl?: string | null): Promise<void>
+  invoke(channel: 'projects:create', name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean): Promise<Project>
+  invoke(channel: 'projects:createFull', spec: NewProjectSpec): Promise<NewProjectResult>
+  invoke(channel: 'projects:update', id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean): Promise<void>
   invoke(channel: 'projects:delete', id: string): Promise<void>
   invoke(channel: 'projects:archive', id: string): Promise<void>
   invoke(channel: 'projects:unarchive', id: string): Promise<void>
@@ -81,6 +82,8 @@ export interface WindowApi {
   invoke(channel: 'git:discardAll', repoPath: string): Promise<void>
   invoke(channel: 'git:generateCommitMessage', repoPath: string): Promise<string>
   invoke(channel: 'git:generateCommitMessageWithContext', repoPath: string, filePaths: string[], context: string): Promise<string>
+  invoke(channel: 'git:generatePullRequestText', repoPath: string, targetBranch: string): Promise<{ title: string; description: string }>
+  invoke(channel: 'git:generateBranchName', repoPath: string): Promise<string>
   invoke(channel: 'git:push', repoPath: string): Promise<void>
   invoke(channel: 'git:pushSetUpstream', repoPath: string, branch: string): Promise<void>
   invoke(channel: 'git:pull', repoPath: string, autoStash?: boolean): Promise<PullResult | void>
@@ -95,6 +98,8 @@ export interface WindowApi {
   invoke(channel: 'git:diff', repoPath: string, filePath: string, staged: boolean): Promise<string>
   invoke(channel: 'git:compareToMain', repoPath: string): Promise<GitCompareResult>
   invoke(channel: 'git:compareDiffToMain', repoPath: string, filePath: string): Promise<string>
+  invoke(channel: 'git:compareToBranch', repoPath: string, targetBranch: string): Promise<GitCompareResult>
+  invoke(channel: 'git:compareDiffToBranch', repoPath: string, targetBranch: string): Promise<string>
   invoke(channel: 'git:log', repoPath: string, opts?: { range?: string; limit?: number }): Promise<CommitLogEntry[]>
   invoke(channel: 'git:commitFiles', repoPath: string, sha: string): Promise<GitFileChange[]>
   invoke(channel: 'git:commitDiff', repoPath: string, sha: string, filePath: string): Promise<string>
@@ -108,6 +113,7 @@ export interface WindowApi {
   invoke(channel: 'git:deleteBranches', repoPath: string, branches: string[]): Promise<{ deleted: string[]; failed: Array<{ branch: string; error: string }> }>
   invoke(channel: 'git:init', repoPath: string): Promise<void>
   invoke(channel: 'git:isRepo', repoPath: string): Promise<boolean>
+  invoke(channel: 'git:getRemoteUrl', repoPath: string): Promise<string | null>
   invoke(channel: 'git:hostingProvider', repoPath: string): Promise<'azure' | 'github' | null>
   invoke(channel: 'git:defaultBranch', repoPath: string): Promise<string>
   invoke(channel: 'azdo:pr:list', repoPath: string): Promise<AzureDevOpsPullRequest[]>

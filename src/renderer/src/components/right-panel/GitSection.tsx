@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { useFilesStore } from '../../stores/files'
 import { useGitStore } from '../../stores/git'
 import { useLocationStore } from '../../stores/locations'
+import { useProjectStore } from '../../stores/projects'
 import { useThreadStore } from '../../stores/threads'
 import { useToastStore } from '../../stores/toast'
 import { GitCompareResult, GitFileChange, PullResult, RepoLocation } from '../../types/ipc'
@@ -9,7 +10,9 @@ import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu'
 import { SectionHeader, SparkleIcon } from './shared'
 import { StashSection } from './StashSection'
 import { CommitLogSection } from './CommitLogSection'
+import CreatePrModal from './CreatePrModal'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
+import { formatErrorDetails } from '../../lib/errorDetails'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
 function joinRepoPath(repoPath: string, relPath: string): string {
@@ -378,7 +381,13 @@ function BranchControls({
       setSelectedForDelete(new Set(merged))
       setScanned(true)
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Scan failed', duration: 0 })
+      addToast({
+        type: 'error',
+        title: 'Branch Scan Failed',
+        message: err instanceof Error ? err.message : 'Scan failed',
+        details: formatErrorDetails({ action: 'git:findMergedBranches', projectPath }, err),
+        duration: 0,
+      })
     } finally {
       setScanning(false)
     }
@@ -393,7 +402,13 @@ function BranchControls({
         addToast({ type: 'success', message: `Deleted ${result.deleted.length} branch${result.deleted.length !== 1 ? 'es' : ''}`, duration: 3000 })
       }
       if (result.failed.length > 0) {
-        addToast({ type: 'error', message: `Failed to delete: ${result.failed.map((f) => f.branch).join(', ')}`, duration: 0 })
+        addToast({
+          type: 'error',
+          title: 'Delete Branches Failed',
+          message: `Failed to delete: ${result.failed.map((f) => f.branch).join(', ')}`,
+          details: formatErrorDetails({ action: 'git:deleteBranches', projectPath, failed: result.failed, deleted: result.deleted }),
+          duration: 0,
+        })
       }
       setScanned(false)
       setMergedBranches([])
@@ -403,7 +418,13 @@ function BranchControls({
       setSelectedForDelete(new Set(remaining))
       setScanned(true)
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Delete failed', duration: 0 })
+      addToast({
+        type: 'error',
+        title: 'Delete Branches Failed',
+        message: err instanceof Error ? err.message : 'Delete failed',
+        details: formatErrorDetails({ action: 'git:deleteBranches', projectPath, branches: [...selectedForDelete] }, err),
+        duration: 0,
+      })
     } finally {
       setDeleting(false)
     }
@@ -643,9 +664,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const byProject = useThreadStore((s) => s.byProject)
   const archivedByProject = useThreadStore((s) => s.archivedByProject)
   const allLocations = useLocationStore((s) => s.byProject)
+  const projects = useProjectStore((s) => s.projects)
+  const archivedProjects = useProjectStore((s) => s.archivedProjects)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const thread = Object.values(byProject).flat().find((t) => t.id === threadId) ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
   const threadProjectId = thread?.project_id ?? null
+  const project = threadProjectId ? (projects.find((entry) => entry.id === threadProjectId) ?? archivedProjects.find((entry) => entry.id === threadProjectId) ?? null) : null
   const locationsLoaded = threadProjectId ? allLocations[threadProjectId] !== undefined : false
   const threadLocations = threadProjectId ? (allLocations[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS
   const location = thread?.location_id ? threadLocations.find((entry) => entry.id === thread.location_id) : threadLocations[0] ?? null
@@ -710,13 +734,9 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [prError, setPrError] = useState<string | null>(null)
   const [checkingOutPrId, setCheckingOutPrId] = useState<number | null>(null)
   const [showCreatePr, setShowCreatePr] = useState(false)
-  const [createPrTarget, setCreatePrTarget] = useState('main')
-  const [createPrTitle, setCreatePrTitle] = useState('')
-  const [createPrDescription, setCreatePrDescription] = useState('')
-  const [createPrTitleEdited, setCreatePrTitleEdited] = useState(false)
-  const [creatingPr, setCreatingPr] = useState(false)
   const [returningToDefault, setReturningToDefault] = useState(false)
   const [prsCollapsed, setPrsCollapsed] = useState(false)
+  const [prSearch, setPrSearch] = useState('')
   const [defaultBranch, setDefaultBranch] = useState('main')
   const [compareCacheByPath, setCompareCacheByPath] = useState<Record<string, CompareCacheEntry>>({})
   const [compareLoadingByPath, setCompareLoadingByPath] = useState<Record<string, boolean>>({})
@@ -732,6 +752,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const compareFiles = compareCache?.files ?? []
   const compareLoading = projectPath ? (compareLoadingByPath[projectPath] ?? false) : false
   const compareLoadedForCurrentBranch = !!(projectPath && gitStatus && compareCache?.loadedBranches[gitStatus.branch])
+  const mainBranchCommitsBlocked = !!(
+    project &&
+    !project.allow_main_branch_commits &&
+    gitStatus &&
+    (gitStatus.branch === 'main' || gitStatus.branch === 'master')
+  )
 
   useEffect(() => {
     if (!projectPath || collapsed) return
@@ -749,16 +775,6 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     }, 300)
     return () => window.clearTimeout(timeoutId)
   }, [threadId, threadStatus, collapsed, fetchModifiedFiles])
-
-  useEffect(() => {
-    if (gitStatus && !createPrTitleEdited) setCreatePrTitle(`Merge ${gitStatus.branch} into ${createPrTarget}`)
-  }, [gitStatus?.branch, createPrTarget, createPrTitleEdited])
-
-  useEffect(() => {
-    if (prCache?.defaultBranch && !showCreatePr) {
-      setCreatePrTarget(prCache.defaultBranch)
-    }
-  }, [prCache?.defaultBranch, showCreatePr])
 
   const refreshPullRequests = useCallback(async () => {
     if (!projectPath || !gitStatus || isNotRepo) return
@@ -785,7 +801,6 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
           },
         }))
-        setCreatePrTarget(resolvedDefaultBranch)
         return
       }
 
@@ -802,7 +817,6 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
           },
         }))
-        setCreatePrTarget(resolvedDefaultBranch)
         return
       }
 
@@ -903,6 +917,21 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
 
   async function handleCommit() {
     if (!projectPath) return
+    if (mainBranchCommitsBlocked) {
+      addToast({
+        type: 'error',
+        title: 'Commit Blocked',
+        message: `Commits are disabled on ${gitStatus?.branch} for this project`,
+        details: formatErrorDetails({
+          action: 'git:commit',
+          projectPath,
+          branch: gitStatus?.branch ?? null,
+          reason: 'commits disabled on main/default branch',
+        }),
+        duration: 0,
+      })
+      return
+    }
     // In normal commit mode we require a message + changes to commit.
     if (!amendMode && (!commitMsg.trim() || (gitStatus?.files.length ?? 0) === 0)) return
     // In amend mode we allow commits with no staged changes (message-only fix)
@@ -979,7 +1008,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     try {
       await generateMsg(projectPath)
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to generate message', duration: 0 })
+      addToast({
+        type: 'error',
+        title: 'Generate Commit Message Failed',
+        message: err instanceof Error ? err.message : 'Failed to generate message',
+        details: formatErrorDetails({ action: 'git:generateCommitMessage', projectPath }, err),
+        duration: 0,
+      })
     }
   }
 
@@ -1059,7 +1094,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       const fullPath = joinRepoPath(projectPath, file.path)
       await window.api.invoke('shell:revealInExplorer', fullPath)
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to reveal in Explorer', duration: 3000 })
+      addToast({
+        type: 'error',
+        title: 'Reveal In Explorer Failed',
+        message: err instanceof Error ? err.message : 'Failed to reveal in Explorer',
+        details: formatErrorDetails({ action: 'shell:revealInExplorer', projectPath, file }, err),
+        duration: 3000,
+      })
     }
   }, [projectPath, addToast])
 
@@ -1070,7 +1111,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       await window.api.invoke('shell:copyPath', value)
       addToast({ type: 'success', message: relative ? 'Copied relative path' : 'Copied path', duration: 2000 })
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to copy path', duration: 3000 })
+      addToast({
+        type: 'error',
+        title: 'Copy Path Failed',
+        message: err instanceof Error ? err.message : 'Failed to copy path',
+        details: formatErrorDetails({ action: 'shell:copyPath', projectPath, file, relative }, err),
+        duration: 3000,
+      })
     }
   }, [projectPath, addToast])
 
@@ -1092,7 +1139,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   }, [projectPath, gitStatus, discardAllAction, addToast, reportGitError])
 
   const totalChanges = gitStatus?.files.length ?? 0
-  const otherOpenPrs = currentPr ? openPrs.filter((pr) => pr.id !== currentPr.id) : openPrs
+  const otherOpenPrsAll = currentPr ? openPrs.filter((pr) => pr.id !== currentPr.id) : openPrs
+  const prSearchQuery = prSearch.trim().toLowerCase()
+  const otherOpenPrs = prSearchQuery
+    ? otherOpenPrsAll.filter((pr) =>
+        `#${pr.id} ${pr.title} ${pr.sourceBranch} ${pr.targetBranch}`.toLowerCase().includes(prSearchQuery)
+      )
+    : otherOpenPrsAll
   const refreshButton = (
     <button
       onClick={() => {
@@ -1119,27 +1172,15 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)}`, duration: 3000 })
       refreshCompareAfterGitOperation()
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to checkout PR branch', duration: 0 })
+      addToast({
+        type: 'error',
+        title: 'Checkout PR Failed',
+        message: err instanceof Error ? err.message : 'Failed to checkout PR branch',
+        details: formatErrorDetails({ action: prProvider === 'azure' ? 'azdo:pr:checkout' : 'gh:pr:checkout', projectPath, prId, provider: prProvider }, err),
+        duration: 0,
+      })
     } finally {
       setCheckingOutPrId(null)
-    }
-  }
-
-  async function handleCreatePr() {
-    if (!projectPath || !createPrTitle.trim() || !createPrTarget.trim() || !prProvider) return
-    setCreatingPr(true)
-    try {
-      const payload = { target: createPrTarget.trim(), title: createPrTitle.trim(), description: createPrDescription.trim() || undefined }
-      const pr = prProvider === 'azure' ? await window.api.invoke('azdo:pr:create', projectPath, payload) : await window.api.invoke('gh:pr:create', projectPath, payload)
-      addToast({ type: 'success', message: `Created PR #${String((pr as PullRequestItem).id)}`, duration: 3000 })
-      setShowCreatePr(false)
-      setCreatePrDescription('')
-      setCreatePrTitleEdited(false)
-      await refreshPullRequests()
-    } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to create pull request', duration: 0 })
-    } finally {
-      setCreatingPr(false)
     }
   }
 
@@ -1153,7 +1194,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       addToast({ type: 'success', message: `Switched to ${effectiveDefaultBranch} and pulled latest changes`, duration: 3000 })
       refreshCompareAfterGitOperation()
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : `Failed to return to ${effectiveDefaultBranch}`, duration: 0 })
+      addToast({
+        type: 'error',
+        title: 'Return To Default Branch Failed',
+        message: err instanceof Error ? err.message : `Failed to return to ${effectiveDefaultBranch}`,
+        details: formatErrorDetails({ action: 'git:returnToDefaultBranch', projectPath, defaultBranch: effectiveDefaultBranch }, err),
+        duration: 0,
+      })
     } finally {
       setReturningToDefault(false)
     }
@@ -1187,17 +1234,19 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
               <p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-text-muted)', opacity: 0.8 }}>Current PR</p>
               {currentPr ? <div className="mt-1"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{currentPr.url ? <a href={currentPr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{currentPr.id}</a> : `#${currentPr.id}`} {currentPr.title}</p><p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{currentPr.sourceBranch} → {currentPr.targetBranch}</p></div> : <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>No open PR for <code>{gitStatus.branch}</code>.</p>}
             </div>
-            <div className="space-y-1 mb-2">{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>No open pull requests.</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id} className="rounded px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : 'Checkout'}</button></div>)}</div>
-            {!showCreatePr ? <button onClick={() => { setCreatePrTitleEdited(false); setShowCreatePr(true) }} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button> : <div className="space-y-1.5"><input value={createPrTarget} onChange={(e) => setCreatePrTarget(e.target.value)} placeholder="Target branch (e.g. main)" className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} /><input value={createPrTitle} onChange={(e) => { setCreatePrTitle(e.target.value); setCreatePrTitleEdited(true) }} placeholder="PR title" className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} /><textarea value={createPrDescription} onChange={(e) => setCreatePrDescription(e.target.value)} placeholder="Description (optional)" rows={3} className="w-full resize-none rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} /><div className="flex gap-1.5"><button onClick={() => void handleCreatePr()} disabled={creatingPr || !createPrTitle.trim() || !createPrTarget.trim()} className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{creatingPr ? 'Creating…' : 'Create'}</button><button onClick={() => { setShowCreatePr(false); setCreatePrTitleEdited(false) }} disabled={creatingPr} className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text-muted)' }}>Cancel</button></div></div>}
+            {otherOpenPrsAll.length > 5 && <input type="text" value={prSearch} onChange={(e) => setPrSearch(e.target.value)} placeholder={`Search ${otherOpenPrsAll.length} pull requests…`} className="mb-2 w-full rounded px-2 py-1 text-[11px] outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />}
+            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id} className="rounded px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : 'Checkout'}</button></div>)}</div>
+            <button onClick={() => setShowCreatePr(true)} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
             {showReturnToDefault && <button onClick={() => void handleReturnToDefaultBranch()} disabled={returningToDefault || hasPendingChanges} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} title={hasPendingChanges ? `Commit or stash unstaged changes before switching to ${effectiveDefaultBranch}` : `Checkout ${effectiveDefaultBranch} and pull latest changes`}>{returningToDefault ? 'Returning…' : returnToDefaultLabel}</button>}
           </>)}
         </div>}
         <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          {isNotRepo ? <div className="py-3 flex flex-col items-center gap-2"><p className="text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No Git repository found.</p><button onClick={async () => { if (!projectPath) return; try { await initRepo(projectPath); addToast({ type: 'success', message: 'Git repository initialised', duration: 3000 }) } catch (err) { addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to initialise repository', duration: 0 }) } }} disabled={isInitializing || !projectPath} className="rounded px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{isInitializing ? 'Initialising…' : 'Initialise Repository'}</button></div> : !gitStatus ? <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>{!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for project.' : 'Loading...'}</p> : <>
+          {isNotRepo ? <div className="py-3 flex flex-col items-center gap-2"><p className="text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No Git repository found.</p><button onClick={async () => { if (!projectPath) return; try { await initRepo(projectPath); addToast({ type: 'success', message: 'Git repository initialised', duration: 3000 }) } catch (err) { addToast({ type: 'error', title: 'Initialise Repository Failed', message: err instanceof Error ? err.message : 'Failed to initialise repository', details: formatErrorDetails({ action: 'git:init', projectPath }, err), duration: 0 }) } }} disabled={isInitializing || !projectPath} className="rounded px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{isInitializing ? 'Initialising…' : 'Initialise Repository'}</button></div> : !gitStatus ? <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>{!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for project.' : 'Loading...'}</p> : <>
             <div className="relative">
-              <textarea value={commitMsg} onChange={(e) => handleSetCommitMsg(e.target.value)} placeholder={amendMode ? 'Leave unchanged to keep the existing commit message' : 'Commit message (Ctrl+Enter)'} rows={2} onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); void handleCommit() } }} className="w-full resize-none rounded px-2 py-1.5 pr-7 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: amendMode ? '1px solid var(--color-claude)' : '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
+              <textarea value={commitMsg} onChange={(e) => handleSetCommitMsg(e.target.value)} placeholder={amendMode ? 'Leave unchanged to keep the existing commit message' : 'Commit message (Ctrl+Enter)'} rows={2} onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (!mainBranchCommitsBlocked) void handleCommit() } }} className="w-full resize-none rounded px-2 py-1.5 pr-7 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: amendMode ? '1px solid var(--color-claude)' : '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
               <button onClick={() => void handleGenerateMessage()} disabled={isGeneratingMessage || totalChanges === 0} className="absolute right-1 top-1 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-claude)' }} title="Generate commit message with AI">{isGeneratingMessage ? <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <SparkleIcon />}</button>
             </div>
+            {mainBranchCommitsBlocked && <p className="mt-1.5 text-[11px]" style={{ color: '#f87171' }}>Commits are disabled on {gitStatus.branch} for this project.</p>}
             {lastCommit && <div className="mt-1.5 flex items-center justify-between gap-2">
               <label className="flex items-center gap-1.5 cursor-pointer min-w-0 flex-1" title={lastCommit.message}>
                 <input type="checkbox" checked={amendMode} onChange={handleToggleAmend} style={{ accentColor: 'var(--color-claude)', flexShrink: 0 }} />
@@ -1210,7 +1259,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                 {isUndoingCommit ? 'Undoing…' : 'Undo'}
               </button>}
             </div>}
-            <button onClick={() => void handleCommit()} disabled={committing || isAmending || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : (!commitMsg.trim() || totalChanges === 0))} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
+            <button onClick={() => void handleCommit()} disabled={mainBranchCommitsBlocked || committing || isAmending || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : (!commitMsg.trim() || totalChanges === 0))} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={mainBranchCommitsBlocked ? `Commits are disabled on ${gitStatus.branch} for this project` : undefined}>{committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : mainBranchCommitsBlocked ? `Commit disabled on ${gitStatus.branch}` : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
             <div className="flex gap-1.5 mt-1.5">
               <button
                 onClick={async () => {
@@ -1218,7 +1267,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                   try {
                     const result = await pullGit(projectPath, true) as PullResult | void
                     if (result && typeof result === 'object' && 'popConflict' in result && result.popConflict) {
-                      addToast({ type: 'error', message: `Pulled but could not re-apply auto-stash (${result.stashRef}) — resolve conflicts manually`, duration: 0 })
+                      addToast({
+                        type: 'error',
+                        title: 'Auto-Stash Reapply Failed',
+                        message: `Pulled but could not re-apply auto-stash (${result.stashRef}) — resolve conflicts manually`,
+                        details: formatErrorDetails({ action: 'git:pull', projectPath, result }),
+                        duration: 0,
+                      })
                     } else if (result && typeof result === 'object' && 'stashed' in result && result.stashed) {
                       addToast({ type: 'success', message: 'Pulled (auto-stashed & restored local changes)', duration: 3000 })
                     } else {
@@ -1269,6 +1324,16 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           </div>
         </div>}
       </>}
+      {showCreatePr && projectPath && gitStatus && prProvider && (
+        <CreatePrModal
+          projectPath={projectPath}
+          sourceBranch={gitStatus.branch}
+          provider={prProvider}
+          defaultTarget={effectiveDefaultBranch}
+          onClose={() => setShowCreatePr(false)}
+          onCreated={() => { void refreshPullRequests() }}
+        />
+      )}
       {fileMenu && (() => {
         const { file } = fileMenu
         const isDeleted = file.status === 'D'

@@ -228,29 +228,43 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   generateCommitMessage: async (repoPath) => {
     if (get().generatingMessageByPath[repoPath]) return
+    const startingMessage = get().commitMessageByPath[repoPath] ?? ''
     set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: true } }))
     try {
       const message = await window.api.invoke('git:generateCommitMessage', repoPath)
-      set((s) => ({
-        commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: message },
-        generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false },
-      }))
-    } catch {
+      set((s) => {
+        const currentMessage = s.commitMessageByPath[repoPath] ?? ''
+        return {
+          commitMessageByPath: currentMessage === startingMessage && message.trim()
+            ? { ...s.commitMessageByPath, [repoPath]: message }
+            : s.commitMessageByPath,
+          generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false },
+        }
+      })
+    } catch (err) {
       set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false } }))
+      throw err
     }
   },
 
   generateCommitMessageWithContext: async (repoPath, filePaths, context) => {
     if (get().generatingMessageByPath[repoPath]) return
+    const startingMessage = get().commitMessageByPath[repoPath] ?? ''
     set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: true } }))
     try {
       const message = await window.api.invoke('git:generateCommitMessageWithContext', repoPath, filePaths, context)
-      set((s) => ({
-        commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: message },
-        generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false },
-      }))
-    } catch {
+      set((s) => {
+        const currentMessage = s.commitMessageByPath[repoPath] ?? ''
+        return {
+          commitMessageByPath: currentMessage === startingMessage && message.trim()
+            ? { ...s.commitMessageByPath, [repoPath]: message }
+            : s.commitMessageByPath,
+          generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false },
+        }
+      })
+    } catch (err) {
       set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: false } }))
+      throw err
     }
   },
 

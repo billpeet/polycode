@@ -5,9 +5,8 @@ import { useCommandStore } from '../stores/commands'
 import { LocationPool, RepoLocation } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { CommandsSection, LocationsSection, PoolsSection } from './project-dialog/EditSections'
-import LocationFormSection from './project-dialog/LocationFormSection'
+import NewProjectForm from './project-dialog/NewProjectForm'
 import { LocationFormState, ProjectDialogProps } from './project-dialog/types'
-import { Project } from '../types/ipc'
 
 const EMPTY: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -16,14 +15,13 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const backdropClose = useBackdropClose(onClose)
   const [name, setName] = useState(project?.name ?? '')
   const [gitUrl, setGitUrl] = useState(project?.git_url ?? '')
+  const [allowMainBranchCommits, setAllowMainBranchCommits] = useState(project?.allow_main_branch_commits ?? true)
   const [error, setError] = useState('')
   const [projectSaved, setProjectSaved] = useState(false)
-  const [createdProject, setCreatedProject] = useState<Project | null>(null)
   const [locationForm, setLocationForm] = useState<LocationFormState>({ mode: 'none' })
   const [deleteConfirm, setDeleteConfirm] = useState<RepoLocation | null>(null)
   const [newPoolName, setNewPoolName] = useState('')
 
-  const createProject = useProjectStore((s) => s.create)
   const updateProject = useProjectStore((s) => s.update)
 
   const locations = useLocationStore((s) => project ? (s.byProject[project.id] ?? EMPTY) : EMPTY)
@@ -52,23 +50,14 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
       setError('Name is required')
       return
     }
+    if (!project) return
     try {
-      if (isEdit && project) {
-        await updateProject(project.id, name.trim(), gitUrl.trim() || null)
-        setProjectSaved(true)
-        setTimeout(() => setProjectSaved(false), 2000)
-      } else {
-        const created = await createProject(name.trim(), gitUrl.trim() || null)
-        setCreatedProject(created)
-      }
+      await updateProject(project.id, name.trim(), gitUrl.trim() || null, allowMainBranchCommits)
+      setProjectSaved(true)
+      setTimeout(() => setProjectSaved(false), 2000)
     } catch (err) {
       setError(String(err))
     }
-  }
-
-  function finishCreate(): void {
-    onClose()
-    if (createdProject) onCreated?.(createdProject)
   }
 
   async function handleDeleteLocation(loc: RepoLocation): Promise<void> {
@@ -106,23 +95,11 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
         onClick={(e) => e.stopPropagation()}
       >
         <h2 className="mb-4 text-base font-semibold" style={{ color: 'var(--color-text)' }}>
-          {isEdit ? 'Edit Project' : createdProject ? 'Add First Location' : 'New Project'}
+          {isEdit ? 'Edit Project' : 'New Project'}
         </h2>
 
-        {createdProject ? (
-          <>
-            <p className="mb-3 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              Project <span style={{ color: 'var(--color-text)' }}>{createdProject.name}</span> created. Add or clone its first location, or skip for now.
-            </p>
-            <LocationFormSection
-              projectId={createdProject.id}
-              pools={EMPTY_POOLS}
-              gitUrl={createdProject.git_url}
-              defaultCloneMode={!!createdProject.git_url}
-              onSaved={finishCreate}
-              onCancel={finishCreate}
-            />
-          </>
+        {!isEdit ? (
+          <NewProjectForm onClose={onClose} onCreated={onCreated} />
         ) : (
         <form onSubmit={handleProjectSubmit} className="space-y-3">
           <div>
@@ -152,16 +129,24 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
             />
           </div>
 
+          <label className="flex items-start gap-2 rounded px-3 py-2 text-xs cursor-pointer" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
+            <input
+              type="checkbox"
+              checked={allowMainBranchCommits}
+              onChange={(e) => setAllowMainBranchCommits(e.target.checked)}
+              style={{ accentColor: 'var(--color-claude)', marginTop: 2, flexShrink: 0 }}
+            />
+            <span>
+              <span className="block">Allow commits on main/master</span>
+              <span className="block mt-0.5" style={{ color: 'var(--color-text-muted)' }}>Turn off to prevent the Git panel from committing while the repo is on the default branch.</span>
+            </span>
+          </label>
+
           {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
 
           <div className="flex justify-end gap-2">
-            {!isEdit && (
-              <button type="button" onClick={onClose} className="rounded px-4 py-2 text-sm" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
-                Cancel
-              </button>
-            )}
             <button type="submit" className="rounded px-4 py-2 text-sm font-medium transition-colors" style={{ background: projectSaved ? '#16a34a' : 'var(--color-claude)', color: '#fff' }}>
-              {isEdit ? (projectSaved ? 'Saved!' : 'Save Changes') : 'Create'}
+              {projectSaved ? 'Saved!' : 'Save Changes'}
             </button>
           </div>
         </form>

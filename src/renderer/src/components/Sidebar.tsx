@@ -49,6 +49,7 @@ export default function Sidebar() {
   const expandedProjectIds = useProjectStore((s) => s.expandedProjectIds)
   const selectProject = useProjectStore((s) => s.select)
   const toggleExpanded = useProjectStore((s) => s.toggleExpanded)
+  const expandProject = useProjectStore((s) => s.expand)
   const removeProject = useProjectStore((s) => s.remove)
   const archiveProject = useProjectStore((s) => s.archive)
   const unarchiveProject = useProjectStore((s) => s.unarchive)
@@ -291,6 +292,18 @@ export default function Sidebar() {
     window.dispatchEvent(new Event('focus-input'))
   }
 
+  // After a project is created, reveal it and drop the user straight into a fresh thread.
+  async function handleProjectCreated(project: Project): Promise<void> {
+    setProjectDialog(null)
+    selectProject(project.id)
+    expandProject(project.id)
+    await Promise.all([fetchThreads(project.id), fetchLocations(project.id), fetchPools(project.id)])
+    const locations = await window.api.invoke('locations:list', project.id) as RepoLocation[]
+    const activeLocation = locations.find((location) => !location.pool_id || location.checked_out)
+    if (!activeLocation) return
+    await handleNewThread(project.id, activeLocation.id)
+  }
+
   async function handleNewWorktreeThread(projectId: string, parentLocationId: string): Promise<void> {
     const location = await createWorktreeLocation(parentLocationId, projectId)
     await handleNewThread(projectId, location.id)
@@ -400,6 +413,7 @@ export default function Sidebar() {
       selectedProjectId={selectedProjectId}
       selectedProjectName={projects.find((project) => project.id === selectedProjectId)?.name}
       onCloseProjectDialog={() => setProjectDialog(null)}
+      onProjectCreated={handleProjectCreated}
       onCloseLocationDialog={(projectId) => {
         setLocationDialog(null)
         fetchLocations(projectId)

@@ -3,6 +3,7 @@ import { useFilesStore } from '../../stores/files'
 import { useToastStore } from '../../stores/toast'
 import { CommitLogEntry, GitFileChange } from '../../types/ipc'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
+import { formatErrorDetails } from '../../lib/errorDetails'
 
 /** Format an ISO timestamp as a short relative-age label (e.g. "2h ago"). Matches StashSection's style. */
 function shortRelativeTime(iso: string): string {
@@ -121,7 +122,13 @@ export function CommitLogSection({
       const files = await window.api.invoke('git:commitFiles', projectPath, sha) as GitFileChange[]
       setFilesBySha((prev) => ({ ...prev, [sha]: files }))
     } catch (err) {
-      addToast({ type: 'error', message: err instanceof Error ? err.message : 'Failed to load commit files', duration: 4000 })
+      addToast({
+        type: 'error',
+        title: 'Commit Files Failed',
+        message: err instanceof Error ? err.message : 'Failed to load commit files',
+        details: formatErrorDetails({ action: 'git:commitFiles', projectPath, sha }, err),
+        duration: 4000,
+      })
       // Collapse on failure so the user can retry.
       setExpandedSha((curr) => (curr === sha ? null : curr))
     } finally {

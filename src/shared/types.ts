@@ -40,9 +40,34 @@ export interface Project {
   id: string
   name: string
   git_url: string | null
+  allow_main_branch_commits: boolean
   archived_at: string | null
   created_at: string
   updated_at: string
+}
+
+/**
+ * Describes how a brand-new project's first local location is provisioned.
+ *  - `new`      → create a fresh directory at `path` and `git init` it
+ *  - `existing` → adopt an existing local directory (its `origin` remote, if any, becomes the project git URL)
+ *  - `clone`    → `git clone` `gitUrl` into a fresh directory under `parentDir`
+ */
+export type NewProjectSource =
+  | { kind: 'new'; path: string }
+  | { kind: 'existing'; path: string }
+  | { kind: 'clone'; gitUrl: string; parentDir: string }
+
+export interface NewProjectSpec {
+  name: string
+  allowMainBranchCommits: boolean
+  /** Label for the created location. Defaults to "Local" when omitted. */
+  label?: string | null
+  source: NewProjectSource
+}
+
+export interface NewProjectResult {
+  project: Project
+  location: RepoLocation
 }
 
 export const ANTHROPIC_MODELS = [

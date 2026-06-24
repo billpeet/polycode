@@ -422,3 +422,31 @@ kbd {
   font-family: var(--font-mono);
   font-size: 0.7rem;
 }
+
+/* ── TipTap markdown editor ────────────────────────────────────────────────── */
+
+.markdown-editor .ProseMirror {
+  outline: none;
+  min-height: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.markdown-editor .ProseMirror :first-child {
+  margin-top: 0;
+}
+
+.markdown-editor .ProseMirror :last-child {
+  margin-bottom: 0;
+}
+
+/* Placeholder for the empty editor (first node) */
+.markdown-editor .ProseMirror.is-editor-empty:first-child::before,
+.markdown-editor .ProseMirror p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: var(--color-text-muted);
+  opacity: 0.6;
+}

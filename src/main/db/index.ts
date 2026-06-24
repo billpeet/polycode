@@ -278,6 +278,9 @@ function runMigrations(database: Database.Database): void {
   if (!projColsFinal.some((c) => c.name === 'git_url')) {
     database.exec('ALTER TABLE projects ADD COLUMN git_url TEXT')
   }
+  if (!projColsFinal.some((c) => c.name === 'allow_main_branch_commits')) {
+    database.exec('ALTER TABLE projects ADD COLUMN allow_main_branch_commits INTEGER NOT NULL DEFAULT 1')
+  }
 
   // ── location_id column on threads ───────────────────────────────────────────
   // Must be added BEFORE the backfill below attempts to UPDATE threads.

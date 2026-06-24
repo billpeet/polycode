@@ -10,6 +10,7 @@ function rowToProject(row: ProjectRow): Project {
     id: row.id,
     name: row.name,
     git_url: row.git_url ?? null,
+    allow_main_branch_commits: row.allow_main_branch_commits !== 0,
     archived_at: row.archived_at ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
@@ -38,28 +39,29 @@ export function unarchiveProject(id: string): void {
     .run(new Date().toISOString(), id)
 }
 
-export function createProject(name: string, gitUrl?: string | null): Project {
+export function createProject(name: string, gitUrl?: string | null, allowMainBranchCommits = true): Project {
   const now = new Date().toISOString()
   const id = uuidv4()
   getDb()
     .prepare(
-      'INSERT INTO projects (id, name, path, git_url, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)'
+      'INSERT INTO projects (id, name, path, git_url, allow_main_branch_commits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
-    .run(id, name, '', gitUrl ?? null, now, now)
+    .run(id, name, '', gitUrl ?? null, allowMainBranchCommits ? 1 : 0, now, now)
   return {
     id,
     name,
     git_url: gitUrl ?? null,
+    allow_main_branch_commits: allowMainBranchCommits,
     archived_at: null,
     created_at: now,
     updated_at: now,
   }
 }
 
-export function updateProject(id: string, name: string, gitUrl?: string | null): void {
+export function updateProject(id: string, name: string, gitUrl?: string | null, allowMainBranchCommits = true): void {
   getDb()
-    .prepare('UPDATE projects SET name = ?, git_url = ?, updated_at = ? WHERE id = ?')
-    .run(name, gitUrl ?? null, new Date().toISOString(), id)
+    .prepare('UPDATE projects SET name = ?, git_url = ?, allow_main_branch_commits = ?, updated_at = ? WHERE id = ?')
+    .run(name, gitUrl ?? null, allowMainBranchCommits ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function deleteProject(id: string): void {
@@ -70,6 +72,13 @@ export function getProjectForThread(threadId: string): Project | null {
   const row = getDb()
     .prepare('SELECT p.* FROM projects p JOIN threads t ON t.project_id = p.id WHERE t.id = ?')
     .get(threadId) as ProjectRow | undefined
+  return row ? rowToProject(row) : null
+}
+
+export function getProjectById(id: string): Project | null {
+  const row = getDb()
+    .prepare('SELECT * FROM projects WHERE id = ?')
+    .get(id) as ProjectRow | undefined
   return row ? rowToProject(row) : null
 }
 
@@ -905,7 +914,7 @@ interface ToolResultMetadata {
 }
 
 /**
- * Extract file paths from successful Edit/Write tool calls in a thread.
+ * Extract file paths from successful Edit/Write/MultiEdit tool calls in a thread.
  * Returns deduplicated absolute paths, resolving relative paths against workingDir.
  */
 export function getThreadModifiedFiles(threadId: string, workingDir: string): string[] {
@@ -928,7 +937,7 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
 
     if (!meta || typeof meta !== 'object' || !('type' in meta)) continue
 
-    if (meta.type === 'tool_call' && (meta.name === 'Edit' || meta.name === 'Write' || meta.name === 'edit' || meta.name === 'write')) {
+    if (meta.type === 'tool_call' && ['edit', 'write', 'multiedit'].includes(meta.name.toLowerCase())) {
       const filePath = meta.input?.file_path ?? meta.input?.filePath
       if (filePath && meta.id) {
         toolCallFiles.set(meta.id, filePath)
@@ -937,8 +946,8 @@ export function getThreadModifiedFiles(threadId: string, workingDir: string): st
       // Codex file_change items carry a changes array; track them all under the item id
       // by joining paths with a delimiter — they'll be split out below.
       const paths = (meta.input!.changes as Array<{ path: string; kind: string }>)
-        .filter((c) => c.kind !== 'delete')
         .map((c) => c.path)
+        .filter((path): path is string => typeof path === 'string' && path.length > 0)
       if (paths.length > 0) {
         toolCallFiles.set(meta.id, '\x00' + paths.join('\x00'))
       }

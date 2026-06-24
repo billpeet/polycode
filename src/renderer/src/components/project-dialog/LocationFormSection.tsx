@@ -30,7 +30,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
   useEffect(() => {
     if (!cloneMode) return
     window.api.invoke('settings:get', 'default_source_dir').then((val) => {
-      setBaseDir(val ?? '~/source')
+      setBaseDir(val?.trim() || '~/source')
     }).catch(() => {})
   }, [cloneMode])
 
@@ -87,7 +87,9 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
   }
 
   function handleSetAsDefault(): void {
-    window.api.invoke('settings:set', 'default_source_dir', baseDir).catch(() => {})
+    const trimmed = baseDir.trim()
+    if (!trimmed) return
+    window.api.invoke('settings:set', 'default_source_dir', trimmed).catch(() => {})
   }
 
   async function handleTest(): Promise<void> {

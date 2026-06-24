@@ -404,7 +404,11 @@ export async function createPullRequest(
   }
 
   if (payload.description?.trim()) {
-    args.push('--description', payload.description.trim())
+    // The azdevops CLI treats each --description value as a separate line. Passing one
+    // multi-line value gets truncated at the first newline on Windows (cmd.exe shell), so
+    // split into per-line args — no individual arg contains a newline.
+    const lines = payload.description.trim().replace(/\r\n/g, '\n').split('\n')
+    args.push('--description', ...lines)
   }
 
   const output = await runAzDevOps(repoPath, args, ssh, wsl)

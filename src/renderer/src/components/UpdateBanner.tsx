@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, Loader2, RefreshCw } from 'lucide-react'
 import type { UpdateState } from '../types/ipc'
 import { useToastStore } from '../stores/toast'
+import { formatErrorDetails } from '../lib/errorDetails'
 
 const INITIAL_STATE: UpdateState = {
   available: false,
@@ -30,14 +31,18 @@ export function UpdateBanner(): React.JSX.Element | null {
       if (!success) {
         useToastStore.getState().add({
           type: 'error',
+          title: 'Update Install Failed',
           message: 'Update is no longer ready to install.',
+          details: formatErrorDetails({ action: 'update:apply', updateState: state, success: false }),
           duration: 5000,
         })
       }
     } catch (err) {
       useToastStore.getState().add({
         type: 'error',
+        title: 'Update Install Failed',
         message: err instanceof Error ? err.message : 'Failed to restart for update.',
+        details: formatErrorDetails({ action: 'update:apply', updateState: state }, err),
         duration: 0,
       })
     }

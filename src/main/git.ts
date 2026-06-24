@@ -2,7 +2,18 @@ import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { promises as fsPromises } from 'fs'
 import * as path from 'path'
-import { simpleQuery } from './claude-sdk'
+import {
+  getCommitMessageContextHash,
+  getPullRequestTextContextHash,
+  type CommitMessageContext,
+  type GeneratedPullRequestText,
+  type PullRequestTextContext,
+} from './git-text-generation'
+import {
+  generateBranchNameText,
+  generateCommitMessageText,
+  generatePullRequestText as generatePullRequestTextFromModel,
+} from './git-text-model'
 import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry } from '../shared/types'
 import { sshExec } from './ssh'
 import { wslExec } from './wsl'
@@ -20,6 +31,8 @@ type CacheEntry<T> = {
 
 const gitReadCache = new Map<string, CacheEntry<unknown>>()
 const gitInFlight = new Map<string, Promise<unknown>>()
+const commitMessageGenerationCache = new Map<string, CacheEntry<string>>()
+const pullRequestTextGenerationCache = new Map<string, CacheEntry<GeneratedPullRequestText>>()
 
 const CACHE_POLICY = {
   isRepo: { ttlMs: 60_000 },
@@ -184,6 +197,9 @@ function isLockError(err: unknown): { locked: true; lockPath: string | null } | 
 }
 
 const GIT_LOCK_MAX_ATTEMPTS = 10
+const GENERATED_TEXT_CACHE_TTL_MS = 5 * 60_000
+const UNTRACKED_FILE_PREVIEW_BYTES = 16_000
+const UNTRACKED_PATCH_MAX_CHARS = 30_000
 
 async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
@@ -678,40 +694,345 @@ export async function gitFetchRemoteCached(repoPath: string, ssh?: SshConfig | n
   }, ssh, wsl)
 }
 
-export async function generateCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  // Get the diff of staged changes
-  let diff = ''
-  try {
-    diff = await git(repoPath, ['diff', '--cached'], ssh, wsl)
-  } catch {
-    // No staged changes
+function normalizePathForGit(repoPath: string, filePath: string): string {
+  const raw = filePath.trim().replace(/\\/g, '/')
+  if (!raw) return ''
+
+  const root = repoPath.trim().replace(/\\/g, '/').replace(/\/+$/g, '')
+  const normalizedRaw = raw.replace(/^\.\/+/, '')
+  const rootPrefix = `${root}/`
+  if (normalizedRaw.startsWith(rootPrefix)) {
+    return normalizedRaw.slice(rootPrefix.length)
   }
 
-  if (!diff.trim()) {
-    // If no staged changes, get diff of all changes
+  const lowerRaw = normalizedRaw.toLowerCase()
+  const lowerRootPrefix = rootPrefix.toLowerCase()
+  if (/^[a-z]:\//i.test(normalizedRaw) && lowerRaw.startsWith(lowerRootPrefix)) {
+    return normalizedRaw.slice(rootPrefix.length)
+  }
+
+  return normalizedRaw
+}
+
+function normalizePathListForGit(repoPath: string, filePaths?: string[]): string[] {
+  if (!filePaths || filePaths.length === 0) return []
+  return Array.from(new Set(filePaths.map((filePath) => normalizePathForGit(repoPath, filePath)).filter(Boolean)))
+}
+
+function pathspecArgs(filePaths: string[]): string[] {
+  return ['--', ...filePaths]
+}
+
+async function gitOrEmpty(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  try {
+    return await git(repoPath, args, ssh, wsl)
+  } catch {
+    return ''
+  }
+}
+
+async function getBranchForCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
+  const branch = (await gitOrEmpty(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)).trim()
+  return branch && branch !== 'HEAD' ? branch : null
+}
+
+async function readDiffContext(
+  repoPath: string,
+  staged: boolean,
+  filePaths: string[],
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<{ summary: string; patch: string } | null> {
+  const baseArgs = staged ? ['diff', '--cached'] : ['diff']
+  const summary = (await gitOrEmpty(repoPath, [...baseArgs, '--name-status', '--find-renames', ...pathspecArgs(filePaths)], ssh, wsl)).trim()
+  if (!summary) return null
+
+  const patch = await gitOrEmpty(
+    repoPath,
+    [...baseArgs, '--no-ext-diff', '--patch', '--minimal', '--find-renames', ...pathspecArgs(filePaths)],
+    ssh,
+    wsl,
+  )
+
+  return { summary, patch: patch.trim() || summary }
+}
+
+function shellSingleQuote(value: string): string {
+  return `'${value.replace(/'/g, "'\\''")}'`
+}
+
+async function readRepoFilePrefix(
+  repoPath: string,
+  gitPath: string,
+  maxBytes: number,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<{ text: string; truncated: boolean; binary: boolean } | null> {
+  try {
+    let buffer: Buffer
+    if (ssh) {
+      const output = await sshExec(ssh, repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`)
+      buffer = Buffer.from(output, 'utf8')
+    } else if (wsl) {
+      const output = await wslExec(wsl, repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`)
+      buffer = Buffer.from(output, 'utf8')
+    } else {
+      const fullPath = path.join(repoPath, gitPath)
+      const stat = await fsPromises.stat(fullPath)
+      if (!stat.isFile()) return null
+      const handle = await fsPromises.open(fullPath, 'r')
+      try {
+        buffer = Buffer.alloc(Math.min(maxBytes + 1, stat.size))
+        const result = await handle.read(buffer, 0, buffer.length, 0)
+        buffer = buffer.subarray(0, result.bytesRead)
+      } finally {
+        await handle.close()
+      }
+    }
+
+    const truncated = buffer.length > maxBytes
+    const limited = truncated ? buffer.subarray(0, maxBytes) : buffer
+    return {
+      text: limited.toString('utf8'),
+      truncated,
+      binary: limited.includes(0),
+    }
+  } catch {
+    return null
+  }
+}
+
+function buildAddedFilePatch(filePath: string, preview: { text: string; truncated: boolean; binary: boolean } | null): string {
+  if (!preview) {
+    return `diff --git a/${filePath} b/${filePath}\nnew file\n--- /dev/null\n+++ b/${filePath}\n@@\n+[file content unavailable]`
+  }
+  if (preview.binary) {
+    return `diff --git a/${filePath} b/${filePath}\nnew file\nBinary file ${filePath} added`
+  }
+
+  const text = preview.text.replace(/\r\n/g, '\n')
+  const lines = text.split('\n')
+  const body = lines.map((line) => `+${line}`).join('\n')
+  const truncated = preview.truncated ? '\n+[truncated]' : ''
+  return `diff --git a/${filePath} b/${filePath}\nnew file\n--- /dev/null\n+++ b/${filePath}\n@@ -0,0 +1,${lines.length} @@\n${body}${truncated}`
+}
+
+async function readUntrackedContext(
+  repoPath: string,
+  filePaths: string[],
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<{ summary: string; patch: string } | null> {
+  const output = (await gitOrEmpty(repoPath, ['ls-files', '--others', '--exclude-standard', ...pathspecArgs(filePaths)], ssh, wsl)).trim()
+  const files = output.split(/\r?\n/g).map((line) => line.trim()).filter(Boolean)
+  if (files.length === 0) return null
+
+  const summary = files.map((file) => `A\t${file}`).join('\n')
+  const patches: string[] = []
+  let remainingPatchChars = UNTRACKED_PATCH_MAX_CHARS
+
+  for (const file of files) {
+    if (remainingPatchChars <= 0) {
+      patches.push('[additional untracked files truncated]')
+      break
+    }
+    const preview = await readRepoFilePrefix(repoPath, file, UNTRACKED_FILE_PREVIEW_BYTES, ssh, wsl)
+    const patch = buildAddedFilePatch(file, preview)
+    patches.push(patch.slice(0, remainingPatchChars))
+    remainingPatchChars -= patch.length
+  }
+
+  return { summary, patch: patches.join('\n') }
+}
+
+async function collectUnstagedContext(
+  repoPath: string,
+  filePaths: string[],
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<{ summary: string; patch: string } | null> {
+  const tracked = await readDiffContext(repoPath, false, filePaths, ssh, wsl)
+  const untracked = await readUntrackedContext(repoPath, filePaths, ssh, wsl)
+  const summary = [tracked?.summary, untracked?.summary].filter(Boolean).join('\n').trim()
+  const patch = [tracked?.patch, untracked?.patch].filter(Boolean).join('\n').trim()
+  return summary ? { summary, patch: patch || summary } : null
+}
+
+async function collectCommitMessageContext(
+  repoPath: string,
+  opts: { filePaths?: string[]; messagesContext?: string } = {},
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<CommitMessageContext | null> {
+  const branch = await getBranchForCommitMessage(repoPath, ssh, wsl)
+  const scopedFilePaths = normalizePathListForGit(repoPath, opts.filePaths)
+
+  const collectForPaths = async (filePaths: string[]) => {
+    const staged = await readDiffContext(repoPath, true, filePaths, ssh, wsl)
+    if (staged) return staged
+    return collectUnstagedContext(repoPath, filePaths, ssh, wsl)
+  }
+
+  let changes = await collectForPaths(scopedFilePaths)
+  if (!changes && scopedFilePaths.length > 0) {
+    changes = await collectForPaths([])
+  }
+  if (!changes) return null
+
+  return {
+    branch,
+    changeSummary: changes.summary,
+    patch: changes.patch,
+    messagesContext: opts.messagesContext,
+  }
+}
+
+async function generateCachedCommitMessage(
+  repoPath: string,
+  context: CommitMessageContext,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const key = `${getCacheScope(repoPath, ssh, wsl)}::${getCommitMessageContextHash(context)}`
+  const cached = commitMessageGenerationCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const message = await generateCommitMessageText(repoPath, context, ssh, wsl)
+  if (message.trim()) {
+    commitMessageGenerationCache.set(key, {
+      value: message,
+      expiresAt: Date.now() + GENERATED_TEXT_CACHE_TTL_MS,
+    })
+  }
+  return message
+}
+
+export async function generateCommitMessage(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  const context = await collectCommitMessageContext(repoPath, {}, ssh, wsl)
+  return context ? generateCachedCommitMessage(repoPath, context, ssh, wsl) : ''
+}
+
+/**
+ * Suggest a git branch name describing the current uncommitted/working changes.
+ * Used when opening a PR from the default branch and a new source branch is needed.
+ */
+export async function generateBranchName(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
+  const context = await collectCommitMessageContext(repoPath, {}, ssh, wsl)
+  return context ? generateBranchNameText(repoPath, context, ssh, wsl) : ''
+}
+
+function normalizeBranchName(branch: string): string {
+  return branch
+    .trim()
+    .replace(/^refs\/heads\//, '')
+    .replace(/^refs\/remotes\//, '')
+}
+
+async function gitRefExists(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {
+  try {
+    await git(repoPath, ['rev-parse', '--verify', `${ref}^{commit}`], ssh, wsl)
+    return true
+  } catch {
+    return false
+  }
+}
+
+async function resolvePullRequestBaseRef(
+  repoPath: string,
+  targetBranch: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const normalized = normalizeBranchName(targetBranch) || 'main'
+  const remoteBranch = normalized.startsWith('origin/') ? normalized.slice('origin/'.length) : normalized
+  if (remoteBranch && /^[A-Za-z0-9._/-]+$/.test(remoteBranch)) {
     try {
-      diff = await git(repoPath, ['diff'], ssh, wsl)
+      await git(repoPath, ['fetch', 'origin', remoteBranch], ssh, wsl)
     } catch {
-      // No changes at all
+      // Continue with local refs if fetch is unavailable.
     }
   }
 
-  if (!diff.trim()) {
-    return ''
+  const candidates = normalized.startsWith('origin/')
+    ? [normalized, remoteBranch]
+    : [`origin/${normalized}`, normalized]
+
+  for (const candidate of Array.from(new Set(candidates.filter(Boolean)))) {
+    if (await gitRefExists(repoPath, candidate, ssh, wsl)) return candidate
   }
 
-  // Truncate diff if too long (keep first ~4000 chars)
-  const maxDiffLength = 4000
-  const truncatedDiff = diff.length > maxDiffLength
-    ? diff.slice(0, maxDiffLength) + '\n... (truncated)'
-    : diff
+  return candidates[0] ?? normalized
+}
 
-  // Use Claude Agent SDK to generate commit message
-  const prompt = `Generate a concise git commit message for the following diff. Follow conventional commit format (e.g., "feat:", "fix:", "refactor:", "docs:", "style:", "test:", "chore:"). Output ONLY the commit message, nothing else. No quotes, no explanation.
+async function collectPullRequestTextContext(
+  repoPath: string,
+  targetBranch: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<PullRequestTextContext | null> {
+  const sourceBranch = await getBranchForCommitMessage(repoPath, ssh, wsl)
+  const normalizedTarget = normalizeBranchName(targetBranch) || 'main'
+  const baseRef = await resolvePullRequestBaseRef(repoPath, normalizedTarget, ssh, wsl)
 
-${truncatedDiff}`
+  let mergeBase = baseRef
+  try {
+    mergeBase = (await git(repoPath, ['merge-base', baseRef, 'HEAD'], ssh, wsl)).trim()
+  } catch {
+    // Fall back to a direct diff against the resolved base ref.
+  }
 
-  return simpleQuery(prompt)
+  // Diff the merge-base against the WORKING TREE (not HEAD) so the PR text reflects what the
+  // pull request will actually contain — including not-yet-committed changes, which the modal
+  // commits before opening the PR. Untracked files are diff-invisible, so add them explicitly.
+  const trackedSummary = (await gitOrEmpty(repoPath, ['diff', '--name-status', '--find-renames', mergeBase, '--'], ssh, wsl)).trim()
+  const trackedPatch = (await gitOrEmpty(repoPath, ['diff', '--find-renames', mergeBase, '--'], ssh, wsl)).trim()
+  const untracked = await readUntrackedContext(repoPath, [], ssh, wsl)
+
+  const changeSummary = [trackedSummary, untracked?.summary].filter(Boolean).join('\n').trim()
+  if (!changeSummary) return null
+
+  const patch = [trackedPatch, untracked?.patch].filter(Boolean).join('\n').trim()
+  const commits = await listCommits(repoPath, { range: `${mergeBase}..HEAD`, limit: 50 }, ssh, wsl)
+  const commitSummary = commits.map((commit) => `- ${commit.shortSha} ${commit.subject}`).join('\n')
+
+  return {
+    sourceBranch,
+    targetBranch: normalizedTarget,
+    baseRef,
+    commitSummary,
+    changeSummary,
+    patch: patch || changeSummary,
+  }
+}
+
+async function generateCachedPullRequestText(
+  repoPath: string,
+  context: PullRequestTextContext,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<GeneratedPullRequestText> {
+  const key = `${getCacheScope(repoPath, ssh, wsl)}::${getPullRequestTextContextHash(context)}`
+  const cached = pullRequestTextGenerationCache.get(key)
+  if (cached && cached.expiresAt > Date.now()) return cached.value
+
+  const text = await generatePullRequestTextFromModel(repoPath, context, ssh, wsl)
+  if (text.title.trim() || text.description.trim()) {
+    pullRequestTextGenerationCache.set(key, {
+      value: text,
+      expiresAt: Date.now() + GENERATED_TEXT_CACHE_TTL_MS,
+    })
+  }
+  return text
+}
+
+export async function generatePullRequestText(
+  repoPath: string,
+  targetBranch: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<GeneratedPullRequestText> {
+  const context = await collectPullRequestTextContext(repoPath, targetBranch, ssh, wsl)
+  return context ? generateCachedPullRequestText(repoPath, context, ssh, wsl) : { title: '', description: '' }
 }
 
 export async function getFileDiff(repoPath: string, filePath: string, staged: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
@@ -922,6 +1243,82 @@ export async function getCompareToMainFileDiff(
 }
 
 /**
+ * Resolve a user-supplied target branch (e.g. "main", "develop") to a concrete ref to
+ * diff against, preferring the remote-tracking ref so the comparison reflects origin.
+ * The remote ref is fetched first so the comparison isn't stale.
+ */
+async function resolveCompareBranchRef(
+  repoPath: string,
+  targetBranch: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<string | null> {
+  const branch = targetBranch.replace(/^origin\//, '').trim()
+  if (!branch) return null
+
+  try {
+    await git(repoPath, ['fetch', 'origin', branch], ssh, wsl)
+  } catch {
+    // continue with possibly stale refs
+  }
+
+  const remoteRef = `origin/${branch}`
+  try {
+    await git(repoPath, ['rev-parse', '--verify', remoteRef], ssh, wsl)
+    return remoteRef
+  } catch {
+    // fall through to local
+  }
+
+  try {
+    await git(repoPath, ['rev-parse', '--verify', branch], ssh, wsl)
+    return branch
+  } catch {
+    return null
+  }
+}
+
+/**
+ * List the files that differ between HEAD and the merge-base with the given target branch —
+ * i.e. the changes a PR merging the current branch into `targetBranch` would introduce.
+ */
+export async function getCompareToBranchChanges(
+  repoPath: string,
+  targetBranch: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<{ baseRef: string; files: GitFileChange[] }> {
+  const baseRef = await resolveCompareBranchRef(repoPath, targetBranch, ssh, wsl)
+  if (!baseRef) return { baseRef: targetBranch, files: [] }
+  try {
+    const mergeBase = await git(repoPath, ['merge-base', baseRef, 'HEAD'], ssh, wsl)
+    const out = await git(repoPath, ['diff', '--name-status', '--find-renames', mergeBase], ssh, wsl)
+    return { baseRef, files: parseNameStatus(out) }
+  } catch {
+    return { baseRef, files: [] }
+  }
+}
+
+/**
+ * Full combined unified diff (all files) between the merge-base with `targetBranch` and HEAD.
+ */
+export async function getCompareToBranchDiff(
+  repoPath: string,
+  targetBranch: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<string> {
+  const baseRef = await resolveCompareBranchRef(repoPath, targetBranch, ssh, wsl)
+  if (!baseRef) return ''
+  try {
+    const mergeBase = await git(repoPath, ['merge-base', baseRef, 'HEAD'], ssh, wsl)
+    return await git(repoPath, ['diff', '--find-renames', mergeBase], ssh, wsl)
+  } catch {
+    return ''
+  }
+}
+
+/**
  * Generate a commit message using pre-built context (conversation messages + thread-modified files).
  * Gets the diff for specific files rather than relying on the agent to discover changes itself.
  */
@@ -932,47 +1329,8 @@ export async function generateCommitMessageWithContext(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null
 ): Promise<string> {
-  // Get diff scoped to thread-modified files first, fall back to full diff
-  let diff = ''
-  try {
-    if (filePaths.length > 0) {
-      diff = await git(repoPath, ['diff', '--', ...filePaths], ssh, wsl)
-      if (!diff.trim()) {
-        diff = await git(repoPath, ['diff', '--cached', '--', ...filePaths], ssh, wsl)
-      }
-    }
-    if (!diff.trim()) {
-      diff = await git(repoPath, ['diff', '--cached'], ssh, wsl)
-    }
-    if (!diff.trim()) {
-      diff = await git(repoPath, ['diff'], ssh, wsl)
-    }
-  } catch {
-    // No git repo or no changes
-  }
-
-  if (!diff.trim() && !messagesContext.trim()) {
-    return ''
-  }
-
-  const maxDiffLength = 4000
-  const truncatedDiff = diff.length > maxDiffLength
-    ? diff.slice(0, maxDiffLength) + '\n... (truncated)'
-    : diff
-
-  const contextParts: string[] = []
-  if (messagesContext.trim()) {
-    contextParts.push(messagesContext)
-  }
-  if (truncatedDiff.trim()) {
-    contextParts.push(`## Git Changes\n\`\`\`diff\n${truncatedDiff}\n\`\`\``)
-  }
-
-  const prompt = `Generate a concise git commit message based on the context below. Follow conventional commit format (e.g., "feat:", "fix:", "refactor:", "docs:", "style:", "test:", "chore:"). Output ONLY the commit message, nothing else. No quotes, no explanation.
-
-${contextParts.join('\n\n')}`
-
-  return simpleQuery(prompt)
+  const context = await collectCommitMessageContext(repoPath, { filePaths, messagesContext }, ssh, wsl)
+  return context ? generateCachedCommitMessage(repoPath, context, ssh, wsl) : ''
 }
 
 export async function listBranches(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitBranches> {
@@ -1121,6 +1479,24 @@ export async function deleteBranches(repoPath: string, branches: string[], ssh?:
 
 export async function gitInit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['init'], ssh, wsl)
+}
+
+/**
+ * Return the URL of the repo's `origin` remote (or the first remote if `origin` is absent),
+ * or `null` when the path isn't a repo / has no remotes. Used to auto-fill the project Git URL
+ * when adopting an existing local repository.
+ */
+export async function getRemoteUrl(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
+  try {
+    const remotesRaw = await git(repoPath, ['remote'], ssh, wsl)
+    const remotes = remotesRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    if (remotes.length === 0) return null
+    const name = remotes.includes('origin') ? 'origin' : remotes[0]
+    const url = (await git(repoPath, ['remote', 'get-url', name], ssh, wsl)).trim()
+    return url || null
+  } catch {
+    return null
+  }
 }
 
 export async function isGitRepo(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<boolean> {

@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, ReasoningLevel } from '../types/ipc'
+import { useToastStore } from './toast'
+import { formatErrorDetails } from '../lib/errorDetails'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 
@@ -290,6 +292,22 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         }
       })
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      useToastStore.getState().add({
+        type: 'error',
+        title: 'Create Thread Failed',
+        message: 'Failed to create new thread',
+        details: formatErrorDetails({
+          action: 'threads:create',
+          projectId,
+          locationId,
+          requestedName: name,
+          optimisticThreadId: optimisticId,
+          message,
+        }, error),
+        duration: 0,
+      })
+
       set((s) => {
         const nextPendingThreadIdByLocation = { ...s.pendingThreadIdByLocation }
         delete nextPendingThreadIdByLocation[locationId]

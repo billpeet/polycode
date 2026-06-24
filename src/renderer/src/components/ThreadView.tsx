@@ -1,59 +1,30 @@
 import { useEffect, useRef } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
-import { useLocationStore } from '../stores/locations'
 import { useToastStore } from '../stores/toast'
 import { useRateLimitStore } from '../stores/rateLimits'
 import { useTodoStore, Todo } from '../stores/todos'
 import { useSessionStore } from '../stores/sessions'
 import { useGitStore } from '../stores/git'
-import { OutputEvent, Message, ThreadStatus } from '../types/ipc'
+import { OutputEvent, ThreadStatus } from '../types/ipc'
 import ThreadHeader from './ThreadHeader'
-
-/** Look up the location path for a thread from store state (for use in callbacks) */
-function getLocationPathForThread(threadId: string): string | null {
-  const thread = Object.values(useThreadStore.getState().byProject)
-    .flat()
-    .find((t) => t.id === threadId)
-  if (!thread?.location_id) return null
-  const loc = Object.values(useLocationStore.getState().byProject)
-    .flat()
-    .find((l) => l.id === thread.location_id)
-  return loc?.path ?? null
-}
 import SessionTabs from './SessionTabs'
 import MessageStream from './MessageStream'
 import InputBar from './InputBar'
-
-function buildMessageContext(messages: Message[]): string {
-  const userMsgs = messages.filter((m) => m.role === 'user')
-  const lastAssistantMsg = [...messages].reverse().find((m) => {
-    if (m.role !== 'assistant') return false
-    if (!m.metadata) return true
-    try {
-      const meta = JSON.parse(m.metadata) as { type?: string }
-      return meta.type !== 'tool_call' && meta.type !== 'tool_result'
-    } catch {
-      return true
-    }
-  })
-
-  const parts: string[] = []
-  if (userMsgs.length > 0) {
-    parts.push('## User Request')
-    for (const msg of userMsgs) {
-      parts.push(msg.content.slice(0, 600))
-    }
-  }
-  if (lastAssistantMsg) {
-    parts.push('## Agent Summary')
-    parts.push(lastAssistantMsg.content.slice(0, 1000))
-  }
-  return parts.join('\n\n')
-}
+import { formatErrorDetails } from '../lib/errorDetails'
 
 interface Props {
   threadId: string
+}
+
+function formatThreadEventErrorDetails(event: OutputEvent, threadId: string): string {
+  return formatErrorDetails({
+    action: 'thread:output',
+    threadId,
+    sessionId: event.sessionId ?? null,
+    message: event.content,
+    metadata: event.metadata ?? null,
+  })
 }
 
 export default function ThreadView({ threadId }: Props) {
@@ -158,7 +129,13 @@ export default function ThreadView({ threadId }: Props) {
       }
 
       if (event.type === 'error') {
-        useToastStore.getState().add({ type: 'error', message: event.content, duration: 0 })
+        useToastStore.getState().add({
+          type: 'error',
+          title: 'Thread Error',
+          message: event.content || 'Thread failed with an unknown error',
+          details: formatThreadEventErrorDetails(event, threadId),
+          duration: 0,
+        })
       }
 
       if (event.type === 'rate_limit' && event.metadata) {
@@ -176,7 +153,14 @@ export default function ThreadView({ threadId }: Props) {
       if (status === 'error') {
         useToastStore.getState().add({
           type: 'error',
+          title: 'Session Error',
           message: 'Session error — try sending a new message to restart.',
+          details: formatErrorDetails({
+            action: 'thread:status',
+            threadId,
+            status,
+            suggestion: 'Try sending a new message to restart the session.',
+          }),
           duration: 0,
         })
       }
@@ -211,23 +195,6 @@ export default function ThreadView({ threadId }: Props) {
 
       // Refresh modified files for the git staging feature
       useGitStore.getState().fetchModifiedFiles(threadId)
-
-      // Auto-generate commit message when run completes successfully and field is empty
-      if (completionStatus === 'idle') {
-        const locationPath = getLocationPathForThread(threadId)
-        if (locationPath) {
-          const currentMsg = useGitStore.getState().commitMessageByPath[locationPath] ?? ''
-          if (!currentMsg.trim()) {
-            const activeSession = useSessionStore.getState().activeSessionByThread[threadId]
-            const msgs = activeSession
-              ? (useMessageStore.getState().messagesBySession[activeSession] ?? [])
-              : (useMessageStore.getState().messagesByThread[threadId] ?? [])
-            const modifiedFiles = useGitStore.getState().modifiedFilesByThread[threadId] ?? []
-            const context = buildMessageContext(msgs)
-            useGitStore.getState().generateCommitMessageWithContext(locationPath, modifiedFiles, context)
-          }
-        }
-      }
 
       // Check for queued message and auto-send if session completed successfully
       const queuedMessage = useThreadStore.getState().queuedMessageByThread[threadId]
