@@ -24,6 +24,7 @@ interface ExpandedSidebarProps {
   unreadByThread: Record<string, boolean | undefined>
   locationsByProject: Record<string, RepoLocation[] | undefined>
   poolsByProject: Record<string, LocationPool[] | undefined>
+  deletingWorktreesByProject: Record<string, number | undefined>
   collapsedLocationIds: Set<string>
   expandedAvailablePools: Set<string>
   pathExistsByLocation: Record<string, boolean>
@@ -71,6 +72,7 @@ export default function ExpandedSidebar({
   unreadByThread,
   locationsByProject,
   poolsByProject,
+  deletingWorktreesByProject,
   collapsedLocationIds,
   expandedAvailablePools,
   pathExistsByLocation,
@@ -228,6 +230,7 @@ export default function ExpandedSidebar({
           const archivedPageCount = Math.ceil(projectArchivedCount / 10)
           const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
           const pools = poolsByProject[project.id] ?? EMPTY_POOLS
+          const deletingWorktreeCount = deletingWorktreesByProject[project.id] ?? 0
           const runningThreads = projectThreads.filter((thread) => statusMap[thread.id] === 'running' || statusMap[thread.id] === 'stopping')
           const unreadThreads = projectThreads.filter((thread) => (unreadByThread[thread.id] ?? !!thread.unread) && statusMap[thread.id] !== 'running' && statusMap[thread.id] !== 'stopping')
           const unreadCount = unreadThreads.length
@@ -476,6 +479,15 @@ export default function ExpandedSidebar({
                         />
                       ))}
                     </>
+                  )}
+
+                  {deletingWorktreeCount > 0 && (
+                    <div className="flex items-center gap-2 pl-6 pr-4 py-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+                      <div className="status-spinner h-2.5 w-2.5 flex-shrink-0" />
+                      <span className="truncate">
+                        Deleting {deletingWorktreeCount} worktree{deletingWorktreeCount === 1 ? '' : 's'}...
+                      </span>
+                    </div>
                   )}
 
                   {projectThreads

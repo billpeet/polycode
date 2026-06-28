@@ -16,7 +16,7 @@ export function shellEscape(s: string): string {
  * so arguments with spaces must be explicitly double-quoted.
  */
 export function winQuote(s: string): string {
-  if (!/[ \t"&|<>^]/.test(s)) return s
+  if (!/[ \t\r\n"&|<>^]/.test(s)) return s
   return '"' + s.replace(/"/g, '\\"') + '"'
 }
 
