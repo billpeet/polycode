@@ -1,5 +1,7 @@
 import { spawn, execFile } from 'child_process'
 import { promisify } from 'util'
+import { existsSync } from 'fs'
+import * as path from 'path'
 import { AzureDevOpsPullRequest, SshConfig, WslConfig } from '../shared/types'
 import { augmentWindowsPath, winQuote } from './driver/runner'
 import { sshExec } from './ssh'
@@ -29,6 +31,12 @@ interface SpawnResult {
   stdout: string
   stderr: string
   code: number | null
+}
+
+interface LocalCommand {
+  cmd: string
+  args: string[]
+  shell: boolean
 }
 
 function shortRef(ref: string | undefined): string {
@@ -215,19 +223,22 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
 }
 
 async function runLocal(cmd: string, args: string[], cwd: string): Promise<SpawnResult> {
+  const command = await resolveLocalCommand(cmd, args)
+
   return new Promise((resolve) => {
     const isWindows = process.platform === 'win32'
-    const proc = isWindows
-      ? spawn([cmd, ...args.map(winQuote)].join(' '), [], {
+    const proc = isWindows && command.shell
+      ? spawn([command.cmd, ...command.args.map(winQuote)].join(' '), [], {
         cwd,
         // On Windows, global CLIs are often .cmd shims and need shell resolution.
         shell: true,
         env: augmentWindowsPath(),
         stdio: ['ignore', 'pipe', 'pipe'],
       })
-      : spawn(cmd, args, {
+      : spawn(command.cmd, command.args, {
         cwd,
         shell: false,
+        env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
         stdio: ['ignore', 'pipe', 'pipe'],
       })
 
@@ -245,6 +256,38 @@ async function runLocal(cmd: string, args: string[], cwd: string): Promise<Spawn
       resolve({ stdout: '', stderr: err.message, code: null })
     })
   })
+}
+
+async function resolveLocalCommand(cmd: string, args: string[]): Promise<LocalCommand> {
+  if (process.platform !== 'win32') return { cmd, args, shell: false }
+
+  if (cmd !== 'azdevops') return { cmd, args, shell: true }
+
+  const direct = await resolveWindowsAzDevOpsNodeCommand(args)
+  if (direct) return direct
+
+  return { cmd, args, shell: true }
+}
+
+async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalCommand | null> {
+  try {
+    const { stdout } = await execFileAsync('where.exe', ['azdevops.cmd'], { env: augmentWindowsPath() })
+    const cmdPath = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
+    if (!cmdPath) return null
+
+    const baseDir = path.dirname(cmdPath)
+    const scriptPath = path.join(baseDir, 'node_modules', '@billpeet', 'azdevops-cli', 'bin', 'azdevops.js')
+    if (!existsSync(scriptPath)) return null
+
+    const adjacentNode = path.join(baseDir, 'node.exe')
+    return {
+      cmd: existsSync(adjacentNode) ? adjacentNode : 'node',
+      args: [scriptPath, ...args],
+      shell: false,
+    }
+  } catch {
+    return null
+  }
 }
 
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
@@ -441,11 +484,7 @@ export async function createPullRequest(
   }
 
   if (payload.description?.trim()) {
-    // The azdevops CLI treats each --description value as a separate line. Passing one
-    // multi-line value gets truncated at the first newline on Windows (cmd.exe shell), so
-    // split into per-line args — no individual arg contains a newline.
-    const lines = payload.description.trim().replace(/\r\n/g, '\n').split('\n')
-    args.push('--description', ...lines)
+    args.push('--description', payload.description.trim().replace(/\r\n/g, '\n'))
   }
 
   const output = await runAzDevOps(repoPath, args, ssh, wsl)

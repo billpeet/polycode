@@ -76,6 +76,7 @@ export default function Sidebar() {
 
   const locationsByProject = useLocationStore((s) => s.byProject)
   const poolsByProject = useLocationStore((s) => s.poolsByProject)
+  const deletingWorktreesByProject = useLocationStore((s) => s.deletingWorktreesByProject)
   const fetchLocations = useLocationStore((s) => s.fetch)
   const fetchPools = useLocationStore((s) => s.fetchPools)
   const checkoutLocation = useLocationStore((s) => s.checkout)
@@ -459,6 +460,7 @@ export default function Sidebar() {
       unreadByThread={unreadByThread}
       locationsByProject={locationsByProject}
       poolsByProject={poolsByProject}
+      deletingWorktreesByProject={deletingWorktreesByProject}
       collapsedLocationIds={collapsedLocationIds}
       expandedAvailablePools={expandedAvailablePools}
       pathExistsByLocation={pathExistsByLocation}

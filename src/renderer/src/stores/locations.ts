@@ -5,6 +5,7 @@ import { useThreadStore } from './threads'
 interface LocationStore {
   byProject: Record<string, RepoLocation[]>
   poolsByProject: Record<string, LocationPool[]>
+  deletingWorktreesByProject: Record<string, number>
   fetch: (projectId: string) => Promise<void>
   fetchPools: (projectId: string) => Promise<void>
   createPool: (projectId: string, name: string) => Promise<LocationPool>
@@ -22,6 +23,7 @@ interface LocationStore {
 export const useLocationStore = create<LocationStore>((set) => ({
   byProject: {},
   poolsByProject: {},
+  deletingWorktreesByProject: {},
 
   fetch: async (projectId) => {
     const locations = await window.api.invoke('locations:list', projectId)
@@ -124,52 +126,84 @@ export const useLocationStore = create<LocationStore>((set) => ({
   removeWorktree: async (id, projectId) => {
     const activeThreads = useThreadStore.getState().byProject[projectId] ?? []
     const worktreeThreadIds = new Set(activeThreads.filter((thread) => thread.location_id === id).map((thread) => thread.id))
-    await window.api.invoke('locations:removeWorktree', id)
-    if (worktreeThreadIds.size > 0) {
-      useThreadStore.setState((s) => {
-        const removedThreads = (s.byProject[projectId] ?? []).filter((thread) => worktreeThreadIds.has(thread.id))
-        const nextStatusMap = { ...s.statusMap }
-        const nextUnreadByThread = { ...s.unreadByThread }
-        const nextQueuedByThread = { ...s.queuedMessageByThread }
-        const nextPlanModeByThread = { ...s.planModeByThread }
-        const nextFastModeByThread = { ...s.fastModeByThread }
-        const nextRunStartedAtByThread = { ...s.runStartedAtByThread }
-        const nextPidByThread = { ...s.pidByThread }
-        for (const threadId of worktreeThreadIds) {
-          delete nextStatusMap[threadId]
-          delete nextUnreadByThread[threadId]
-          delete nextQueuedByThread[threadId]
-          delete nextPlanModeByThread[threadId]
-          delete nextFastModeByThread[threadId]
-          delete nextRunStartedAtByThread[threadId]
-          delete nextPidByThread[threadId]
-        }
-        return {
-          byProject: {
-            ...s.byProject,
-            [projectId]: (s.byProject[projectId] ?? []).filter((thread) => !worktreeThreadIds.has(thread.id))
-          },
-          archivedCountByProject: {
-            ...s.archivedCountByProject,
-            [projectId]: (s.archivedCountByProject[projectId] ?? 0) + removedThreads.filter((thread) => thread.has_messages).length
-          },
-          selectedThreadId: s.selectedThreadId && worktreeThreadIds.has(s.selectedThreadId) ? null : s.selectedThreadId,
-          statusMap: nextStatusMap,
-          unreadByThread: nextUnreadByThread,
-          queuedMessageByThread: nextQueuedByThread,
-          planModeByThread: nextPlanModeByThread,
-          fastModeByThread: nextFastModeByThread,
-          runStartedAtByThread: nextRunStartedAtByThread,
-          pidByThread: nextPidByThread,
-        }
-      })
-    }
+    const locationsSnapshot = (useLocationStore.getState().byProject[projectId] ?? []).slice()
+    const threadSnapshot = useThreadStore.getState()
+
+    useThreadStore.setState((s) => {
+      const removedThreads = (s.byProject[projectId] ?? []).filter((thread) => worktreeThreadIds.has(thread.id))
+      const nextStatusMap = { ...s.statusMap }
+      const nextUnreadByThread = { ...s.unreadByThread }
+      const nextQueuedByThread = { ...s.queuedMessageByThread }
+      const nextPlanModeByThread = { ...s.planModeByThread }
+      const nextFastModeByThread = { ...s.fastModeByThread }
+      const nextRunStartedAtByThread = { ...s.runStartedAtByThread }
+      const nextPidByThread = { ...s.pidByThread }
+      for (const threadId of worktreeThreadIds) {
+        delete nextStatusMap[threadId]
+        delete nextUnreadByThread[threadId]
+        delete nextQueuedByThread[threadId]
+        delete nextPlanModeByThread[threadId]
+        delete nextFastModeByThread[threadId]
+        delete nextRunStartedAtByThread[threadId]
+        delete nextPidByThread[threadId]
+      }
+      return {
+        byProject: {
+          ...s.byProject,
+          [projectId]: (s.byProject[projectId] ?? []).filter((thread) => !worktreeThreadIds.has(thread.id))
+        },
+        archivedCountByProject: {
+          ...s.archivedCountByProject,
+          [projectId]: (s.archivedCountByProject[projectId] ?? 0) + removedThreads.filter((thread) => thread.has_messages).length
+        },
+        selectedThreadId: s.selectedThreadId && worktreeThreadIds.has(s.selectedThreadId) ? null : s.selectedThreadId,
+        statusMap: nextStatusMap,
+        unreadByThread: nextUnreadByThread,
+        queuedMessageByThread: nextQueuedByThread,
+        planModeByThread: nextPlanModeByThread,
+        fastModeByThread: nextFastModeByThread,
+        runStartedAtByThread: nextRunStartedAtByThread,
+        pidByThread: nextPidByThread,
+      }
+    })
     set((s) => ({
+      deletingWorktreesByProject: {
+        ...s.deletingWorktreesByProject,
+        [projectId]: (s.deletingWorktreesByProject[projectId] ?? 0) + 1,
+      },
       byProject: {
         ...s.byProject,
         [projectId]: (s.byProject[projectId] ?? []).filter((l) => l.id !== id)
       }
     }))
+    try {
+      await window.api.invoke('locations:removeWorktree', id)
+    } catch (error) {
+      useThreadStore.setState({
+        byProject: threadSnapshot.byProject,
+        archivedCountByProject: threadSnapshot.archivedCountByProject,
+        selectedThreadId: threadSnapshot.selectedThreadId,
+        statusMap: threadSnapshot.statusMap,
+        unreadByThread: threadSnapshot.unreadByThread,
+        queuedMessageByThread: threadSnapshot.queuedMessageByThread,
+        planModeByThread: threadSnapshot.planModeByThread,
+        fastModeByThread: threadSnapshot.fastModeByThread,
+        runStartedAtByThread: threadSnapshot.runStartedAtByThread,
+        pidByThread: threadSnapshot.pidByThread,
+      })
+      set((s) => ({
+        byProject: { ...s.byProject, [projectId]: locationsSnapshot }
+      }))
+      throw error
+    } finally {
+      set((s) => {
+        const currentCount = s.deletingWorktreesByProject[projectId] ?? 0
+        const nextDeleting = { ...s.deletingWorktreesByProject }
+        if (currentCount <= 1) delete nextDeleting[projectId]
+        else nextDeleting[projectId] = currentCount - 1
+        return { deletingWorktreesByProject: nextDeleting }
+      })
+    }
   },
 
   checkout: async (id, projectId) => {
