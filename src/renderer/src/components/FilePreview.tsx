@@ -5,7 +5,8 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { getHighlighter, onReady } from '../lib/shiki'
 import type { BundledLanguage, SpecialLanguage, ThemedToken } from 'shiki'
-import { PatchDiff } from '@pierre/diffs/react'
+import { PatchDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
+import type { WorkerInitializationRenderOptions, WorkerPoolOptions } from '@pierre/diffs/react'
 import { reportPerf } from '../lib/perf'
 
 function getLanguageFromPath(filePath: string): string {
@@ -379,18 +380,140 @@ function MarkdownPreview({ content }: { content: string }) {
 
 // ─── Diff rendering ───────────────────────────────────────────────────────────
 
+const LARGE_DIFF_LINE_THRESHOLD = 2500
+const LARGE_DIFF_CHAR_THRESHOLD = 350_000
+const LARGE_DIFF_PREVIEW_LINES = 800
+const DIFF_WORKER_POOL_OPTIONS: WorkerPoolOptions = {
+  workerFactory: () => new Worker(new URL('@pierre/diffs/worker/worker.js', import.meta.url), { type: 'module' }),
+  poolSize: 2,
+}
+const DIFF_WORKER_HIGHLIGHTER_OPTIONS: WorkerInitializationRenderOptions = {
+  theme: 'pierre-dark',
+  tokenizeMaxLineLength: 500,
+}
+
+function getDiffLineClass(line: string): string {
+  if (line.startsWith('+++') || line.startsWith('---')) return ''
+  if (line.startsWith('+')) return 'bg-emerald-500/10 text-emerald-200'
+  if (line.startsWith('-')) return 'bg-red-500/10 text-red-200'
+  if (line.startsWith('@@')) return 'bg-sky-500/10 text-sky-200'
+  return ''
+}
+
+function PlainDiffPreview({
+  diff,
+  lineCount,
+  onRenderFull,
+}: {
+  diff: string
+  lineCount: number
+  onRenderFull: () => void
+}) {
+  const previewLines = useMemo(() => diff.split('\n').slice(0, LARGE_DIFF_PREVIEW_LINES), [diff])
+  const omittedLines = Math.max(0, lineCount - previewLines.length)
+
+  return (
+    <div className="flex flex-col h-full" style={{ background: 'var(--color-surface)' }}>
+      <div
+        className="flex items-center gap-2 px-3 py-2 border-b text-xs"
+        style={{ borderColor: 'var(--color-border)', color: 'var(--color-text-muted)' }}
+      >
+        <span className="flex-1">
+          Large diff preview: showing {previewLines.length.toLocaleString()} of {lineCount.toLocaleString()} lines
+          {omittedLines > 0 ? `, ${omittedLines.toLocaleString()} hidden` : ''}
+        </span>
+        <button
+          type="button"
+          onClick={onRenderFull}
+          className="px-2 py-1 rounded transition-colors hover:bg-white/10"
+          style={{ color: 'var(--color-text)' }}
+          title="Render the full highlighted diff"
+        >
+          Render full diff
+        </button>
+      </div>
+      <div
+        className="flex-1 overflow-auto text-xs leading-relaxed"
+        style={{ fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace' }}
+      >
+        <table style={{ borderCollapse: 'collapse', width: '100%' }}>
+          <tbody>
+            {previewLines.map((line, i) => (
+              <tr key={i} className={getDiffLineClass(line)}>
+                <td
+                  className="select-none text-right px-3"
+                  style={{
+                    width: `${String(previewLines.length).length + 2}ch`,
+                    minWidth: `${String(previewLines.length).length + 2}ch`,
+                    color: 'var(--color-text-muted)',
+                    opacity: 0.5,
+                    verticalAlign: 'top',
+                  }}
+                >
+                  {i + 1}
+                </td>
+                <td style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', paddingRight: '1rem' }}>
+                  {line || '\n'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )
+}
+
 function DiffPreview({ diff, filePath }: { diff: string; filePath?: string }) {
+  const [renderFullDiff, setRenderFullDiff] = useState(false)
+  const lineCount = useMemo(() => diff.split('\n').length, [diff])
+  const isLargeDiff = lineCount > LARGE_DIFF_LINE_THRESHOLD || diff.length > LARGE_DIFF_CHAR_THRESHOLD
+
+  useEffect(() => {
+    setRenderFullDiff(false)
+  }, [diff])
+
+  useEffect(() => {
+    reportPerf(
+      'file-preview:diff-size',
+      isLargeDiff ? 1 : 0,
+      {
+        filePath,
+        diffLength: diff.length,
+        lineCount,
+        large: isLargeDiff,
+      },
+      { thresholdMs: 1, minIntervalMs: 1000, level: isLargeDiff ? 'warn' : 'debug' }
+    )
+  }, [diff.length, filePath, isLargeDiff, lineCount])
+
+  if (isLargeDiff && !renderFullDiff) {
+    return (
+      <PlainDiffPreview
+        diff={diff}
+        lineCount={lineCount}
+        onRenderFull={() => setRenderFullDiff(true)}
+      />
+    )
+  }
+
   return (
     <div style={{ height: '100%', overflow: 'auto', fontSize: '0.72rem' }}>
-      <PatchDiff
-        patch={diff}
-        options={{
-          theme: 'pierre-dark',
-          diffStyle: 'unified',
-          disableFileHeader: true,
-          overflow: 'wrap',
-        }}
-      />
+      <WorkerPoolContextProvider
+        poolOptions={DIFF_WORKER_POOL_OPTIONS}
+        highlighterOptions={DIFF_WORKER_HIGHLIGHTER_OPTIONS}
+      >
+        <PatchDiff
+          patch={diff}
+          options={{
+            theme: 'pierre-dark',
+            diffStyle: 'unified',
+            disableFileHeader: true,
+            overflow: 'wrap',
+            tokenizeMaxLineLength: 500,
+          }}
+        />
+      </WorkerPoolContextProvider>
     </div>
   )
 }
