@@ -359,6 +359,19 @@ function runGit(args: string[], cwd: string): Promise<string> {
   })
 }
 
+async function resolveWorktreeBaseRef(repoPath: string): Promise<string> {
+  for (const ref of ['main', 'master', 'origin/main', 'origin/master']) {
+    try {
+      await runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], repoPath)
+      return ref
+    } catch {
+      // Try the next conventional default branch ref.
+    }
+  }
+
+  throw new Error('Could not find a main or master branch to create the worktree from.')
+}
+
 function isNotRegisteredWorktreeError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes('is not a working tree') || message.includes('is not a git repository')
@@ -385,7 +398,8 @@ async function createLocalWorktree(parentLocationId: string, label?: string | nu
   }
 
   const branchName = `polycode/${baseName}-${Date.now().toString(36)}`
-  await runGit(['worktree', 'add', '-b', branchName, worktreePath, 'HEAD'], parent.path)
+  const baseRef = await resolveWorktreeBaseRef(parent.path)
+  await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
   const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
 
   for (const command of listCommands(parent.project_id).filter((cmd) => cmd.run_on_worktree_create)) {
