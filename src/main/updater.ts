@@ -15,6 +15,31 @@ let updateState: UpdateState = {
   downloading: false,
 }
 
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function isExpectedNetworkError(error: unknown): boolean {
+  const message = getErrorMessage(error)
+  const code = typeof error === 'object' && error !== null && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : ''
+
+  return [
+    'ERR_NAME_NOT_RESOLVED',
+    'ERR_INTERNET_DISCONNECTED',
+    'ERR_NETWORK_CHANGED',
+    'ERR_CONNECTION_TIMED_OUT',
+    'ERR_CONNECTION_RESET',
+    'ERR_CONNECTION_REFUSED',
+    'EAI_AGAIN',
+    'ENOTFOUND',
+    'ETIMEDOUT',
+    'ECONNRESET',
+    'ECONNREFUSED',
+  ].some((token) => code === token || message.includes(token))
+}
+
 function broadcast(): void {
   try {
     getWindow()?.webContents.send('update:state', { ...updateState })
@@ -35,10 +60,12 @@ export function getUpdateState(): UpdateState {
 export function checkForUpdates(): void {
   if (!app.isPackaged) return
   autoUpdater.checkForUpdates().catch((err) => {
-    console.error('[updater] check failed:', err instanceof Error ? err.message : err)
+    const message = getErrorMessage(err)
+    const log = isExpectedNetworkError(err) ? console.warn : console.error
+    log('[updater] check failed:', message)
     setState({
       checking: false,
-      error: err instanceof Error ? err.message : String(err),
+      error: message,
     })
   })
 }
@@ -91,8 +118,13 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
   })
 
   autoUpdater.on('error', (err) => {
-    Sentry.captureException(err, { tags: { source: 'auto-updater' } })
-    console.error('[updater] error:', err.message)
+    if (isExpectedNetworkError(err)) {
+      console.warn('[updater] network unavailable:', err.message)
+    } else {
+      Sentry.captureException(err, { tags: { source: 'auto-updater' } })
+      console.error('[updater] error:', err.message)
+    }
+
     setState({
       checking: false,
       downloading: false,
