@@ -430,6 +430,7 @@ export interface FileEntry {
   name: string
   path: string
   isDirectory: boolean
+  isSymlink?: boolean
   children?: FileEntry[]
 }
 
@@ -439,6 +440,7 @@ export interface SearchableFile {
   relativePath: string
   name: string
   isDirectory?: boolean
+  isSymlink?: boolean
 }
 
 // ── Claude Code History types ──────────────────────────────────────────────────

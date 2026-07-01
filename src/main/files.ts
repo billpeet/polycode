@@ -20,9 +20,20 @@ const IGNORED_DIRS = new Set([
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
 
-function shouldSkipEntry(entry: fs.Dirent): boolean {
-  if (entry.isDirectory()) return IGNORED_DIRS.has(entry.name)
-  return entry.name.startsWith('.') && !entry.name.startsWith('.env')
+function isEntryDirectory(entry: fs.Dirent, fullPath: string): boolean {
+  if (entry.isDirectory()) return true
+  if (!entry.isSymbolicLink()) return false
+
+  try {
+    return fs.statSync(fullPath).isDirectory()
+  } catch {
+    return false
+  }
+}
+
+function shouldSkipEntry(name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return IGNORED_DIRS.has(name)
+  return name.startsWith('.') && !name.startsWith('.env')
 }
 
 export function listDirectory(dirPath: string): FileEntry[] {
@@ -31,13 +42,15 @@ export function listDirectory(dirPath: string): FileEntry[] {
     const result: FileEntry[] = []
 
     for (const entry of entries) {
-      if (shouldSkipEntry(entry)) continue
-
       const fullPath = path.join(dirPath, entry.name)
+      const isDirectory = isEntryDirectory(entry, fullPath)
+      if (shouldSkipEntry(entry.name, isDirectory)) continue
+
       result.push({
         name: entry.name,
         path: fullPath,
-        isDirectory: entry.isDirectory(),
+        isDirectory,
+        isSymlink: entry.isSymbolicLink(),
       })
     }
 
@@ -61,9 +74,18 @@ const MAX_SEARCH_FILES = 5000
  */
 export function listAllFiles(rootPath: string): SearchableFile[] {
   const results: SearchableFile[] = []
+  const visitedDirs = new Set<string>()
 
   function walk(dirPath: string): void {
     if (results.length >= MAX_SEARCH_FILES) return
+
+    try {
+      const realPath = fs.realpathSync(dirPath)
+      if (visitedDirs.has(realPath)) return
+      visitedDirs.add(realPath)
+    } catch {
+      return
+    }
 
     try {
       const entries = fs.readdirSync(dirPath, { withFileTypes: true })
@@ -71,17 +93,18 @@ export function listAllFiles(rootPath: string): SearchableFile[] {
       for (const entry of entries) {
         if (results.length >= MAX_SEARCH_FILES) break
 
-        if (shouldSkipEntry(entry)) continue
-
         const fullPath = path.join(dirPath, entry.name)
+        const isDirectory = isEntryDirectory(entry, fullPath)
+        if (shouldSkipEntry(entry.name, isDirectory)) continue
 
-        if (entry.isDirectory()) {
+        if (isDirectory) {
           const relativePath = path.relative(rootPath, fullPath).replace(/\\/g, '/')
           results.push({
             path: fullPath,
             relativePath,
             name: entry.name,
             isDirectory: true,
+            isSymlink: entry.isSymbolicLink(),
           })
           walk(fullPath)
         } else {
@@ -90,6 +113,7 @@ export function listAllFiles(rootPath: string): SearchableFile[] {
             path: fullPath,
             relativePath,
             name: entry.name,
+            isSymlink: entry.isSymbolicLink(),
           })
         }
       }

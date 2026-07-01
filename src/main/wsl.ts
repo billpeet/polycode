@@ -95,9 +95,20 @@ const IGNORED_DIRS = new Set([
   'dist', 'build', 'out', '.vscode', '.idea', 'coverage', '.nyc_output',
 ])
 
-function shouldSkipEntry(entry: fs.Dirent): boolean {
-  if (entry.isDirectory()) return IGNORED_DIRS.has(entry.name)
-  return entry.name.startsWith('.') && !entry.name.startsWith('.env')
+function shouldSkipEntry(name: string, isDirectory: boolean): boolean {
+  if (isDirectory) return IGNORED_DIRS.has(name)
+  return name.startsWith('.') && !name.startsWith('.env')
+}
+
+function isEntryDirectory(entry: fs.Dirent, fullPath: string): boolean {
+  if (entry.isDirectory()) return true
+  if (!entry.isSymbolicLink()) return false
+
+  try {
+    return fs.statSync(fullPath).isDirectory()
+  } catch {
+    return false
+  }
 }
 
 /**
@@ -112,10 +123,12 @@ export function wslListDirectory(wsl: WslConfig, dirPath: string): FileEntry[] {
     const result: FileEntry[] = []
 
     for (const entry of entries) {
-      if (shouldSkipEntry(entry)) continue
-
       const entryPath = dirPath.endsWith('/') ? dirPath + entry.name : dirPath + '/' + entry.name
-      result.push({ name: entry.name, path: entryPath, isDirectory: entry.isDirectory() })
+      const entryUncPath = path.join(uncPath, entry.name)
+      const isDirectory = isEntryDirectory(entry, entryUncPath)
+      if (shouldSkipEntry(entry.name, isDirectory)) continue
+
+      result.push({ name: entry.name, path: entryPath, isDirectory, isSymlink: entry.isSymbolicLink() })
     }
 
     return result.sort((a, b) => {
@@ -162,27 +175,36 @@ export function wslListAllFiles(wsl: WslConfig, rootPath: string): SearchableFil
   const MAX_SEARCH_FILES = 5000
   const uncRoot = wslToUncPath(wsl, rootPath)
   const results: SearchableFile[] = []
+  const visitedDirs = new Set<string>()
 
   function walk(uncDir: string, linuxDir: string): void {
     if (results.length >= MAX_SEARCH_FILES) return
+
+    try {
+      const realPath = fs.realpathSync(uncDir)
+      if (visitedDirs.has(realPath)) return
+      visitedDirs.add(realPath)
+    } catch {
+      return
+    }
 
     try {
       const entries = fs.readdirSync(uncDir, { withFileTypes: true })
 
       for (const entry of entries) {
         if (results.length >= MAX_SEARCH_FILES) break
-        if (shouldSkipEntry(entry)) continue
-
         const entryLinuxPath = linuxDir.endsWith('/') ? linuxDir + entry.name : linuxDir + '/' + entry.name
         const entryUncPath = path.join(uncDir, entry.name)
+        const isDirectory = isEntryDirectory(entry, entryUncPath)
+        if (shouldSkipEntry(entry.name, isDirectory)) continue
 
-        if (entry.isDirectory()) {
+        if (isDirectory) {
           const relativePath = entryLinuxPath.startsWith(rootPath + '/')
             ? entryLinuxPath.slice(rootPath.length + 1)
             : entryLinuxPath.startsWith(rootPath)
               ? entryLinuxPath.slice(rootPath.length)
               : entryLinuxPath
-          results.push({ path: entryLinuxPath, relativePath, name: entry.name, isDirectory: true })
+          results.push({ path: entryLinuxPath, relativePath, name: entry.name, isDirectory: true, isSymlink: entry.isSymbolicLink() })
           walk(entryUncPath, entryLinuxPath)
         } else {
           const relativePath = entryLinuxPath.startsWith(rootPath + '/')
@@ -190,7 +212,7 @@ export function wslListAllFiles(wsl: WslConfig, rootPath: string): SearchableFil
             : entryLinuxPath.startsWith(rootPath)
               ? entryLinuxPath.slice(rootPath.length)
               : entryLinuxPath
-          results.push({ path: entryLinuxPath, relativePath, name: entry.name })
+          results.push({ path: entryLinuxPath, relativePath, name: entry.name, isSymlink: entry.isSymbolicLink() })
         }
       }
     } catch {

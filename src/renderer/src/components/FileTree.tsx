@@ -42,6 +42,31 @@ function getFileIcon(name: string, isDirectory: boolean): string {
   }
 }
 
+function SymlinkBadge() {
+  return (
+    <span
+      title="Symlink"
+      aria-label="Symlink"
+      className="inline-flex items-center justify-center"
+      style={{
+        width: 11,
+        height: 11,
+        marginLeft: -4,
+        marginRight: -1,
+        borderRadius: 3,
+        fontSize: '0.55rem',
+        lineHeight: 1,
+        background: 'var(--color-surface-2)',
+        color: 'var(--color-text-muted)',
+        border: '1px solid var(--color-border)',
+        flexShrink: 0,
+      }}
+    >
+      ↪
+    </span>
+  )
+}
+
 function FileTreeItem({
   entry,
   depth = 0,
@@ -135,6 +160,7 @@ function FileTreeItem({
           <span style={{ fontSize: '0.75rem', flexShrink: 0 }}>
             {getFileIcon(entry.name, entry.isDirectory)}
           </span>
+          {entry.isSymlink && <SymlinkBadge />}
 
           {/* Name */}
           <span className="text-xs truncate">{entry.name}</span>
@@ -222,7 +248,10 @@ function SearchResultItem({
           color: 'var(--color-text)',
         }}
       >
-        <span className="text-xs truncate">{entry.name}</span>
+        <span className="flex items-center gap-1 text-xs truncate">
+          <span className="truncate">{entry.name}</span>
+          {entry.isSymlink && <SymlinkBadge />}
+        </span>
         <span className="text-xs truncate" style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem' }}>{relativePath}</span>
       </button>
       {isHovered && (
