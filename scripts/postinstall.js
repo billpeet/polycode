@@ -41,56 +41,51 @@ if (!fs.existsSync(bsq3PkgPath)) {
 }
 
 const bsq3Version = require(bsq3PkgPath).version
-const electronPkg = require(path.join(ROOT, 'node_modules', 'electron', 'package.json'))
-const electronVersion = electronPkg.version
 
-// Determine the Electron ABI from the dist/version file
-const electronVersionFile = path.join(
-  ROOT, 'node_modules', 'electron', 'dist', 'version'
-)
-let abiVersion = null
-if (fs.existsSync(electronVersionFile)) {
-  // Map electron version → ABI using process.versions equivalent lookup
-  // We just use prebuild-install to query it
-  try {
-    const result = spawnSync(
-      process.execPath,
-      ['-e', `
-        const { execSync } = require('child_process');
-        // Get ABI from electron's node version
-        const ver = require('${electronVersionFile.replace(/\\/g, '\\\\')}').trim ? require('fs').readFileSync('${electronVersionFile.replace(/\\/g, '\\\\')}', 'utf8').trim() : '33.4.11';
-        console.log(ver);
-      `],
-      { encoding: 'utf8' }
-    )
-  } catch {}
+// Determine the installed Electron's ABI directly — a hardcoded version→ABI
+// map silently goes stale the moment Electron is bumped, which packages a
+// prebuilt for the wrong ABI and crashes the app at startup.
+// Recent electron packages ship an abi_version file; fall back to asking the
+// binary itself for older versions.
+let abiNumber = null
+const abiVersionFile = path.join(ROOT, 'node_modules', 'electron', 'abi_version')
+if (fs.existsSync(abiVersionFile)) {
+  abiNumber = fs.readFileSync(abiVersionFile, 'utf8').trim()
+} else {
+  const electronExeName = fs
+    .readFileSync(path.join(ROOT, 'node_modules', 'electron', 'path.txt'), 'utf8')
+    .trim()
+  const electronExe = path.join(ROOT, 'node_modules', 'electron', 'dist', electronExeName)
+  const abiProbe = spawnSync(electronExe, ['-p', 'process.versions.modules'], {
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+    encoding: 'utf8'
+  })
+  abiNumber = (abiProbe.stdout || '').trim()
 }
-
-// Electron 33.x → ABI v130, 34.x → v132, 35.x → v135
-// Read from electron/dist/version
-let electronVer = electronVersion
-try {
-  if (fs.existsSync(electronVersionFile)) {
-    electronVer = fs.readFileSync(electronVersionFile, 'utf8').trim()
-  }
-} catch {}
-
-const majorMinor = electronVer.split('.').map(Number)
-const major = majorMinor[0]
-
-// ABI map (from https://www.electronjs.org/docs/latest/tutorial/electron-versioning)
-const abiMap = {
-  29: 'v121', 30: 'v123', 31: 'v125', 32: 'v128',
-  33: 'v130', 34: 'v132', 35: 'v135'
+if (!/^\d+$/.test(abiNumber)) {
+  console.error('[postinstall] Could not determine Electron ABI.')
+  process.exit(1)
 }
-const abi = abiMap[major] ?? 'v130'
+const abi = `v${abiNumber}`
 
-const prebuiltDir = path.join(
-  ROOT, 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64', 'build', 'Release'
+// The ABI-specific binding path is the source of truth for "already installed" —
+// checking an ABI-less path would let a stale binary from a previous Electron
+// version short-circuit the download.
+const bindingDir = path.join(
+  ROOT, 'node_modules', 'better-sqlite3', 'lib', 'binding', `node-${abi}-win32-x64`
 )
-const prebuiltNode = path.join(prebuiltDir, 'better_sqlite3.node')
+const bindingNode = path.join(bindingDir, 'better_sqlite3.node')
 
-if (fs.existsSync(prebuiltNode)) {
+if (fs.existsSync(bindingNode)) {
+  // Refresh the generic copies in case they hold a binary for a different ABI
+  const buildReleaseDir = path.join(ROOT, 'node_modules', 'better-sqlite3', 'build', 'Release')
+  fs.mkdirSync(buildReleaseDir, { recursive: true })
+  fs.copyFileSync(bindingNode, path.join(buildReleaseDir, 'better_sqlite3.node'))
+  const genericPrebuilt = path.join(
+    ROOT, 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64', 'build', 'Release'
+  )
+  fs.mkdirSync(genericPrebuilt, { recursive: true })
+  fs.copyFileSync(bindingNode, path.join(genericPrebuilt, 'better_sqlite3.node'))
   console.log(`[postinstall] better-sqlite3 prebuilt already present (electron ${abi}).`)
   process.exit(0)
 }
@@ -100,7 +95,6 @@ const url = `https://github.com/WiseLibs/better-sqlite3/releases/download/v${bsq
 const tmp = path.join(require('os').tmpdir(), tarball)
 // Two places bindings looks: prebuilds/ and lib/binding/
 const prebuildsDir = path.join(ROOT, 'node_modules', 'better-sqlite3', 'prebuilds', 'win32-x64')
-const bindingDir = path.join(ROOT, 'node_modules', 'better-sqlite3', 'lib', 'binding', `node-${abi}-win32-x64`)
 
 console.log(`[postinstall] Downloading better-sqlite3 prebuilt (electron ${abi})...`)
 console.log(`[postinstall] ${url}`)
