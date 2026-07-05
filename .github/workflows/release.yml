@@ -43,8 +43,15 @@ jobs:
         shell: bash
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
 
+      # --ignore-scripts stops better-sqlite3 (and friends) from compiling via
+      # node-gyp, which breaks whenever the runner image's Visual Studio is newer
+      # than node-gyp understands. scripts/postinstall.js installs the Electron
+      # binary and the matching better-sqlite3 prebuilt instead.
       - name: Install dependencies
-        run: bun install
+        run: bun install --ignore-scripts
+
+      - name: Install native prebuilts
+        run: node scripts/postinstall.js
 
       - name: Build app
         run: bun run build
