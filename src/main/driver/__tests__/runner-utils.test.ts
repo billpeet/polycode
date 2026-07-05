@@ -60,6 +60,14 @@ describe('winQuote', () => {
     expect(winQuote('say "hi"')).toBe('"say \\"hi\\""')
   })
 
+  it('doubles trailing backslashes before the closing quote', () => {
+    expect(winQuote('C:\\Program Files\\App\\')).toBe('"C:\\Program Files\\App\\\\"')
+  })
+
+  it('doubles backslashes before embedded double quotes', () => {
+    expect(winQuote('C:\\path\\\\"value"')).toBe('"C:\\path\\\\\\\\\\"value\\""')
+  })
+
   it('wraps strings containing & | < > ^ cmd special chars', () => {
     expect(winQuote('a&b')).toBe('"a&b"')
     expect(winQuote('a|b')).toBe('"a|b"')

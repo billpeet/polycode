@@ -17,7 +17,7 @@ export function shellEscape(s: string): string {
  */
 export function winQuote(s: string): string {
   if (!/[ \t\r\n"&|<>^]/.test(s)) return s
-  return '"' + s.replace(/"/g, '\\"') + '"'
+  return '"' + s.replace(/(\\*)"/g, '$1$1\\"').replace(/\\+$/g, '$&$&') + '"'
 }
 
 function getWindowsPathKey(env: NodeJS.ProcessEnv): 'PATH' | 'Path' {
