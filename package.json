@@ -54,7 +54,7 @@
     "@types/react-dom": "^19.0.3",
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^6.0.1",
-    "electron": "33.4.11",
+    "electron": "39.8.5",
     "electron-builder": "^25.1.8",
     "electron-vite": "^5.0.0",
     "png-to-ico": "^3.0.1",
