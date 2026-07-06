@@ -377,6 +377,27 @@ function isNotRegisteredWorktreeError(error: unknown): boolean {
   return message.includes('is not a working tree') || message.includes('is not a git repository')
 }
 
+function isWorktreeDirectoryCleanupError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes('failed to delete') && (
+    message.includes('Directory not empty') ||
+    message.includes('Permission denied')
+  )
+}
+
+function removeWorktreeDirectoryBestEffort(path: string): void {
+  if (!existsSync(path)) return
+  try {
+    rmSync(path, { recursive: true, force: true })
+  } catch (removeError) {
+    const code = removeError && typeof removeError === 'object' && 'code' in removeError
+      ? String((removeError as { code?: unknown }).code)
+      : ''
+    if (code !== 'EBUSY' && code !== 'EPERM') throw removeError
+    console.warn(`[worktree] Could not remove locked worktree directory "${path}"; removing PolyCode location only.`)
+  }
+}
+
 async function createLocalWorktree(parentLocationId: string, label?: string | null): Promise<ReturnType<typeof createWorktreeLocation>> {
   const parent = getLocationById(parentLocationId)
   if (!parent) throw new Error('Parent location not found')
@@ -530,21 +551,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     try {
       await runGit(['worktree', 'remove', '--force', location.path], gitCwd)
     } catch (error) {
-      if (!isNotRegisteredWorktreeError(error)) throw error
+      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
       if (parent?.path && existsSync(parent.path)) {
         await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
       }
-      if (existsSync(location.path)) {
-        try {
-          rmSync(location.path, { recursive: true, force: true })
-        } catch (removeError) {
-          const code = removeError && typeof removeError === 'object' && 'code' in removeError
-            ? String((removeError as { code?: unknown }).code)
-            : ''
-          if (code !== 'EBUSY' && code !== 'EPERM') throw removeError
-          console.warn(`[worktree] Could not remove locked worktree directory "${location.path}"; removing PolyCode location only.`)
-        }
-      }
+      removeWorktreeDirectoryBestEffort(location.path)
     }
     deleteLocation(id)
   })

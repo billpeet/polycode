@@ -3,8 +3,10 @@ import { useCommandStore, instKey } from '../stores/commands'
 import { useLocationStore } from '../stores/locations'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
+import { useToastStore } from '../stores/toast'
 import { useYouTrackStore } from '../stores/youtrack'
 import { Project, RepoLocation, Thread, ThreadStatus } from '../types/ipc'
+import { formatErrorDetails } from '../lib/errorDetails'
 import CollapsedSidebar from './sidebar/CollapsedSidebar'
 import ExpandedSidebar from './sidebar/ExpandedSidebar'
 import SidebarDialogs, {
@@ -68,6 +70,7 @@ export default function Sidebar() {
   const archiveThread = useThreadStore((s) => s.archive)
   const unarchiveThread = useThreadStore((s) => s.unarchive)
   const toggleShowArchived = useThreadStore((s) => s.toggleShowArchived)
+  const addToast = useToastStore((s) => s.add)
   const setArchivedPage = useThreadStore((s) => s.setArchivedPage)
   const selectThread = useThreadStore((s) => s.select)
   const setName = useThreadStore((s) => s.setName)
@@ -306,8 +309,18 @@ export default function Sidebar() {
   }
 
   async function handleNewWorktreeThread(projectId: string, parentLocationId: string): Promise<void> {
-    const location = await createWorktreeLocation(parentLocationId, projectId)
-    await handleNewThread(projectId, location.id)
+    try {
+      const location = await createWorktreeLocation(parentLocationId, projectId)
+      await handleNewThread(projectId, location.id)
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Create Worktree Failed',
+        message: err instanceof Error ? err.message : 'Failed to create worktree',
+        details: formatErrorDetails({ action: 'locations:createWorktree', projectId, parentLocationId }, err),
+        duration: 0,
+      })
+    }
   }
 
   async function handleRemoveWorktree(location: RepoLocation, projectId: string): Promise<void> {
@@ -318,8 +331,18 @@ export default function Sidebar() {
     )
     if (hasRunningThread) return
     if (!window.confirm(`Remove worktree "${location.label}"?\n\n${location.path}`)) return
-    await removeWorktreeLocation(location.id, projectId)
-    await fetchThreads(projectId)
+    try {
+      await removeWorktreeLocation(location.id, projectId)
+      await fetchThreads(projectId)
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Remove Worktree Failed',
+        message: err instanceof Error ? err.message : 'Failed to remove worktree',
+        details: formatErrorDetails({ action: 'locations:removeWorktree', projectId, location }, err),
+        duration: 0,
+      })
+    }
   }
 
   async function handleDeleteProject(projectId: string): Promise<void> {
