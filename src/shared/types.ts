@@ -70,6 +70,29 @@ export interface NewProjectResult {
   location: RepoLocation
 }
 
+export interface RemoteServerConfig {
+  enabled: boolean
+  host: string
+  port: number
+  token: string
+}
+
+export interface RemoteHost {
+  id: string
+  label: string
+  baseUrl: string
+  token: string
+  createdAt: string
+  updatedAt: string
+}
+
+export type RemoteHostInput = Pick<RemoteHost, 'label' | 'baseUrl' | 'token'>
+
+export interface RemoteConnectionStatus {
+  ok: boolean
+  error?: string
+}
+
 export const ANTHROPIC_MODELS = [
   { id: 'claude-fable-5[1m]', label: 'Fable 5', contextWindow: 1_000_000 },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },

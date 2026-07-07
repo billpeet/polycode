@@ -12,6 +12,7 @@ import {
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { getModelsForProvider, getDefaultModelForProvider, Provider } from '../../shared/types'
+import { emitAppEvent } from '../app-events'
 
 let server: http.Server | null = null
 
@@ -87,7 +88,7 @@ async function handleCreateThread(
   const resolvedProvider = (typeof provider === 'string' ? provider : defaultProvider) as Provider
   const validModels = getModelsForProvider(resolvedProvider).map((m) => m.id)
   const resolvedModel =
-    typeof model === 'string' && (resolvedProvider === 'claude-code' || resolvedProvider === 'codex' || resolvedProvider === 'pi' || resolvedProvider === 'cursor' || validModels.includes(model))
+    typeof model === 'string' && (resolvedProvider === 'claude-code' || resolvedProvider === 'codex' || resolvedProvider === 'pi' || resolvedProvider === 'cursor' || (validModels as readonly string[]).includes(model))
       ? model
       : typeof model === 'string'
         ? getDefaultModelForProvider(resolvedProvider)
@@ -111,7 +112,7 @@ async function handleCreateThread(
   }
 
   // Notify renderer to refresh thread list
-  window.webContents.send('webhook:thread-created', { projectId: project.id, threadId: thread.id })
+  emitAppEvent(window, 'webhook:thread-created', { projectId: project.id, threadId: thread.id })
 
   sendJson(res, 201, { threadId: thread.id, projectId: project.id, locationId })
 }

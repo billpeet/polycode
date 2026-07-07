@@ -4,14 +4,16 @@ import { CliHealthPanel } from './CliHealthDialog'
 import { SlashCommandsPanel } from './SlashCommandsDialog'
 import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
 import { WebhookPanel } from './WebhookPanel'
+import { RemoteControlPanel } from './RemoteControlPanel'
 
-type Tab = 'health' | 'slash' | 'youtrack' | 'webhook'
+type Tab = 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'health', label: 'Health Checks' },
   { id: 'slash', label: 'Slash Commands' },
   { id: 'youtrack', label: 'YouTrack' },
   { id: 'webhook', label: 'Webhook' },
+  { id: 'remote', label: 'Remote' },
 ]
 
 interface Props {
@@ -106,6 +108,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
             )}
             {activeTab === 'youtrack' && <YouTrackSettingsPanel hideHeader />}
             {activeTab === 'webhook' && <WebhookPanel hideHeader />}
+            {activeTab === 'remote' && <RemoteControlPanel hideHeader />}
           </div>
         </div>
       </div>

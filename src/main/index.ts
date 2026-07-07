@@ -10,6 +10,9 @@ import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
 import { SENTRY_DSN } from '../shared/sentry.config'
 import { startWebhookServer, stopWebhookServer } from './webhook/server'
+import { startRemoteControlServer, stopRemoteControlServer } from './remote/server'
+import { readRemoteServerConfig } from './remote/config'
+import { stopRemoteControlClient } from './remote/client'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
 import { getSetting } from './db/queries'
@@ -236,6 +239,7 @@ app.whenReady().then(() => {
     port: parseInt(getSetting('webhook:port') ?? '3284', 10),
     token: getSetting('webhook:token') ?? '',
   }, win)
+  startRemoteControlServer(readRemoteServerConfig(), win)
 
   initUpdater(() => win)
 
@@ -259,6 +263,8 @@ app.on('before-quit', () => {
   sessionManager.stopAll()
   commandManager.stopAll()
   stopWebhookServer()
+  stopRemoteControlClient()
+  stopRemoteControlServer()
   stopPlanWatcher()
   stopAllFileWatches()
   ptyManager.killAll()

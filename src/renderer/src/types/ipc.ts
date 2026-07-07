@@ -1,6 +1,6 @@
-import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, CURSOR_MODELS, CursorModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, ReasoningLevel, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult } from '../../../shared/types'
+import { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, ANTHROPIC_MODELS, AnthropicModelId, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, OPENAI_MODELS, OpenAIModelId, CURSOR_MODELS, CursorModelId, Provider, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, ReasoningLevel, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult, RemoteServerConfig, RemoteHost, RemoteHostInput, RemoteConnectionStatus } from '../../../shared/types'
 
-export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, CursorModelId, Provider, ReasoningLevel, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult }
+export type { Project, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, AzureDevOpsPullRequest, GitHubPullRequest, AnthropicModelId, OpenAIModelId, CursorModelId, Provider, ReasoningLevel, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult, RemoteServerConfig, RemoteHost, RemoteHostInput, RemoteConnectionStatus }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, CURSOR_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT }
 
 /** Shape of window.api exposed by preload */
@@ -193,6 +193,16 @@ export interface WindowApi {
   invoke(channel: 'settings:set', key: string, value: string): Promise<void>
   invoke(channel: 'webhook:getConfig'): Promise<{ enabled: boolean; port: number; token: string }>
   invoke(channel: 'webhook:setConfig', config: { enabled: boolean; port: number; token: string }): Promise<void>
+  invoke(channel: 'remote:getServerConfig'): Promise<RemoteServerConfig>
+  invoke(channel: 'remote:setServerConfig', config: RemoteServerConfig): Promise<RemoteServerConfig>
+  invoke(channel: 'remote:regenerateServerToken'): Promise<RemoteServerConfig>
+  invoke(channel: 'remote:getHosts'): Promise<RemoteHost[]>
+  invoke(channel: 'remote:addHost', input: RemoteHostInput): Promise<RemoteHost>
+  invoke(channel: 'remote:updateHost', id: string, input: RemoteHostInput): Promise<RemoteHost>
+  invoke(channel: 'remote:removeHost', id: string): Promise<void>
+  invoke(channel: 'remote:setActiveHost', id: string | null): Promise<RemoteHost | null>
+  invoke(channel: 'remote:getActiveHost'): Promise<RemoteHost | null>
+  invoke(channel: 'remote:testHost', input: RemoteHostInput): Promise<RemoteConnectionStatus>
   // Fallback for dynamic channels
   invoke(channel: string, ...args: unknown[]): Promise<unknown>
 

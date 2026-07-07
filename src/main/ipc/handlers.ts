@@ -101,6 +101,8 @@ import { getThreadLogs } from '../thread-logger'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
+import { emitAppEvent } from '../app-events'
+import { registerRemoteControlIpcHandlers } from '../remote/client'
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
 
@@ -435,10 +437,21 @@ let cachedWslDistros: { expiresAt: number; value: string[] } | null = null
 export function registerIpcHandlers(window: BrowserWindow): void {
   commandManager.init(window)
   ptyManager.init(window)
+  const remoteClient = registerRemoteControlIpcHandlers(window)
+  const proxyable = <T extends unknown[]>(
+    channel: string,
+    handler: (...args: T) => unknown | Promise<unknown>,
+  ): void => {
+    ipcMain.handle(channel, async (_event, ...args: T) => {
+      const proxied = await remoteClient.invokeIfActive(channel, args)
+      if (proxied.handled) return proxied.value
+      return handler(...args)
+    })
+  }
 
   // ── Projects ──────────────────────────────────────────────────────────────
 
-  ipcMain.handle('projects:list', () => {
+  proxyable('projects:list', () => {
     return listProjects()
   })
 
@@ -499,7 +512,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return deleteProject(id)
   })
 
-  ipcMain.handle('projects:listArchived', () => {
+  proxyable('projects:listArchived', () => {
     return listArchivedProjects()
   })
 
@@ -513,7 +526,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Repo Locations ────────────────────────────────────────────────────────
 
-  ipcMain.handle('locations:list', (_event, projectId: string) => {
+  proxyable('locations:list', (projectId: string) => {
     return listLocations(projectId)
   })
 
@@ -560,15 +573,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     deleteLocation(id)
   })
 
-  ipcMain.handle('locations:checkout', (_event, id: string) => {
+  proxyable('locations:checkout', (id: string) => {
     return checkoutLocation(id)
   })
 
-  ipcMain.handle('locations:returnToPool', (_event, id: string) => {
+  proxyable('locations:returnToPool', (id: string) => {
     return returnLocationToPool(id)
   })
 
-  ipcMain.handle('location-pools:list', (_event, projectId: string) => {
+  proxyable('location-pools:list', (projectId: string) => {
     return listLocationPools(projectId)
   })
 
@@ -584,7 +597,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return deleteLocationPool(id)
   })
 
-  ipcMain.handle('locations:pathExists', (_event, path: string): boolean => {
+  proxyable('locations:pathExists', (path: string): boolean => {
     return existsSync(path)
   })
 
@@ -717,29 +730,29 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Threads ───────────────────────────────────────────────────────────────
 
-  ipcMain.handle('threads:list', (_event, projectId: string) => {
+  proxyable('threads:list', (projectId: string) => {
     return listThreads(projectId)
   })
 
-  ipcMain.handle('threads:create', (_event, projectId: string, name: string, locationId: string) => {
+  proxyable('threads:create', (projectId: string, name: string, locationId: string) => {
     const { provider, model } = getLastUsedProviderAndModel(projectId)
     return createThread(projectId, name, locationId, provider, model)
   })
 
-  ipcMain.handle('threads:delete', (_event, id: string) => {
+  proxyable('threads:delete', (id: string) => {
     sessionManager.remove(id)
     return deleteThread(id)
   })
 
-  ipcMain.handle('threads:archivedCount', (_event, projectId: string) => {
+  proxyable('threads:archivedCount', (projectId: string) => {
     return archivedThreadCount(projectId)
   })
 
-  ipcMain.handle('threads:listArchived', (_event, projectId: string, limit?: number, offset?: number) => {
+  proxyable('threads:listArchived', (projectId: string, limit?: number, offset?: number) => {
     return listArchivedThreads(projectId, limit, offset)
   })
 
-  ipcMain.handle('threads:archive', (_event, id: string) => {
+  proxyable('threads:archive', (id: string) => {
     sessionManager.remove(id)
     if (threadHasMessages(id)) {
       archiveThread(id)
@@ -750,46 +763,46 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:unarchive', (_event, id: string) => {
+  proxyable('threads:unarchive', (id: string) => {
     return unarchiveThread(id)
   })
 
-  ipcMain.handle('threads:updateName', (_event, id: string, name: string) => {
+  proxyable('threads:updateName', (id: string, name: string) => {
     return updateThreadName(id, name)
   })
 
-  ipcMain.handle('threads:updateModel', (_event, id: string, model: string) => {
+  proxyable('threads:updateModel', (id: string, model: string) => {
     // Drop any live session so next message picks up the new model
     sessionManager.remove(id)
     return updateThreadModel(id, model)
   })
 
-  ipcMain.handle('threads:updateProviderAndModel', (_event, id: string, provider: string, model: string) => {
+  proxyable('threads:updateProviderAndModel', (id: string, provider: string, model: string) => {
     sessionManager.remove(id)
     return updateThreadProviderAndModel(id, provider, model)
   })
 
-  ipcMain.handle('threads:updateReasoningLevel', (_event, id: string, reasoningLevel: string) => {
+  proxyable('threads:updateReasoningLevel', (id: string, reasoningLevel: string) => {
     sessionManager.remove(id)
     return updateThreadReasoningLevel(id, reasoningLevel)
   })
 
-  ipcMain.handle('threads:setUnread', (_event, threadId: string, unread: boolean) => {
+  proxyable('threads:setUnread', (threadId: string, unread: boolean) => {
     return updateThreadUnread(threadId, unread)
   })
 
-  ipcMain.handle('threads:setYolo', (_event, threadId: string, yoloMode: boolean) => {
+  proxyable('threads:setYolo', (threadId: string, yoloMode: boolean) => {
     sessionManager.remove(threadId)
     return updateThreadYoloMode(threadId, yoloMode)
   })
 
-  ipcMain.handle('threads:setWsl', (_event, threadId: string, useWsl: boolean, wslDistro: string | null) => {
+  proxyable('threads:setWsl', (threadId: string, useWsl: boolean, wslDistro: string | null) => {
     if (threadHasMessages(threadId)) return // locked after first message
     sessionManager.remove(threadId) // drop existing session so it gets recreated
     updateThreadWsl(threadId, useWsl, wslDistro)
   })
 
-  ipcMain.handle('threads:start', (_event, threadId: string) => {
+  proxyable('threads:start', (threadId: string) => {
     if (!threadExists(threadId)) return
     const pathError = getLocalPathError(threadId)
     if (pathError) throw new Error(pathError)
@@ -802,30 +815,30 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:stop', (_event, threadId: string) => {
+  proxyable('threads:stop', (threadId: string) => {
     const session = sessionManager.get(threadId)
     if (session?.isRunning()) {
       session.stop()
     } else {
       // No live session (e.g. after restart) — force-reset stuck status in DB and notify renderer
       updateThreadStatus(threadId, 'idle')
-      window.webContents.send(`thread:status:${threadId}`, 'idle')
-      window.webContents.send(`thread:pid:${threadId}`, null)
+      emitAppEvent(window, `thread:status:${threadId}`, 'idle')
+      emitAppEvent(window, `thread:pid:${threadId}`, null)
     }
   })
 
-  ipcMain.handle('threads:reset', (_event, threadId: string) => {
+  proxyable('threads:reset', (threadId: string) => {
     sessionManager.reset(threadId)
     updateThreadStatus(threadId, 'idle')
-    window.webContents.send(`thread:status:${threadId}`, 'idle')
-    window.webContents.send(`thread:pid:${threadId}`, null)
+    emitAppEvent(window, `thread:status:${threadId}`, 'idle')
+    emitAppEvent(window, `thread:pid:${threadId}`, null)
   })
 
-  ipcMain.handle('threads:getPid', (_event, threadId: string) => {
+  proxyable('threads:getPid', (threadId: string) => {
     return sessionManager.get(threadId)?.getPid() ?? null
   })
 
-  ipcMain.handle('threads:send', (_event, threadId: string, content: string, options?: { planMode?: boolean; fastMode?: boolean }) => {
+  proxyable('threads:send', (threadId: string, content: string, options?: { planMode?: boolean; fastMode?: boolean }) => {
     if (!threadExists(threadId)) {
       sessionManager.remove(threadId)
       console.warn('[handlers] threads:send for missing thread — ignoring', threadId)
@@ -847,52 +860,52 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('threads:approvePlan', (_event, threadId: string) => {
+  proxyable('threads:approvePlan', (threadId: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
       session.approvePlan()
     }
   })
 
-  ipcMain.handle('threads:rejectPlan', (_event, threadId: string) => {
+  proxyable('threads:rejectPlan', (threadId: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
       session.rejectPlan()
     }
   })
 
-  ipcMain.handle('threads:getQuestions', (_event, threadId: string) => {
+  proxyable('threads:getQuestions', (threadId: string) => {
     const session = sessionManager.get(threadId)
     return session?.getPendingQuestions() ?? []
   })
 
-  ipcMain.handle('threads:answerQuestion', (_event, threadId: string, answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string>, generalComment: string) => {
+  proxyable('threads:answerQuestion', (threadId: string, answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string>, generalComment: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
       session.answerQuestion(answers, questionComments, generalComment)
     }
   })
 
-  ipcMain.handle('threads:getPendingPermissions', (_event, threadId: string) => {
+  proxyable('threads:getPendingPermissions', (threadId: string) => {
     const session = sessionManager.get(threadId)
     return session?.getPendingPermissions() ?? []
   })
 
-  ipcMain.handle('threads:approvePermissions', (_event, threadId: string, requestId?: string) => {
+  proxyable('threads:approvePermissions', (threadId: string, requestId?: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
       session.approvePermissions(requestId)
     }
   })
 
-  ipcMain.handle('threads:denyPermissions', (_event, threadId: string, requestId?: string) => {
+  proxyable('threads:denyPermissions', (threadId: string, requestId?: string) => {
     const session = sessionManager.get(threadId)
     if (session) {
       session.denyPermissions(requestId)
     }
   })
 
-  ipcMain.handle('threads:executePlanInNewContext', (_event, threadId: string) => {
+  proxyable('threads:executePlanInNewContext', (threadId: string) => {
     if (!threadExists(threadId)) return
     const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
@@ -901,26 +914,26 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     session.executePlanInNewContext()
   })
 
-  ipcMain.handle('threads:getModifiedFiles', (_event, threadId: string) => {
+  proxyable('threads:getModifiedFiles', (threadId: string) => {
     const workingDir = getWorkingDirForThread(threadId) ?? ''
     return getThreadModifiedFiles(threadId, workingDir)
   })
 
-  ipcMain.handle('threads:getLogs', (_event, threadId: string) => {
+  proxyable('threads:getLogs', (threadId: string) => {
     return getThreadLogs(threadId)
   })
 
   // ── Sessions ────────────────────────────────────────────────────────────────
 
-  ipcMain.handle('sessions:list', (_event, threadId: string) => {
+  proxyable('sessions:list', (threadId: string) => {
     return listSessions(threadId)
   })
 
-  ipcMain.handle('sessions:getActive', (_event, threadId: string) => {
+  proxyable('sessions:getActive', (threadId: string) => {
     return getActiveSession(threadId)
   })
 
-  ipcMain.handle('sessions:switch', (_event, threadId: string, sessionId: string) => {
+  proxyable('sessions:switch', (threadId: string, sessionId: string) => {
     if (!threadExists(threadId)) return
     const effectiveDir = getEffectiveWorkingDir(threadId)
     const sshConfig = getSshConfigForThread(threadId)
@@ -931,11 +944,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Messages ──────────────────────────────────────────────────────────────
 
-  ipcMain.handle('messages:list', (_event, threadId: string) => {
+  proxyable('messages:list', (threadId: string) => {
     return listMessages(threadId)
   })
 
-  ipcMain.handle('messages:listBySession', (_event, sessionId: string) => {
+  proxyable('messages:listBySession', (sessionId: string) => {
     return listMessagesBySession(sessionId)
   })
 
@@ -950,7 +963,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Git ───────────────────────────────────────────────────────────────────
 
-  ipcMain.handle('git:branch', (_event, repoPath: string) => {
+  proxyable('git:branch', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedGitBranch(repoPath, ssh, wsl)
   })
@@ -1513,11 +1526,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Slash Commands ─────────────────────────────────────────────────────────
 
-  ipcMain.handle('slash-commands:list', (_event, projectId?: string | null) => {
+  proxyable('slash-commands:list', (projectId?: string | null) => {
     return listSlashCommands(projectId).map((c) => ({ ...c, kind: 'command' as const }))
   })
 
-  ipcMain.handle('skills:list', (_event, provider: Provider, cwd?: string | null) => {
+  proxyable('skills:list', (provider: Provider, cwd?: string | null) => {
     return listDetectedSkills(provider, cwd ?? null).map((s, index) => ({
       id: s.id,
       project_id: s.scope === 'project' ? 'project' : null,
@@ -1535,15 +1548,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }))
   })
 
-  ipcMain.handle('slash-commands:create', (_event, projectId: string | null, name: string, description: string | null, prompt: string) => {
+  proxyable('slash-commands:create', (projectId: string | null, name: string, description: string | null, prompt: string) => {
     return createSlashCommand(projectId, name, description, prompt)
   })
 
-  ipcMain.handle('slash-commands:update', (_event, id: string, name: string, description: string | null, prompt: string) => {
+  proxyable('slash-commands:update', (id: string, name: string, description: string | null, prompt: string) => {
     return updateSlashCommand(id, name, description, prompt)
   })
 
-  ipcMain.handle('slash-commands:delete', (_event, id: string) => {
+  proxyable('slash-commands:delete', (id: string) => {
     return deleteSlashCommand(id)
   })
 
@@ -1751,8 +1764,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
 
   // ── CLI health & updates ────────────────────────────────────────────────────
 
-  ipcMain.handle('cli:health', (
-    _event,
+  proxyable('cli:health', (
     provider: Provider,
     connectionType: string,
     ssh?: SshConfig | null,
@@ -1773,7 +1785,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     return result
   })
 
-  ipcMain.handle('models:claudeAvailable', (_event, threadId?: string | null) => {
+  proxyable('models:claudeAvailable', (threadId?: string | null) => {
     if (!threadId || !threadExists(threadId)) {
       return listClaudeAvailableModels()
     }
@@ -1785,7 +1797,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     })
   })
 
-  ipcMain.handle('models:codexAvailable', (_event, threadId?: string | null) => {
+  proxyable('models:codexAvailable', (threadId?: string | null) => {
     if (!threadId || !threadExists(threadId)) {
       return listCodexAvailableModels()
     }
@@ -1797,7 +1809,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     })
   })
 
-  ipcMain.handle('models:opencodeAvailable', (_event, threadId?: string | null) => {
+  proxyable('models:opencodeAvailable', (threadId?: string | null) => {
     if (!threadId || !threadExists(threadId)) {
       return listOpenCodeAvailableModels()
     }
@@ -1809,7 +1821,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     })
   })
 
-  ipcMain.handle('models:piAvailable', (_event, threadId?: string | null) => {
+  proxyable('models:piAvailable', (threadId?: string | null) => {
     if (!threadId || !threadExists(threadId)) {
       return listPiAvailableModels()
     }
@@ -1821,7 +1833,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     })
   })
 
-  ipcMain.handle('models:cursorAvailable', (_event, threadId?: string | null) => {
+  proxyable('models:cursorAvailable', (threadId?: string | null) => {
     if (!threadId || !threadExists(threadId)) {
       return listCursorAvailableModels()
     }

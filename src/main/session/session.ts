@@ -28,6 +28,7 @@ import {
   cancelPendingToolCalls
 } from '../db/queries'
 import { generateTitle } from '../claude-sdk'
+import { emitAppEvent } from '../app-events'
 
 export class Session {
   readonly threadId: string
@@ -65,6 +66,10 @@ export class Session {
     const session = getOrCreateActiveSession(threadId)
     this.activeSessionId = session.id
     this.initDriver(session.id, session.claude_session_id)
+  }
+
+  private emit(channel: string, ...args: unknown[]): void {
+    emitAppEvent(this.window, channel, ...args)
   }
 
   private initDriver(sessionId: string, externalSessionId: string | null): CLIDriver {
@@ -134,7 +139,7 @@ export class Session {
     }
 
     // Notify renderer of session switch
-    this.window.webContents.send(`thread:session-switched:${this.threadId}`, sessionId)
+    this.emit(`thread:session-switched:${this.threadId}`, sessionId)
     this.setStatus('idle')
   }
 
@@ -218,7 +223,7 @@ export class Session {
       const provisional = content.split('\n')[0].trim().slice(0, 80)
       if (provisional) {
         updateThreadName(this.threadId, provisional)
-        this.window.webContents.send(`thread:title:${this.threadId}`, provisional)
+        this.emit(`thread:title:${this.threadId}`, provisional)
       }
       this.triggerAutoTitle(content)
     }
@@ -236,7 +241,7 @@ export class Session {
     }
 
     // Broadcast the spawned PID to the renderer for visibility
-    this.window.webContents.send(`thread:pid:${this.threadId}`, this.getPid())
+    this.emit(`thread:pid:${this.threadId}`, this.getPid())
   }
 
   stop(): void {
@@ -263,7 +268,7 @@ export class Session {
     // is a transient state and we don't want it persisted (a crash would leave
     // the DB in 'stopping' which startup wouldn't know to handle).
     // The DB and final UI status are both set in handleDone() when the process exits.
-    this.window.webContents.send(`thread:status:${this.threadId}`, 'stopping')
+    this.emit(`thread:status:${this.threadId}`, 'stopping')
   }
 
   forceReset(): void {
@@ -272,7 +277,7 @@ export class Session {
     if (this.activeSessionId) {
       const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
       for (const msg of cancelled) {
-        this.window.webContents.send(`thread:output:${this.threadId}`, {
+        this.emit(`thread:output:${this.threadId}`, {
           type: 'tool_result',
           content: '',
           metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
@@ -298,7 +303,7 @@ export class Session {
     this.pendingPlanContent = null
     this.clearPendingPermissions()
     this.recentToolCalls.clear()
-    this.window.webContents.send(`thread:pid:${this.threadId}`, null)
+    this.emit(`thread:pid:${this.threadId}`, null)
   }
 
   isRunning(): boolean {
@@ -354,7 +359,7 @@ export class Session {
     try {
       const proc = this.spawnShellCommand(command)
       this.shellProcess = proc
-      this.window.webContents.send(`thread:pid:${this.threadId}`, this.getPid())
+      this.emit(`thread:pid:${this.threadId}`, this.getPid())
 
       let stdout = ''
       let stderr = ''
@@ -498,7 +503,7 @@ export class Session {
         (error?: Error) => this.handleDone(error),
         { yoloMode: getThreadYoloMode(this.threadId) }
       )
-    this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
+    this.emit(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
   /** Reject pending plan and return to idle */
@@ -512,10 +517,10 @@ export class Session {
       insertMessage(this.threadId, 'system', 'Plan rejected by user.', undefined, this.activeSessionId)
     }
 
-    this.window.webContents.send(`thread:output:${this.threadId}`, {
+    this.emit(`thread:output:${this.threadId}`, {
       type: 'text',
       content: 'Plan rejected.',
-      sessionId: this.activeSessionId
+      sessionId: this.activeSessionId ?? undefined
     } satisfies OutputEvent)
   }
 
@@ -570,7 +575,7 @@ export class Session {
     insertMessage(this.threadId, 'user', qaText, { type: 'question_answer' }, this.activeSessionId)
 
     // Send to renderer so it appears in the thread
-    this.window.webContents.send(`thread:output:${this.threadId}`, {
+    this.emit(`thread:output:${this.threadId}`, {
       type: 'text',
       content: qaText,
       metadata: { type: 'question_answer', role: 'user' },
@@ -609,7 +614,7 @@ export class Session {
         (error?: Error) => this.handleDone(error)
       )
     }
-    this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
+    this.emit(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
   /** Get pending permission requests */
@@ -643,7 +648,7 @@ export class Session {
       (error?: Error) => this.handleDone(error),
       { ...this.lastMessageOptions, yoloMode: true }
     )
-    this.window.webContents.send(`thread:pid:${this.threadId}`, driver.getPid())
+    this.emit(`thread:pid:${this.threadId}`, driver.getPid())
   }
 
   denyPermissions(requestId?: string): void {
@@ -684,7 +689,7 @@ export class Session {
     // Don't send question/permission_request events to renderer message stream —
     // they're handled via UI state (status + banner), not as message bubbles
     if (event.type !== 'question' && event.type !== 'permission_request' && !shouldSuppressAssistantText) {
-      this.window.webContents.send(`thread:output:${this.threadId}`, eventWithSession)
+      this.emit(`thread:output:${this.threadId}`, eventWithSession)
     }
 
     // Persist all relevant event types to DB with session ID
@@ -786,7 +791,7 @@ export class Session {
         }
         // Emit per-thread plan association so the renderer can show the plan for the right thread
         if (this.lastPlanFileName) {
-          this.window.webContents.send('plan:associated', {
+          this.emit('plan:associated', {
             threadId: this.threadId,
             name: this.lastPlanFileName,
             path: this.lastPlanFilePath,
@@ -832,7 +837,7 @@ export class Session {
     })
 
     // Clear the PID — the process has exited
-    this.window.webContents.send(`thread:pid:${this.threadId}`, null)
+    this.emit(`thread:pid:${this.threadId}`, null)
 
     // If the user intentionally stopped the session, keep the stopped status
     // regardless of how the process exited (non-zero exit from SIGTERM looks
@@ -841,7 +846,7 @@ export class Session {
       if (this.activeSessionId) {
         const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
         for (const msg of cancelled) {
-          this.window.webContents.send(`thread:output:${this.threadId}`, {
+          this.emit(`thread:output:${this.threadId}`, {
             type: 'tool_result',
             content: '',
             metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
@@ -850,17 +855,17 @@ export class Session {
         }
       }
       this.setStatus('stopped')
-      this.window.webContents.send(`thread:complete:${this.threadId}`, 'stopped')
+      this.emit(`thread:complete:${this.threadId}`, 'stopped')
       return
     }
 
     // Always ensure status transitions to a terminal state
     let finalStatus: ThreadStatus
     if (error) {
-      this.window.webContents.send(`thread:output:${this.threadId}`, {
+      this.emit(`thread:output:${this.threadId}`, {
         type: 'error',
         content: error.message,
-        sessionId: this.activeSessionId
+        sessionId: this.activeSessionId ?? undefined
       } satisfies OutputEvent)
       finalStatus = 'error'
     } else if (this.planPending) {
@@ -881,7 +886,7 @@ export class Session {
     if (this.activeSessionId) {
       const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
       for (const msg of cancelled) {
-        this.window.webContents.send(`thread:output:${this.threadId}`, {
+        this.emit(`thread:output:${this.threadId}`, {
           type: 'tool_result',
           content: '',
           metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
@@ -893,12 +898,12 @@ export class Session {
     this.setStatus(finalStatus)
     // Include final status in complete event so the renderer doesn't depend
     // on the separate thread:status event having been processed first
-    this.window.webContents.send(`thread:complete:${this.threadId}`, finalStatus)
+    this.emit(`thread:complete:${this.threadId}`, finalStatus)
   }
 
   private setStatus(status: ThreadStatus): void {
     updateThreadStatus(this.threadId, status)
-    this.window.webContents.send(`thread:status:${this.threadId}`, status)
+    this.emit(`thread:status:${this.threadId}`, status)
   }
 
   private makeSyntheticRequestId(seed: string): string {
@@ -953,7 +958,7 @@ export class Session {
       .then((title) => {
         if (!title) return
         updateThreadName(this.threadId, title)
-        this.window.webContents.send(`thread:title:${this.threadId}`, title)
+        this.emit(`thread:title:${this.threadId}`, title)
       })
       .catch((err) => {
         console.error('[auto-title]', err.message)

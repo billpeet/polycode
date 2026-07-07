@@ -170,6 +170,42 @@ export default function App() {
     return () => window.removeEventListener('keydown', handler)
   }, [selectedProjectId])
 
+  useEffect(() => {
+    return window.api.on('remote:active-changed', () => {
+      useProjectStore.setState({
+        projects: [],
+        archivedProjects: [],
+        selectedProjectId: null,
+        expandedProjectIds: new Set<string>(),
+        loading: false,
+      })
+      useThreadStore.setState({
+        byProject: {},
+        archivedByProject: {},
+        archivedCountByProject: {},
+        archivedPageByProject: {},
+        selectedThreadId: null,
+        statusMap: {},
+        unreadByThread: {},
+        expandedArchivedProjectId: null,
+        draftByThread: {},
+        planModeByThread: {},
+        fastModeByThread: {},
+        queuedMessageByThread: {},
+        usageByThread: {},
+        runStartedAtByThread: {},
+        pidByThread: {},
+        pendingThreadIdByLocation: {},
+      })
+      useLocationStore.setState({
+        byProject: {},
+        poolsByProject: {},
+        deletingWorktreesByProject: {},
+      })
+      void fetchProjects()
+    })
+  }, [fetchProjects])
+
   // 4. Persist selections whenever they change
   useEffect(() => {
     if (selectedProjectId) {
