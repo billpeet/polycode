@@ -1,5 +1,5 @@
 import { spawn, exec, execFile } from 'child_process'
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync, rmSync, readFileSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
@@ -126,6 +126,23 @@ function runExecFile(cmd: string, args: string[]): Promise<string> {
 function getPowerShellExe(): string {
   const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
   return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+}
+
+function mimeTypeForPath(filePath: string): string {
+  const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+  const mimeMap: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+  }
+  return mimeMap[ext] || 'application/octet-stream'
+}
+
+function filePathToDataUrl(filePath: string): string {
+  return `data:${mimeTypeForPath(filePath)};base64,${readFileSync(filePath).toString('base64')}`
 }
 
 async function commandExists(cmd: string): Promise<boolean> {
@@ -968,73 +985,73 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getCachedGitBranch(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:status', (_event, repoPath: string) => {
+  proxyable('git:status', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedGitStatus(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:commit', async (_event, repoPath: string, message: string) => {
+  proxyable('git:commit', async (repoPath: string, message: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await commitChanges(repoPath, message, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:lastCommit', (_event, repoPath: string) => {
+  proxyable('git:lastCommit', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedLastCommit(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:amendCommit', async (_event, repoPath: string, message?: string | null) => {
+  proxyable('git:amendCommit', async (repoPath: string, message?: string | null) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await amendCommit(repoPath, message ?? null, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:undoLastCommit', async (_event, repoPath: string) => {
+  proxyable('git:undoLastCommit', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await undoLastCommit(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stage', async (_event, repoPath: string, filePath: string) => {
+  proxyable('git:stage', async (repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await stageFile(repoPath, filePath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:unstage', async (_event, repoPath: string, filePath: string) => {
+  proxyable('git:unstage', async (repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await unstageFile(repoPath, filePath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stageAll', async (_event, repoPath: string) => {
+  proxyable('git:stageAll', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await stageAll(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:unstageAll', async (_event, repoPath: string) => {
+  proxyable('git:unstageAll', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await unstageAll(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stageFiles', async (_event, repoPath: string, filePaths: string[]) => {
+  proxyable('git:stageFiles', async (repoPath: string, filePaths: string[]) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await stageFiles(repoPath, filePaths, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:discardFile', async (_event, repoPath: string, filePath: string, oldPath?: string | null) => {
+  proxyable('git:discardFile', async (repoPath: string, filePath: string, oldPath?: string | null) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await discardFileChanges(repoPath, filePath, oldPath ?? null, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:discardFiles', async (_event, repoPath: string, files: Array<{ path: string; oldPath?: string | null }>) => {
+  proxyable('git:discardFiles', async (repoPath: string, files: Array<{ path: string; oldPath?: string | null }>) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     // Discard one at a time so one failure doesn't abort the rest
     const errors: Array<{ path: string; error: string }> = []
@@ -1051,47 +1068,47 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:discardAll', async (_event, repoPath: string) => {
+  proxyable('git:discardAll', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await discardAllChanges(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:generateCommitMessage', (_event, repoPath: string) => {
+  proxyable('git:generateCommitMessage', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return generateCommitMessage(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:generateCommitMessageWithContext', (_event, repoPath: string, filePaths: string[], context: string) => {
+  proxyable('git:generateCommitMessageWithContext', (repoPath: string, filePaths: string[], context: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
   })
 
-  ipcMain.handle('git:generateBranchName', (_event, repoPath: string) => {
+  proxyable('git:generateBranchName', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return generateBranchName(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:generatePullRequestText', (_event, repoPath: string, targetBranch: string) => {
+  proxyable('git:generatePullRequestText', (repoPath: string, targetBranch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return generatePullRequestText(repoPath, targetBranch, ssh, wsl)
   })
 
-  ipcMain.handle('git:push', async (_event, repoPath: string) => {
+  proxyable('git:push', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await gitPush(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
     return result
   })
 
-  ipcMain.handle('git:pushSetUpstream', async (_event, repoPath: string, branch: string) => {
+  proxyable('git:pushSetUpstream', async (repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await gitPushSetUpstream(repoPath, branch, ssh, wsl)
     invalidateRepoGitCache(repoPath)
     return result
   })
 
-  ipcMain.handle('git:pull', async (_event, repoPath: string, autoStash?: boolean) => {
+  proxyable('git:pull', async (repoPath: string, autoStash?: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = autoStash
       ? await gitPullWithAutoStash(repoPath, true, ssh, wsl)
@@ -1100,7 +1117,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return result
   })
 
-  ipcMain.handle('git:pullOrigin', async (_event, repoPath: string) => {
+  proxyable('git:pullOrigin', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await gitPullOrigin(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
@@ -1108,148 +1125,148 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   // ─── Stash ────────────────────────────────────────────────────────────────
-  ipcMain.handle('git:stashList', (_event, repoPath: string) => {
+  proxyable('git:stashList', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return listStashes(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:stashCreate', async (_event, repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => {
+  proxyable('git:stashCreate', async (repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await createStash(repoPath, opts ?? {}, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stashApply', async (_event, repoPath: string, ref: string) => {
+  proxyable('git:stashApply', async (repoPath: string, ref: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await applyStash(repoPath, ref, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stashPop', async (_event, repoPath: string, ref: string) => {
+  proxyable('git:stashPop', async (repoPath: string, ref: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await popStash(repoPath, ref, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:stashDrop', async (_event, repoPath: string, ref: string) => {
+  proxyable('git:stashDrop', async (repoPath: string, ref: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await dropStash(repoPath, ref, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:forceUnlock', (_event, repoPath: string) => {
+  proxyable('git:forceUnlock', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return forceUnlockRepo(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:fetchRemote', (_event, repoPath: string) => {
+  proxyable('git:fetchRemote', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return gitFetchRemoteCached(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:diff', (_event, repoPath: string, filePath: string, staged: boolean) => {
+  proxyable('git:diff', (repoPath: string, filePath: string, staged: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getFileDiff(repoPath, filePath, staged, ssh, wsl)
   })
 
-  ipcMain.handle('git:compareToMain', (_event, repoPath: string) => {
+  proxyable('git:compareToMain', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedCompareToMainChanges(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:compareDiffToMain', (_event, repoPath: string, filePath: string) => {
+  proxyable('git:compareDiffToMain', (repoPath: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
   })
 
-  ipcMain.handle('git:compareToBranch', (_event, repoPath: string, targetBranch: string) => {
+  proxyable('git:compareToBranch', (repoPath: string, targetBranch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCompareToBranchChanges(repoPath, targetBranch, ssh, wsl)
   })
 
-  ipcMain.handle('git:compareDiffToBranch', (_event, repoPath: string, targetBranch: string) => {
+  proxyable('git:compareDiffToBranch', (repoPath: string, targetBranch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCompareToBranchDiff(repoPath, targetBranch, ssh, wsl)
   })
 
-  ipcMain.handle('git:log', (_event, repoPath: string, opts?: { range?: string; limit?: number }) => {
+  proxyable('git:log', (repoPath: string, opts?: { range?: string; limit?: number }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return listCommits(repoPath, opts ?? {}, ssh, wsl)
   })
 
-  ipcMain.handle('git:commitFiles', (_event, repoPath: string, sha: string) => {
+  proxyable('git:commitFiles', (repoPath: string, sha: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return listCommitFiles(repoPath, sha, ssh, wsl)
   })
 
-  ipcMain.handle('git:commitDiff', (_event, repoPath: string, sha: string, filePath: string) => {
+  proxyable('git:commitDiff', (repoPath: string, sha: string, filePath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCommitFileDiff(repoPath, sha, filePath, ssh, wsl)
   })
 
-  ipcMain.handle('git:branches', (_event, repoPath: string) => {
+  proxyable('git:branches', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return listCachedBranches(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:checkout', async (_event, repoPath: string, branch: string) => {
+  proxyable('git:checkout', async (repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await checkoutBranch(repoPath, branch, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:createBranch', async (_event, repoPath: string, name: string, base: string, pullFirst: boolean) => {
+  proxyable('git:createBranch', async (repoPath: string, name: string, base: string, pullFirst: boolean) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await createBranch(repoPath, name, base, pullFirst, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:merge', async (_event, repoPath: string, source: string) => {
+  proxyable('git:merge', async (repoPath: string, source: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await mergeBranch(repoPath, source, ssh, wsl)
     invalidateRepoGitCache(repoPath)
     return result
   })
 
-  ipcMain.handle('git:findMergedBranches', (_event, repoPath: string) => {
+  proxyable('git:findMergedBranches', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return findMergedBranches(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:deleteBranches', (_event, repoPath: string, branches: string[]) => {
+  proxyable('git:deleteBranches', (repoPath: string, branches: string[]) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return deleteBranches(repoPath, branches, ssh, wsl)
   })
 
-  ipcMain.handle('git:init', async (_event, repoPath: string) => {
+  proxyable('git:init', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await gitInit(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
   })
 
-  ipcMain.handle('git:isRepo', (_event, repoPath: string) => {
+  proxyable('git:isRepo', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return isGitRepoCached(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:getRemoteUrl', (_event, repoPath: string) => {
+  proxyable('git:getRemoteUrl', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getRemoteUrl(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:hostingProvider', (_event, repoPath: string) => {
+  proxyable('git:hostingProvider', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return detectGitHostingProviderCached(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('git:defaultBranch', (_event, repoPath: string) => {
+  proxyable('git:defaultBranch', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
   // ── Azure DevOps Pull Requests ────────────────────────────────────────────
 
-  ipcMain.handle('azdo:pr:list', async (_event, repoPath: string) => {
+  proxyable('azdo:pr:list', async (repoPath: string) => {
     try {
       const { ssh, wsl } = getConfigForPath(repoPath)
       return await listOpenPullRequests(repoPath, ssh, wsl)
@@ -1259,7 +1276,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('azdo:pr:current', async (_event, repoPath: string, branch: string) => {
+  proxyable('azdo:pr:current', async (repoPath: string, branch: string) => {
     try {
       const { ssh, wsl } = getConfigForPath(repoPath)
       return await getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)
@@ -1269,31 +1286,31 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('azdo:pr:create', (_event, repoPath: string, payload: { target: string; title: string; description?: string }) => {
+  proxyable('azdo:pr:create', (repoPath: string, payload: { target: string; title: string; description?: string }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return createPullRequest(repoPath, payload, ssh, wsl)
   })
 
-  ipcMain.handle('azdo:pr:checkout', async (_event, repoPath: string, prId: number) => {
+  proxyable('azdo:pr:checkout', async (repoPath: string, prId: number) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
     invalidateRepoGitCache(repoPath)
     return result
   })
 
-  ipcMain.handle('azdo:pr:webUrl', (_event, repoPath: string) => {
+  proxyable('azdo:pr:webUrl', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getPullRequestsWebUrl(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('azdo:repo:webUrl', (_event, repoPath: string) => {
+  proxyable('azdo:repo:webUrl', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getRepoWebUrl(repoPath, ssh, wsl)
   })
 
   // ── GitHub Pull Requests ──────────────────────────────────────────────────
 
-  ipcMain.handle('gh:pr:list', async (_event, repoPath: string) => {
+  proxyable('gh:pr:list', async (repoPath: string) => {
     try {
       const { ssh, wsl } = getConfigForPath(repoPath)
       return await listOpenGitHubPullRequests(repoPath, ssh, wsl)
@@ -1303,7 +1320,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('gh:pr:current', async (_event, repoPath: string, branch: string) => {
+  proxyable('gh:pr:current', async (repoPath: string, branch: string) => {
     try {
       const { ssh, wsl } = getConfigForPath(repoPath)
       return await getCurrentBranchGitHubPullRequest(repoPath, branch, ssh, wsl)
@@ -1313,24 +1330,24 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  ipcMain.handle('gh:pr:create', (_event, repoPath: string, payload: { target: string; title: string; description?: string }) => {
+  proxyable('gh:pr:create', (repoPath: string, payload: { target: string; title: string; description?: string }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return createGitHubPullRequest(repoPath, payload, ssh, wsl)
   })
 
-  ipcMain.handle('gh:pr:checkout', async (_event, repoPath: string, prId: number) => {
+  proxyable('gh:pr:checkout', async (repoPath: string, prId: number) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
     invalidateRepoGitCache(repoPath)
     return result
   })
 
-  ipcMain.handle('gh:pr:webUrl', (_event, repoPath: string) => {
+  proxyable('gh:pr:webUrl', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getGitHubPullRequestsWebUrl(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('gh:repo:webUrl', (_event, repoPath: string) => {
+  proxyable('gh:repo:webUrl', (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getGitHubRepoWebUrl(repoPath, ssh, wsl)
   })
@@ -1347,34 +1364,34 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Files ────────────────────────────────────────────────────────────────
 
-  ipcMain.handle('files:list', (_event, dirPath: string) => {
+  proxyable('files:list', (dirPath: string) => {
     const { ssh, wsl } = getConfigForPath(dirPath)
     if (ssh) return sshListDirectory(ssh, dirPath)
     if (wsl) return wslListDirectory(wsl, dirPath)
     return listDirectory(dirPath)
   })
 
-  ipcMain.handle('files:read', (_event, filePath: string) => {
+  proxyable('files:read', (filePath: string) => {
     const { ssh, wsl } = getConfigForPath(filePath)
     if (ssh) return sshReadFileContent(ssh, filePath)
     if (wsl) return wslReadFileContent(wsl, filePath)
     return readFileContent(filePath)
   })
 
-  ipcMain.handle('files:searchList', (_event, rootPath: string) => {
+  proxyable('files:searchList', (rootPath: string) => {
     const { ssh, wsl } = getConfigForPath(rootPath)
     if (ssh) return sshListAllFiles(ssh, rootPath)
     if (wsl) return wslListAllFiles(wsl, rootPath)
     return listAllFiles(rootPath)
   })
 
-  ipcMain.handle('files:watchStart', (_event, filePath: string) => {
+  proxyable('files:watchStart', (filePath: string) => {
     const { ssh, wsl } = getConfigForPath(filePath)
     if (ssh || wsl) return false
     return startFileWatch(window, filePath)
   })
 
-  ipcMain.handle('files:watchStop', (_event, filePath: string) => {
+  proxyable('files:watchStop', (filePath: string) => {
     stopFileWatch(filePath)
   })
 
@@ -1406,15 +1423,30 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   // ── Attachments ─────────────────────────────────────────────────────────────
 
   ipcMain.handle('attachments:save', (_event, dataUrl: string, filename: string, threadId: string) => {
-    return saveAttachment(dataUrl, filename, threadId)
+    return remoteClient.invokeIfActive('attachments:save', [dataUrl, filename, threadId]).then((proxied) => {
+      if (proxied.handled) return proxied.value
+      return saveAttachment(dataUrl, filename, threadId)
+    })
   })
 
-  ipcMain.handle('attachments:saveFromPath', (_event, sourcePath: string, threadId: string) => {
-    return copyAttachmentFromPath(sourcePath, threadId)
+  ipcMain.handle('attachments:saveFromPath', async (_event, sourcePath: string, threadId: string) => {
+    const dataUrl = filePathToDataUrl(sourcePath)
+    const proxied = await remoteClient.invokeIfActive('attachments:save', [
+      dataUrl,
+      basename(sourcePath),
+      threadId,
+    ])
+    if (proxied.handled && proxied.value && typeof proxied.value === 'object') {
+      return { ...proxied.value, dataUrl }
+    }
+    return { ...copyAttachmentFromPath(sourcePath, threadId), dataUrl }
   })
 
   ipcMain.handle('attachments:cleanup', (_event, threadId: string) => {
-    return cleanupThreadAttachments(threadId)
+    return remoteClient.invokeIfActive('attachments:cleanup', [threadId]).then((proxied) => {
+      if (proxied.handled) return proxied.value
+      return cleanupThreadAttachments(threadId)
+    })
   })
 
   ipcMain.handle('attachments:getFileInfo', (_event, filePath: string) => {
@@ -1435,47 +1467,47 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Commands ──────────────────────────────────────────────────────────────
 
-  ipcMain.handle('commands:list', (_event, projectId: string) => {
+  proxyable('commands:list', (projectId: string) => {
     return listCommands(projectId)
   })
 
-  ipcMain.handle('commands:create', (_event, projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
+  proxyable('commands:create', (projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
     return createCommand(projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false)
   })
 
-  ipcMain.handle('commands:update', (_event, id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
+  proxyable('commands:update', (id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
     return updateCommand(id, name, command, cwd, shell, runOnWorktreeCreate ?? false)
   })
 
-  ipcMain.handle('commands:delete', (_event, id: string) => {
+  proxyable('commands:delete', (id: string) => {
     commandManager.stopAllInstances(id)
     return deleteCommand(id)
   })
 
-  ipcMain.handle('commands:start', async (_event, commandId: string, locationId: string) => {
+  proxyable('commands:start', async (commandId: string, locationId: string) => {
     await commandManager.start(commandId, locationId)
   })
 
-  ipcMain.handle('commands:stop', async (_event, commandId: string, locationId: string) => {
+  proxyable('commands:stop', async (commandId: string, locationId: string) => {
     await commandManager.stop(commandId, locationId)
   })
 
-  ipcMain.handle('commands:restart', async (_event, commandId: string, locationId: string) => {
+  proxyable('commands:restart', async (commandId: string, locationId: string) => {
     await commandManager.restart(commandId, locationId)
   })
 
-  ipcMain.handle('commands:getStatus', (_event, commandId: string, locationId: string) => {
+  proxyable('commands:getStatus', (commandId: string, locationId: string) => {
     return commandManager.getStatus(commandId, locationId)
   })
 
-  ipcMain.handle('commands:getLogs', (_event, commandId: string, locationId: string) => {
+  proxyable('commands:getLogs', (commandId: string, locationId: string) => {
     return commandManager.getLogs(commandId, locationId)
   })
 
-  ipcMain.handle('commands:getPid', (_event, commandId: string, locationId: string) => {
+  proxyable('commands:getPid', (commandId: string, locationId: string) => {
     return commandManager.getPid(commandId, locationId)
   })
-  ipcMain.handle('commands:getPorts', (_event, commandId: string, locationId: string) => {
+  proxyable('commands:getPorts', (commandId: string, locationId: string) => {
     return commandManager.getPorts(commandId, locationId)
   })
 
@@ -1707,7 +1739,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     }
   }
 
-  ipcMain.handle('process:kill', async (_event, target: string, type: 'pid' | 'port', threadId?: string) => {
+  proxyable('process:kill', async (target: string, type: 'pid' | 'port', threadId?: string) => {
     try {
       const num = parseInt(target, 10)
       if (isNaN(num)) return { ok: false, error: 'Invalid number' }
@@ -1773,8 +1805,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     return checkCliHealth(provider, connectionType, ssh, wsl)
   })
 
-  ipcMain.handle('cli:update', async (
-    _event,
+  proxyable('cli:update', async (
     provider: Provider,
     connectionType: string,
     ssh?: SshConfig | null,
@@ -1847,7 +1878,7 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
 
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────
 
-  ipcMain.handle('terminal:spawn', (_event, threadId: string, cols: number, rows: number) => {
+  proxyable('terminal:spawn', (threadId: string, cols: number, rows: number) => {
     const location = getLocationForThread(threadId)
     if (!location) throw new Error('No location associated with this thread')
 
@@ -1862,18 +1893,30 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
   })
 
   ipcMain.on('terminal:write', (_event, terminalId: string, data: string) => {
-    ptyManager.write(terminalId, data)
+    void remoteClient.invokeIfActive('terminal:write', [terminalId, data]).then((proxied) => {
+      if (!proxied.handled) ptyManager.write(terminalId, data)
+    })
   })
 
   ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
+    void remoteClient.invokeIfActive('terminal:resize', [terminalId, cols, rows]).then((proxied) => {
+      if (!proxied.handled) ptyManager.resize(terminalId, cols, rows)
+    })
+  })
+
+  proxyable('terminal:write', (terminalId: string, data: string) => {
+    ptyManager.write(terminalId, data)
+  })
+
+  proxyable('terminal:resize', (terminalId: string, cols: number, rows: number) => {
     ptyManager.resize(terminalId, cols, rows)
   })
 
-  ipcMain.handle('terminal:kill', (_event, terminalId: string) => {
+  proxyable('terminal:kill', (terminalId: string) => {
     ptyManager.kill(terminalId)
   })
 
-  ipcMain.handle('terminal:getBuffer', (_event, terminalId: string) => {
+  proxyable('terminal:getBuffer', (terminalId: string) => {
     return ptyManager.getBuffer(terminalId)
   })
 

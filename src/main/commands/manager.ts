@@ -5,6 +5,7 @@ import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand, ConnectionType } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
+import { emitAppEvent } from '../app-events'
 
 const LOG_RING_BUFFER_SIZE = 1000
 const LOG_FLUSH_INTERVAL_MS = 33
@@ -434,7 +435,7 @@ class CommandManager {
 
   private pushStatus(commandId: string, locationId: string, status: CommandStatus): void {
     const key = instKey(commandId, locationId)
-    this.window?.webContents.send(`command:status:${key}`, status)
+    if (this.window) emitAppEvent(this.window, `command:status:${key}`, status)
   }
 
   private flushPendingLogs(key: string, entry: RunningCommand): void {
@@ -445,7 +446,7 @@ class CommandManager {
     if (entry.pendingLogs.length === 0) return
     const batch = entry.pendingLogs
     entry.pendingLogs = []
-    this.window?.webContents.send(`command:log:${key}`, batch)
+    if (this.window) emitAppEvent(this.window, `command:log:${key}`, batch)
   }
 
   private scheduleLogFlush(key: string, entry: RunningCommand): void {
@@ -459,7 +460,7 @@ class CommandManager {
 
   private pushPorts(commandId: string, locationId: string, ports: number[]): void {
     const key = instKey(commandId, locationId)
-    this.window?.webContents.send(`command:ports:${key}`, ports)
+    if (this.window) emitAppEvent(this.window, `command:ports:${key}`, ports)
   }
 
   private startPortPolling(key: string, entry: RunningCommand): void {

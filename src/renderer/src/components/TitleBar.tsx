@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
+import { RemoteHost } from '../types/ipc'
 
 export default function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false)
+  const [hosts, setHosts] = useState<RemoteHost[]>([])
+  const [activeHost, setActiveHost] = useState<RemoteHost | null>(null)
 
   useEffect(() => {
     window.api.invoke('window:is-maximized').then((maximized) => {
@@ -12,6 +15,36 @@ export default function TitleBar() {
       setIsMaximized((prev) => (prev === next ? prev : next))
     })
   }, [])
+
+  useEffect(() => {
+    async function loadRemoteState() {
+      const [savedHosts, active] = await Promise.all([
+        window.api.invoke('remote:getHosts'),
+        window.api.invoke('remote:getActiveHost'),
+      ])
+      setHosts(savedHosts)
+      setActiveHost(active)
+    }
+
+    void loadRemoteState()
+    const offActive = window.api.on('remote:active-changed', (...args) => {
+      setActiveHost((args[0] as RemoteHost | null) ?? null)
+      void window.api.invoke('remote:getHosts').then(setHosts).catch(() => undefined)
+    })
+    const offHosts = window.api.on('remote:hosts-changed', (...args) => {
+      setHosts((args[0] as RemoteHost[] | undefined) ?? [])
+    })
+    return () => {
+      offActive()
+      offHosts()
+    }
+  }, [])
+
+  function switchHost(id: string) {
+    void window.api.invoke('remote:setActiveHost', id === 'local' ? null : id)
+      .then((host) => setActiveHost(host))
+      .catch((error) => console.error('[remote] Failed to switch host', error))
+  }
 
   function minimize() {
     window.api.invoke('window:minimize')
@@ -38,19 +71,50 @@ export default function TitleBar() {
         WebkitAppRegion: 'drag',
       } as React.CSSProperties}
     >
-      <span
+      <div
         style={{
           position: 'absolute',
           left: '50%',
           transform: 'translateX(-50%)',
-          fontSize: 12,
-          color: 'var(--color-text-muted)',
-          userSelect: 'none',
-          pointerEvents: 'none',
-        }}
+          display: 'flex',
+          alignItems: 'center',
+          gap: 8,
+          WebkitAppRegion: 'no-drag',
+        } as React.CSSProperties}
       >
-        PolyCode
-      </span>
+        <span
+          style={{
+            fontSize: 12,
+            color: activeHost ? 'var(--color-text)' : 'var(--color-text-muted)',
+            userSelect: 'none',
+          }}
+        >
+          PolyCode
+        </span>
+        <select
+          value={activeHost?.id ?? 'local'}
+          onChange={(event) => switchHost(event.target.value)}
+          title={activeHost ? `Remote: ${activeHost.label}` : 'Local instance'}
+          style={{
+            height: 22,
+            maxWidth: 220,
+            borderRadius: 4,
+            border: `1px solid ${activeHost ? 'var(--color-claude)' : 'var(--color-border)'}`,
+            background: activeHost ? 'color-mix(in srgb, var(--color-claude) 18%, var(--color-surface))' : 'var(--color-surface-2)',
+            color: 'var(--color-text)',
+            fontSize: 11,
+            padding: '0 6px',
+            outline: 'none',
+          }}
+        >
+          <option value="local">Local</option>
+          {hosts.map((host) => (
+            <option key={host.id} value={host.id}>
+              Remote: {host.label}
+            </option>
+          ))}
+        </select>
+      </div>
 
       <div style={{ flex: 1 }} />
 

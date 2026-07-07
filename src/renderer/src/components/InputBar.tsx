@@ -674,14 +674,15 @@ export default function InputBar({ threadId }: Props) {
     }
 
     // Copy to temp and get path
-    const { tempPath, id } = await window.api.invoke('attachments:saveFromPath', filePath, threadId)
+    const { tempPath, id, dataUrl: savedDataUrl } = await window.api.invoke('attachments:saveFromPath', filePath, threadId) as { tempPath: string; id: string; dataUrl?: string }
     const typeInfo = SUPPORTED_ATTACHMENT_TYPES[info.mimeType as keyof typeof SUPPORTED_ATTACHMENT_TYPES]
     const fileName = filePath.split(/[\\/]/).pop() ?? 'file'
 
     // For images, read as data URL for preview
     let dataUrl: string | undefined
     if (typeInfo.type === 'image') {
-      const result = await window.api.invoke('files:read', tempPath)
+      dataUrl = savedDataUrl
+      const result = dataUrl ? null : await window.api.invoke('files:read', tempPath)
       if (result) {
         // Read the temp file as base64 for preview
         const base64 = await fetch(`file://${tempPath}`)

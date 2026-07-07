@@ -2,6 +2,7 @@ import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
 import { buildSshBaseArgs } from '../driver/runner/utils'
+import { emitAppEvent } from '../app-events'
 
 interface PtyInstance {
   terminalId: string
@@ -87,7 +88,7 @@ class PtyManager {
 
     proc.onData((data) => {
       instance.buffer = this.appendToBuffer(instance.buffer, data)
-      this.window?.webContents.send(`terminal:data:${terminalId}`, data)
+      if (this.window) emitAppEvent(this.window, `terminal:data:${terminalId}`, data)
     })
 
     proc.onExit(({ exitCode, signal }) => {
@@ -95,8 +96,10 @@ class PtyManager {
       instance.buffer = this.appendToBuffer(instance.buffer, exitText)
       instance.process = null
       instance.exited = true
-      this.window?.webContents.send(`terminal:data:${terminalId}`, exitText)
-      this.window?.webContents.send(`terminal:exit:${terminalId}`, { exitCode, signal })
+      if (this.window) {
+        emitAppEvent(this.window, `terminal:data:${terminalId}`, exitText)
+        emitAppEvent(this.window, `terminal:exit:${terminalId}`, { exitCode, signal })
+      }
     })
 
     console.log(`[PtyManager] Spawned terminal ${terminalId} (${connectionType}, pid=${proc.pid})`)

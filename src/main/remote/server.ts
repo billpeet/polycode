@@ -15,7 +15,7 @@ function sendJson(res: http.ServerResponse, status: number, body: unknown): void
   res.end(json)
 }
 
-function readBody(req: http.IncomingMessage, maxBytes = 5 * 1024 * 1024): Promise<string> {
+function readBody(req: http.IncomingMessage, maxBytes = 15 * 1024 * 1024): Promise<string> {
   return new Promise((resolve, reject) => {
     let data = ''
     let size = 0
@@ -40,8 +40,12 @@ function isAuthorized(req: http.IncomingMessage, token: string): boolean {
 
 function shouldStreamEvent(channel: string): boolean {
   return channel.startsWith('thread:')
+    || channel.startsWith('command:')
+    || channel.startsWith('terminal:')
     || channel === 'plan:associated'
     || channel === 'webhook:thread-created'
+    || channel === 'files:changed'
+    || channel === 'git:repoChanged'
 }
 
 function createRequestHandler(config: RemoteServerConfig, window: BrowserWindow): http.RequestListener {

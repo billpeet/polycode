@@ -15,6 +15,9 @@ import { useUiStore } from './stores/ui'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 import { useFavouritesStore, formatFavourite, Favourite } from './stores/favourites'
+import { useFilesStore } from './stores/files'
+import { useGitStore } from './stores/git'
+import { useCommandStore } from './stores/commands'
 import { Provider } from './types/ipc'
 import { useToastStore } from './stores/toast'
 import './stores/plans' // Initialize plan file watcher listener
@@ -201,6 +204,54 @@ export default function App() {
         byProject: {},
         poolsByProject: {},
         deletingWorktreesByProject: {},
+      })
+      useCommandStore.setState({
+        byProject: {},
+        statusMap: {},
+        portsMap: {},
+        logsByCommand: {},
+        selectedInstanceByLocation: {},
+        pinnedInstancesByLocation: {},
+      })
+      useTerminalStore.setState({
+        terminalByLocation: {},
+        visibleByLocation: {},
+        widthByLocation: {},
+      })
+      useFilesStore.setState({
+        entriesByPath: {},
+        expandedPaths: new Set<string>(),
+        loadingPaths: new Set<string>(),
+        selectedFilePath: null,
+        fileContent: null,
+        loadingContent: false,
+        selectedFilePathByLocation: {},
+        fileContentByLocation: {},
+        loadingContentByLocation: {},
+        diffView: null,
+        loadingDiff: false,
+        diffViewByLocation: {},
+        loadingDiffByLocation: {},
+      })
+      useGitStore.setState({
+        statusByPath: {},
+        loadingByPath: {},
+        notRepoByPath: {},
+        commitMessageByPath: {},
+        generatingMessageByPath: {},
+        pushingByPath: {},
+        pullingByPath: {},
+        refreshingRemoteByPath: {},
+        branchesByPath: {},
+        branchLoadingByPath: {},
+        initializingByPath: {},
+        lastCommitByPath: {},
+        amendingByPath: {},
+        undoingCommitByPath: {},
+        stashesByPath: {},
+        stashLoadingByPath: {},
+        stashBusyByPath: {},
+        modifiedFilesByThread: {},
       })
       void fetchProjects()
     })

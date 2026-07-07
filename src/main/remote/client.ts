@@ -135,6 +135,7 @@ export class RemoteControlClient {
       updatedAt: now,
     }
     writeHosts([...this.getHosts(), host])
+    emitAppEvent(this.window, 'remote:hosts-changed', this.getHosts())
     return host
   }
 
@@ -148,12 +149,15 @@ export class RemoteControlClient {
     })
     if (!updated) throw new Error('Remote host not found')
     writeHosts(hosts)
+    emitAppEvent(this.window, 'remote:hosts-changed', hosts)
     if (getSetting(REMOTE_ACTIVE_HOST_KEY) === id) this.restartEventStream()
     return updated
   }
 
   removeHost(id: string): void {
-    writeHosts(this.getHosts().filter((host) => host.id !== id))
+    const hosts = this.getHosts().filter((host) => host.id !== id)
+    writeHosts(hosts)
+    emitAppEvent(this.window, 'remote:hosts-changed', hosts)
     if (getSetting(REMOTE_ACTIVE_HOST_KEY) === id) {
       setSetting(REMOTE_ACTIVE_HOST_KEY, '')
       this.restartEventStream()

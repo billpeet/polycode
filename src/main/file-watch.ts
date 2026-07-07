@@ -1,6 +1,7 @@
 import { watch, existsSync, statSync, FSWatcher } from 'node:fs'
 import { basename, dirname } from 'node:path'
 import { BrowserWindow } from 'electron'
+import { emitAppEvent } from './app-events'
 
 interface FileWatchEntry {
   watcher: FSWatcher
@@ -55,7 +56,7 @@ export function startFileWatch(win: BrowserWindow, filePath: string): boolean {
 
         if (!win.isDestroyed()) {
           const exists = existsSync(filePath)
-          win.webContents.send('files:changed', {
+          emitAppEvent(win, 'files:changed', {
             path: filePath,
             modifiedAt: exists ? safeMtimeMs(filePath) : Date.now(),
             deleted: !exists,
@@ -139,7 +140,7 @@ export function startRepoGitWatch(win: BrowserWindow, repoPath: string, onChange
 
         onChanged?.(repoPath)
         if (!win.isDestroyed()) {
-          win.webContents.send('git:repoChanged', {
+          emitAppEvent(win, 'git:repoChanged', {
             path: repoPath,
             changedAt: Date.now(),
           })
