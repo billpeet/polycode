@@ -137,6 +137,8 @@ export default function InputBar({ threadId }: Props) {
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
   const setModel = useThreadStore((s) => s.setModel)
   const setReasoningLevel = useThreadStore((s) => s.setReasoningLevel)
+  const setCursorThinking = useThreadStore((s) => s.setCursorThinking)
+  const setCursorContext = useThreadStore((s) => s.setCursorContext)
   const setPermissionMode = useThreadStore((s) => s.setPermissionMode)
   const setWsl = useThreadStore((s) => s.setWsl)
 
@@ -881,6 +883,8 @@ export default function InputBar({ threadId }: Props) {
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}
           setReasoningLevel={setReasoningLevel}
+          setCursorThinking={setCursorThinking}
+          setCursorContext={setCursorContext}
           elapsedSeconds={elapsedSeconds}
         />
 

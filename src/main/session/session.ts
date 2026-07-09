@@ -7,7 +7,7 @@ import { OpenCodeDriver } from '../driver/opencode'
 import { PiDriver } from '../driver/pi'
 import { CursorDriver } from '../driver/cursor'
 import { CLIDriver } from '../driver/types'
-import { OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider } from '../../shared/types'
+import { OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 import {
@@ -17,6 +17,8 @@ import {
   getThreadModel,
   getThreadProvider,
   getThreadReasoningLevel,
+  getThreadCursorThinking,
+  getThreadCursorContext,
   getThreadPermissionMode,
   getOrCreateActiveSession,
   createSession,
@@ -73,13 +75,18 @@ export class Session {
   }
 
   private initDriver(sessionId: string, externalSessionId: string | null): CLIDriver {
-    const model = getThreadModel(this.threadId)
     const provider = getThreadProvider(this.threadId)
+    const contextWindow = getThreadCursorContext(this.threadId)
+    // Claude Code enables 1M context via a `<model>[1m]` slug; other providers
+    // leave the model untouched and apply context selection separately.
+    const model = resolveEffectiveModel(provider, getThreadModel(this.threadId), contextWindow)
     const options = {
       workingDir: this.workingDir,
       threadId: this.threadId,
       model,
       reasoningLevel: getThreadReasoningLevel(this.threadId),
+      thinking: getThreadCursorThinking(this.threadId),
+      contextWindow,
       permissionMode: getThreadPermissionMode(this.threadId),
       yoloMode: getThreadPermissionMode(this.threadId) === 'yolo',
       initialSessionId: externalSessionId,

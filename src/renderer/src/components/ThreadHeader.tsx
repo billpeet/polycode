@@ -6,7 +6,7 @@ import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
 import { useGitErrorReporter } from '../lib/gitErrorToast'
 import { useTerminalStore } from '../stores/terminal'
-import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT } from '../types/ipc'
+import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, resolveEffectiveModel } from '../types/ipc'
 import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
@@ -455,7 +455,7 @@ export default function ThreadHeader({ threadId }: Props) {
 
         {/* Token usage + context window */}
         {usage && (() => {
-          const model = thread?.model ?? 'claude-opus-4-8'
+          const model = resolveEffectiveModel(thread?.provider ?? 'claude-code', thread?.model ?? 'claude-opus-4-8', thread?.cursor_context)
           const contextLimit = MODEL_CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
           return (
             <span

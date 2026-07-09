@@ -40,6 +40,10 @@ export interface DriverOptions {
   threadId: string
   model?: string
   reasoningLevel?: ReasoningLevel
+  /** Cursor: thinking toggle override; null/undefined = use provider default. */
+  thinking?: boolean | null
+  /** Cursor: selected context-window value; null/undefined = use provider default. */
+  contextWindow?: string | null
   permissionMode?: PermissionMode
   yoloMode?: boolean
   initialSessionId?: string | null

@@ -39,6 +39,8 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadReasoningLevel,
+  updateThreadCursorThinking,
+  updateThreadCursorContext,
   updateThreadPermissionMode,
   updateThreadYoloMode,
   updateThreadStatus,
@@ -803,6 +805,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   proxyable('threads:updateReasoningLevel', (id: string, reasoningLevel: string) => {
     sessionManager.remove(id)
     return updateThreadReasoningLevel(id, reasoningLevel)
+  })
+
+  proxyable('threads:updateCursorThinking', (id: string, thinking: boolean | null) => {
+    sessionManager.remove(id)
+    return updateThreadCursorThinking(id, thinking)
+  })
+
+  proxyable('threads:updateCursorContext', (id: string, context: string | null) => {
+    sessionManager.remove(id)
+    return updateThreadCursorContext(id, context)
   })
 
   proxyable('threads:setUnread', (threadId: string, unread: boolean) => {

@@ -396,6 +396,8 @@ function rowToThread(r: ThreadRow): Thread {
     provider,
     model,
     reasoning_level: normalizeReasoningLevel(r.reasoning_level),
+    cursor_thinking: r.cursor_thinking == null ? null : r.cursor_thinking === 1,
+    cursor_context: r.cursor_context ?? null,
     status: r.status as Thread['status'],
     archived: r.archived === 1,
     input_tokens: r.input_tokens ?? 0,
@@ -476,6 +478,8 @@ export function createThread(projectId: string, name: string, locationId: string
     provider,
     model,
     reasoning_level: 'off',
+    cursor_thinking: null,
+    cursor_context: null,
     status: 'idle',
     archived: 0,
     input_tokens: 0,
@@ -531,6 +535,19 @@ export function updateThreadReasoningLevel(id: string, reasoningLevel: string): 
   getDb()
     .prepare('UPDATE threads SET reasoning_level = ?, updated_at = ? WHERE id = ?')
     .run(normalizeReasoningLevel(reasoningLevel), new Date().toISOString(), id)
+}
+
+export function updateThreadCursorThinking(id: string, thinking: boolean | null): void {
+  getDb()
+    .prepare('UPDATE threads SET cursor_thinking = ?, updated_at = ? WHERE id = ?')
+    .run(thinking == null ? null : thinking ? 1 : 0, new Date().toISOString(), id)
+}
+
+export function updateThreadCursorContext(id: string, context: string | null): void {
+  const value = context && context.trim() ? context.trim() : null
+  getDb()
+    .prepare('UPDATE threads SET cursor_context = ?, updated_at = ? WHERE id = ?')
+    .run(value, new Date().toISOString(), id)
 }
 
 export function updateThreadYoloMode(id: string, yoloMode: boolean): void {
@@ -639,6 +656,20 @@ export function getThreadReasoningLevel(threadId: string): ReasoningLevel {
     .prepare('SELECT reasoning_level FROM threads WHERE id = ?')
     .get(threadId) as { reasoning_level: string | null } | undefined
   return normalizeReasoningLevel(row?.reasoning_level)
+}
+
+export function getThreadCursorThinking(threadId: string): boolean | null {
+  const row = getDb()
+    .prepare('SELECT cursor_thinking FROM threads WHERE id = ?')
+    .get(threadId) as { cursor_thinking: number | null } | undefined
+  return row?.cursor_thinking == null ? null : row.cursor_thinking === 1
+}
+
+export function getThreadCursorContext(threadId: string): string | null {
+  const row = getDb()
+    .prepare('SELECT cursor_context FROM threads WHERE id = ?')
+    .get(threadId) as { cursor_context: string | null } | undefined
+  return row?.cursor_context ?? null
 }
 
 export function getThreadSessionId(threadId: string): string | null {
@@ -1186,6 +1217,8 @@ export function importThread(
     provider,
     model,
     reasoning_level: 'off',
+    cursor_thinking: null,
+    cursor_context: null,
     status: 'idle',
     archived: 0,
     input_tokens: 0,

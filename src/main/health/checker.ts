@@ -1,4 +1,7 @@
 import { spawn } from 'child_process'
+import { readFileSync } from 'fs'
+import { homedir } from 'os'
+import { join } from 'path'
 import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult } from '../../shared/types'
 import {
   shellEscape,
@@ -189,6 +192,40 @@ function runProcess(
   })
 }
 
+// Cursor's parameterized model picker (effort/fast/thinking/context) requires a
+// recent CLI on the `lab` channel. Mirror t3code's advisory so users understand
+// why those controls are missing when their CLI is too old / on another channel.
+const CURSOR_MIN_PICKER_VERSION_DATE = 2026_04_08
+
+function parseCursorVersionDate(version: string | null): number | undefined {
+  const match = version?.trim().match(/^(\d{4})\.(\d{2})\.(\d{2})/)
+  return match ? Number(`${match[1]}${match[2]}${match[3]}`) : undefined
+}
+
+function readLocalCursorChannel(): string | null {
+  try {
+    const raw = readFileSync(join(homedir(), '.cursor', 'cli-config.json'), 'utf8')
+    const parsed = JSON.parse(raw) as { channel?: unknown }
+    const channel = typeof parsed.channel === 'string' ? parsed.channel.trim().toLowerCase() : ''
+    return channel || null
+  } catch {
+    return null
+  }
+}
+
+function buildCursorPickerAdvisory(version: string | null, channel: string | null): string | null {
+  const reasons: string[] = []
+  const versionDate = parseCursorVersionDate(version)
+  if (versionDate !== undefined && versionDate < CURSOR_MIN_PICKER_VERSION_DATE) {
+    reasons.push(`CLI ${version} is too old for the model picker (effort/fast/thinking/context)`)
+  }
+  if (channel && channel !== 'lab') {
+    reasons.push(`CLI channel is "${channel}", but the model picker needs the lab channel`)
+  }
+  if (reasons.length === 0) return null
+  return `${reasons.join('. ')}. Run \`cursor-agent set-channel lab && cursor-agent update\` and use 2026.04.08 or newer.`
+}
+
 /** Extract a semver string from command output. */
 function extractVersion(output: string): string | null {
   const match = output.match(/(\d+\.\d+\.\d+(?:-[\w.]+)?)/)
@@ -232,7 +269,7 @@ const PROVIDER_INFO: Record<Provider, {
   'codex':       { cmd: 'codex',   package: '@openai/codex',             updatePkg: '@openai/codex@latest' },
   'opencode':    { cmd: 'opencode', package: 'opencode-ai',              updatePkg: 'opencode-ai@latest' },
   'pi':          { cmd: 'pi',      package: '@mariozechner/pi-coding-agent', updatePkg: '@mariozechner/pi-coding-agent@latest' },
-  'cursor':      { cmd: 'agent',   package: '@cursor/agent',              updateCmd: ['agent', 'update'] },
+  'cursor':      { cmd: 'cursor-agent',   package: '@cursor/agent',              updateCmd: ['cursor-agent', 'update'] },
 }
 
 function buildSshArgs(ssh: SshConfig): string[] {
@@ -397,7 +434,12 @@ export async function checkCliHealth(
       const currentVersion = extractVersion(versionResult.output)
       const installed = currentVersion !== null || versionResult.exitCode === 0
       const upToDate = installed && currentVersion && latestVersion ? isUpToDate(currentVersion, latestVersion) : null
-      return { installed, currentVersion, latestVersion, upToDate }
+      // Channel is only readable from the local Cursor config; version gating
+      // applies across all transports.
+      const advisory = provider === 'cursor' && installed
+        ? buildCursorPickerAdvisory(currentVersion, connectionType === 'local' ? readLocalCursorChannel() : null)
+        : null
+      return { installed, currentVersion, latestVersion, upToDate, ...(advisory ? { advisory } : {}) }
     },
     (result) => result.installed ? HEALTH_RESULT_TTL_MS : NEGATIVE_HEALTH_RESULT_TTL_MS,
   )

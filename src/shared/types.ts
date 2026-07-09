@@ -97,8 +97,8 @@ export const ANTHROPIC_MODELS = [
   { id: 'claude-fable-5[1m]', label: 'Fable 5', contextWindow: 1_000_000 },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
   { id: 'claude-opus-4-7', label: 'Opus 4.7', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
+  { id: 'claude-opus-4-6', label: 'Opus 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], contextWindows: [{ value: '200k', label: '200k' }, { value: '1m', label: '1M' }] },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'], contextWindows: [{ value: '200k', label: '200k' }, { value: '1m', label: '1M' }] },
   { id: 'claude-opus-4-5', label: 'Opus 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
   { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
   { id: 'claude-haiku-4-5', label: 'Haiku 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'] },
@@ -156,6 +156,12 @@ export interface ModelOption {
   contextWindow?: number
   reasoning?: boolean
   reasoningLevels?: ReasoningLevel[]
+  /** Cursor: model exposes a priority "fast" processing tier. */
+  fast?: boolean
+  /** Cursor: model exposes a separate thinking on/off toggle. */
+  thinking?: boolean
+  /** Cursor: selectable context-window sizes (e.g. 200k / 1m). */
+  contextWindows?: { value: string; label: string }[]
 }
 
 export const CURSOR_MODELS = [
@@ -202,6 +208,10 @@ export interface Thread {
   provider: string
   model: string
   reasoning_level: ReasoningLevel
+  /** Cursor: thinking toggle override; null = use provider default. */
+  cursor_thinking: boolean | null
+  /** Cursor: selected context-window value; null = use provider default. */
+  cursor_context: string | null
   status: ThreadStatus
   archived: boolean
   input_tokens: number
@@ -249,10 +259,16 @@ export interface TokenUsage {
 
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'claude-fable-5[1m]': 1_000_000,
-  'claude-opus-4-8': 200_000,
-  'claude-opus-4-7': 200_000,
+  // Opus 4.8 / 4.7 run at the 1M context window by default in Claude Code
+  // (no `[1m]` suffix needed), matching t3code's selectedClaudeContextWindow.
+  // The other 1M-capable models default to 200k and only reach 1M via the
+  // opt-in `<model>[1m]` slug, so they stay at 200k here.
+  'claude-opus-4-8': 1_000_000,
+  'claude-opus-4-7': 1_000_000,
   'claude-opus-4-6': 200_000,
+  'claude-opus-4-6[1m]': 1_000_000,
   'claude-sonnet-4-6': 200_000,
+  'claude-sonnet-4-6[1m]': 1_000_000,
   'claude-opus-4-5': 200_000,
   'claude-sonnet-4-5': 200_000,
   'claude-haiku-4-5': 200_000,
@@ -283,6 +299,26 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
 }
 
 export const DEFAULT_CONTEXT_LIMIT = 200_000
+
+// Claude Code enables its 1M context window via a `<model>[1m]` model slug
+// (e.g. `claude-opus-4-6[1m]`). When a claude-code thread opted into the 1M
+// context window, append that suffix so the CLI runs at 1M and the context
+// usage bar reads the 1M limit. Other providers apply context selection
+// differently (Cursor uses an ACP config option), so this is a no-op for them.
+export function resolveEffectiveModel(
+  provider: string,
+  model: string,
+  contextSelection: string | null | undefined
+): string {
+  if (provider === 'claude-code' && contextSelection === '1m' && !model.includes('[1m]')) {
+    const withSuffix = `${model}[1m]`
+    // Only append when the base model actually supports a 1M window (has a
+    // known `[1m]` limit), so a stale selection carried over to a 200k-only
+    // model like Haiku never produces an invalid slug.
+    if (withSuffix in MODEL_CONTEXT_LIMITS) return withSuffix
+  }
+  return model
+}
 
 export interface RateLimitInfo {
   status: 'allowed' | 'allowed_warning' | 'blocked' | 'unknown'
@@ -564,6 +600,8 @@ export interface CliHealthResult {
   latestVersion: string | null
   /** null when either version is unavailable */
   upToDate: boolean | null
+  /** Non-fatal capability advisory (e.g. Cursor parameterized model picker requires a newer CLI / lab channel). */
+  advisory?: string | null
 }
 
 export interface CliUpdateResult {

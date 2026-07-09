@@ -116,8 +116,13 @@ interface ComposerToolbarProps {
   setProviderAndModel: (threadId: string, provider: Provider, model: string) => void
   setModel: (threadId: string, model: string) => void
   setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => void
+  setCursorThinking: (threadId: string, thinking: boolean | null) => void
+  setCursorContext: (threadId: string, context: string | null) => void
   elapsedSeconds: number
 }
+
+// Stable empty reference so the context-window map never churns identity.
+const EMPTY_CONTEXT_WINDOWS: { value: string; label: string }[] = []
 
 export default function ComposerToolbar({
   threadId,
@@ -134,6 +139,8 @@ export default function ComposerToolbar({
   setProviderAndModel,
   setModel,
   setReasoningLevel,
+  setCursorThinking,
+  setCursorContext,
   elapsedSeconds,
 }: ComposerToolbarProps) {
   const permissionOptions = useMemo<Array<{ mode: PermissionMode; label: string; title: string }>>(() => {
@@ -152,8 +159,6 @@ export default function ComposerToolbar({
     }
     return []
   }, [currentThread?.provider])
-  // Fast mode (priority processing) is currently supported by Claude Code and Codex.
-  const supportsFastMode = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
   const [liveClaudeModels, setLiveClaudeModels] = useState<ModelOption[]>([])
   const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
@@ -259,7 +264,7 @@ export default function ComposerToolbar({
     return [{ id: currentModel, label: currentModel }, ...baseModels]
   }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels])
 
-  const selectedModel = useMemo(
+  const selectedModel = useMemo<ModelOption | undefined>(
     () => modelOptions.find((model) => model.id === currentThread?.model),
     [modelOptions, currentThread?.model]
   )
@@ -273,6 +278,16 @@ export default function ComposerToolbar({
     ? currentThread?.reasoning_level ?? 'off'
     : reasoningOptions[0]
   const showReasoningSelector = currentProvider === 'pi' || currentProvider === 'codex' || currentProvider === 'claude-code' || currentProvider === 'opencode' || currentProvider === 'cursor'
+  // Fast mode (priority processing): Claude Code and Codex always; Cursor only
+  // when the selected model advertises a fast tier.
+  const supportsFastMode = currentProvider === 'claude-code' || currentProvider === 'codex' || (currentProvider === 'cursor' && !!selectedModel?.fast)
+  // Cursor-only per-model config toggles surfaced from discovery.
+  const showThinkingToggle = currentProvider === 'cursor' && !!selectedModel?.thinking
+  const cursorThinking = currentThread?.cursor_thinking === true
+  // Context-window selector: Cursor surfaces it via discovery; Claude Code
+  // surfaces it on models that support the opt-in 1M window (Opus 4.6, Sonnet 4.6).
+  const contextWindows = selectedModel?.contextWindows ?? EMPTY_CONTEXT_WINDOWS
+  const currentContextWindow = currentThread?.cursor_context ?? ''
 
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -308,6 +323,26 @@ export default function ComposerToolbar({
           >
             <FastIcon />
             Fast
+          </button>
+          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
+        </>
+      )}
+      {showThinkingToggle && (
+        <>
+          <button
+            onClick={() => setCursorThinking(threadId, !cursorThinking)}
+            disabled={isProcessing}
+            title={cursorThinking
+              ? 'Thinking: ON - the model reasons before responding'
+              : 'Thinking: OFF - use the model default'}
+            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
+            style={{
+              background: cursorThinking ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
+              color: cursorThinking ? '#8b5cf6' : 'var(--color-text-muted)',
+              border: `1px solid ${cursorThinking ? 'rgba(139, 92, 246, 0.3)' : 'transparent'}`,
+            }}
+          >
+            Thinking
           </button>
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>
@@ -486,11 +521,36 @@ export default function ComposerToolbar({
             background: 'var(--color-surface)',
             opacity: isProcessing || reasoningOptions.length <= 1 ? 0.4 : 1,
           }}
-          title={`Select ${currentProvider === 'claude-code' ? 'Claude effort' : currentProvider === 'codex' ? 'Codex reasoning' : currentProvider === 'opencode' ? 'OpenCode reasoning' : 'Pi reasoning'} level`}
+          title={`Select ${currentProvider === 'claude-code' ? 'Claude effort' : currentProvider === 'codex' ? 'Codex reasoning' : currentProvider === 'opencode' ? 'OpenCode reasoning' : currentProvider === 'cursor' ? 'Cursor effort' : 'Pi reasoning'} level`}
         >
           {reasoningOptions.map((level) => (
             <option key={level} value={level} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {level === 'off' ? (currentProvider === 'claude-code' ? 'Effort default' : currentProvider === 'opencode' ? 'Reasoning default' : 'Reasoning off') : `${currentProvider === 'claude-code' ? 'Effort' : 'Reasoning'} ${level}`}
+              {level === 'off' ? (currentProvider === 'claude-code' ? 'Effort default' : currentProvider === 'opencode' || currentProvider === 'cursor' ? 'Effort default' : 'Reasoning off') : `${currentProvider === 'claude-code' || currentProvider === 'cursor' ? 'Effort' : 'Reasoning'} ${level}`}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {contextWindows.length > 0 && (
+        <select
+          value={currentContextWindow}
+          onChange={(e) => setCursorContext(threadId, e.target.value ? e.target.value : null)}
+          disabled={isProcessing}
+          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
+          style={{
+            color: 'var(--color-text-muted)',
+            borderColor: 'var(--color-border)',
+            background: 'var(--color-surface)',
+            opacity: isProcessing ? 0.4 : 1,
+          }}
+          title="Select context window"
+        >
+          <option value="" style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+            Context default
+          </option>
+          {contextWindows.map((cw) => (
+            <option key={cw.value} value={cw.value} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
+              {cw.label}
             </option>
           ))}
         </select>

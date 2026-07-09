@@ -69,6 +69,8 @@ interface ThreadStore {
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
   setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => Promise<void>
+  setCursorThinking: (threadId: string, thinking: boolean | null) => Promise<void>
+  setCursorContext: (threadId: string, context: string | null) => Promise<void>
   setPermissionMode: (threadId: string, permissionMode: PermissionMode) => Promise<void>
   setYolo: (threadId: string, yoloMode: boolean) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
@@ -177,6 +179,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       provider: sourceThread?.provider ?? 'claude-code',
       model: sourceThread?.model ?? 'claude-opus-4-8',
       reasoning_level: sourceThread?.reasoning_level ?? 'off',
+      cursor_thinking: sourceThread?.cursor_thinking ?? null,
+      cursor_context: sourceThread?.cursor_context ?? null,
       status: 'idle',
       archived: false,
       input_tokens: 0,
@@ -623,6 +627,28 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
         updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, reasoning_level: reasoningLevel } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
+  setCursorThinking: async (threadId, thinking) => {
+    await window.api.invoke('threads:updateCursorThinking', threadId, thinking)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, cursor_thinking: thinking } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
+  setCursorContext: async (threadId, context) => {
+    await window.api.invoke('threads:updateCursorContext', threadId, context)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, cursor_context: context } : t))
       }
       return { byProject: updated }
     })

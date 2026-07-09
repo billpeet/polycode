@@ -176,6 +176,16 @@ function runMigrations(database: Database.Database): void {
     database.exec("ALTER TABLE threads ADD COLUMN reasoning_level TEXT NOT NULL DEFAULT 'off'")
   }
 
+  // ── Cursor per-thread config options (thinking / context window) ─────────
+  // Nullable: NULL means "no override — use the provider default".
+  const threadColsCursor = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadColsCursor.some((c) => c.name === 'cursor_thinking')) {
+    database.exec('ALTER TABLE threads ADD COLUMN cursor_thinking INTEGER')
+  }
+  if (!threadColsCursor.some((c) => c.name === 'cursor_context')) {
+    database.exec('ALTER TABLE threads ADD COLUMN cursor_context TEXT')
+  }
+
   // ── Remap stale Codex model IDs to current ones ───────────────────────────
   // Old placeholder models (o4-mini, o3, gpt-4o, gpt-4.1) were never valid
   // Codex CLI models. Migrate any threads still referencing them.

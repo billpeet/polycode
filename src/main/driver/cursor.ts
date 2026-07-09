@@ -61,6 +61,61 @@ function normalizeReasoning(level: ReasoningLevel | undefined): string | undefin
   return level
 }
 
+function isEffortConfigOption(option: ConfigOption): boolean {
+  const id = (option.id ?? '').toLowerCase()
+  const name = ((asRecord(option)?.name as string | undefined) ?? '').toLowerCase()
+  return option.type === 'select' && (
+    id === 'effort' || id === 'reasoning' ||
+    name === 'effort' || name === 'reasoning' ||
+    name.includes('effort') || name.includes('reasoning')
+  )
+}
+
+// Mirror t3code's findCursorEffortConfigOption priority so we target the real
+// effort picker when Cursor exposes several select options.
+function findEffortConfigOption(options: ConfigOption[]): ConfigOption | undefined {
+  const candidates = options.filter(isEffortConfigOption)
+  return (
+    candidates.find((option) => option.category === 'model_option') ??
+    candidates.find((option) => (option.id ?? '').toLowerCase() === 'effort') ??
+    candidates.find((option) => option.category === 'thought_level') ??
+    candidates[0]
+  )
+}
+
+function configOptionName(option: ConfigOption): string {
+  return ((asRecord(option)?.name as string | undefined) ?? '').toLowerCase()
+}
+
+function isFastConfigOption(option: ConfigOption): boolean {
+  const id = (option.id ?? '').toLowerCase()
+  const name = configOptionName(option)
+  return id === 'fast' || name === 'fast' || name.includes('fast mode')
+}
+
+function isThinkingConfigOption(option: ConfigOption): boolean {
+  const id = (option.id ?? '').toLowerCase()
+  return id === 'thinking' || configOptionName(option).includes('thinking')
+}
+
+function isContextConfigOption(option: ConfigOption): boolean {
+  const id = (option.id ?? '').toLowerCase()
+  return id === 'context' || id === 'context_size' || configOptionName(option).includes('context')
+}
+
+// Prefer the model_config-scoped option (t3code's category), else any match.
+function findModelConfigOption(options: ConfigOption[], predicate: (option: ConfigOption) => boolean): ConfigOption | undefined {
+  return options.find((option) => option.category === 'model_config' && predicate(option)) ?? options.find(predicate)
+}
+
+// Resolve a boolean request to the concrete config value: boolean options take
+// the boolean directly; select options ("true"/"false") take the matching value.
+function resolveBooleanConfigValue(option: ConfigOption | undefined, requested: boolean): string | boolean | undefined {
+  if (!option) return undefined
+  if (option.type === 'boolean') return requested
+  return flattenSelectOptions(option).find((entry) => entry.value.trim().toLowerCase() === String(requested))?.value
+}
+
 function flattenSelectOptions(option: ConfigOption | undefined): Array<{ value: string; name: string }> {
   if (!option || option.type !== 'select' || !Array.isArray(option.options)) return []
   const out: Array<{ value: string; name: string }> = []
@@ -290,7 +345,7 @@ export class CursorDriver implements CLIDriver {
     this.readyPromise = (async () => {
       const runner = createRunner(this.options)
       const cmd = {
-        binary: 'agent',
+        binary: 'cursor-agent',
         args: ['acp'],
         workDir: this.options.workingDir,
         preamble: LOAD_NODE_MANAGERS,
@@ -340,9 +395,40 @@ export class CursorDriver implements CLIDriver {
   }
 
   private async applyModelConfiguration(): Promise<void> {
-    if (!this.options.model || this.options.model === 'default') return
-    await this.setConfigOption(this.modelConfigId, this.options.model)
+    if (this.options.model && this.options.model !== 'default') {
+      await this.setConfigOption(this.modelConfigId, this.options.model)
+    }
+    // Apply the effort/reasoning selection for every model — including the
+    // Default/Auto model, whose effort option is already present in the
+    // session/new config options — so the picked level is never dropped.
     await this.applyReasoningConfiguration()
+    await this.applyThinkingConfiguration()
+    await this.applyContextConfiguration()
+  }
+
+  private async applyThinkingConfiguration(): Promise<void> {
+    if (this.options.thinking == null) return
+    const option = findModelConfigOption(this.configOptions, isThinkingConfigOption)
+    if (!option?.id) return
+    const value = resolveBooleanConfigValue(option, this.options.thinking)
+    if (value !== undefined) await this.setConfigOption(option.id, value)
+  }
+
+  private async applyContextConfiguration(): Promise<void> {
+    const requested = this.options.contextWindow?.trim()
+    if (!requested) return
+    const option = findModelConfigOption(this.configOptions, isContextConfigOption)
+    const value = findOptionValue(option, requested)
+    if (option?.id && value) await this.setConfigOption(option.id, value)
+  }
+
+  // Fast mode is a per-turn priority tier toggled from the composer, so it is
+  // applied on every prompt rather than pinned at session setup.
+  private async applyFastConfiguration(options?: MessageOptions): Promise<void> {
+    const option = findModelConfigOption(this.configOptions, isFastConfigOption)
+    if (!option?.id) return
+    const value = resolveBooleanConfigValue(option, options?.fastMode === true)
+    if (value !== undefined) await this.setConfigOption(option.id, value)
   }
 
   private async applyTurnConfiguration(options?: MessageOptions): Promise<void> {
@@ -353,16 +439,13 @@ export class CursorDriver implements CLIDriver {
       await this.setConfigOption('mode', modeId)
       if (this.modeState) this.modeState = { ...this.modeState, currentModeId: modeId }
     }
+    await this.applyFastConfiguration(options)
   }
 
   private async applyReasoningConfiguration(): Promise<void> {
     const requested = normalizeReasoning(this.options.reasoningLevel)
     if (!requested) return
-    const option = findConfigOption(this.configOptions, (opt) => {
-      const id = opt.id?.toLowerCase() ?? ''
-      const name = (asRecord(opt)?.name as string | undefined)?.toLowerCase() ?? ''
-      return opt.type === 'select' && (id.includes('effort') || id.includes('reasoning') || name.includes('effort') || name.includes('reasoning'))
-    })
+    const option = findEffortConfigOption(this.configOptions)
     const value = findOptionValue(option, requested)
     if (option?.id && value) await this.setConfigOption(option.id, value)
   }

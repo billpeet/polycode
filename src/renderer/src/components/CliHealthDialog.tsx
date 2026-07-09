@@ -323,6 +323,11 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
                   <p className="mt-1.5 text-xs" style={{ color: '#f87171' }}>{status.error}</p>
                 )}
 
+                {/* Capability advisory (e.g. Cursor model picker requirements) */}
+                {status.result?.advisory && (
+                  <p className="mt-1.5 text-xs" style={{ color: '#fbbf24' }}>{status.result.advisory}</p>
+                )}
+
                 {/* Update output */}
                 {status.showOutput && status.updateResult && (
                   <pre
