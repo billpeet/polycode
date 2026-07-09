@@ -31,6 +31,8 @@ type PendingQuestionDecision = {
 }
 
 type ClaudeEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+type SDKSystemMessage = Extract<SDKMessage, { type: 'system' }>
+type SDKRateLimitEvent = Extract<SDKMessage, { type: 'rate_limit_event' }>
 
 function reasoningLevelToClaudeEffort(level?: ReasoningLevel): ClaudeEffort | undefined {
   if (!level || level === 'off') return undefined
@@ -96,6 +98,7 @@ export class ClaudeDriver implements CLIDriver {
   private pendingQuestionDecisions = new Map<string, PendingQuestionDecision>()
   private currentMessageOptions: MessageOptions = {}
   private queuedTurnCount = 0
+  private activeBackgroundTaskIds = new Set<string>()
 
   constructor(private readonly options: DriverOptions) {
     if (options.initialSessionId) {
@@ -117,6 +120,7 @@ export class ClaudeDriver implements CLIDriver {
     this.stopped = false
     this.specialToolIds.clear()
     this.queuedTurnCount = 0
+    this.activeBackgroundTaskIds.clear()
     this.currentMessageOptions = options ?? {}
     this.currentTurn = { onEvent, onDone }
 
@@ -125,6 +129,7 @@ export class ClaudeDriver implements CLIDriver {
         await this.applyTurnConfiguration()
         this.promptQueue?.push({
           type: 'user',
+          parent_tool_use_id: null,
           message: {
             role: 'user',
             content,
@@ -148,6 +153,7 @@ export class ClaudeDriver implements CLIDriver {
         await this.applyTurnConfiguration()
         this.promptQueue?.push({
           type: 'user',
+          parent_tool_use_id: null,
           message: {
             role: 'user',
             content,
@@ -160,6 +166,7 @@ export class ClaudeDriver implements CLIDriver {
   stop(): void {
     this.stopped = true
     this.queuedTurnCount = 0
+    this.activeBackgroundTaskIds.clear()
 
     const pendingError = new Error('Claude turn interrupted')
     for (const pending of this.pendingPermissionDecisions.values()) {
@@ -401,27 +408,47 @@ export class ClaudeDriver implements CLIDriver {
     const query = this.query
     if (!query) return
 
-    for await (const message of query) {
-      const sessionId = this.extractSessionId(message)
-      if (sessionId && sessionId !== this.sessionId) {
-        this.sessionId = sessionId
-        this.options.onSessionId?.(sessionId)
-      }
+    try {
+      for await (const message of query) {
+        const sessionId = this.extractSessionId(message)
+        if (sessionId && sessionId !== this.sessionId) {
+          this.sessionId = sessionId
+          this.options.onSessionId?.(sessionId)
+        }
 
-      for (const event of this.parseMessage(message)) {
-        this.emit(event)
-      }
+        for (const event of this.parseMessage(message)) {
+          this.emit(event)
+        }
 
-      if (message.type === 'result') {
-        const error = this.resultError(message)
-        if (error) {
-          this.finishTurn(error)
-        } else if (this.queuedTurnCount > 0) {
-          this.queuedTurnCount -= 1
-        } else {
-          this.finishTurn()
+        if (message.type === 'result') {
+          const error = this.resultError(message)
+          if (error) {
+            this.finishTurn(error)
+          } else {
+            this.handleSuccessfulTurnBoundary()
+          }
+        } else if (this.isIdleStateMessage(message) && this.currentTurn) {
+          // Claude Code's session_state_changed:idle is emitted after held-back
+          // background/subagent output is flushed. Treat it as a completion
+          // fallback for SDK/CLI paths that do not produce a result frame.
+          this.handleSuccessfulTurnBoundary()
         }
       }
+    } finally {
+      if (this.query === query) {
+        this.promptQueue?.close()
+        this.promptQueue = null
+        this.query = null
+        this.streamTask = null
+      }
+    }
+
+    if (this.currentTurn) {
+      this.finishTurn(
+        this.stopped
+          ? undefined
+          : new Error('Claude stream ended before a result was received')
+      )
     }
   }
 
@@ -439,6 +466,14 @@ export class ClaudeDriver implements CLIDriver {
 
       case 'result':
         this.collectResultMessage(message, events)
+        break
+
+      case 'system':
+        this.collectSystemMessage(message, events)
+        break
+
+      case 'rate_limit_event':
+        this.collectRateLimitMessage(message, events)
         break
     }
 
@@ -484,9 +519,9 @@ export class ClaudeDriver implements CLIDriver {
     }
   }
 
-  private collectUserMessage(message: SDKMessage, events: OutputEvent[]): void {
-    if (message.type !== 'user') return
-    for (const block of message.message.content) {
+  private collectUserMessage(message: SDKUserMessage, events: OutputEvent[]): void {
+    const blocks = Array.isArray(message.message.content) ? message.message.content : []
+    for (const block of blocks) {
       if (block.type !== 'tool_result') continue
       if (this.specialToolIds.has(block.tool_use_id ?? '')) continue
 
@@ -548,6 +583,123 @@ export class ClaudeDriver implements CLIDriver {
     }
   }
 
+  private collectSystemMessage(message: SDKSystemMessage, events: OutputEvent[]): void {
+    switch (message.subtype) {
+      case 'task_started':
+        this.activeBackgroundTaskIds.add(message.task_id)
+        if (message.skip_transcript) return
+        events.push({
+          type: 'thinking',
+          content: this.formatTaskStarted(message),
+          metadata: {
+            type: 'thinking',
+            source: 'claude_task',
+            task_event: 'started',
+            task_id: message.task_id,
+            tool_use_id: message.tool_use_id,
+            task_type: message.task_type,
+            subagent_type: message.subagent_type,
+          },
+        })
+        break
+
+      case 'task_progress':
+        events.push({
+          type: 'thinking',
+          content: this.formatTaskProgress(message),
+          metadata: {
+            type: 'thinking',
+            source: 'claude_task',
+            task_event: 'progress',
+            task_id: message.task_id,
+            tool_use_id: message.tool_use_id,
+            subagent_type: message.subagent_type,
+            usage: message.usage,
+            last_tool_name: message.last_tool_name,
+          },
+        })
+        break
+
+      case 'task_notification':
+        this.activeBackgroundTaskIds.delete(message.task_id)
+        if (message.skip_transcript) return
+        events.push({
+          type: 'thinking',
+          content: this.formatTaskNotification(message),
+          metadata: {
+            type: 'thinking',
+            source: 'claude_task',
+            task_event: 'notification',
+            task_id: message.task_id,
+            tool_use_id: message.tool_use_id,
+            status: message.status,
+            usage: message.usage,
+          },
+        })
+        break
+
+      case 'task_updated':
+        if (
+          message.patch.status === 'completed' ||
+          message.patch.status === 'failed' ||
+          message.patch.status === 'killed'
+        ) {
+          this.activeBackgroundTaskIds.delete(message.task_id)
+        }
+        break
+
+      case 'status':
+        if (message.status === 'compacting') {
+          events.push({
+            type: 'thinking',
+            content: 'Compacting conversation context...',
+            metadata: { type: 'thinking', source: 'claude_status', status: message.status },
+          })
+        }
+        break
+
+      case 'local_command_output':
+        if (message.content) {
+          events.push({ type: 'text', content: message.content })
+        }
+        break
+
+      case 'api_retry':
+        events.push({
+          type: 'thinking',
+          content: `Claude API retry ${message.attempt}/${message.max_retries}: ${message.error}`,
+          metadata: {
+            type: 'thinking',
+            source: 'claude_api_retry',
+            attempt: message.attempt,
+            max_retries: message.max_retries,
+            retry_delay_ms: message.retry_delay_ms,
+            error_status: message.error_status,
+            error: message.error,
+          },
+        })
+        break
+    }
+  }
+
+  private collectRateLimitMessage(message: SDKRateLimitEvent, events: OutputEvent[]): void {
+    const info = message.rate_limit_info
+    events.push({
+      type: 'rate_limit',
+      content: '',
+      metadata: {
+        status: info.status === 'rejected' ? 'blocked' : info.status,
+        resetsAt: info.resetsAt,
+        rateLimitType: info.rateLimitType,
+        utilization: info.utilization,
+        surpassedThreshold: info.surpassedThreshold,
+        isUsingOverage: info.isUsingOverage ?? info.overageInUse,
+        overageStatus: info.overageStatus === 'rejected' ? 'blocked' : info.overageStatus,
+        overageDisabledReason: info.overageDisabledReason,
+      },
+    })
+  }
+
   private extractSessionId(message: SDKMessage): string | null {
     if ('session_id' in message && typeof message.session_id === 'string') {
       return message.session_id
@@ -558,6 +710,47 @@ export class ClaudeDriver implements CLIDriver {
   private resultError(message: SDKResultMessage): Error | undefined {
     if (message.subtype === 'success') return undefined
     return new Error((message.errors && message.errors[0]) || 'Claude execution failed')
+  }
+
+  private isIdleStateMessage(message: SDKMessage): boolean {
+    return message.type === 'system' &&
+      message.subtype === 'session_state_changed' &&
+      message.state === 'idle'
+  }
+
+  private handleSuccessfulTurnBoundary(): void {
+    if (this.queuedTurnCount > 0) {
+      this.queuedTurnCount -= 1
+      return
+    }
+
+    if (this.activeBackgroundTaskIds.size > 0) {
+      return
+    }
+
+    this.finishTurn()
+  }
+
+  private formatTaskStarted(message: Extract<SDKSystemMessage, { subtype: 'task_started' }>): string {
+    const label = message.subagent_type ?? message.task_type ?? 'subagent'
+    return `**Subagent started:** ${label}${message.description ? `\n${message.description}` : ''}`
+  }
+
+  private formatTaskProgress(message: Extract<SDKSystemMessage, { subtype: 'task_progress' }>): string {
+    const lines = [
+      `**Subagent update:** ${message.summary || message.description}`,
+    ]
+    const details: string[] = []
+    if (message.last_tool_name) details.push(`tool: ${message.last_tool_name}`)
+    if (message.usage?.tool_uses != null) details.push(`tool uses: ${message.usage.tool_uses}`)
+    if (message.usage?.total_tokens != null) details.push(`tokens: ${message.usage.total_tokens}`)
+    if (details.length > 0) lines.push(details.join(', '))
+    return lines.join('\n')
+  }
+
+  private formatTaskNotification(message: Extract<SDKSystemMessage, { subtype: 'task_notification' }>): string {
+    const status = message.status === 'completed' ? 'completed' : message.status
+    return `**Subagent ${status}:** ${message.summary || message.task_id}`
   }
 
   private emit(event: OutputEvent): void {
