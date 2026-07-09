@@ -134,6 +134,38 @@ describe('ClaudeDriver permission control flow', () => {
 })
 
 describe('ClaudeDriver query configuration', () => {
+  it('launches plan-mode yolo sessions with dangerous skip permissions allowed for later approval', async () => {
+    let capturedInput: any
+    const fakeQuery = {
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      interrupt: async () => {},
+      close: () => {},
+      [Symbol.asyncIterator]: async function* () {},
+    }
+
+    mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+      query: (input: any) => {
+        capturedInput = input
+        return fakeQuery
+      },
+    }))
+
+    process.env = {
+      ...BASE_ENV,
+      CLAUDE_CODE_PATH: '/tmp/custom-claude',
+    }
+
+    const driver = makeDriver()
+    ;(driver as any).currentMessageOptions = { planMode: true, yoloMode: true }
+
+    await (driver as any).ensureQuery()
+
+    expect(capturedInput).toBeDefined()
+    expect(capturedInput.options.permissionMode).toBe('plan')
+    expect(capturedInput.options.allowDangerouslySkipPermissions).toBe(true)
+  })
+
   it('uses the system claude binary and adds the working directory to additionalDirectories', async () => {
     let capturedInput: any
     const fakeQuery = {

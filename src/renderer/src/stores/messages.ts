@@ -52,7 +52,13 @@ function appendOrMergeMessage(messages: Message[], incoming: Message, event: Out
 
   if (event.type === 'thinking') {
     const previousType = previousMetadata?.type
-    if (previousType === 'thinking' && sameScope) {
+    // Never merge sub-agent task lifecycle bubbles (started/progress/notification): each
+    // carries unique per-event metadata (status, usage) that deriveAgentMeta relies on.
+    // Merging keeps the *previous* metadata, which would drop a terminal "completed"
+    // notification and leave the agent group stuck showing "running".
+    const isTaskBubble =
+      previousMetadata?.source === 'claude_task' || nextMetadata?.source === 'claude_task'
+    if (previousType === 'thinking' && sameScope && !isTaskBubble) {
       return [
         ...messages.slice(0, -1),
         {
@@ -66,9 +72,15 @@ function appendOrMergeMessage(messages: Message[], incoming: Message, event: Out
   }
 
   if (event.type === 'tool_result') {
+    // Only merge into a *previous tool_result* streaming chunk for the same tool_use_id.
+    // Guard on the previous type: task lifecycle bubbles (e.g. a "Subagent completed"
+    // notification) carry the spawning Task/Agent tool_use_id in their metadata, so
+    // without this check the sub-agent's main-scope tool_result would clobber the
+    // notification — destroying its metadata and leaving the agent group stuck "running".
+    const previousIsToolResult = previousMetadata?.type === 'tool_result'
     const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
     const nextToolUseId = typeof nextMetadata?.tool_use_id === 'string' ? nextMetadata.tool_use_id : null
-    if (!previousToolUseId || !nextToolUseId || previousToolUseId !== nextToolUseId) {
+    if (!previousIsToolResult || !previousToolUseId || !nextToolUseId || previousToolUseId !== nextToolUseId) {
       return [...messages, incoming]
     }
 

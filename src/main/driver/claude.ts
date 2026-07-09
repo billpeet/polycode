@@ -268,6 +268,7 @@ export class ClaudeDriver implements CLIDriver {
     const env = process.platform === 'win32' ? augmentWindowsPath(process.env) : process.env
     const workingDir = expandHomePath(this.options.workingDir)
     const effort = reasoningLevelToClaudeEffort(this.options.reasoningLevel)
+    const permissionMode = this.resolvePermissionMode(this.currentMessageOptions)
     const queryOptions = {
       model: this.options.model,
       effort,
@@ -275,8 +276,8 @@ export class ClaudeDriver implements CLIDriver {
       pathToClaudeCodeExecutable: resolveClaudeCodeExecutable(env),
       env,
       resume: this.sessionId ?? undefined,
-      permissionMode: this.resolvePermissionMode(this.currentMessageOptions),
-      allowDangerouslySkipPermissions: this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions',
+      permissionMode,
+      allowDangerouslySkipPermissions: this.isYoloEnabled(this.currentMessageOptions),
       additionalDirectories: workingDir ? [workingDir] : undefined,
       canUseTool: this.handleCanUseTool,
       // Stream sub-agent text/thinking blocks (not just tool_use/tool_result) so the
