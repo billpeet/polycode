@@ -362,6 +362,102 @@ describe('parseCodexAppServerNotification', () => {
       } satisfies OutputEvent,
     ])
   })
+
+  it('renders Codex collab agent tool calls as tool events', () => {
+    const started = parseCodexAppServerNotification(
+      'item/started',
+      {
+        item: {
+          id: 'agent_call_1',
+          type: 'collabAgentToolCall',
+          tool: 'spawnAgent',
+          status: 'inProgress',
+          senderThreadId: 'parent-thread',
+          receiverThreadIds: [],
+          prompt: 'Review the parser changes',
+          model: 'gpt-5.3-codex',
+          reasoningEffort: 'medium',
+          agentsStates: {},
+        },
+      },
+      state,
+    )
+    const completed = parseCodexAppServerNotification(
+      'item/completed',
+      {
+        item: {
+          id: 'agent_call_1',
+          type: 'collabAgentToolCall',
+          tool: 'spawnAgent',
+          status: 'completed',
+          senderThreadId: 'parent-thread',
+          receiverThreadIds: ['child-thread'],
+          prompt: 'Review the parser changes',
+          model: 'gpt-5.3-codex',
+          reasoningEffort: 'medium',
+          agentsStates: {
+            'child-thread': { status: 'running', message: null },
+          },
+        },
+      },
+      state,
+    )
+
+    expect(started).toHaveLength(1)
+    expect(started[0]).toMatchObject({
+      type: 'tool_call',
+      content: 'Spawn agent: Review the parser changes',
+      metadata: {
+        name: 'Agent',
+        tool: 'spawnAgent',
+        sender_thread_id: 'parent-thread',
+      },
+    })
+    expect(completed).toHaveLength(1)
+    expect(completed[0]).toMatchObject({
+      type: 'tool_result',
+      content: 'child-thread running',
+      metadata: {
+        tool_use_id: 'agent_call_1',
+        receiver_thread_ids: ['child-thread'],
+      },
+    })
+  })
+
+  it('renders Codex sub-agent activity as thinking events', () => {
+    const events = parseCodexAppServerNotification(
+      'item/completed',
+      {
+        item: {
+          id: 'subagent_evt_1',
+          type: 'subAgentActivity',
+          kind: 'started',
+          agentThreadId: 'child-thread',
+          agentPath: 'worker',
+        },
+      },
+      state,
+    )
+
+    expect(events).toEqual([
+      {
+        type: 'thinking',
+        content: '**Subagent started:** worker',
+        metadata: {
+          type: 'thinking',
+          source: 'codex_subagent',
+          task_event: 'started',
+          task_id: 'child-thread',
+          agent_scope: 'subagent',
+          agent_task_id: 'child-thread',
+          agent_description: 'worker',
+          agent_status: 'running',
+          codex_item_id: 'subagent_evt_1',
+          codex_agent_path: 'worker',
+        },
+      } satisfies OutputEvent,
+    ])
+  })
 })
 
 describe('CodexDriver transport selection', () => {

@@ -30,7 +30,42 @@ type ImageViewItem = {
   caption?: string
 }
 
-type CodexThreadItem = ThreadItem | ContextCompactionItem | ImageViewItem
+type CollabAgentStatus =
+  | 'pendingInit'
+  | 'running'
+  | 'interrupted'
+  | 'completed'
+  | 'errored'
+  | 'shutdown'
+  | 'notFound'
+
+type CollabAgentState = {
+  status: CollabAgentStatus
+  message: string | null
+}
+
+type CollabAgentToolCallItem = {
+  id: string
+  type: 'collab_agent_tool_call'
+  tool: 'spawnAgent' | 'sendInput' | 'resumeAgent' | 'wait' | 'closeAgent'
+  status: 'inProgress' | 'completed' | 'failed'
+  sender_thread_id: string
+  receiver_thread_ids: string[]
+  prompt: string | null
+  model: string | null
+  reasoning_effort: string | null
+  agents_states: Record<string, CollabAgentState>
+}
+
+type SubAgentActivityItem = {
+  id: string
+  type: 'sub_agent_activity'
+  kind: 'started' | 'interacted' | 'interrupted'
+  agent_thread_id: string
+  agent_path: string
+}
+
+type CodexThreadItem = ThreadItem | ContextCompactionItem | ImageViewItem | CollabAgentToolCallItem | SubAgentActivityItem
 
 type CodexStreamState = {
   streamedItemIds: Set<string>
@@ -120,6 +155,25 @@ function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
     }
   }
 
+  if (item.type === 'collab_agent_tool_call') {
+    return {
+      content: formatCollabAgentToolCallLabel(item),
+      metadata: {
+        ...item,
+        type: 'tool_call',
+        name: 'Agent',
+        input: {
+          tool: item.tool,
+          prompt: item.prompt,
+          model: item.model,
+          reasoning_effort: item.reasoning_effort,
+          sender_thread_id: item.sender_thread_id,
+          receiver_thread_ids: item.receiver_thread_ids,
+        },
+      },
+    }
+  }
+
   if (item.type === 'context_compaction') {
     return {
       content: 'conversation history',
@@ -205,6 +259,17 @@ function buildToolResult(item: CodexThreadItem): OutputEvent | null {
           tool_use_id: item.id,
         },
       }
+    case 'collab_agent_tool_call':
+      return {
+        type: 'tool_result',
+        content: summarizeCollabAgentToolCallResult(item),
+        metadata: {
+          ...item,
+          type: 'tool_result',
+          tool_use_id: item.id,
+          ...(item.status === 'failed' ? { is_error: true } : {}),
+        },
+      }
     case 'error':
       return {
         type: 'error',
@@ -212,6 +277,63 @@ function buildToolResult(item: CodexThreadItem): OutputEvent | null {
       }
     default:
       return null
+  }
+}
+
+function formatCollabAgentToolCallLabel(item: CollabAgentToolCallItem): string {
+  switch (item.tool) {
+    case 'spawnAgent':
+      return item.prompt ? `Spawn agent: ${truncateOneLine(item.prompt)}` : 'Spawn agent'
+    case 'sendInput':
+      return item.prompt ? `Send input: ${truncateOneLine(item.prompt)}` : 'Send input to agent'
+    case 'resumeAgent':
+      return 'Resume agent'
+    case 'wait':
+      return item.receiver_thread_ids.length > 1
+        ? `Wait for ${item.receiver_thread_ids.length} agents`
+        : 'Wait for agent'
+    case 'closeAgent':
+      return 'Close agent'
+  }
+}
+
+function summarizeCollabAgentToolCallResult(item: CollabAgentToolCallItem): string {
+  const states = Object.entries(item.agents_states ?? {})
+  if (states.length === 0) return ''
+  return states
+    .map(([threadId, state]) => {
+      const message = state.message ? `: ${state.message}` : ''
+      return `${threadId} ${state.status}${message}`
+    })
+    .join('\n')
+}
+
+function truncateOneLine(value: string, limit = 120): string {
+  const compact = value.split(/\s+/).filter(Boolean).join(' ')
+  return compact.length > limit ? `${compact.slice(0, limit - 3)}...` : compact
+}
+
+function buildSubAgentActivityEvent(item: SubAgentActivityItem): OutputEvent {
+  const action = item.kind === 'started'
+    ? 'started'
+    : item.kind === 'interacted'
+      ? 'interacted with'
+      : 'interrupted'
+  return {
+    type: 'thinking',
+    content: `**Subagent ${action}:** ${item.agent_path}`,
+    metadata: {
+      type: 'thinking',
+      source: 'codex_subagent',
+      task_event: item.kind,
+      task_id: item.agent_thread_id,
+      agent_scope: 'subagent',
+      agent_task_id: item.agent_thread_id,
+      agent_description: item.agent_path,
+      agent_status: item.kind === 'interrupted' ? 'stopped' : 'running',
+      codex_item_id: item.id,
+      codex_agent_path: item.agent_path,
+    },
   }
 }
 
@@ -387,7 +509,7 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
             }
           : {}),
         status: ((raw.status as string | undefined) ?? 'in_progress') as 'in_progress' | 'completed' | 'failed',
-      }
+      } as unknown as CodexThreadItem
     case 'webSearch':
       return {
         id,
@@ -422,6 +544,31 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
         ...(typeof captionValue === 'string' ? { caption: captionValue } : {}),
       }
     }
+    case 'collabAgentToolCall':
+      return {
+        id,
+        type: 'collab_agent_tool_call',
+        tool: (typeof raw.tool === 'string' ? raw.tool : 'spawnAgent') as CollabAgentToolCallItem['tool'],
+        status: (typeof raw.status === 'string' ? raw.status : 'inProgress') as CollabAgentToolCallItem['status'],
+        sender_thread_id: String(raw.senderThreadId ?? ''),
+        receiver_thread_ids: Array.isArray(raw.receiverThreadIds)
+          ? raw.receiverThreadIds.map(String)
+          : [],
+        prompt: typeof raw.prompt === 'string' ? raw.prompt : null,
+        model: typeof raw.model === 'string' ? raw.model : null,
+        reasoning_effort: typeof raw.reasoningEffort === 'string' ? raw.reasoningEffort : null,
+        agents_states: raw.agentsStates && typeof raw.agentsStates === 'object'
+          ? raw.agentsStates as Record<string, CollabAgentState>
+          : {},
+      }
+    case 'subAgentActivity':
+      return {
+        id,
+        type: 'sub_agent_activity',
+        kind: (typeof raw.kind === 'string' ? raw.kind : 'started') as SubAgentActivityItem['kind'],
+        agent_thread_id: String(raw.agentThreadId ?? ''),
+        agent_path: String(raw.agentPath ?? ''),
+      }
     case 'error':
       return {
         id,
@@ -487,6 +634,11 @@ export function parseCodexAppServerNotification(
 
       if (item.type === 'error') {
         events.push({ type: 'error', content: item.message })
+        break
+      }
+
+      if (item.type === 'sub_agent_activity') {
+        events.push(buildSubAgentActivityEvent(item))
         break
       }
 
