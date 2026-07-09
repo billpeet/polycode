@@ -149,6 +149,10 @@ function runMigrations(database: Database.Database): void {
   if (!threadColsWsl.some((c) => c.name === 'yolo_mode')) {
     database.exec('ALTER TABLE threads ADD COLUMN yolo_mode INTEGER NOT NULL DEFAULT 0')
   }
+  if (!threadColsWsl.some((c) => c.name === 'permission_mode')) {
+    database.exec("ALTER TABLE threads ADD COLUMN permission_mode TEXT NOT NULL DEFAULT 'ask'")
+    database.exec("UPDATE threads SET permission_mode = 'yolo' WHERE yolo_mode = 1")
+  }
   if (!threadColsWsl.some((c) => c.name === 'use_wsl')) {
     database.exec('ALTER TABLE threads ADD COLUMN use_wsl INTEGER NOT NULL DEFAULT 0')
     database.exec('ALTER TABLE threads ADD COLUMN wsl_distro TEXT')

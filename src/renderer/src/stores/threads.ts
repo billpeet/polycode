@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, ReasoningLevel } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel } from '../types/ipc'
 import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 
@@ -69,6 +69,7 @@ interface ThreadStore {
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
   setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => Promise<void>
+  setPermissionMode: (threadId: string, permissionMode: PermissionMode) => Promise<void>
   setYolo: (threadId: string, yoloMode: boolean) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string) => Promise<void>
@@ -183,7 +184,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       context_window: 0,
       unread: false,
       has_messages: false,
-      yolo_mode: sourceThread?.yolo_mode ?? false,
+      permission_mode: sourceThread?.permission_mode ?? (sourceThread?.yolo_mode ? 'yolo' : 'ask'),
+      yolo_mode: sourceThread?.permission_mode === 'yolo' || sourceThread?.yolo_mode === true,
       use_wsl: sourceThread?.use_wsl ?? false,
       wsl_distro: sourceThread?.wsl_distro ?? null,
       git_branch: null,
@@ -211,18 +213,19 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         (
           thread.use_wsl !== sourceThread.use_wsl ||
           thread.wsl_distro !== sourceThread.wsl_distro ||
-          thread.yolo_mode !== sourceThread.yolo_mode ||
+          thread.permission_mode !== sourceThread.permission_mode ||
           thread.reasoning_level !== sourceThread.reasoning_level
         )
       ) {
         await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
-        await window.api.invoke('threads:setYolo', thread.id, sourceThread.yolo_mode)
+        await window.api.invoke('threads:setPermissionMode', thread.id, sourceThread.permission_mode)
         await window.api.invoke('threads:updateReasoningLevel', thread.id, sourceThread.reasoning_level)
         thread = {
           ...thread,
           use_wsl: sourceThread.use_wsl,
           wsl_distro: sourceThread.wsl_distro,
-          yolo_mode: sourceThread.yolo_mode,
+          permission_mode: sourceThread.permission_mode,
+          yolo_mode: sourceThread.permission_mode === 'yolo',
           reasoning_level: sourceThread.reasoning_level,
         }
       }
@@ -594,11 +597,21 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setProviderAndModel: async (threadId, provider, model) => {
+    const currentThread = Object.values(get().byProject).flat().find((thread) => thread.id === threadId)
+    const currentPermissionMode = currentThread?.permission_mode ?? (currentThread?.yolo_mode ? 'yolo' : 'ask')
+    const nextPermissionMode: PermissionMode = provider === 'codex'
+      ? currentPermissionMode
+      : currentPermissionMode === 'yolo'
+        ? 'yolo'
+        : 'ask'
     await window.api.invoke('threads:updateProviderAndModel', threadId, provider, model)
+    if (currentPermissionMode !== nextPermissionMode) {
+      await window.api.invoke('threads:setPermissionMode', threadId, nextPermissionMode)
+    }
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
-        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, provider, model } : t))
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, provider, model, permission_mode: nextPermissionMode, yolo_mode: nextPermissionMode === 'yolo' } : t))
       }
       return { byProject: updated }
     })
@@ -628,17 +641,21 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
   },
 
-  setYolo: async (threadId, yoloMode) => {
-    await window.api.invoke('threads:setYolo', threadId, yoloMode)
+  setPermissionMode: async (threadId, permissionMode) => {
+    await window.api.invoke('threads:setPermissionMode', threadId, permissionMode)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
         updated[pid] = updated[pid].map((t) =>
-          t.id === threadId ? { ...t, yolo_mode: yoloMode } : t
+          t.id === threadId ? { ...t, permission_mode: permissionMode, yolo_mode: permissionMode === 'yolo' } : t
         )
       }
       return { byProject: updated }
     })
+  },
+
+  setYolo: async (threadId, yoloMode) => {
+    await get().setPermissionMode(threadId, yoloMode ? 'yolo' : 'ask')
   },
 
   start: async (threadId) => {

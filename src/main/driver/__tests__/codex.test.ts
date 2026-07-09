@@ -27,7 +27,10 @@ describe('buildCodexArgs', () => {
     expect(buildCodexArgs(null, undefined, 'hello world')).toEqual([
       'exec',
       '--json',
-      '--full-auto',
+      '--sandbox',
+      'read-only',
+      '--ask-for-approval',
+      'on-request',
       'hello world',
     ])
   })
@@ -49,7 +52,10 @@ describe('buildCodexArgs', () => {
     expect(buildCodexArgs(null, 'gpt-5.5', 'go fast', false, 'medium', true)).toEqual([
       'exec',
       '--json',
-      '--full-auto',
+      '--sandbox',
+      'read-only',
+      '--ask-for-approval',
+      'on-request',
       '-c',
       'model=gpt-5.5',
       '-c',
@@ -64,8 +70,23 @@ describe('buildCodexArgs', () => {
     expect(buildCodexArgs(null, undefined, 'normal', false, undefined, false)).toEqual([
       'exec',
       '--json',
-      '--full-auto',
+      '--sandbox',
+      'read-only',
+      '--ask-for-approval',
+      'on-request',
       'normal',
+    ])
+  })
+
+  it('builds workspace-write permission mode args', () => {
+    expect(buildCodexArgs(null, undefined, 'edit', 'workspace')).toEqual([
+      'exec',
+      '--json',
+      '--sandbox',
+      'workspace-write',
+      '--ask-for-approval',
+      'on-request',
+      'edit',
     ])
   })
 })
@@ -458,6 +479,188 @@ describe('parseCodexAppServerNotification', () => {
       } satisfies OutputEvent,
     ])
   })
+
+  it('streams Codex plan and reasoning deltas as thinking', () => {
+    expect(parseCodexAppServerNotification(
+      'item/plan/delta',
+      { itemId: 'plan_1', turnId: 'turn_1', delta: 'Plan line\n' },
+      state,
+    )).toEqual([
+      {
+        type: 'thinking',
+        content: 'Plan line\n',
+        metadata: { type: 'thinking', source: 'codex_plan', item_id: 'plan_1', turn_id: 'turn_1' },
+      } satisfies OutputEvent,
+    ])
+
+    expect(parseCodexAppServerNotification(
+      'item/reasoning/summaryTextDelta',
+      { itemId: 'reason_1', turnId: 'turn_1', summaryIndex: 0, delta: 'Checking files.' },
+      state,
+    )).toEqual([
+      {
+        type: 'thinking',
+        content: 'Checking files.',
+        metadata: {
+          type: 'thinking',
+          source: 'codex_reasoning_summary',
+          item_id: 'reason_1',
+          turn_id: 'turn_1',
+          content_index: undefined,
+          summary_index: 0,
+        },
+      } satisfies OutputEvent,
+    ])
+  })
+
+  it('emits completed Codex plan items as plan_ready', () => {
+    parseCodexAppServerNotification(
+      'item/plan/delta',
+      { itemId: 'plan_1', turnId: 'turn_1', delta: 'Fallback plan\n' },
+      state,
+    )
+
+    expect(parseCodexAppServerNotification(
+      'item/completed',
+      {
+        item: {
+          id: 'plan_1',
+          type: 'plan',
+          text: '# Plan\n\n1. Inspect the code.\n2. Patch the driver.',
+        },
+      },
+      state,
+    )).toEqual([
+      {
+        type: 'plan_ready',
+        content: '# Plan\n\n1. Inspect the code.\n2. Patch the driver.',
+        metadata: {
+          id: 'plan_1',
+          type: 'plan_ready',
+          text: '# Plan\n\n1. Inspect the code.\n2. Patch the driver.',
+          provider: 'codex',
+        },
+      } satisfies OutputEvent,
+    ])
+  })
+
+  it('falls back to streamed proposed plan text when completed plan text is empty', () => {
+    parseCodexAppServerNotification(
+      'item/plan/delta',
+      { itemId: 'plan_2', turnId: 'turn_1', delta: '# Streamed Plan\n' },
+      state,
+    )
+
+    expect(parseCodexAppServerNotification(
+      'item/completed',
+      { item: { id: 'plan_2', type: 'plan', text: '' } },
+      state,
+    )).toEqual([
+      {
+        type: 'plan_ready',
+        content: '# Streamed Plan\n',
+        metadata: {
+          id: 'plan_2',
+          type: 'plan_ready',
+          text: '# Streamed Plan\n',
+          provider: 'codex',
+        },
+      } satisfies OutputEvent,
+    ])
+  })
+
+  it('emits live Codex token usage updates', () => {
+    expect(parseCodexAppServerNotification(
+      'thread/tokenUsage/updated',
+      {
+        threadId: 'thread_1',
+        turnId: 'turn_1',
+        tokenUsage: {
+          last: { inputTokens: 10, cachedInputTokens: 2, outputTokens: 3, totalTokens: 15 },
+          total: { inputTokens: 20, cachedInputTokens: 4, outputTokens: 6, totalTokens: 30 },
+          modelContextWindow: 200,
+        },
+      },
+      state,
+    )).toEqual([
+      {
+        type: 'usage',
+        content: '',
+        metadata: { input_tokens: 10, output_tokens: 3, context_window: 15 },
+      } satisfies OutputEvent,
+    ])
+  })
+
+  it('surfaces Codex model and warning notifications', () => {
+    expect(parseCodexAppServerNotification(
+      'model/rerouted',
+      {
+        threadId: 'thread_1',
+        turnId: 'turn_1',
+        fromModel: 'gpt-5.3-codex',
+        toModel: 'gpt-5.3-codex-spark',
+        reason: 'load',
+      },
+      state,
+    )[0]).toMatchObject({
+      type: 'thinking',
+      content: 'Model rerouted from gpt-5.3-codex to gpt-5.3-codex-spark.',
+      metadata: { source: 'codex_model_rerouted' },
+    })
+
+    expect(parseCodexAppServerNotification(
+      'configWarning',
+      { summary: 'Invalid config', details: 'Unknown key', path: 'config.toml' },
+      state,
+    )[0]).toMatchObject({
+      type: 'thinking',
+      content: 'Invalid config\nUnknown key',
+      metadata: { source: 'codex_config_warning', path: 'config.toml' },
+    })
+  })
+
+  it('surfaces Codex MCP progress and patch updates', () => {
+    expect(parseCodexAppServerNotification(
+      'item/mcpToolCall/progress',
+      { threadId: 'thread_1', turnId: 'turn_1', itemId: 'mcp_1', message: 'Fetching issue data' },
+      state,
+    )).toEqual([
+      {
+        type: 'thinking',
+        content: 'Fetching issue data',
+        metadata: {
+          type: 'thinking',
+          source: 'codex_mcp_progress',
+          item_id: 'mcp_1',
+          turn_id: 'turn_1',
+        },
+      } satisfies OutputEvent,
+    ])
+
+    expect(parseCodexAppServerNotification(
+      'item/fileChange/patchUpdated',
+      {
+        threadId: 'thread_1',
+        turnId: 'turn_1',
+        itemId: 'patch_1',
+        changes: [{ path: 'src/app.ts', kind: 'update' }],
+      },
+      state,
+    )).toEqual([
+      {
+        type: 'tool_result',
+        content: '',
+        metadata: {
+          threadId: 'thread_1',
+          turnId: 'turn_1',
+          itemId: 'patch_1',
+          changes: [{ path: 'src/app.ts', kind: 'update' }],
+          type: 'tool_result',
+          tool_use_id: 'patch_1',
+        },
+      } satisfies OutputEvent,
+    ])
+  })
 })
 
 describe('CodexDriver transport selection', () => {
@@ -471,6 +674,203 @@ describe('CodexDriver transport selection', () => {
     const driver = makeDriver({ wsl: { distro: 'Ubuntu' } })
     expect((driver as any).localDriver).toBeNull()
     expect((driver as any).fallbackDriver).toBeDefined()
+  })
+})
+
+describe('CodexDriver app-server approvals', () => {
+  function setupLocalDriver(opts: Partial<DriverOptions> = {}) {
+    const driver = makeDriver(opts)
+    const local = (driver as any).localDriver
+    const events: OutputEvent[] = []
+    const writes: unknown[] = []
+    ;(local as any).currentTurn = {
+      onEvent: (event: OutputEvent) => events.push(event),
+      onDone: () => {},
+    }
+    ;(local as any).child = {
+      stdin: {
+        writable: true,
+        write: (line: string) => {
+          writes.push(JSON.parse(line))
+          return true
+        },
+      },
+      killed: false,
+      kill: () => {},
+    }
+    return { driver, local, events, writes }
+  }
+
+  it('emits command approval requests and sends accept/decline decisions', () => {
+    const { driver, local, events, writes } = setupLocalDriver()
+    ;(local as any).handleServerRequest(42, 'item/commandExecution/requestApproval', {
+      threadId: 'thread_1',
+      turnId: 'turn_1',
+      itemId: 'cmd_1',
+      command: 'npm test',
+      cwd: '/repo',
+      reason: 'Run tests',
+    })
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      type: 'permission_request',
+      content: 'Bash',
+      metadata: {
+        requestId: 'codex:item/commandExecution/requestApproval:42',
+        toolName: 'Bash',
+        toolUseId: 'cmd_1',
+      },
+    })
+
+    driver.sendControlResponse('codex:item/commandExecution/requestApproval:42', 'allow')
+    expect(writes).toEqual([{ id: 42, result: { decision: 'accept' } }])
+  })
+
+  it('emits Codex user-input questions and sends structured answers', () => {
+    const { driver, local, events, writes } = setupLocalDriver()
+    ;(local as any).handleServerRequest(43, 'item/tool/requestUserInput', {
+      threadId: 'thread_1',
+      turnId: 'turn_1',
+      itemId: 'question_1',
+      questions: [
+        {
+          id: 'choice',
+          header: 'Mode',
+          question: 'Which mode?',
+          options: [{ label: 'Fast', description: 'Use fast mode' }],
+        },
+      ],
+    })
+
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({
+      type: 'question',
+      metadata: {
+        requestId: 'codex:item/tool/requestUserInput:43',
+        toolUseId: 'question_1',
+      },
+    })
+
+    driver.answerQuestion?.('codex:item/tool/requestUserInput:43', { choice: 'Fast' })
+    expect(writes).toEqual([
+      {
+        id: 43,
+        result: { answers: { choice: { answers: ['Fast'] } } },
+      },
+    ])
+  })
+
+  it('responds to permission-profile requests with granted or empty permissions', () => {
+    const { driver, local, writes } = setupLocalDriver()
+    ;(local as any).handleServerRequest(44, 'item/permissions/requestApproval', {
+      threadId: 'thread_1',
+      turnId: 'turn_1',
+      itemId: 'perm_1',
+      permissions: { fileSystem: { write: ['/repo'] } },
+    })
+
+    driver.sendControlResponse('codex:item/permissions/requestApproval:44', 'deny')
+    expect(writes).toEqual([
+      {
+        id: 44,
+        result: { permissions: {}, scope: 'session' },
+      },
+    ])
+  })
+
+  it('starts non-yolo turns with read-only sandbox and on-request approvals', async () => {
+    const { local } = setupLocalDriver()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).ensureReady = async () => {}
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      return { turn: { id: 'turn_1' } }
+    }
+
+    await (local as any).startTurn('write a file', { yoloMode: false })
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      method: 'turn/start',
+      params: {
+        approvalPolicy: 'on-request',
+        sandboxPolicy: { type: 'readOnly' },
+      },
+    })
+  })
+
+  it('starts yolo turns with full access and no approvals', async () => {
+    const { local } = setupLocalDriver()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).ensureReady = async () => {}
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      return { turn: { id: 'turn_1' } }
+    }
+
+    await (local as any).startTurn('write a file', { yoloMode: true })
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      method: 'turn/start',
+      params: {
+        approvalPolicy: 'never',
+        sandboxPolicy: { type: 'dangerFullAccess' },
+      },
+    })
+  })
+
+  it('starts workspace turns with workspace-write sandbox and on-request approvals', async () => {
+    const { local } = setupLocalDriver()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).ensureReady = async () => {}
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      return { turn: { id: 'turn_1' } }
+    }
+
+    await (local as any).startTurn('write a file', { permissionMode: 'workspace' })
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      method: 'turn/start',
+      params: {
+        approvalPolicy: 'on-request',
+        sandboxPolicy: { type: 'workspaceWrite' },
+      },
+    })
+  })
+
+  it('starts plan-mode turns with Codex collaboration mode enabled', async () => {
+    const { local } = setupLocalDriver({ model: 'gpt-5.5' })
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).ensureReady = async () => {}
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      return { turn: { id: 'turn_1' } }
+    }
+
+    await (local as any).startTurn('make a plan', { planMode: true })
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toMatchObject({
+      method: 'turn/start',
+      params: {
+        collaborationMode: {
+          mode: 'plan',
+          settings: {
+            model: 'gpt-5.5',
+            reasoning_effort: null,
+            developer_instructions: null,
+          },
+        },
+      },
+    })
   })
 })
 

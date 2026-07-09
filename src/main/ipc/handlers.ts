@@ -39,6 +39,7 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadReasoningLevel,
+  updateThreadPermissionMode,
   updateThreadYoloMode,
   updateThreadStatus,
   updateThreadUnread,
@@ -811,6 +812,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   proxyable('threads:setYolo', (threadId: string, yoloMode: boolean) => {
     sessionManager.remove(threadId)
     return updateThreadYoloMode(threadId, yoloMode)
+  })
+
+  proxyable('threads:setPermissionMode', (threadId: string, permissionMode: string) => {
+    sessionManager.remove(threadId)
+    return updateThreadPermissionMode(threadId, permissionMode)
   })
 
   proxyable('threads:setWsl', (threadId: string, useWsl: boolean, wslDistro: string | null) => {

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Thread, PROVIDERS, Provider, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
+import { Thread, PROVIDERS, Provider, PermissionMode, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
 import { PlanIcon, YoloIcon, FastIcon, formatElapsed } from './icons'
 import { useFavouritesStore, formatFavourite, FAVOURITE_SLOTS, Favourite } from '../../stores/favourites'
@@ -111,7 +111,7 @@ interface ComposerToolbarProps {
   isLocalLocation: boolean | undefined
   currentThread: Thread | undefined
   availableDistros: string[]
-  setYolo: (threadId: string, yoloMode: boolean) => void
+  setPermissionMode: (threadId: string, permissionMode: PermissionMode) => void
   setWsl: (threadId: string, useWsl: boolean, distro: string | null) => void
   setProviderAndModel: (threadId: string, provider: Provider, model: string) => void
   setModel: (threadId: string, model: string) => void
@@ -129,14 +129,29 @@ export default function ComposerToolbar({
   isLocalLocation,
   currentThread,
   availableDistros,
-  setYolo,
+  setPermissionMode,
   setWsl,
   setProviderAndModel,
   setModel,
   setReasoningLevel,
   elapsedSeconds,
 }: ComposerToolbarProps) {
-  const supportsYolo = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex' || currentThread?.provider === 'cursor'
+  const permissionOptions = useMemo<Array<{ mode: PermissionMode; label: string; title: string }>>(() => {
+    if (currentThread?.provider === 'codex') {
+      return [
+        { mode: 'ask', label: 'Ask', title: 'Review writes and privileged actions before Codex runs them' },
+        { mode: 'workspace', label: 'Workspace', title: 'Allow Codex to edit files in the workspace without asking' },
+        { mode: 'yolo', label: 'Yolo', title: 'Bypass Codex approvals and sandbox' },
+      ]
+    }
+    if (currentThread?.provider === 'claude-code' || currentThread?.provider === 'cursor') {
+      return [
+        { mode: 'ask', label: 'Ask', title: 'Ask before privileged provider actions' },
+        { mode: 'yolo', label: 'Yolo', title: 'Bypass provider approval checks where supported' },
+      ]
+    }
+    return []
+  }, [currentThread?.provider])
   // Fast mode (priority processing) is currently supported by Claude Code and Codex.
   const supportsFastMode = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex'
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
@@ -297,24 +312,47 @@ export default function ComposerToolbar({
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>
       )}
-      {supportsYolo && currentThread && (
+      {permissionOptions.length > 0 && currentThread && (
         <>
-          <button
-            onClick={() => setYolo(threadId, !currentThread.yolo_mode)}
-            disabled={isProcessing}
-            className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-60 mb-2"
-            title={currentThread.provider === 'codex'
-              ? 'Codex Yolo: bypass approvals and sandbox'
-              : 'Yolo: bypass provider approval checks where supported'}
-            style={{
-              background: currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.15)' : 'transparent',
-              color: currentThread.yolo_mode ? '#f97316' : 'var(--color-text-muted)',
-              border: `1px solid ${currentThread.yolo_mode ? 'rgba(249, 115, 22, 0.3)' : 'transparent'}`,
-            }}
+          <div
+            className="flex items-center overflow-hidden rounded-md mb-2"
+            style={{ border: '1px solid var(--color-border)' }}
           >
-            <YoloIcon />
-            Yolo
-          </button>
+            <span className="flex h-full items-center px-1.5" style={{ color: 'var(--color-text-muted)' }}>
+              <YoloIcon />
+            </span>
+            {permissionOptions.map((option) => {
+              const selected = currentThread.permission_mode === option.mode || (!currentThread.permission_mode && option.mode === (currentThread.yolo_mode ? 'yolo' : 'ask'))
+              return (
+                <button
+                  key={option.mode}
+                  onClick={() => setPermissionMode(threadId, option.mode)}
+                  disabled={isProcessing || selected}
+                  className="px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-80"
+                  title={option.title}
+                  style={{
+                    background: selected
+                      ? option.mode === 'yolo'
+                        ? 'rgba(249, 115, 22, 0.15)'
+                        : option.mode === 'workspace'
+                          ? 'rgba(59, 130, 246, 0.14)'
+                          : 'rgba(34, 197, 94, 0.12)'
+                      : 'transparent',
+                    color: selected
+                      ? option.mode === 'yolo'
+                        ? '#f97316'
+                        : option.mode === 'workspace'
+                          ? '#60a5fa'
+                          : '#22c55e'
+                      : 'var(--color-text-muted)',
+                    borderLeft: '1px solid var(--color-border)',
+                  }}
+                >
+                  {option.label}
+                </button>
+              )
+            })}
+          </div>
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>
       )}

@@ -7,7 +7,7 @@ import type {
 } from '@openai/codex-sdk'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
-import { OutputEvent, ReasoningLevel } from '../../shared/types'
+import { OutputEvent, PermissionMode, ReasoningLevel } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
 import { BaseDriver } from './base'
 import { augmentWindowsPath } from './runner'
@@ -28,6 +28,31 @@ type ImageViewItem = {
   path?: string
   url?: string
   caption?: string
+}
+
+type PlanItem = {
+  id: string
+  type: 'plan'
+  text: string
+}
+
+type SleepItem = {
+  id: string
+  type: 'sleep'
+  duration_ms: number
+}
+
+type ImageGenerationItem = {
+  id: string
+  type: 'image_generation'
+  prompt?: string
+  status?: string
+}
+
+type ReviewModeItem = {
+  id: string
+  type: 'entered_review_mode' | 'exited_review_mode'
+  review: string
 }
 
 type CollabAgentStatus =
@@ -65,13 +90,23 @@ type SubAgentActivityItem = {
   agent_path: string
 }
 
-type CodexThreadItem = ThreadItem | ContextCompactionItem | ImageViewItem | CollabAgentToolCallItem | SubAgentActivityItem
+type CodexThreadItem =
+  | ThreadItem
+  | ContextCompactionItem
+  | ImageViewItem
+  | PlanItem
+  | SleepItem
+  | ImageGenerationItem
+  | ReviewModeItem
+  | CollabAgentToolCallItem
+  | SubAgentActivityItem
 
 type CodexStreamState = {
   streamedItemIds: Set<string>
   announcedItemIds: Set<string>
   completedItemIds: Set<string>
   lastAgentTextById: Map<string, string>
+  proposedPlanTextById: Map<string, string>
 }
 
 function asFiniteNumber(value: unknown): number | null {
@@ -86,6 +121,32 @@ function normalizeCodexContextWindowUsage(usage: Record<string, unknown> | null 
   const usedTokens = inputTokens + cachedInputTokens + outputTokens
   const maxTokens = asFiniteNumber(usage.model_context_window ?? usage.modelContextWindow)
   return maxTokens && maxTokens > 0 ? Math.min(usedTokens, maxTokens) : usedTokens
+}
+
+function pickString(record: Record<string, unknown> | undefined, ...keys: string[]): string | undefined {
+  if (!record) return undefined
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'string') return value
+  }
+  return undefined
+}
+
+function pickNumber(record: Record<string, unknown> | undefined, ...keys: string[]): number | undefined {
+  if (!record) return undefined
+  for (const key of keys) {
+    const value = record[key]
+    if (typeof value === 'number' && Number.isFinite(value)) return value
+  }
+  return undefined
+}
+
+function thinking(content: string, metadata: Record<string, unknown>): OutputEvent {
+  return {
+    type: 'thinking',
+    content,
+    metadata: { type: 'thinking', ...metadata },
+  }
 }
 
 /**
@@ -152,6 +213,35 @@ function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
     return {
       content: 'todo_list',
       metadata: { ...item, type: 'tool_call', name: 'TodoList', input: { items: item.items } },
+    }
+  }
+
+  if (item.type === 'plan') {
+    return {
+      content: 'plan',
+      metadata: { ...item, type: 'tool_call', name: 'Plan', input: { text: item.text } },
+    }
+  }
+
+  if (item.type === 'sleep') {
+    return {
+      content: `sleep ${item.duration_ms}ms`,
+      metadata: { ...item, type: 'tool_call', name: 'Sleep', input: { duration_ms: item.duration_ms } },
+    }
+  }
+
+  if (item.type === 'image_generation') {
+    return {
+      content: item.prompt ? truncateOneLine(item.prompt) : 'image generation',
+      metadata: { ...item, type: 'tool_call', name: 'ImageGeneration', input: { prompt: item.prompt } },
+    }
+  }
+
+  if (item.type === 'entered_review_mode' || item.type === 'exited_review_mode') {
+    const name = item.type === 'entered_review_mode' ? 'EnteredReviewMode' : 'ExitedReviewMode'
+    return {
+      content: item.review || name,
+      metadata: { ...item, type: 'tool_call', name, input: { review: item.review } },
     }
   }
 
@@ -248,11 +338,20 @@ function buildToolResult(item: CodexThreadItem): OutputEvent | null {
     case 'file_change':
     case 'web_search':
     case 'todo_list':
+    case 'plan':
+    case 'sleep':
+    case 'image_generation':
+    case 'entered_review_mode':
+    case 'exited_review_mode':
     case 'context_compaction':
     case 'image_view':
       return {
         type: 'tool_result',
-        content: item.type === 'context_compaction' ? 'Conversation history compacted.' : '',
+        content: item.type === 'context_compaction'
+          ? 'Conversation history compacted.'
+          : item.type === 'plan'
+            ? item.text
+            : '',
         metadata: {
           ...item,
           type: 'tool_result',
@@ -337,12 +436,32 @@ function buildSubAgentActivityEvent(item: SubAgentActivityItem): OutputEvent {
   }
 }
 
+function normalizeCodexQuestion(raw: Record<string, unknown>, index: number) {
+  const id = typeof raw.id === 'string' && raw.id ? raw.id : `question-${index + 1}`
+  const header = typeof raw.header === 'string' && raw.header ? raw.header : 'Question'
+  const question = typeof raw.question === 'string' && raw.question ? raw.question : header
+  const rawOptions = Array.isArray(raw.options) ? raw.options as Record<string, unknown>[] : []
+  const options = rawOptions.map((option) => ({
+    label: String(option.label ?? option.value ?? option.id ?? ''),
+    description: String(option.description ?? option.label ?? option.value ?? ''),
+  })).filter((option) => option.label)
+  return {
+    id,
+    header,
+    question,
+    options,
+    multiple: Boolean(raw.isOther) || Boolean(raw.allowMultiple),
+    secret: Boolean(raw.isSecret),
+  }
+}
+
 export function createCodexStreamState(): CodexStreamState {
   return {
     streamedItemIds: new Set<string>(),
     announcedItemIds: new Set<string>(),
     completedItemIds: new Set<string>(),
     lastAgentTextById: new Map<string, string>(),
+    proposedPlanTextById: new Map<string, string>(),
   }
 }
 
@@ -466,6 +585,12 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
       return {
         id,
         type: 'reasoning',
+        text: String(raw.text ?? (Array.isArray(raw.summary) ? raw.summary.join('\n') : '')),
+      }
+    case 'plan':
+      return {
+        id,
+        type: 'plan',
         text: String(raw.text ?? ''),
       }
     case 'commandExecution':
@@ -544,6 +669,31 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
         ...(typeof captionValue === 'string' ? { caption: captionValue } : {}),
       }
     }
+    case 'sleep':
+      return {
+        id,
+        type: 'sleep',
+        duration_ms: Number(raw.durationMs ?? 0),
+      }
+    case 'imageGeneration':
+      return {
+        id,
+        type: 'image_generation',
+        ...(typeof raw.prompt === 'string' ? { prompt: raw.prompt } : {}),
+        ...(typeof raw.status === 'string' ? { status: raw.status } : {}),
+      }
+    case 'enteredReviewMode':
+      return {
+        id,
+        type: 'entered_review_mode',
+        review: String(raw.review ?? ''),
+      }
+    case 'exitedReviewMode':
+      return {
+        id,
+        type: 'exited_review_mode',
+        review: String(raw.review ?? ''),
+      }
     case 'collabAgentToolCall':
       return {
         id,
@@ -611,6 +761,43 @@ export function parseCodexAppServerNotification(
       }
       break
     }
+    case 'item/plan/delta': {
+      const delta = params?.delta as string | undefined
+      if (delta) {
+        const itemId = params?.itemId as string | undefined
+        if (itemId) {
+          state.proposedPlanTextById.set(itemId, `${state.proposedPlanTextById.get(itemId) ?? ''}${delta}`)
+        }
+        events.push(thinking(delta, {
+          source: 'codex_plan',
+          item_id: itemId,
+          turn_id: params?.turnId,
+        }))
+      }
+      break
+    }
+    case 'item/reasoning/textDelta':
+    case 'item/reasoning/summaryTextDelta': {
+      const delta = params?.delta as string | undefined
+      if (delta) {
+        events.push(thinking(delta, {
+          source: method === 'item/reasoning/textDelta' ? 'codex_reasoning' : 'codex_reasoning_summary',
+          item_id: params?.itemId,
+          turn_id: params?.turnId,
+          content_index: params?.contentIndex,
+          summary_index: params?.summaryIndex,
+        }))
+      }
+      break
+    }
+    case 'item/reasoning/summaryPartAdded':
+      events.push(thinking('Reasoning summary updated.', {
+        source: 'codex_reasoning_summary',
+        item_id: params?.itemId,
+        turn_id: params?.turnId,
+        summary_index: params?.summaryIndex,
+      }))
+      break
     case 'item/started':
     case 'item/completed': {
       const item = params?.item && typeof params.item === 'object'
@@ -634,6 +821,20 @@ export function parseCodexAppServerNotification(
 
       if (item.type === 'error') {
         events.push({ type: 'error', content: item.message })
+        break
+      }
+
+      if (item.type === 'plan') {
+        if (method === 'item/completed') {
+          const text = item.text || state.proposedPlanTextById.get(item.id) || ''
+          if (text.trim()) {
+            events.push({
+              type: 'plan_ready',
+              content: text,
+              metadata: { ...item, text, type: 'plan_ready', provider: 'codex' },
+            })
+          }
+        }
         break
       }
 
@@ -672,6 +873,32 @@ export function parseCodexAppServerNotification(
       }
       break
     }
+    case 'item/fileChange/patchUpdated': {
+      const changes = Array.isArray(params?.changes) ? params?.changes : []
+      const itemId = params?.itemId as string | undefined
+      events.push({
+        type: 'tool_result',
+        content: '',
+        metadata: {
+          ...(params ?? {}),
+          type: 'tool_result',
+          ...(itemId ? { tool_use_id: itemId } : {}),
+          changes,
+        },
+      })
+      break
+    }
+    case 'item/mcpToolCall/progress': {
+      const message = params?.message as string | undefined
+      if (message) {
+        events.push(thinking(message, {
+          source: 'codex_mcp_progress',
+          item_id: params?.itemId,
+          turn_id: params?.turnId,
+        }))
+      }
+      break
+    }
     case 'turn/completed': {
       const turn = params?.turn as Record<string, unknown> | undefined
       const usage = (turn?.usage as Record<string, unknown> | undefined) ?? (params?.usage as Record<string, unknown> | undefined)
@@ -691,6 +918,133 @@ export function parseCodexAppServerNotification(
       }
       break
     }
+    case 'turn/plan/updated': {
+      const explanation = typeof params?.explanation === 'string' ? params.explanation : ''
+      const plan = Array.isArray(params?.plan)
+        ? params.plan
+            .map((step) => {
+              const record = step as Record<string, unknown>
+              const label = String(record.step ?? '')
+              const status = String(record.status ?? '')
+              return status ? `- [${status}] ${label}` : `- ${label}`
+            })
+            .join('\n')
+        : ''
+      const content = [explanation, plan].filter(Boolean).join('\n\n')
+      if (content) {
+        events.push(thinking(content, {
+          source: 'codex_plan',
+          turn_id: params?.turnId,
+        }))
+      }
+      break
+    }
+    case 'thread/tokenUsage/updated': {
+      const tokenUsage = params?.tokenUsage as Record<string, unknown> | undefined
+      const last = tokenUsage?.last as Record<string, unknown> | undefined
+      const total = tokenUsage?.total as Record<string, unknown> | undefined
+      const usage = last ?? total
+      const inputTokens = pickNumber(usage, 'inputTokens', 'input_tokens') ?? 0
+      const outputTokens = pickNumber(usage, 'outputTokens', 'output_tokens') ?? 0
+      const cachedInputTokens = pickNumber(usage, 'cachedInputTokens', 'cached_input_tokens') ?? 0
+      const totalTokens = pickNumber(usage, 'totalTokens', 'total_tokens') ?? (inputTokens + outputTokens + cachedInputTokens)
+      const maxTokens = pickNumber(tokenUsage, 'modelContextWindow', 'model_context_window')
+      if (totalTokens || inputTokens || outputTokens) {
+        events.push({
+          type: 'usage',
+          content: '',
+          metadata: {
+            input_tokens: inputTokens,
+            output_tokens: outputTokens,
+            context_window: maxTokens && maxTokens > 0 ? Math.min(totalTokens, maxTokens) : totalTokens,
+          },
+        })
+      }
+      break
+    }
+    case 'thread/name/updated': {
+      const name = params?.threadName as string | undefined
+      if (name) {
+        events.push({
+          type: 'status',
+          content: name,
+          metadata: { type: 'thread_name_updated', name },
+        })
+      }
+      break
+    }
+    case 'thread/compacted':
+      events.push({
+        type: 'tool_result',
+        content: 'Conversation history compacted.',
+        metadata: {
+          type: 'tool_result',
+          tool_use_id: String(params?.turnId ?? 'context-compaction'),
+          source: 'codex_context_compaction',
+        },
+      })
+      break
+    case 'model/rerouted': {
+      const fromModel = pickString(params, 'fromModel')
+      const toModel = pickString(params, 'toModel')
+      if (fromModel && toModel) {
+        events.push(thinking(`Model rerouted from ${fromModel} to ${toModel}.`, {
+          source: 'codex_model_rerouted',
+          from_model: fromModel,
+          to_model: toModel,
+          reason: params?.reason,
+          turn_id: params?.turnId,
+        }))
+      }
+      break
+    }
+    case 'model/safetyBuffering/updated': {
+      if (params?.showBufferingUi === true) {
+        const fasterModel = pickString(params, 'fasterModel')
+        const reasons = Array.isArray(params?.reasons) ? params.reasons.map(String).join(', ') : ''
+        events.push(thinking(
+          `Codex is buffering model output${fasterModel ? `; faster model available: ${fasterModel}` : ''}.`,
+          {
+            source: 'codex_safety_buffering',
+            model: params?.model,
+            faster_model: fasterModel,
+            reasons,
+            turn_id: params?.turnId,
+          }
+        ))
+      }
+      break
+    }
+    case 'warning':
+    case 'guardianWarning': {
+      const message = params?.message as string | undefined
+      if (message) {
+        events.push(thinking(message, {
+          source: method === 'guardianWarning' ? 'codex_guardian_warning' : 'codex_warning',
+          thread_id: params?.threadId,
+        }))
+      }
+      break
+    }
+    case 'configWarning': {
+      const summary = params?.summary as string | undefined
+      const details = params?.details as string | null | undefined
+      if (summary) {
+        events.push(thinking(details ? `${summary}\n${details}` : summary, {
+          source: 'codex_config_warning',
+          path: params?.path,
+          range: params?.range,
+        }))
+      }
+      break
+    }
+    case 'deprecationNotice': {
+      const message = pickString(params, 'message', 'summary')
+      if (message) {
+        events.push(thinking(message, { source: 'codex_deprecation_notice' }))
+      }
+      break
+    }
     case 'error':
       break
   }
@@ -706,12 +1060,48 @@ function codexReasoningLevelToEffort(level: ReasoningLevel | undefined): string 
   return level === 'off' ? 'none' : level
 }
 
-function buildSdkThreadOptions(options: DriverOptions, yoloMode: boolean): CodexThreadOptions {
+function resolvePermissionMode(options: { permissionMode?: PermissionMode; yoloMode?: boolean }): PermissionMode {
+  if (options.permissionMode) return options.permissionMode
+  return options.yoloMode ? 'yolo' : 'ask'
+}
+
+function codexApprovalPolicy(permissionMode: PermissionMode): 'never' | 'on-request' {
+  return permissionMode === 'yolo' ? 'never' : 'on-request'
+}
+
+function codexSdkSandboxMode(permissionMode: PermissionMode): 'read-only' | 'workspace-write' | 'danger-full-access' {
+  if (permissionMode === 'yolo') return 'danger-full-access'
+  if (permissionMode === 'workspace') return 'workspace-write'
+  return 'read-only'
+}
+
+function codexAppServerSandboxPolicy(permissionMode: PermissionMode): { type: 'readOnly' | 'workspaceWrite' | 'dangerFullAccess' } {
+  if (permissionMode === 'yolo') return { type: 'dangerFullAccess' }
+  if (permissionMode === 'workspace') return { type: 'workspaceWrite' }
+  return { type: 'readOnly' }
+}
+
+function codexCollaborationMode(
+  planMode: boolean | undefined,
+  model: string | undefined
+): Record<string, unknown> | undefined {
+  if (!planMode) return undefined
+  return {
+    mode: 'plan',
+    settings: {
+      model: model ?? 'gpt-5-codex',
+      reasoning_effort: null,
+      developer_instructions: null,
+    },
+  }
+}
+
+function buildSdkThreadOptions(options: DriverOptions, permissionMode: PermissionMode): CodexThreadOptions {
   return {
     model: options.model,
     workingDirectory: options.workingDir,
-    approvalPolicy: 'never',
-    sandboxMode: yoloMode ? 'danger-full-access' : 'workspace-write',
+    approvalPolicy: codexApprovalPolicy(permissionMode),
+    sandboxMode: codexSdkSandboxMode(permissionMode),
   }
 }
 
@@ -764,13 +1154,22 @@ export function buildCodexArgs(
   codexThreadId: string | null,
   model: string | undefined,
   content: string,
-  yoloMode = false,
+  yoloModeOrPermissionMode: boolean | PermissionMode = false,
   reasoningLevel?: ReasoningLevel,
   fastMode = false
 ): string[] {
+  const permissionMode = typeof yoloModeOrPermissionMode === 'string'
+    ? yoloModeOrPermissionMode
+    : yoloModeOrPermissionMode
+      ? 'yolo'
+      : 'ask'
   const args: string[] = ['exec', '--json']
   if (codexThreadId) args.push('resume')
-  args.push(yoloMode ? '--dangerously-bypass-approvals-and-sandbox' : '--full-auto')
+  if (permissionMode === 'yolo') {
+    args.push('--dangerously-bypass-approvals-and-sandbox')
+  } else {
+    args.push('--sandbox', codexSdkSandboxMode(permissionMode), '--ask-for-approval', 'on-request')
+  }
   if (model) args.push('-c', `model=${model}`)
   const effort = codexReasoningLevelToEffort(reasoningLevel)
   if (effort) args.push('-c', `model_reasoning_effort=${effort}`)
@@ -814,7 +1213,10 @@ class CodexCliDriver extends BaseDriver {
         this.codexThreadId,
         this.options.model,
         content,
-        options?.yoloMode ?? this.options.yoloMode ?? false,
+        resolvePermissionMode({
+          permissionMode: options?.permissionMode ?? this.options.permissionMode,
+          yoloMode: options?.yoloMode ?? this.options.yoloMode,
+        }),
         this.options.reasoningLevel,
         options?.fastMode ?? false
       ),
@@ -849,6 +1251,15 @@ class CodexCliDriver extends BaseDriver {
           }
         } else if (itemType === 'reasoning') {
           break
+        } else if (itemType === 'plan') {
+          const text = typeof item.text === 'string' ? item.text : ''
+          if (text.trim()) {
+            events.push({
+              type: 'plan_ready',
+              content: text,
+              metadata: { ...item, type: 'plan_ready', provider: 'codex' },
+            })
+          }
         } else if (itemType) {
           if (itemId && this.completedItemIds.has(itemId)) break
           if (itemId) this.completedItemIds.add(itemId)
@@ -944,13 +1355,13 @@ class CodexCliDriver extends BaseDriver {
 }
 
 type JsonRpcRequest = {
-  id: number
+  id: number | string
   method: string
   params?: unknown
 }
 
 type JsonRpcResponse = {
-  id: number
+  id: number | string
   result?: unknown
   error?: { message?: string }
 }
@@ -965,6 +1376,17 @@ class CodexAppServerDriver implements CLIDriver {
   private output: readline.Interface | null = null
   private codexThreadId: string | null = null
   private pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>()
+  private pendingPermissionRequests = new Map<string, {
+    rpcId: number | string
+    kind: 'command' | 'file_change' | 'permissions'
+    params: Record<string, unknown>
+  }>()
+  private pendingQuestionRequests = new Map<string, {
+    rpcId: number | string
+    kind: 'user_input' | 'mcp_elicitation'
+    params: Record<string, unknown>
+    questions: Array<{ id: string; question: string; options?: Array<{ label: string; description: string }> }>
+  }>()
   private nextRequestId = 1
   private currentTurn: { onEvent: (event: OutputEvent) => void; onDone: (error?: Error) => void } | null = null
   private outstandingTurnCount = 0
@@ -1032,7 +1454,40 @@ class CodexAppServerDriver implements CLIDriver {
     return this.child?.pid ?? null
   }
 
-  sendControlResponse(_requestId: string, _behavior: 'allow' | 'deny', _message?: string): void {}
+  sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
+    const permission = this.pendingPermissionRequests.get(requestId)
+    if (permission) {
+      this.pendingPermissionRequests.delete(requestId)
+      this.writeMessage({
+        id: permission.rpcId,
+        result: this.buildApprovalResponse(permission.kind, permission.params, behavior),
+      })
+      return
+    }
+
+    const question = this.pendingQuestionRequests.get(requestId)
+    if (question) {
+      this.pendingQuestionRequests.delete(requestId)
+      this.writeMessage({
+        id: question.rpcId,
+        result: question.kind === 'mcp_elicitation'
+          ? { action: behavior === 'allow' ? 'accept' : 'decline', content: null, _meta: message ? { message } : null }
+          : { answers: {} },
+      })
+    }
+  }
+
+  answerQuestion(requestId: string, answers: Record<string, unknown>, message?: string): void {
+    const pending = this.pendingQuestionRequests.get(requestId)
+    if (!pending) return
+    this.pendingQuestionRequests.delete(requestId)
+    this.writeMessage({
+      id: pending.rpcId,
+      result: pending.kind === 'mcp_elicitation'
+        ? this.buildMcpElicitationResponse(pending, answers, message)
+        : this.buildUserInputResponse(pending, answers),
+    })
+  }
 
   private async startTurn(content: string, options?: MessageOptions): Promise<void> {
     await this.ensureReady()
@@ -1042,13 +1497,20 @@ class CodexAppServerDriver implements CLIDriver {
 
     this.outstandingTurnCount += 1
     try {
+      const permissionMode = resolvePermissionMode({
+        permissionMode: options?.permissionMode ?? this.options.permissionMode,
+        yoloMode: options?.yoloMode ?? this.options.yoloMode,
+      })
+      const collaborationMode = codexCollaborationMode(options?.planMode, this.options.model)
       const response = await this.sendRequest('turn/start', {
         threadId: this.codexThreadId,
         input: [{ type: 'text', text: content, text_elements: [] }],
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(codexReasoningLevelToEffort(this.options.reasoningLevel) ? { effort: codexReasoningLevelToEffort(this.options.reasoningLevel) } : {}),
         ...(options?.fastMode ? { serviceTier: CODEX_FAST_SERVICE_TIER } : {}),
-        sandbox: (options?.yoloMode ?? this.options.yoloMode ?? false) ? 'danger-full-access' : 'workspace-write',
+        ...(collaborationMode ? { collaborationMode } : {}),
+        approvalPolicy: codexApprovalPolicy(permissionMode),
+        sandboxPolicy: codexAppServerSandboxPolicy(permissionMode),
       })
       const record = response && typeof response === 'object' ? response as Record<string, unknown> : {}
       const turn = record.turn && typeof record.turn === 'object' ? record.turn as Record<string, unknown> : undefined
@@ -1100,8 +1562,8 @@ class CodexAppServerDriver implements CLIDriver {
       const result = await this.sendRequest(threadMethod, {
         model: this.options.model,
         cwd: this.options.workingDir,
-        approvalPolicy: 'never',
-        sandbox: this.options.yoloMode ? 'danger-full-access' : 'workspace-write',
+        approvalPolicy: codexApprovalPolicy(resolvePermissionMode(this.options)),
+        sandboxPolicy: codexAppServerSandboxPolicy(resolvePermissionMode(this.options)),
         ...(this.codexThreadId ? { threadId: this.codexThreadId } : {}),
       })
       const record = result && typeof result === 'object' ? result as Record<string, unknown> : {}
@@ -1131,7 +1593,7 @@ class CodexAppServerDriver implements CLIDriver {
       return
     }
 
-    if ('id' in parsed && typeof parsed.id === 'number' && !('method' in parsed)) {
+    if ('id' in parsed && (typeof parsed.id === 'number' || typeof parsed.id === 'string') && !('method' in parsed)) {
       this.handleResponse(parsed)
       return
     }
@@ -1171,19 +1633,16 @@ class CodexAppServerDriver implements CLIDriver {
       return
     }
 
-    if ('method' in parsed && typeof parsed.method === 'string' && 'id' in parsed && typeof parsed.id === 'number') {
-      // We run Codex in never-approval mode, so reject unexpected server requests.
-      this.writeMessage({
-        id: parsed.id,
-        error: {
-          code: -32601,
-          message: `Unsupported server request: ${parsed.method}`,
-        },
-      })
+    if ('method' in parsed && typeof parsed.method === 'string' && 'id' in parsed && (typeof parsed.id === 'number' || typeof parsed.id === 'string')) {
+      const params = parsed.params && typeof parsed.params === 'object'
+        ? parsed.params as Record<string, unknown>
+        : {}
+      this.handleServerRequest(parsed.id, parsed.method, params)
     }
   }
 
   private handleResponse(response: JsonRpcResponse): void {
+    if (typeof response.id !== 'number') return
     const pending = this.pending.get(response.id)
     if (!pending) return
     clearTimeout(pending.timeout)
@@ -1193,6 +1652,182 @@ class CodexAppServerDriver implements CLIDriver {
       return
     }
     pending.resolve(response.result)
+  }
+
+  private handleServerRequest(rpcId: number | string, method: string, params: Record<string, unknown>): void {
+    switch (method) {
+      case 'item/commandExecution/requestApproval':
+        this.emitPermissionRequest(rpcId, method, params, 'command', 'CommandExecution')
+        return
+      case 'item/fileChange/requestApproval':
+        this.emitPermissionRequest(rpcId, method, params, 'file_change', 'FileChange')
+        return
+      case 'item/permissions/requestApproval':
+        this.emitPermissionRequest(rpcId, method, params, 'permissions', 'RequestPermissions')
+        return
+      case 'item/tool/requestUserInput':
+        this.emitUserInputRequest(rpcId, params)
+        return
+      case 'mcpServer/elicitation/request':
+        this.emitMcpElicitationRequest(rpcId, params)
+        return
+      default:
+        this.writeMessage({
+          id: rpcId,
+          error: {
+            code: -32601,
+            message: `Unsupported Codex app-server request: ${method}`,
+          },
+        })
+    }
+  }
+
+  private emitPermissionRequest(
+    rpcId: number | string,
+    method: string,
+    params: Record<string, unknown>,
+    kind: 'command' | 'file_change' | 'permissions',
+    fallbackToolName: string
+  ): void {
+    const requestId = `codex:${method}:${String(rpcId)}`
+    this.pendingPermissionRequests.set(requestId, { rpcId, kind, params })
+    const command = typeof params.command === 'string' ? params.command : undefined
+    const reason = typeof params.reason === 'string' ? params.reason : undefined
+    const toolName = kind === 'command'
+      ? 'Bash'
+      : kind === 'file_change'
+        ? 'FileChange'
+        : 'RequestPermissions'
+    this.emit({
+      type: 'permission_request',
+      content: toolName,
+      metadata: {
+        type: 'permission_request',
+        requestId,
+        toolName,
+        toolInput: {
+          provider: 'codex',
+          requestType: kind,
+          ...(command ? { command } : {}),
+          ...(typeof params.cwd === 'string' ? { cwd: params.cwd } : {}),
+          ...(reason ? { reason } : {}),
+          ...(params.permissions ? { permissions: params.permissions } : {}),
+          ...(params.grantRoot ? { grantRoot: params.grantRoot } : {}),
+          ...(Array.isArray(params.commandActions) ? { commandActions: params.commandActions } : {}),
+        },
+        toolUseId: typeof params.itemId === 'string' ? params.itemId : String(rpcId),
+        codexRequestMethod: method,
+        codexApprovalId: params.approvalId,
+        fallbackToolName,
+      },
+    })
+  }
+
+  private emitUserInputRequest(rpcId: number | string, params: Record<string, unknown>): void {
+    const requestId = `codex:item/tool/requestUserInput:${String(rpcId)}`
+    const rawQuestions = Array.isArray(params.questions) ? params.questions as Record<string, unknown>[] : []
+    const questions = rawQuestions.map((question, index) => normalizeCodexQuestion(question, index))
+    this.pendingQuestionRequests.set(requestId, {
+      rpcId,
+      kind: 'user_input',
+      params,
+      questions,
+    })
+    this.emit({
+      type: 'question',
+      content: JSON.stringify(questions),
+      metadata: {
+        type: 'question',
+        requestId,
+        toolUseId: params.itemId,
+        questions,
+      },
+    })
+  }
+
+  private emitMcpElicitationRequest(rpcId: number | string, params: Record<string, unknown>): void {
+    const requestId = `codex:mcpServer/elicitation/request:${String(rpcId)}`
+    const message = typeof params.message === 'string' ? params.message : 'MCP server requested input'
+    const question = {
+      id: 'response',
+      header: typeof params.serverName === 'string' ? params.serverName : 'MCP',
+      question: message,
+      options: [
+        { label: 'Approve', description: 'Send an empty accepted response.' },
+        { label: 'Decline', description: 'Decline this MCP elicitation.' },
+      ],
+    }
+    this.pendingQuestionRequests.set(requestId, {
+      rpcId,
+      kind: 'mcp_elicitation',
+      params,
+      questions: [question],
+    })
+    this.emit({
+      type: 'question',
+      content: JSON.stringify([question]),
+      metadata: {
+        type: 'question',
+        requestId,
+        questions: [question],
+        mcpElicitation: params,
+      },
+    })
+  }
+
+  private buildApprovalResponse(
+    kind: 'command' | 'file_change' | 'permissions',
+    params: Record<string, unknown>,
+    behavior: 'allow' | 'deny'
+  ): Record<string, unknown> {
+    if (kind === 'permissions') {
+      return {
+        permissions: behavior === 'allow' && params.permissions && typeof params.permissions === 'object'
+          ? params.permissions
+          : {},
+        scope: 'session',
+      }
+    }
+    return {
+      decision: behavior === 'allow' ? 'accept' : 'decline',
+    }
+  }
+
+  private buildUserInputResponse(
+    pending: {
+      questions: Array<{ id: string; question: string }>
+    },
+    answers: Record<string, unknown>
+  ): Record<string, unknown> {
+    const responseAnswers: Record<string, { answers: string[] }> = {}
+    for (const question of pending.questions) {
+      const raw = answers[question.id] ?? answers[question.question]
+      const values = Array.isArray(raw)
+        ? raw.map(String).filter(Boolean)
+        : typeof raw === 'string' && raw
+          ? [raw]
+          : []
+      responseAnswers[question.id] = { answers: values }
+    }
+    return { answers: responseAnswers }
+  }
+
+  private buildMcpElicitationResponse(
+    pending: {
+      questions: Array<{ id: string; question: string }>
+    },
+    answers: Record<string, unknown>,
+    message?: string
+  ): Record<string, unknown> {
+    const first = pending.questions[0]
+    const raw = first ? (answers[first.id] ?? answers[first.question]) : undefined
+    const values = Array.isArray(raw) ? raw.map(String) : typeof raw === 'string' ? [raw] : []
+    const declined = values.some((value) => value.toLowerCase() === 'decline')
+    return {
+      action: declined ? 'decline' : 'accept',
+      content: null,
+      _meta: message ? { message } : null,
+    }
   }
 
   private async sendRequest(method: string, params: unknown, timeoutMs = 20_000): Promise<unknown> {
@@ -1236,6 +1871,8 @@ class CodexAppServerDriver implements CLIDriver {
       pending.reject(new Error('Codex app-server stopped'))
     }
     this.pending.clear()
+    this.pendingPermissionRequests.clear()
+    this.pendingQuestionRequests.clear()
     this.output?.close()
     this.output = null
     if (this.child && !this.child.killed) {
@@ -1300,10 +1937,18 @@ export class CodexDriver implements CLIDriver {
   }
 
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
-    this.fallbackDriver?.sendControlResponse(requestId, behavior, message)
+    if (this.fallbackDriver) {
+      this.fallbackDriver.sendControlResponse(requestId, behavior, message)
+      return
+    }
+    this.localDriver?.sendControlResponse(requestId, behavior, message)
   }
 
   answerQuestion(requestId: string, answers: Record<string, unknown>, message?: string): void {
-    this.fallbackDriver?.answerQuestion?.(requestId, answers, message)
+    if (this.fallbackDriver) {
+      this.fallbackDriver.answerQuestion?.(requestId, answers, message)
+      return
+    }
+    this.localDriver?.answerQuestion?.(requestId, answers, message)
   }
 }

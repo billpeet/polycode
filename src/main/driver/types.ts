@@ -1,7 +1,8 @@
-import { OutputEvent, ReasoningLevel, SshConfig, WslConfig } from '../../shared/types'
+import { OutputEvent, PermissionMode, ReasoningLevel, SshConfig, WslConfig } from '../../shared/types'
 
 export interface MessageOptions {
   planMode?: boolean
+  permissionMode?: PermissionMode
   yoloMode?: boolean
   /** When true, request the provider's "fast" / priority processing tier
    *  (faster responses, consumes session/usage limits more quickly).
@@ -39,6 +40,7 @@ export interface DriverOptions {
   threadId: string
   model?: string
   reasoningLevel?: ReasoningLevel
+  permissionMode?: PermissionMode
   yoloMode?: boolean
   initialSessionId?: string | null
   onSessionId?: (sessionId: string) => void

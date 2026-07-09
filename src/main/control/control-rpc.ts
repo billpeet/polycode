@@ -36,6 +36,7 @@ import {
   updateThreadModel,
   updateThreadName,
   updateThreadProviderAndModel,
+  updateThreadPermissionMode,
   updateThreadReasoningLevel,
   updateThreadStatus,
   updateThreadUnread,
@@ -152,6 +153,7 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'threads:updateReasoningLevel',
   'threads:setUnread',
   'threads:setYolo',
+  'threads:setPermissionMode',
   'threads:setWsl',
   'threads:start',
   'threads:stop',
@@ -555,6 +557,11 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       const [threadId, yoloMode] = args as [string, boolean]
       sessionManager.remove(threadId)
       return updateThreadYoloMode(threadId, yoloMode)
+    }
+    case 'threads:setPermissionMode': {
+      const [threadId, permissionMode] = args as [string, string]
+      sessionManager.remove(threadId)
+      return updateThreadPermissionMode(threadId, permissionMode)
     }
     case 'threads:setWsl': {
       const [threadId, useWsl, wslDistro] = args as [string, boolean, string | null]

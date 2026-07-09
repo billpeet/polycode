@@ -17,7 +17,7 @@ import {
   getThreadModel,
   getThreadProvider,
   getThreadReasoningLevel,
-  getThreadYoloMode,
+  getThreadPermissionMode,
   getOrCreateActiveSession,
   createSession,
   listSessions,
@@ -80,7 +80,8 @@ export class Session {
       threadId: this.threadId,
       model,
       reasoningLevel: getThreadReasoningLevel(this.threadId),
-      yoloMode: getThreadYoloMode(this.threadId),
+      permissionMode: getThreadPermissionMode(this.threadId),
+      yoloMode: getThreadPermissionMode(this.threadId) === 'yolo',
       initialSessionId: externalSessionId,
       onSessionId: (sid: string) => updateSessionClaudeId(sessionId, sid),
       ssh: this.sshConfig,
@@ -185,7 +186,8 @@ export class Session {
           content: content.slice(0, 500),
         })
         insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId)
-        driver.injectMessage(content, { planMode: options?.planMode, fastMode: options?.fastMode, yoloMode: getThreadYoloMode(this.threadId) })
+        const permissionMode = getThreadPermissionMode(this.threadId)
+        driver.injectMessage(content, { planMode: options?.planMode, fastMode: options?.fastMode, permissionMode, yoloMode: permissionMode === 'yolo' })
       } else {
         console.warn('[Session] sendMessage called while driver is already running — ignoring for thread', this.threadId)
       }
@@ -232,11 +234,12 @@ export class Session {
     if (shellMode.enabled) {
       this.executeShellModeCommand(shellMode.command)
     } else {
+      const permissionMode = getThreadPermissionMode(this.threadId)
       driver.sendMessage(
         content,
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        { planMode: options?.planMode, fastMode: options?.fastMode, yoloMode: getThreadYoloMode(this.threadId) }
+        { planMode: options?.planMode, fastMode: options?.fastMode, permissionMode, yoloMode: permissionMode === 'yolo' }
       )
     }
 
@@ -501,7 +504,7 @@ export class Session {
         'Approved. Execute the plan.',
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        { yoloMode: getThreadYoloMode(this.threadId) }
+        { permissionMode: getThreadPermissionMode(this.threadId), yoloMode: getThreadPermissionMode(this.threadId) === 'yolo' }
       )
     this.emit(`thread:pid:${this.threadId}`, driver.getPid())
   }

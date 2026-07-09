@@ -58,6 +58,7 @@ export interface ThreadRow {
   unread: number
   /** Set by queries that include an EXISTS subquery; undefined when row built locally */
   has_messages?: number
+  permission_mode?: string
   yolo_mode: number
   use_wsl: number
   wsl_distro: string | null

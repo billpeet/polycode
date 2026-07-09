@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
+import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -371,9 +371,15 @@ export function getLocationByPath(path: string): RepoLocation | null {
 // ── Threads ───────────────────────────────────────────────────────────────────
 
 const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const VALID_PERMISSION_MODES: PermissionMode[] = ['ask', 'workspace', 'yolo']
 
 function normalizeReasoningLevel(level: string | null | undefined): ReasoningLevel {
   return VALID_REASONING_LEVELS.includes(level as ReasoningLevel) ? level as ReasoningLevel : 'off'
+}
+
+function normalizePermissionMode(mode: string | null | undefined, yoloMode?: number | boolean): PermissionMode {
+  if (VALID_PERMISSION_MODES.includes(mode as PermissionMode)) return mode as PermissionMode
+  return yoloMode === 1 || yoloMode === true ? 'yolo' : 'ask'
 }
 
 function rowToThread(r: ThreadRow): Thread {
@@ -381,6 +387,7 @@ function rowToThread(r: ThreadRow): Thread {
   const provider = (r.provider ?? 'claude-code') as Provider
   const validModels = getModelsForProvider(provider).map((m) => m.id as string)
   const model = provider === 'claude-code' || provider === 'codex' || provider === 'pi' || provider === 'cursor' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
+  const permissionMode = normalizePermissionMode(r.permission_mode, r.yolo_mode)
   return {
     id: r.id,
     project_id: r.project_id,
@@ -396,7 +403,8 @@ function rowToThread(r: ThreadRow): Thread {
     context_window: r.context_window ?? 0,
     unread: (r.unread ?? 0) === 1,
     has_messages: (r.has_messages ?? 0) === 1,
-    yolo_mode: (r.yolo_mode ?? 0) === 1,
+    permission_mode: permissionMode,
+    yolo_mode: permissionMode === 'yolo',
     use_wsl: r.use_wsl === 1,
     wsl_distro: r.wsl_distro ?? null,
     git_branch: r.git_branch ?? null,
@@ -475,6 +483,7 @@ export function createThread(projectId: string, name: string, locationId: string
     context_window: 0,
     unread: 0,
     has_messages: 0,
+    permission_mode: 'ask',
     yolo_mode: 0,
     use_wsl: 0,
     wsl_distro: null,
@@ -484,7 +493,7 @@ export function createThread(projectId: string, name: string, locationId: string
   }
   getDb()
     .prepare(
-      'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, yolo_mode, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, permission_mode, yolo_mode, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       thread.id,
@@ -495,6 +504,7 @@ export function createThread(projectId: string, name: string, locationId: string
       thread.model,
       thread.reasoning_level,
       thread.status,
+      thread.permission_mode,
       thread.yolo_mode,
       thread.git_branch,
       thread.created_at,
@@ -524,9 +534,14 @@ export function updateThreadReasoningLevel(id: string, reasoningLevel: string): 
 }
 
 export function updateThreadYoloMode(id: string, yoloMode: boolean): void {
+  updateThreadPermissionMode(id, yoloMode ? 'yolo' : 'ask')
+}
+
+export function updateThreadPermissionMode(id: string, permissionMode: string): void {
+  const normalized = normalizePermissionMode(permissionMode)
   getDb()
-    .prepare('UPDATE threads SET yolo_mode = ?, updated_at = ? WHERE id = ?')
-    .run(yoloMode ? 1 : 0, new Date().toISOString(), id)
+    .prepare('UPDATE threads SET permission_mode = ?, yolo_mode = ?, updated_at = ? WHERE id = ?')
+    .run(normalized, normalized === 'yolo' ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function deleteThread(id: string): void {
@@ -575,10 +590,14 @@ export function getThreadWsl(id: string): { use_wsl: boolean; wsl_distro: string
 }
 
 export function getThreadYoloMode(id: string): boolean {
+  return getThreadPermissionMode(id) === 'yolo'
+}
+
+export function getThreadPermissionMode(id: string): PermissionMode {
   const row = getDb()
-    .prepare('SELECT yolo_mode FROM threads WHERE id = ?')
-    .get(id) as { yolo_mode: number } | undefined
-  return (row?.yolo_mode ?? 0) === 1
+    .prepare('SELECT permission_mode, yolo_mode FROM threads WHERE id = ?')
+    .get(id) as { permission_mode?: string; yolo_mode: number } | undefined
+  return normalizePermissionMode(row?.permission_mode, row?.yolo_mode)
 }
 
 /** Sets git_branch only if it hasn't been set yet. Returns true if it was updated. */
@@ -1174,6 +1193,7 @@ export function importThread(
     context_window: 0,
     unread: 0,
     has_messages: 1,
+    permission_mode: 'ask',
     yolo_mode: 0,
     use_wsl: 0,
     wsl_distro: null,

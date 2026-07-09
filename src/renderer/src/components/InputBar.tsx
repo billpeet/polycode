@@ -137,7 +137,7 @@ export default function InputBar({ threadId }: Props) {
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
   const setModel = useThreadStore((s) => s.setModel)
   const setReasoningLevel = useThreadStore((s) => s.setReasoningLevel)
-  const setYolo = useThreadStore((s) => s.setYolo)
+  const setPermissionMode = useThreadStore((s) => s.setPermissionMode)
   const setWsl = useThreadStore((s) => s.setWsl)
 
   const [availableDistros, setAvailableDistros] = useState<string[]>([])
@@ -876,7 +876,7 @@ export default function InputBar({ threadId }: Props) {
           isLocalLocation={isLocalLocation}
           currentThread={currentThread}
           availableDistros={availableDistros}
-          setYolo={setYolo}
+          setPermissionMode={setPermissionMode}
           setWsl={setWsl}
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}

@@ -166,6 +166,7 @@ export const CURSOR_MODELS = [
 export type CursorModelId = typeof CURSOR_MODELS[number]['id']
 
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor'
+export type PermissionMode = 'ask' | 'workspace' | 'yolo'
 
 export const PROVIDERS = [
   { id: 'claude-code' as Provider, label: 'Claude Code' },
@@ -209,6 +210,8 @@ export interface Thread {
   unread: boolean
   /** True if at least one message has been sent in this thread */
   has_messages: boolean
+  permission_mode: PermissionMode
+  /** Compatibility flag derived from permission_mode === 'yolo'. */
   yolo_mode: boolean
   use_wsl: boolean
   wsl_distro: string | null
