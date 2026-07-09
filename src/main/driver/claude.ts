@@ -99,6 +99,14 @@ export class ClaudeDriver implements CLIDriver {
   private currentMessageOptions: MessageOptions = {}
   private queuedTurnCount = 0
   private activeBackgroundTaskIds = new Set<string>()
+  private agentRegistry = new Map<string, {
+    taskId?: string
+    parentToolUseId: string
+    description?: string
+    subagentType?: string
+    status: 'running' | 'completed' | 'failed' | 'stopped'
+  }>()
+  private taskIdToParent = new Map<string, string>()
 
   constructor(private readonly options: DriverOptions) {
     if (options.initialSessionId) {
@@ -121,6 +129,8 @@ export class ClaudeDriver implements CLIDriver {
     this.specialToolIds.clear()
     this.queuedTurnCount = 0
     this.activeBackgroundTaskIds.clear()
+    this.agentRegistry.clear()
+    this.taskIdToParent.clear()
     this.currentMessageOptions = options ?? {}
     this.currentTurn = { onEvent, onDone }
 
@@ -167,6 +177,8 @@ export class ClaudeDriver implements CLIDriver {
     this.stopped = true
     this.queuedTurnCount = 0
     this.activeBackgroundTaskIds.clear()
+    this.agentRegistry.clear()
+    this.taskIdToParent.clear()
 
     const pendingError = new Error('Claude turn interrupted')
     for (const pending of this.pendingPermissionDecisions.values()) {
@@ -267,6 +279,11 @@ export class ClaudeDriver implements CLIDriver {
       allowDangerouslySkipPermissions: this.resolvePermissionMode(this.currentMessageOptions) === 'bypassPermissions',
       additionalDirectories: workingDir ? [workingDir] : undefined,
       canUseTool: this.handleCanUseTool,
+      // Stream sub-agent text/thinking blocks (not just tool_use/tool_result) so the
+      // renderer can reconstruct a full nested transcript per sub-agent, and include
+      // progress summaries for richer task_progress bubbles.
+      forwardSubagentText: true,
+      agentProgressSummaries: true,
       // The SDK accepts these setting sources even though older typings omit them.
       // Without them, user/project skills and plugins are not surfaced consistently.
       settingSources: ['user', 'project', 'local'],
@@ -481,17 +498,25 @@ export class ClaudeDriver implements CLIDriver {
   }
 
   private collectAssistantMessage(message: SDKAssistantMessage, events: OutputEvent[]): void {
+    const parentToolUseId = message.parent_tool_use_id ?? null
+    const agentMeta = this.agentMeta(parentToolUseId, {
+      subagentType: message.subagent_type,
+      description: message.task_description,
+    })
+
     for (const block of message.message.content) {
       if (block.type === 'thinking') {
         if (block.thinking) {
-          events.push({ type: 'thinking', content: block.thinking, metadata: { type: 'thinking' } })
+          events.push({ type: 'thinking', content: block.thinking, metadata: { type: 'thinking', ...agentMeta } })
         }
         continue
       }
 
       if (block.type === 'text') {
         if (block.text) {
-          events.push({ type: 'text', content: block.text })
+          // Prose text carries agent scope metadata only (no `type` key), so
+          // markdown rendering and height estimation stay unaffected.
+          events.push({ type: 'text', content: block.text, metadata: { ...agentMeta } })
         }
         continue
       }
@@ -499,6 +524,22 @@ export class ClaudeDriver implements CLIDriver {
       if (block.type === 'tool_use') {
         const toolName = block.name ?? 'unknown'
         const toolId = block.id ?? ''
+
+        // Register Task/Agent dispatches keyed by the tool_use id so that every
+        // subsequent sub-agent message (which carries parent_tool_use_id === this id)
+        // can be grouped and labeled.
+        if ((toolName === 'Task' || toolName === 'Agent') && toolId) {
+          const input = (block.input ?? {}) as Record<string, unknown>
+          const existing = this.agentRegistry.get(toolId)
+          this.agentRegistry.set(toolId, {
+            parentToolUseId: toolId,
+            taskId: existing?.taskId,
+            description: typeof input.description === 'string' ? input.description : existing?.description,
+            subagentType: typeof input.subagent_type === 'string' ? input.subagent_type : existing?.subagentType,
+            status: existing?.status ?? 'running',
+          })
+        }
+
         // Special tools are handled via dedicated events (question, plan_ready, permission_request)
         // and should never appear as tool_call bubbles. Filter by both ID (set by handleCanUseTool)
         // and name (guards against race where stream message arrives before callback fires).
@@ -512,6 +553,7 @@ export class ClaudeDriver implements CLIDriver {
               id: toolId,
               name: toolName,
               input: block.input as Record<string, unknown>,
+              ...agentMeta,
             },
           })
         }
@@ -519,7 +561,37 @@ export class ClaudeDriver implements CLIDriver {
     }
   }
 
+  /**
+   * Build the `agent_*` metadata block stamped onto every emitted event so the
+   * renderer can bucket messages by sub-agent. Returns main scope when there is
+   * no parent Task tool_use. Emits `agent_parent_tool_use_id` even when the
+   * registry entry is missing, to survive the message-before-task_started race.
+   */
+  private agentMeta(
+    parentToolUseId: string | null,
+    overrides?: { subagentType?: string; description?: string }
+  ): Record<string, unknown> {
+    if (!parentToolUseId) return { agent_scope: 'main' }
+    const entry = this.agentRegistry.get(parentToolUseId)
+    const subagentType = overrides?.subagentType ?? entry?.subagentType
+    const description = overrides?.description ?? entry?.description
+    const meta: Record<string, unknown> = {
+      agent_scope: 'subagent',
+      agent_parent_tool_use_id: parentToolUseId,
+    }
+    if (entry?.taskId) meta.agent_task_id = entry.taskId
+    if (description) meta.agent_description = description
+    if (subagentType) meta.agent_subagent_type = subagentType
+    if (entry?.status) meta.agent_status = entry.status
+    return meta
+  }
+
   private collectUserMessage(message: SDKUserMessage, events: OutputEvent[]): void {
+    const parentToolUseId = message.parent_tool_use_id ?? null
+    const agentMeta = this.agentMeta(parentToolUseId, {
+      subagentType: message.subagent_type,
+      description: message.task_description,
+    })
     const blocks = Array.isArray(message.message.content) ? message.message.content : []
     for (const block of blocks) {
       if (block.type !== 'tool_result') continue
@@ -543,6 +615,7 @@ export class ClaudeDriver implements CLIDriver {
           type: 'tool_result',
           tool_use_id: block.tool_use_id,
           is_error: block.is_error === true,
+          ...agentMeta,
         },
       })
     }
@@ -585,8 +658,23 @@ export class ClaudeDriver implements CLIDriver {
 
   private collectSystemMessage(message: SDKSystemMessage, events: OutputEvent[]): void {
     switch (message.subtype) {
-      case 'task_started':
+      case 'task_started': {
         this.activeBackgroundTaskIds.add(message.task_id)
+        // Link task_id → parent tool_use id and backfill the registry entry BEFORE
+        // the skip_transcript early return so grouping metadata is available even
+        // for ambient tasks that don't render a bubble.
+        const startedParent = message.tool_use_id
+        if (startedParent) {
+          const existing = this.agentRegistry.get(startedParent)
+          this.agentRegistry.set(startedParent, {
+            parentToolUseId: startedParent,
+            taskId: message.task_id,
+            description: existing?.description ?? message.description,
+            subagentType: existing?.subagentType ?? message.subagent_type,
+            status: existing?.status ?? 'running',
+          })
+          this.taskIdToParent.set(message.task_id, startedParent)
+        }
         if (message.skip_transcript) return
         events.push({
           type: 'thinking',
@@ -599,9 +687,11 @@ export class ClaudeDriver implements CLIDriver {
             tool_use_id: message.tool_use_id,
             task_type: message.task_type,
             subagent_type: message.subagent_type,
+            ...this.agentMeta(message.tool_use_id ?? null),
           },
         })
         break
+      }
 
       case 'task_progress':
         events.push({
@@ -616,12 +706,18 @@ export class ClaudeDriver implements CLIDriver {
             subagent_type: message.subagent_type,
             usage: message.usage,
             last_tool_name: message.last_tool_name,
+            ...this.agentMeta(message.tool_use_id ?? this.taskIdToParent.get(message.task_id) ?? null),
           },
         })
         break
 
-      case 'task_notification':
+      case 'task_notification': {
         this.activeBackgroundTaskIds.delete(message.task_id)
+        const notifyParent = message.tool_use_id ?? this.taskIdToParent.get(message.task_id) ?? null
+        if (notifyParent) {
+          const entry = this.agentRegistry.get(notifyParent)
+          if (entry) entry.status = message.status
+        }
         if (message.skip_transcript) return
         events.push({
           type: 'thinking',
@@ -634,19 +730,28 @@ export class ClaudeDriver implements CLIDriver {
             tool_use_id: message.tool_use_id,
             status: message.status,
             usage: message.usage,
+            ...this.agentMeta(notifyParent),
           },
         })
         break
+      }
 
-      case 'task_updated':
+      case 'task_updated': {
+        const patchStatus = message.patch.status
         if (
-          message.patch.status === 'completed' ||
-          message.patch.status === 'failed' ||
-          message.patch.status === 'killed'
+          patchStatus === 'completed' ||
+          patchStatus === 'failed' ||
+          patchStatus === 'killed'
         ) {
           this.activeBackgroundTaskIds.delete(message.task_id)
+          const updatedParent = this.taskIdToParent.get(message.task_id)
+          if (updatedParent) {
+            const entry = this.agentRegistry.get(updatedParent)
+            if (entry) entry.status = patchStatus === 'killed' ? 'stopped' : patchStatus
+          }
         }
         break
+      }
 
       case 'status':
         if (message.status === 'compacting') {

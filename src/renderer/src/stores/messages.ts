@@ -10,6 +10,18 @@ function parseMetadata(metadata: string | null): Record<string, unknown> | null 
   }
 }
 
+/**
+ * Stable grouping key identifying which agent (main or a specific sub-agent)
+ * produced a message. Used to prevent merging text/thinking across agent scopes.
+ */
+function agentKey(metadata: Record<string, unknown> | null): string {
+  const taskId = metadata?.agent_task_id
+  if (typeof taskId === 'string' && taskId) return taskId
+  const parentToolUseId = metadata?.agent_parent_tool_use_id
+  if (typeof parentToolUseId === 'string' && parentToolUseId) return parentToolUseId
+  return 'main'
+}
+
 function appendOrMergeMessage(messages: Message[], incoming: Message, event: OutputEvent): Message[] {
   const previous = messages[messages.length - 1]
   if (!previous || previous.role !== incoming.role) {
@@ -19,9 +31,13 @@ function appendOrMergeMessage(messages: Message[], incoming: Message, event: Out
   const previousMetadata = parseMetadata(previous.metadata)
   const nextMetadata = event.metadata ?? null
 
+  // Never merge across agent scopes: main-scope assistant text followed by
+  // sub-agent assistant text (both role 'assistant') must stay separate bubbles.
+  const sameScope = agentKey(previousMetadata) === agentKey(nextMetadata)
+
   if (event.type === 'text') {
     const previousType = previousMetadata?.type
-    if (!previousType) {
+    if (!previousType && sameScope) {
       return [
         ...messages.slice(0, -1),
         {
@@ -36,7 +52,7 @@ function appendOrMergeMessage(messages: Message[], incoming: Message, event: Out
 
   if (event.type === 'thinking') {
     const previousType = previousMetadata?.type
-    if (previousType === 'thinking') {
+    if (previousType === 'thinking' && sameScope) {
       return [
         ...messages.slice(0, -1),
         {

@@ -2,14 +2,18 @@ import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } fr
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
-import MessageBubble from './MessageBubble'
-import ToolCallGroupBlock from './ToolCallGroupBlock'
+import { renderEntry } from './renderEntry'
+import AgentPrompt from './AgentPrompt'
 import { Message } from '../types/ipc'
 import { estimateEntryHeight } from '../lib/messageHeight'
 
 interface Props {
   threadId: string
   sessionId?: string
+  /** When set, isolate the view to a single agent group (matched by `AgentGroup.key`). */
+  agentFilter?: string | null
+  /** Callback to isolate the view to a specific agent group. */
+  onIsolateAgent?: (agentKey: string) => void
 }
 
 const EMPTY: Message[] = []
@@ -43,6 +47,24 @@ export interface MessageGroup {
   toolName: string
   entries: MessageEntry[]
 }
+
+export type AgentStatus = 'running' | 'completed' | 'failed' | 'stopped'
+
+export interface AgentGroup {
+  kind: 'agent'
+  key: string // `agent-${parentToolUseId}` (stable)
+  parentToolUseId: string
+  taskId?: string
+  label: string // humanized subagent_type (fallback: description || 'subagent')
+  description?: string // short task description, for disambiguation
+  prompt?: string // full prompt sent to the sub-agent (Task tool_call input.prompt)
+  status: AgentStatus
+  usage?: { totalTokens?: number; toolUses?: number; durationMs?: number } // latest task usage
+  lastToolName?: string // most recent tool the sub-agent ran (while active)
+  entries: (MessageEntry | MessageGroup | AgentGroup)[]
+}
+
+export type StreamEntry = MessageEntry | MessageGroup | AgentGroup
 
 /** Tools that can be grouped together (mapped to a shared group key). */
 const TOOL_GROUP_KEY: Record<string, string> = {
@@ -169,15 +191,239 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   return grouped
 }
 
-function renderEntry(entry: MessageEntry | MessageGroup) {
-  return entry.kind === 'group' ? (
-    <ToolCallGroupBlock group={entry} />
-  ) : (
-    <MessageBubble entry={entry} />
+/** The parent Task tool_use id that groups a sub-agent's messages, or null for main scope. */
+function messageParentKey(metadata: Record<string, unknown> | null): string | null {
+  if (!metadata || metadata.agent_scope !== 'subagent') return null
+  const parent = metadata.agent_parent_tool_use_id
+  return typeof parent === 'string' && parent ? parent : null
+}
+
+/**
+ * `task_started` / `task_progress` / `task_notification` bubbles ("Subagent
+ * started/update/completed") duplicate the AgentGroup header's status and usage, so they
+ * are hidden from the transcript. They are still kept in the bucket for status and usage
+ * derivation (see deriveAgentMeta).
+ */
+function isAgentStatusBubble(metadata: Record<string, unknown> | null): boolean {
+  return (
+    metadata?.source === 'claude_task' &&
+    (metadata.task_event === 'started' ||
+      metadata.task_event === 'progress' ||
+      metadata.task_event === 'notification')
   )
 }
 
-export default function MessageStream({ threadId, sessionId }: Props) {
+/** Turn a hyphen/underscore agent type into a human-readable label ("general-purpose" → "General Purpose"). */
+function humanizeAgentType(type: string): string {
+  return type
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ')
+}
+
+/** Derive the display label, description, task id, status and usage for an agent group from its messages' metadata. */
+function deriveAgentMeta(bucketMessages: Message[]): {
+  label: string
+  description?: string
+  taskId?: string
+  status: AgentStatus
+  usage?: AgentGroup['usage']
+  lastToolName?: string
+} {
+  let subagentType: string | undefined
+  let description: string | undefined
+  let taskId: string | undefined
+  let status: AgentStatus = 'running'
+  let terminalStatus: AgentStatus | undefined
+  let usage: AgentGroup['usage']
+  let lastToolName: string | undefined
+
+  for (const msg of bucketMessages) {
+    const meta = safeParseJson(msg.metadata)
+    if (!meta) continue
+    if (typeof meta.agent_subagent_type === 'string' && meta.agent_subagent_type) {
+      subagentType = meta.agent_subagent_type
+    } else if (typeof meta.subagent_type === 'string' && meta.subagent_type && !subagentType) {
+      subagentType = meta.subagent_type
+    }
+    if (typeof meta.agent_description === 'string' && meta.agent_description) description = meta.agent_description
+    if (typeof meta.agent_task_id === 'string' && meta.agent_task_id) taskId = meta.agent_task_id
+    if (typeof meta.agent_status === 'string') status = meta.agent_status as AgentStatus
+    // A terminal task_notification within the bucket is the authoritative final status.
+    if (meta.task_event === 'notification' && typeof meta.status === 'string') {
+      terminalStatus = meta.status as AgentStatus
+    }
+    // task_progress / task_notification carry running usage totals (last one wins —
+    // the terminal notification holds the authoritative final totals).
+    const u = meta.usage as Record<string, unknown> | undefined
+    if (u && typeof u === 'object') {
+      usage = {
+        totalTokens: typeof u.total_tokens === 'number' ? u.total_tokens : usage?.totalTokens,
+        toolUses: typeof u.tool_uses === 'number' ? u.tool_uses : usage?.toolUses,
+        durationMs: typeof u.duration_ms === 'number' ? u.duration_ms : usage?.durationMs,
+      }
+    }
+    if (typeof meta.last_tool_name === 'string' && meta.last_tool_name) lastToolName = meta.last_tool_name
+  }
+
+  const label = subagentType ? humanizeAgentType(subagentType) : description || 'subagent'
+  return { label, description, taskId, status: terminalStatus ?? status, usage, lastToolName }
+}
+
+/**
+ * Bucket messages by sub-agent (using explicit `agent_*` metadata, never adjacency)
+ * and render each bucket as a collapsible AgentGroup, anchored at the Task tool_call
+ * that spawned it. Nested sub-agents nest inside their parent group.
+ *
+ * Implementation: flat-bucket every message by its *immediate* parent tool_use id
+ * (all depths at once), then recursively assemble each scope — a bucket's paired
+ * entries with child groups spliced in at the Task tool_call that spawned them. A
+ * cycle guard + build cache guarantee termination even on malformed metadata.
+ */
+export function groupByAgent(messages: Message[]): StreamEntry[] {
+  const buckets = new Map<string, Message[]>()
+  const bucketOrder: string[] = []
+  const mainMessages: Message[] = []
+
+  for (const msg of messages) {
+    const meta = safeParseJson(msg.metadata)
+    const parentKey = messageParentKey(meta)
+    if (parentKey) {
+      let bucket = buckets.get(parentKey)
+      if (!bucket) {
+        bucket = []
+        buckets.set(parentKey, bucket)
+        bucketOrder.push(parentKey)
+      }
+      bucket.push(msg)
+    } else {
+      mainMessages.push(msg)
+    }
+  }
+
+  // No sub-agents at all → plain paired list.
+  if (buckets.size === 0) {
+    return pairMessages(mainMessages)
+  }
+
+  const groupCache = new Map<string, AgentGroup>()
+  const building = new Set<string>() // cycle guard for the current assembly path
+
+  const makeGroup = (parentKey: string, anchorInput?: Record<string, unknown>): AgentGroup => {
+    const cached = groupCache.get(parentKey)
+    if (cached) return cached
+    building.add(parentKey)
+    const bucketMessages = buckets.get(parentKey) ?? []
+    const entries = assemble(bucketMessages)
+    building.delete(parentKey)
+    const { label, description, taskId, status, usage, lastToolName } = deriveAgentMeta(bucketMessages)
+    // The full prompt sent to the sub-agent lives on the spawning Task tool_call's input.
+    const prompt = typeof anchorInput?.prompt === 'string' ? anchorInput.prompt : undefined
+    const group: AgentGroup = {
+      kind: 'agent',
+      key: `agent-${parentKey}`,
+      parentToolUseId: parentKey,
+      taskId,
+      label,
+      description,
+      prompt,
+      status,
+      usage,
+      lastToolName,
+      entries,
+    }
+    groupCache.set(parentKey, group)
+    return group
+  }
+
+  // Splice child AgentGroups into a scope's paired entries at their anchor Task tool_call.
+  const assemble = (scopeMessages: Message[]): StreamEntry[] => {
+    // Hide redundant "Subagent started/completed" status bubbles — the group header shows status.
+    const visible = scopeMessages.filter((m) => !isAgentStatusBubble(safeParseJson(m.metadata)))
+    const paired = pairMessages(visible)
+    const result: StreamEntry[] = []
+    for (const entry of paired) {
+      if (entry.kind === 'single') {
+        const isToolCall = entry.metadata?.type === 'tool_call' || entry.metadata?.type === 'tool_use'
+        const anchorId = isToolCall ? (entry.metadata?.id as string | undefined) : undefined
+        if (anchorId && buckets.has(anchorId) && !building.has(anchorId)) {
+          result.push(makeGroup(anchorId, entry.metadata?.input as Record<string, unknown> | undefined))
+          continue
+        }
+        result.push(entry)
+      } else {
+        // ToolCallGroupBlock: emit it, then splice any agent groups anchored inside it.
+        result.push(entry)
+        for (const sub of entry.entries) {
+          const anchorId = sub.metadata?.id as string | undefined
+          if (anchorId && buckets.has(anchorId) && !building.has(anchorId)) {
+            result.push(makeGroup(anchorId, sub.metadata?.input as Record<string, unknown> | undefined))
+          }
+        }
+      }
+    }
+    return result
+  }
+
+  const result = assemble(mainMessages)
+
+  // Append any groups whose anchor Task tool_call wasn't found (backward compat / race).
+  for (const parentKey of bucketOrder) {
+    if (!groupCache.has(parentKey)) {
+      result.push(makeGroup(parentKey))
+    }
+  }
+
+  return result
+}
+
+/** Recursively find an AgentGroup by its stable `key`. */
+export function findAgentGroup(entries: StreamEntry[], key: string): AgentGroup | null {
+  for (const entry of entries) {
+    if (entry.kind === 'agent') {
+      if (entry.key === key) return entry
+      const nested = findAgentGroup(entry.entries, key)
+      if (nested) return nested
+    }
+  }
+  return null
+}
+
+/** Compact token count: 39777 → "39.8k". */
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`
+  return String(n)
+}
+
+/** One-line usage summary for an agent group, e.g. "3 tools · 39.8k tokens" (null if none). */
+export function agentStatsLabel(group: AgentGroup): string | null {
+  const parts: string[] = []
+  const toolUses = group.usage?.toolUses
+  if (typeof toolUses === 'number') parts.push(`${toolUses} ${toolUses === 1 ? 'tool' : 'tools'}`)
+  const tokens = group.usage?.totalTokens
+  if (typeof tokens === 'number' && tokens > 0) parts.push(`${formatTokens(tokens)} tokens`)
+  if (group.status === 'running' && group.lastToolName) parts.push(group.lastToolName)
+  return parts.length ? parts.join(' · ') : null
+}
+
+/** Collect all currently-active (running) agent groups, flattened across nesting. */
+export function collectActiveAgents(entries: StreamEntry[]): AgentGroup[] {
+  const active: AgentGroup[] = []
+  const walk = (list: StreamEntry[]): void => {
+    for (const entry of list) {
+      if (entry.kind === 'agent') {
+        if (entry.status === 'running') active.push(entry)
+        walk(entry.entries)
+      }
+    }
+  }
+  walk(entries)
+  return active
+}
+
+export default function MessageStream({ threadId, sessionId, agentFilter, onIsolateAgent }: Props) {
   // Use session-based messages when sessionId is provided, otherwise fall back to thread-based
   const sessionMessages = useMessageStore((s) => sessionId ? s.messagesBySession[sessionId] : undefined)
   const threadMessages = useMessageStore((s) => s.messagesByThread[threadId])
@@ -189,7 +435,15 @@ export default function MessageStream({ threadId, sessionId }: Props) {
   const [showLatestButton, setShowLatestButton] = useState(false)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
 
-  const entries = useMemo(() => pairMessages(messages), [messages])
+  const allEntries = useMemo(() => groupByAgent(messages), [messages])
+  const isolatedGroup = useMemo(
+    () => (agentFilter ? findAgentGroup(allEntries, agentFilter) : null),
+    [allEntries, agentFilter]
+  )
+  const entries = useMemo(
+    () => (isolatedGroup ? isolatedGroup.entries : allEntries),
+    [isolatedGroup, allEntries]
+  )
   const isStreaming = status === 'running'
 
   // Compute how many rows to virtualize (all except the tail + current streaming turn)
@@ -321,7 +575,7 @@ export default function MessageStream({ threadId, sessionId }: Props) {
   useLayoutEffect(() => {
     const frame = requestAnimationFrame(() => rowVirtualizer.measure())
     return () => cancelAnimationFrame(frame)
-  }, [rowVirtualizer, threadId, sessionId, entries.length, virtualizedRowCount])
+  }, [rowVirtualizer, threadId, sessionId, entries.length, virtualizedRowCount, agentFilter])
 
   const measureVirtualRow = useCallback((node: HTMLDivElement | null) => {
     if (!node) return
@@ -371,6 +625,29 @@ export default function MessageStream({ threadId, sessionId }: Props) {
           </p>
         )}
 
+        {/* Isolated sub-agent header: label, description, and the full prompt it was given */}
+        {isolatedGroup && (
+          <div className="mb-3 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>SUBAGENT</span>
+              <span className="font-mono" style={{ fontSize: '0.8rem', color: 'var(--color-claude)' }}>{isolatedGroup.label}</span>
+              {isolatedGroup.description && (
+                <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{isolatedGroup.description}</span>
+              )}
+              {agentStatsLabel(isolatedGroup) && (
+                <span style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)', fontFamily: 'var(--font-mono)', opacity: 0.85, marginLeft: 'auto' }}>
+                  {agentStatsLabel(isolatedGroup)}
+                </span>
+              )}
+            </div>
+            {isolatedGroup.prompt && (
+              <div style={{ marginTop: 6 }}>
+                <AgentPrompt prompt={isolatedGroup.prompt} defaultOpen />
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Virtualized rows (historical messages) */}
         {virtualizedRowCount > 0 && (
           <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
@@ -386,7 +663,7 @@ export default function MessageStream({ threadId, sessionId }: Props) {
                   className="absolute left-0 top-0 w-full pb-2"
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
-                  {renderEntry(entry)}
+                  {renderEntry(entry, { onIsolateAgent })}
                 </div>
               )
             })}
@@ -397,7 +674,7 @@ export default function MessageStream({ threadId, sessionId }: Props) {
         <div ref={tailRef}>
           {nonVirtualizedEntries.map((entry) => (
             <div key={entry.key} data-entry-key={entry.key} className="pb-2">
-              {renderEntry(entry)}
+              {renderEntry(entry, { onIsolateAgent })}
             </div>
           ))}
         </div>

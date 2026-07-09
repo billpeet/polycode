@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import { useToastStore } from '../stores/toast'
@@ -9,6 +9,7 @@ import { useGitStore } from '../stores/git'
 import { OutputEvent, ThreadStatus } from '../types/ipc'
 import ThreadHeader from './ThreadHeader'
 import SessionTabs from './SessionTabs'
+import AgentTabs from './AgentTabs'
 import MessageStream from './MessageStream'
 import InputBar from './InputBar'
 import { formatErrorDetails } from '../lib/errorDetails'
@@ -38,6 +39,17 @@ export default function ThreadView({ threadId }: Props) {
   const fetchSessions = useSessionStore((s) => s.fetch)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
   const activeSessionId = useSessionStore((s) => s.activeSessionByThread[threadId])
+
+  // View isolation: null = full transcript with inline agent groups; otherwise the
+  // key of a single AgentGroup to show in isolation (driven by AgentTabs / group headers).
+  // Persists after the turn finishes so the isolated agent's tab (and the Main tab) stay
+  // reachable; AgentTabs keeps a Main tab visible whenever an agent is isolated.
+  const [isolatedAgentKey, setIsolatedAgentKey] = useState<string | null>(null)
+
+  // Reset isolation only when the thread/session changes.
+  useEffect(() => {
+    setIsolatedAgentKey(null)
+  }, [threadId, activeSessionId])
   const isPendingThread = useThreadStore((s) =>
     Object.values(s.byProject).some((threads) => (threads ?? []).some((thread) => thread.id === threadId && thread.is_pending))
   )
@@ -81,40 +93,44 @@ export default function ThreadView({ threadId }: Props) {
         appendEvent(threadId, event)
       }
 
-      // Intercept TodoWrite/todo_list/TaskCreate/TaskUpdate tool calls and update the todo store
-      if (event.type === 'tool_call') {
-        if (event.metadata?.name === 'TodoWrite') {
-          const input = event.metadata.input as { todos?: Todo[] } | undefined
-          if (Array.isArray(input?.todos)) {
-            useTodoStore.getState().setTodos(threadId, input.todos as Todo[])
+      // Intercept TodoWrite/todo_list/TaskCreate/TaskUpdate tool calls and update the todo store.
+      // Only main-scope activity drives the thread's todo panel — sub-agent todo activity
+      // is scoped to that sub-agent and must not overwrite the main thread's todos.
+      if (event.metadata?.agent_scope !== 'subagent') {
+        if (event.type === 'tool_call') {
+          if (event.metadata?.name === 'TodoWrite') {
+            const input = event.metadata.input as { todos?: Todo[] } | undefined
+            if (Array.isArray(input?.todos)) {
+              useTodoStore.getState().setTodos(threadId, input.todos as Todo[])
+            }
+          } else if (event.metadata?.name === 'TaskCreate') {
+            useTodoStore.getState().addTask(threadId, (event.metadata.input as Record<string, unknown> | undefined) ?? {})
+          } else if (event.metadata?.name === 'TaskUpdate') {
+            const input = (event.metadata.input as Record<string, unknown> | undefined) ?? {}
+            const taskId = typeof input.taskId === 'string' ? input.taskId : undefined
+            const status = input.status as Todo['status'] | undefined
+            if (taskId && (status === 'pending' || status === 'in_progress' || status === 'completed')) {
+              useTodoStore.getState().updateTask(threadId, taskId, status)
+            }
+          } else if (event.content === 'todo_list') {
+            const items = event.metadata?.items as { text: string; completed: boolean }[] | undefined
+            if (Array.isArray(items)) {
+              useTodoStore.getState().setTodos(
+                threadId,
+                items.map((item) => ({ content: item.text, activeForm: '', status: item.completed ? 'completed' : 'pending' }))
+              )
+            }
           }
-        } else if (event.metadata?.name === 'TaskCreate') {
-          useTodoStore.getState().addTask(threadId, (event.metadata.input as Record<string, unknown> | undefined) ?? {})
-        } else if (event.metadata?.name === 'TaskUpdate') {
-          const input = (event.metadata.input as Record<string, unknown> | undefined) ?? {}
-          const taskId = typeof input.taskId === 'string' ? input.taskId : undefined
-          const status = input.status as Todo['status'] | undefined
-          if (taskId && (status === 'pending' || status === 'in_progress' || status === 'completed')) {
-            useTodoStore.getState().updateTask(threadId, taskId, status)
-          }
-        } else if (event.content === 'todo_list') {
+        }
+        // Codex todo_list result carries the final completed states
+        if (event.type === 'tool_result') {
           const items = event.metadata?.items as { text: string; completed: boolean }[] | undefined
-          if (Array.isArray(items)) {
+          if (Array.isArray(items) && items.length > 0 && typeof items[0].text === 'string') {
             useTodoStore.getState().setTodos(
               threadId,
               items.map((item) => ({ content: item.text, activeForm: '', status: item.completed ? 'completed' : 'pending' }))
             )
           }
-        }
-      }
-      // Codex todo_list result carries the final completed states
-      if (event.type === 'tool_result') {
-        const items = event.metadata?.items as { text: string; completed: boolean }[] | undefined
-        if (Array.isArray(items) && items.length > 0 && typeof items[0].text === 'string') {
-          useTodoStore.getState().setTodos(
-            threadId,
-            items.map((item) => ({ content: item.text, activeForm: '', status: item.completed ? 'completed' : 'pending' }))
-          )
         }
       }
 
@@ -266,7 +282,20 @@ export default function ThreadView({ threadId }: Props) {
     <div className="relative flex flex-1 flex-col h-full overflow-hidden">
       <ThreadHeader threadId={threadId} />
       {!isPendingThread && <SessionTabs threadId={threadId} />}
-      <MessageStream threadId={threadId} sessionId={activeSessionId} />
+      {!isPendingThread && (
+        <AgentTabs
+          threadId={threadId}
+          sessionId={activeSessionId}
+          isolatedAgentKey={isolatedAgentKey}
+          onSelect={setIsolatedAgentKey}
+        />
+      )}
+      <MessageStream
+        threadId={threadId}
+        sessionId={activeSessionId}
+        agentFilter={isolatedAgentKey}
+        onIsolateAgent={setIsolatedAgentKey}
+      />
       <InputBar threadId={threadId} />
     </div>
   )

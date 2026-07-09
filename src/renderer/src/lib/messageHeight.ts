@@ -1,4 +1,4 @@
-import type { MessageEntry, MessageGroup } from '../components/MessageStream'
+import type { MessageEntry, MessageGroup, AgentGroup } from '../components/MessageStream'
 
 const LINE_HEIGHT_PX = 22
 const USER_BASE_HEIGHT_PX = 72
@@ -46,9 +46,14 @@ function estimateAssistantCharsPerLine(containerWidthPx: number | null): number 
 }
 
 export function estimateEntryHeight(
-  entry: MessageEntry | MessageGroup,
+  entry: MessageEntry | MessageGroup | AgentGroup,
   containerWidthPx: number | null
 ): number {
+  if (entry.kind === 'agent') {
+    // Collapsed header height; live expansion is measured via ResizeObserver.
+    return TOOL_GROUP_HEIGHT_PX
+  }
+
   if (entry.kind === 'group') {
     return TOOL_GROUP_HEIGHT_PX
   }
