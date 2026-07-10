@@ -138,8 +138,7 @@ export default function App() {
         return
       }
 
-      if (e.key === 't' || e.key === 'T') {
-        if (isInputField) return
+      if ((e.key === 't' || e.key === 'T') && !e.altKey && !e.shiftKey) {
         e.preventDefault()
         if (selectedProjectId) {
           const locations = useLocationStore.getState().byProject[selectedProjectId] ?? []
@@ -149,8 +148,7 @@ export default function App() {
             useThreadStore.getState().create(selectedProjectId, 'New thread', locationId)
           }
         }
-      } else if (e.key === 'w' || e.key === 'W') {
-        if (isInputField) return
+      } else if ((e.key === 'w' || e.key === 'W') && !e.altKey && !e.shiftKey) {
         e.preventDefault()
         useThreadStore.getState().select(null)
       } else if (e.key === 'k' || e.key === 'K') {
