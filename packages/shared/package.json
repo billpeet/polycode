@@ -1,0 +1,11 @@
+{
+  "name": "@polycode/shared",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dependency-free types and protocol logic shared by the PolyCode desktop and mobile apps. Consumed as raw TypeScript — no build step.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

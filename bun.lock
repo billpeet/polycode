@@ -39,6 +39,7 @@
         "zustand": "^5.0.11",
       },
       "devDependencies": {
+        "@polycode/shared": "workspace:*",
         "@sentry/vite-plugin": "^5.1.0",
         "@tailwindcss/vite": "^4.0.6",
         "@types/better-sqlite3": "^7.6.12",
@@ -59,6 +60,10 @@
         "typescript": "^5.9.3",
         "vite": "^8.0.0",
       },
+    },
+    "packages/shared": {
+      "name": "@polycode/shared",
+      "version": "0.1.0",
     },
   },
   "overrides": {
@@ -372,6 +377,8 @@
     "@pierre/diffs": ["@pierre/diffs@1.0.11", "", { "dependencies": { "@shikijs/core": "^3.0.0", "@shikijs/engine-javascript": "^3.0.0", "@shikijs/transformers": "^3.0.0", "diff": "8.0.3", "hast-util-to-html": "9.0.5", "lru_map": "0.4.1", "shiki": "^3.0.0" }, "peerDependencies": { "react": "^18.3.1 || ^19.0.0", "react-dom": "^18.3.1 || ^19.0.0" } }, "sha512-j6zIEoyImQy1HfcJqbrDwP0O5I7V2VNXAaw53FqQ+SykRfaNwABeZHs9uibXO4supaXPmTx6LEH9Lffr03e1Tw=="],
 
     "@pkgjs/parseargs": ["@pkgjs/parseargs@0.11.0", "", {}, "sha512-+1VkjdD0QBLPodGrJUeqarH8VAIvQODIbwh9XpP5Syisf7YoQgsJKPNFoqqLQlu+VQ/tVSshMR6loPMn8U+dPg=="],
+
+    "@polycode/shared": ["@polycode/shared@workspace:packages/shared"],
 
     "@prisma/instrumentation": ["@prisma/instrumentation@7.2.0", "", { "dependencies": { "@opentelemetry/instrumentation": "^0.207.0" }, "peerDependencies": { "@opentelemetry/api": "^1.8" } }, "sha512-Rh9Z4x5kEj1OdARd7U18AtVrnL6rmLSI0qYShaB4W7Wx5BKbgzndWF+QnuzMb7GLfVdlT5aYCXoPQVYuYtVu0g=="],
 
