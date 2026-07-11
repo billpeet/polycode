@@ -30,8 +30,11 @@ import {
 } from '@/components/ThreadControls'
 import { TodoBadge, TodoSheet } from '@/components/TodoPanel'
 import { Chip } from '@/components/ui'
+import { FileBrowser } from '@/components/FileBrowser'
+import { GitPanel } from '@/components/GitPanel'
 import { useInteractionsStore } from '@/stores/interactions'
 import { useMessagesStore } from '@/stores/messages'
+import { useProjectsStore } from '@/stores/projects'
 import { useThreadsStore } from '@/stores/threads'
 import { useTodosStore } from '@/stores/todos'
 import { colors, statusLabel } from '@/theme/colors'
@@ -86,7 +89,20 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
   const [showEffortPicker, setShowEffortPicker] = useState(false)
   const [showTodos, setShowTodos] = useState(false)
+  const [showGit, setShowGit] = useState(false)
+  const [showFiles, setShowFiles] = useState(false)
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
+
+  // The thread's repo location path drives the git panel and file browser.
+  // Only local locations are supported by the host-side git/files handlers.
+  const location = useProjectsStore((s) =>
+    thread?.location_id ? s.locationsByProject[projectId]?.find((l) => l.id === thread.location_id) : undefined,
+  )
+  const fetchLocations = useProjectsStore((s) => s.fetchLocations)
+  useEffect(() => {
+    void fetchLocations(projectId).catch(() => undefined)
+  }, [projectId, fetchLocations])
+  const repoPath = location?.path ?? null
 
   // Slash commands for the "/" popup (global + project scoped).
   useEffect(() => {
@@ -218,6 +234,16 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
             ) : null}
           </View>
         </View>
+        {repoPath ? (
+          <>
+            <Pressable onPress={() => setShowFiles(true)} hitSlop={8}>
+              <Text style={styles.headerIcon}>🗂</Text>
+            </Pressable>
+            <Pressable onPress={() => setShowGit(true)} hitSlop={8}>
+              <Text style={styles.headerIcon}>⎇</Text>
+            </Pressable>
+          </>
+        ) : null}
         <TodoBadge todos={todos ?? []} onPress={() => setShowTodos(true)} />
       </View>
 
@@ -297,6 +323,8 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       </Animated.View>
 
       <TodoSheet todos={todos ?? []} visible={showTodos} onClose={() => setShowTodos(false)} />
+      <GitPanel repoPath={repoPath} visible={showGit} onClose={() => setShowGit(false)} />
+      <FileBrowser rootPath={repoPath} visible={showFiles} onClose={() => setShowFiles(false)} />
 
       {/* Sheets */}
       {thread ? (
@@ -352,6 +380,7 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   menuIcon: { color: colors.text, fontSize: 20 },
+  headerIcon: { color: colors.textMuted, fontSize: 17 },
   title: { color: colors.text, fontSize: 16, fontWeight: '700' },
   statusText: { color: colors.textMuted, fontSize: 12 },
   rateLimitBanner: {

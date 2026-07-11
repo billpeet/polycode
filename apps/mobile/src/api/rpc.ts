@@ -1,6 +1,10 @@
 import type {
+  FileEntry,
+  GitStatus,
+  LastCommitInfo,
   Message,
   ModelOption,
+  PullResult,
   PermissionMode,
   PermissionRequest,
   Project,
@@ -64,6 +68,23 @@ export interface RpcChannelMap {
   'messages:listBySession': [[sessionId: string], Message[]]
 
   'slash-commands:list': [[projectId?: string | null], SlashCommand[]]
+
+  'git:branch': [[repoPath: string], string | null]
+  'git:status': [[repoPath: string], GitStatus | null]
+  'git:commit': [[repoPath: string, message: string], void]
+  'git:lastCommit': [[repoPath: string], LastCommitInfo | null]
+  'git:stage': [[repoPath: string, filePath: string], void]
+  'git:unstage': [[repoPath: string, filePath: string], void]
+  'git:stageAll': [[repoPath: string], void]
+  'git:unstageAll': [[repoPath: string], void]
+  'git:discardFile': [[repoPath: string, filePath: string, oldPath?: string | null], void]
+  'git:generateCommitMessage': [[repoPath: string], string]
+  'git:push': [[repoPath: string], void]
+  'git:pushSetUpstream': [[repoPath: string, branch: string], void]
+  'git:pull': [[repoPath: string, autoStash?: boolean], PullResult | void]
+
+  'files:list': [[dirPath: string], FileEntry[]]
+  'files:read': [[filePath: string], { content: string; truncated: boolean } | null]
 
   'models:claudeAvailable': [[threadId?: string], ModelOption[]]
   'models:codexAvailable': [[threadId?: string], ModelOption[]]
