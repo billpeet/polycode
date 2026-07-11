@@ -623,6 +623,17 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
         getWslConfigForThread(threadId),
       )
       session.sendMessage(content, options)
+      // Show the remote client's user message in the local renderer. Sent
+      // directly to this window (not via emitAppEvent) so it is NOT echoed
+      // back over the SSE stream — the originating device already rendered
+      // it optimistically and would merge the echo into a duplicate.
+      if (!window.webContents.isDestroyed()) {
+        window.webContents.send(`thread:output:${threadId}`, {
+          type: 'text',
+          content,
+          metadata: { role: 'user', source: 'remote_client' },
+        })
+      }
       const location = getLocationForThread(threadId)
       if (location) {
         getCachedGitBranch(location.path, location.ssh, location.wsl)

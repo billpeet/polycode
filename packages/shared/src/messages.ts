@@ -53,6 +53,12 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
   const sameScope = agentKey(previousMetadata) === agentKey(nextMetadata)
 
   if (event.type === 'text') {
+    // User-role events (question answers, remote-client sends) are discrete
+    // messages, never streaming chunks — don't merge them into the previous
+    // bubble or fuse consecutive user messages together.
+    if (nextMetadata?.role === 'user' || previousMetadata?.role === 'user') {
+      return [...messages, incoming]
+    }
     const previousType = previousMetadata?.type
     if (!previousType && sameScope) {
       return [

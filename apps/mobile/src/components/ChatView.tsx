@@ -13,6 +13,7 @@ import {
 } from '@polycode/shared'
 import { channels, onChannel } from '@/api/events'
 import { sseManager } from '@/api/sse'
+import { useKeyboardHeight } from '@/lib/useKeyboardHeight'
 import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banners'
 import { InputBar } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
@@ -70,6 +71,11 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
   const insets = useSafeAreaInsets()
+  const keyboardHeight = useKeyboardHeight()
+  // Android edge-to-edge: the keyboard overlays the app, so pad the layout
+  // up manually. iOS is handled by KeyboardAvoidingView's padding behavior.
+  const bottomPad =
+    Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight : insets.bottom
 
   const status: ThreadStatus = thread?.status ?? 'idle'
 
@@ -239,7 +245,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         ) : null}
 
         <InputBar status={status} onSend={handleSend} onStop={handleStop} />
-        <View style={{ height: insets.bottom, backgroundColor: colors.surface }} />
+        <View style={{ height: bottomPad, backgroundColor: colors.surface }} />
       </KeyboardAvoidingView>
 
       {/* Sheets */}
