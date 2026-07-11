@@ -27,7 +27,15 @@ export function endpoint(baseUrl: string, path: string): string {
 }
 
 export function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error)
+  const message = error instanceof Error ? error.message : String(error)
+  // AbortController timeouts surface as opaque "cancelled" errors.
+  if (
+    (error instanceof Error && error.name === 'AbortError') ||
+    /abort|cancell?ed/i.test(message)
+  ) {
+    return 'Connection timed out — host unreachable'
+  }
+  return message
 }
 
 async function readJsonResponse(response: Response): Promise<RpcResponse> {
@@ -46,15 +54,20 @@ export async function rpcRequest(host: HostConnection, channel: string, args: un
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 30_000)
   try {
-    const response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${host.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ channel, args }),
-      signal: controller.signal,
-    })
+    let response: Response
+    try {
+      response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${host.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ channel, args }),
+        signal: controller.signal,
+      })
+    } catch (error) {
+      throw new Error(errorMessage(error))
+    }
     const body = await readJsonResponse(response)
     if (!response.ok || !body.ok) {
       throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
