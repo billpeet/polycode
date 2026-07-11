@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { RemoteConnectionStatus, RemoteHost, RemoteHostInput, RemoteServerConfig } from '../types/ipc'
+import QRCode from 'qrcode'
+import { RemoteConnectionStatus, RemoteHost, RemoteHostInput, RemotePairingInfo, RemoteServerConfig } from '../types/ipc'
 
 const DEFAULT_SERVER: RemoteServerConfig = {
   enabled: false,
@@ -32,6 +33,127 @@ function secondaryButtonStyle() {
     border: '1px solid var(--color-border)',
     color: 'var(--color-text-muted)',
   }
+}
+
+/**
+ * Mobile pairing QR code for the saved server config. The payload embeds the
+ * bearer token, so it stays collapsed behind an explicit reveal toggle.
+ */
+function PairingQrSection({
+  server,
+  onBindToAllInterfaces,
+}: {
+  server: RemoteServerConfig
+  onBindToAllInterfaces: () => void
+}) {
+  const [show, setShow] = useState(false)
+  const [info, setInfo] = useState<RemotePairingInfo | null>(null)
+  const [selectedIp, setSelectedIp] = useState<string | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
+
+  const isLoopback = server.host === '127.0.0.1' || server.host === 'localhost' || server.host === '::1'
+  const bindsAll = server.host === '0.0.0.0' || server.host === '::' || server.host === ''
+  const pairingIp = !isLoopback && !bindsAll ? server.host : (selectedIp ?? info?.addresses[0] ?? null)
+
+  useEffect(() => {
+    if (!show || isLoopback) return
+    window.api
+      .invoke('remote:getPairingInfo')
+      .then(setInfo)
+      .catch(() => setInfo({ addresses: [], hostname: 'PolyCode' }))
+  }, [show, isLoopback])
+
+  useEffect(() => {
+    if (!show || isLoopback || !pairingIp || !server.token) {
+      setQrDataUrl(null)
+      return
+    }
+    const params = new URLSearchParams()
+    params.set('v', '1')
+    params.set('url', `http://${pairingIp}:${server.port}`)
+    params.set('token', server.token)
+    params.set('name', info?.hostname ?? 'PolyCode')
+    const payload = `polycode://pair?${params.toString()}`
+    let cancelled = false
+    QRCode.toDataURL(payload, { width: 220, margin: 1, color: { dark: '#0f0f0f', light: '#e8e8e8' } })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl)
+      })
+      .catch(() => setQrDataUrl(null))
+    return () => {
+      cancelled = true
+    }
+  }, [show, isLoopback, pairingIp, server.port, server.token, info?.hostname])
+
+  if (!server.enabled || !server.token) return null
+
+  return (
+    <div className="flex flex-col gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+          Mobile pairing
+        </span>
+        <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} onClick={() => setShow((v) => !v)}>
+          {show ? 'Hide QR' : 'Show pairing QR'}
+        </button>
+      </div>
+
+      {show && isLoopback && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>
+            The server is bound to {server.host} and is unreachable from your phone. Bind it to all interfaces
+            (0.0.0.0) and save to enable pairing.
+          </p>
+          <button
+            className="w-fit rounded px-2 py-1 text-xs font-medium"
+            style={{ background: 'var(--color-claude)', color: '#fff' }}
+            onClick={onBindToAllInterfaces}
+          >
+            Bind to 0.0.0.0 and save
+          </button>
+        </div>
+      )}
+
+      {show && !isLoopback && (
+        <div className="flex flex-col items-start gap-2">
+          {bindsAll && (info?.addresses.length ?? 0) > 1 && (
+            <div className="flex flex-wrap gap-1">
+              {info!.addresses.map((address) => (
+                <button
+                  key={address}
+                  className="rounded px-2 py-0.5 text-xs"
+                  style={{
+                    ...secondaryButtonStyle(),
+                    ...(address === pairingIp ? { borderColor: 'var(--color-claude)', color: 'var(--color-text)' } : {}),
+                  }}
+                  onClick={() => setSelectedIp(address)}
+                >
+                  {address}
+                </button>
+              ))}
+            </div>
+          )}
+          {qrDataUrl && pairingIp ? (
+            <>
+              <img src={qrDataUrl} alt="PolyCode pairing QR code" className="rounded" width={220} height={220} />
+              <p className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>
+                http://{pairingIp}:{server.port}
+              </p>
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                Scan with the PolyCode mobile app. The code contains this machine's access token — don't share it.
+              </p>
+            </>
+          ) : (
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              {info && info.addresses.length === 0
+                ? 'No LAN address detected on this machine.'
+                : 'Generating…'}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  )
 }
 
 export function RemoteControlPanel({ hideHeader }: Props) {
@@ -71,8 +193,9 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     setActiveHostState(active)
   }
 
-  async function saveServer(): Promise<void> {
-    if (server.port < 1024 || server.port > 65535) {
+  async function saveServer(config?: RemoteServerConfig): Promise<void> {
+    const next = config ?? server
+    if (next.port < 1024 || next.port > 65535) {
       setError('Port must be between 1024 and 65535')
       return
     }
@@ -80,7 +203,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     setError(null)
     setStatus(null)
     try {
-      const saved = await window.api.invoke('remote:setServerConfig', server)
+      const saved = await window.api.invoke('remote:setServerConfig', next)
       setServer(saved)
       setStatus(saved.enabled ? 'Remote host server is running.' : 'Remote host server is stopped.')
     } catch (err) {
@@ -226,6 +349,11 @@ export function RemoteControlPanel({ hideHeader }: Props) {
         >
           {savingServer ? 'Saving...' : 'Save Host Server'}
         </button>
+
+        <PairingQrSection
+          server={server}
+          onBindToAllInterfaces={() => void saveServer({ ...server, host: '0.0.0.0' })}
+        />
       </section>
 
       <section className="flex flex-col gap-3">

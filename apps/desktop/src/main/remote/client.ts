@@ -3,6 +3,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { getSetting, setSetting } from '../db/queries'
 import { CONTROL_RPC_CHANNELS } from '../control/control-rpc'
 import { readRemoteServerConfig, saveRemoteServerConfig } from './config'
+import { getPairingInfo } from './lan'
 import { restartRemoteControlServer } from './server'
 import { emitAppEvent } from '../app-events'
 import {
@@ -348,6 +349,10 @@ export function registerRemoteControlIpcHandlers(window: BrowserWindow): RemoteC
     })
     restartRemoteControlServer(saved, window)
     return saved
+  })
+
+  ipcMain.handle('remote:getPairingInfo', () => {
+    return getPairingInfo()
   })
 
   ipcMain.handle('remote:getHosts', () => {

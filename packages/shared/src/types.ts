@@ -93,6 +93,12 @@ export interface RemoteConnectionStatus {
   error?: string
 }
 
+/** LAN info used to render the mobile pairing QR code on the desktop. */
+export interface RemotePairingInfo {
+  addresses: string[]
+  hostname: string
+}
+
 export const ANTHROPIC_MODELS = [
   { id: 'claude-fable-5[1m]', label: 'Fable 5', contextWindow: 1_000_000 },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
