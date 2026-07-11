@@ -5,7 +5,7 @@
  * with stdout/stderr/exit-code extraction and result diff blocks.
  */
 import { memo, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native'
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { stripAnsi } from '@/lib/diff'
 import { colors } from '@/theme/colors'
 import { EditDiffView } from './EditDiffView'
@@ -197,7 +197,9 @@ export const STATUS_VISUALS: Record<
 // ── Body pieces ──────────────────────────────────────────────────────────────
 
 const CLAUDE_LINE_RE = /^ *(\d+)→(.*)$/
-const MAX_BODY_LINES = 60
+const MAX_BODY_LINES = 300
+/** Desktop caps expanded bodies at ~400px with inner scroll — same here. */
+export const BLOCK_BODY_MAX_HEIGHT = 400
 
 /** Plain output body: ANSI-stripped, Claude numbered-line gutter when detected. */
 function BodyContent({ text }: { text: string }) {
@@ -469,7 +471,11 @@ export const ToolCallBlock = memo(function ToolCallBlock(props: ToolCallProps) {
       </Pressable>
 
       {expanded ? (
-        <View style={blockStyles.body}>
+        <ScrollView
+          style={{ maxHeight: BLOCK_BODY_MAX_HEIGHT }}
+          nestedScrollEnabled
+          contentContainerStyle={blockStyles.body}
+        >
           {hasMeaningfulInput(input) ? <InputBody toolName={toolName} input={input} /> : null}
 
           {resultDiffs.length > 0 ? (
@@ -489,7 +495,7 @@ export const ToolCallBlock = memo(function ToolCallBlock(props: ToolCallProps) {
           ) : null}
 
           {status === 'pending' ? <Text style={blockStyles.pending}>Running…</Text> : null}
-        </View>
+        </ScrollView>
       ) : null}
     </View>
   )

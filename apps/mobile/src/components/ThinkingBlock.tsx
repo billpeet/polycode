@@ -1,9 +1,10 @@
 import { memo, useState } from 'react'
-import { Pressable, StyleSheet, Text, View } from 'react-native'
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { colors } from '@/theme/colors'
 
 /** Desktop parity: purple accent, ◌ icon, 200-char collapsed preview. */
 const TRUNCATE_LENGTH = 200
+const EXPANDED_MAX_HEIGHT = 320
 
 export const ThinkingBlock = memo(function ThinkingBlock(props: { content: string; subagent?: boolean }) {
   const [expanded, setExpanded] = useState(false)
@@ -18,9 +19,15 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: { content: strin
           <Text style={styles.label}>Thinking</Text>
           <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text>
         </View>
-        <Text style={styles.content} selectable={expanded}>
-          {expanded ? props.content : preview}
-        </Text>
+        {expanded ? (
+          <ScrollView style={{ maxHeight: EXPANDED_MAX_HEIGHT }} nestedScrollEnabled>
+            <Text style={styles.content} selectable>
+              {props.content}
+            </Text>
+          </ScrollView>
+        ) : (
+          <Text style={styles.content}>{preview}</Text>
+        )}
       </View>
     </Pressable>
   )

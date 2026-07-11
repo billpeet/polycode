@@ -18,7 +18,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { useThreadsStore } from '@/stores/threads'
 import { useUiStore } from '@/stores/ui'
 import { colors } from '@/theme/colors'
-import { StatusDot } from './StatusDot'
+import { ThreadStatusIndicator } from './StatusDot'
 import { NewThreadModal, RenameThreadModal } from './ThreadModals'
 
 const SIDEBAR_WIDTH = Math.min(320, Dimensions.get('window').width * 0.85)
@@ -51,7 +51,7 @@ function ThreadRow(props: {
         pressed && { opacity: 0.7 },
       ]}
     >
-      <StatusDot status={thread.status} size={7} />
+      <ThreadStatusIndicator status={thread.status} unread={thread.unread} size={7} />
       <Text
         style={[
           styles.threadName,
