@@ -1,5 +1,4 @@
-import { useState } from 'react'
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { Todo } from '@polycode/shared'
 import { colors } from '@/theme/colors'
 
@@ -15,69 +14,91 @@ function todoIcon(status: Todo['status']): { icon: string; color: string } {
   }
 }
 
-export function TodoPanel(props: { todos: Todo[] }) {
-  const [expanded, setExpanded] = useState(false)
+/** Compact header chip: "☑ 3/16" — hidden entirely when there are no tasks. */
+export function TodoBadge(props: { todos: Todo[]; onPress: () => void }) {
   const { todos } = props
   if (todos.length === 0) return null
-
   const completed = todos.filter((t) => t.status === 'completed').length
-  const active = todos.find((t) => t.status === 'in_progress')
+  const anyRunning = todos.some((t) => t.status === 'in_progress')
+  return (
+    <Pressable onPress={props.onPress} hitSlop={8} style={({ pressed }) => [styles.badge, pressed && { opacity: 0.7 }]}>
+      <Text style={[styles.badgeIcon, anyRunning && { color: colors.claude }]}>☑</Text>
+      <Text style={styles.badgeText}>
+        {completed}/{todos.length}
+      </Text>
+    </Pressable>
+  )
+}
+
+/** Bottom-sheet task list, opened from the header badge. */
+export function TodoSheet(props: { todos: Todo[]; visible: boolean; onClose: () => void }) {
+  const { todos, visible, onClose } = props
+  const completed = todos.filter((t) => t.status === 'completed').length
 
   return (
-    <View style={styles.container}>
-      <Pressable onPress={() => setExpanded((v) => !v)} style={styles.header}>
-        <Text style={styles.count}>
-          Tasks {completed}/{todos.length}
-        </Text>
-        {!expanded && active ? (
-          <Text style={styles.active} numberOfLines={1}>
-            {active.activeForm || active.content}
-          </Text>
-        ) : null}
-        <Text style={styles.chevron}>{expanded ? '▾' : '▸'}</Text>
+    <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.backdrop} onPress={onClose}>
+        <Pressable style={styles.sheet} onPress={() => undefined}>
+          <View style={styles.sheetHeader}>
+            <Text style={styles.sheetTitle}>Tasks</Text>
+            <Text style={styles.sheetCount}>
+              {completed}/{todos.length}
+            </Text>
+          </View>
+          <ScrollView contentContainerStyle={{ gap: 8, paddingBottom: 12 }} style={{ maxHeight: 480 }}>
+            {todos.map((todo, index) => {
+              const { icon, color } = todoIcon(todo.status)
+              return (
+                <View key={todo.id ?? index} style={styles.todoRow}>
+                  <Text style={[styles.todoIcon, { color }]}>{icon}</Text>
+                  <Text
+                    style={[
+                      styles.todoText,
+                      todo.status === 'completed' && { color: colors.textMuted, textDecorationLine: 'line-through' },
+                      todo.status === 'in_progress' && { color: colors.text, fontWeight: '600' },
+                    ]}
+                  >
+                    {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
+                  </Text>
+                </View>
+              )
+            })}
+          </ScrollView>
+        </Pressable>
       </Pressable>
-      {expanded ? (
-        <ScrollView style={{ maxHeight: 220 }} contentContainerStyle={{ gap: 6, paddingBottom: 8, paddingHorizontal: 12 }}>
-          {todos.map((todo, index) => {
-            const { icon, color } = todoIcon(todo.status)
-            return (
-              <View key={todo.id ?? index} style={styles.todoRow}>
-                <Text style={[styles.todoIcon, { color }]}>{icon}</Text>
-                <Text
-                  style={[
-                    styles.todoText,
-                    todo.status === 'completed' && { color: colors.textMuted, textDecorationLine: 'line-through' },
-                    todo.status === 'in_progress' && { color: colors.text, fontWeight: '600' },
-                  ]}
-                >
-                  {todo.status === 'in_progress' && todo.activeForm ? todo.activeForm : todo.content}
-                </Text>
-              </View>
-            )
-          })}
-        </ScrollView>
-      ) : null}
-    </View>
+    </Modal>
   )
 }
 
 const styles = StyleSheet.create({
-  container: {
-    borderTopWidth: 1,
-    borderTopColor: colors.border,
-    backgroundColor: colors.surface,
-  },
-  header: {
+  badge: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 12,
-    paddingVertical: 8,
+    gap: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingHorizontal: 9,
+    paddingVertical: 4,
+    backgroundColor: colors.surface2,
   },
-  count: { color: colors.text, fontSize: 12.5, fontWeight: '700' },
-  active: { color: colors.textMuted, fontSize: 12.5, flex: 1, fontStyle: 'italic' },
-  chevron: { color: colors.textMuted, fontSize: 12, marginLeft: 'auto' },
-  todoRow: { flexDirection: 'row', gap: 8, alignItems: 'flex-start' },
-  todoIcon: { fontSize: 13, width: 16, textAlign: 'center' },
-  todoText: { color: colors.textMuted, fontSize: 13, flex: 1, lineHeight: 18 },
+  badgeIcon: { color: colors.textMuted, fontSize: 12 },
+  badgeText: { color: colors.text, fontSize: 12, fontWeight: '600' },
+  backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 18,
+    paddingBottom: 28,
+    gap: 12,
+  },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sheetTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
+  sheetCount: { color: colors.textMuted, fontSize: 13, fontWeight: '600' },
+  todoRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
+  todoIcon: { fontSize: 14, width: 18, textAlign: 'center' },
+  todoText: { color: colors.textMuted, fontSize: 13.5, flex: 1, lineHeight: 19 },
 })

@@ -19,7 +19,7 @@ import { InputBar } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
 import { StatusDot } from '@/components/StatusDot'
 import { ModelPickerSheet, PermissionModeSheet } from '@/components/ThreadControls'
-import { TodoPanel } from '@/components/TodoPanel'
+import { TodoBadge, TodoSheet } from '@/components/TodoPanel'
 import { Chip } from '@/components/ui'
 import { useInteractionsStore } from '@/stores/interactions'
 import { useMessagesStore } from '@/stores/messages'
@@ -70,6 +70,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
+  const [showTodos, setShowTodos] = useState(false)
   const insets = useSafeAreaInsets()
   // Precise IME tracking (native inset animation via Reanimated) — the
   // Keyboard-event heights under-report on some edge-to-edge devices.
@@ -186,6 +187,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
             ) : null}
           </View>
         </View>
+        <TodoBadge todos={todos ?? []} onPress={() => setShowTodos(true)} />
       </View>
 
       {/* Controls */}
@@ -206,8 +208,6 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         <View style={{ flex: 1, backgroundColor: colors.bg }}>
           <MessageList messages={messages} />
         </View>
-
-        <TodoPanel todos={todos ?? []} />
 
         {status === 'plan_pending' ? (
           <PlanBanner
@@ -244,6 +244,8 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
         <InputBar status={status} onSend={handleSend} onStop={handleStop} />
       </Animated.View>
+
+      <TodoSheet todos={todos ?? []} visible={showTodos} onClose={() => setShowTodos(false)} />
 
       {/* Sheets */}
       {thread ? (
