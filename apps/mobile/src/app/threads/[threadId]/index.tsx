@@ -160,8 +160,10 @@ export default function ThreadScreen() {
 
   if (!threadId) return <View style={styles.screen} />
 
-  const inputTokens = usage?.input_tokens ?? thread?.input_tokens ?? 0
-  const contextPercent = contextLimit > 0 ? Math.min(100, Math.round((inputTokens / contextLimit) * 100)) : 0
+  // context_window on usage/thread = tokens currently in the context window
+  // (input_tokens is the cumulative total across the session — not what we want).
+  const contextTokens = usage?.context_window ?? thread?.context_window ?? 0
+  const contextPercent = contextLimit > 0 ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0
 
   const handleSend = (content: string, planMode: boolean) => {
     appendUserMessage(threadId, content)
@@ -188,9 +190,9 @@ export default function ThreadScreen() {
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <StatusDot status={status} size={7} />
             <Text style={styles.statusText}>{statusLabel(status)}</Text>
-            {inputTokens > 0 ? (
+            {contextTokens > 0 ? (
               <Text style={styles.statusText}>
-                · {formatTokens(inputTokens)} tok ({contextPercent}%)
+                · {formatTokens(contextTokens)} ctx ({contextPercent}%)
               </Text>
             ) : null}
           </View>
