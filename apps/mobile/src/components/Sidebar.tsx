@@ -20,6 +20,7 @@ import { useThreadsStore } from '@/stores/threads'
 import { useUiStore } from '@/stores/ui'
 import { colors } from '@/theme/colors'
 import { ThreadStatusIndicator } from './StatusDot'
+import { CommandsPanel } from './CommandsPanel'
 import { NewThreadModal, RenameThreadModal } from './ThreadModals'
 
 const SIDEBAR_WIDTH = Math.min(320, Dimensions.get('window').width * 0.85)
@@ -139,6 +140,7 @@ function ProjectSection(props: {
   onNewThread: (projectId: string) => void
   onThreadLongPress: (projectId: string, thread: Thread) => void
   onShowArchived: (projectId: string) => void
+  onShowCommands: (projectId: string) => void
 }) {
   const { project } = props
   const expanded = useUiStore((s) => s.expandedProjectIds.includes(project.id))
@@ -234,6 +236,12 @@ function ProjectSection(props: {
           >
             <Text style={styles.newThreadText}>＋ New thread</Text>
           </Pressable>
+          <Pressable
+            onPress={() => props.onShowCommands(project.id)}
+            style={({ pressed }) => [styles.newThreadRow, pressed && { opacity: 0.7 }]}
+          >
+            <Text style={styles.archivedLink}>▶ Commands</Text>
+          </Pressable>
           {archivedTotal > 0 ? (
             <Pressable
               onPress={() => props.onShowArchived(project.id)}
@@ -261,6 +269,7 @@ export function Sidebar() {
   const [newThreadProjectId, setNewThreadProjectId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
+  const [commandsProjectId, setCommandsProjectId] = useState<string | null>(null)
 
   const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current
   const [rendered, setRendered] = useState(open)
@@ -326,6 +335,8 @@ export function Sidebar() {
         <NewThreadModal projectId={newThreadProjectId} onClose={() => setNewThreadProjectId(null)} />
         <RenameThreadModal target={renameTarget} onClose={() => setRenameTarget(null)} />
       <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
+      <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
+        <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
         <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       </>
     )
@@ -363,6 +374,7 @@ export function Sidebar() {
                 onNewThread={setNewThreadProjectId}
                 onThreadLongPress={handleThreadLongPress}
                 onShowArchived={setArchivedProjectId}
+                onShowCommands={setCommandsProjectId}
               />
             ))}
             {projects.length === 0 ? (

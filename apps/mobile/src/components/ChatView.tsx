@@ -22,6 +22,7 @@ import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banne
 import { InputBar } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
 import { StatusDot } from '@/components/StatusDot'
+import { SessionTabs } from '@/components/SessionTabs'
 import {
   ModelPickerSheet,
   PermissionModeSheet,
@@ -35,6 +36,8 @@ import { GitPanel } from '@/components/GitPanel'
 import { useInteractionsStore } from '@/stores/interactions'
 import { useMessagesStore } from '@/stores/messages'
 import { useProjectsStore } from '@/stores/projects'
+import { useSessionsStore } from '@/stores/sessions'
+import { useUiStore } from '@/stores/ui'
 import { useThreadsStore } from '@/stores/threads'
 import { useTodosStore } from '@/stores/todos'
 import { colors, statusLabel } from '@/theme/colors'
@@ -148,6 +151,16 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
     return sseManager.onConnect(refetchAll)
   }, [refetchAll])
 
+  // Session tabs: load the list, follow active-session switches from any device.
+  const fetchSessions = useSessionsStore((s) => s.fetch)
+  useEffect(() => {
+    void fetchSessions(threadId).catch(() => undefined)
+    return onChannel(channels.threadSessionSwitched(threadId), () => {
+      void fetchSessions(threadId).catch(() => undefined)
+      refetchAll()
+    })
+  }, [threadId, fetchSessions, refetchAll])
+
   // Live event wiring for this thread.
   useEffect(() => {
     const offOutput = onChannel(channels.threadOutput(threadId), (_channel, rawEvent) => {
@@ -169,6 +182,8 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       // Replace streamed bubbles with persisted rows once the turn finishes.
       refetchAll()
       interactions.clear(threadId)
+      // Resets create new sessions; keep the tab strip current.
+      void useSessionsStore.getState().fetch(threadId).catch(() => undefined)
     })
 
     return () => {
@@ -213,6 +228,41 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
     stopThread(threadId).catch((error: unknown) => Alert.alert('Stop failed', errorText(error)))
   }
 
+  // Long-press the header title for thread actions (same menu as the sidebar).
+  const showThreadActions = () => {
+    if (!thread) return
+    const store = useThreadsStore.getState()
+    const closeThread = () => useUiStore.getState().clearSelection()
+    Alert.alert(thread.name, undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset session',
+        onPress: () =>
+          Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Reset', style: 'destructive', onPress: () => void store.reset(threadId) },
+          ]),
+      },
+      {
+        text: 'Archive',
+        onPress: () => void store.archive(projectId, threadId).then(closeThread).catch((e: unknown) => Alert.alert('Archive failed', errorText(e))),
+      },
+      {
+        text: 'Delete',
+        style: 'destructive',
+        onPress: () =>
+          Alert.alert('Delete thread?', `Permanently delete "${thread.name}" and its messages?`, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: 'Delete',
+              style: 'destructive',
+              onPress: () => void store.remove(projectId, threadId).then(closeThread).catch((e: unknown) => Alert.alert('Delete failed', errorText(e))),
+            },
+          ]),
+      },
+    ])
+  }
+
   return (
     <View style={styles.screen}>
       {/* Header */}
@@ -220,7 +270,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         <Pressable onPress={onOpenSidebar} hitSlop={10}>
           <Text style={styles.menuIcon}>☰</Text>
         </Pressable>
-        <View style={{ flex: 1, gap: 2 }}>
+        <Pressable style={{ flex: 1, gap: 2 }} onLongPress={showThreadActions}>
           <Text style={styles.title} numberOfLines={1}>
             {thread?.name ?? 'Thread'}
           </Text>
@@ -233,7 +283,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
               </Text>
             ) : null}
           </View>
-        </View>
+        </Pressable>
         {repoPath ? (
           <>
             <Pressable onPress={() => setShowFiles(true)} hitSlop={8}>
@@ -246,6 +296,8 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         ) : null}
         <TodoBadge todos={todos ?? []} onPress={() => setShowTodos(true)} />
       </View>
+
+      <SessionTabs threadId={threadId} onSwitched={refetchAll} />
 
       {/* Messages */}
       <Animated.View style={[{ flex: 1, backgroundColor: colors.surface }, keyboardPadStyle]}>

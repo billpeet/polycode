@@ -69,6 +69,9 @@ export const channels = {
   threadTitle: (threadId: string) => `thread:title:${threadId}`,
   threadPid: (threadId: string) => `thread:pid:${threadId}`,
   threadSessionSwitched: (threadId: string) => `thread:session-switched:${threadId}`,
+  commandStatus: (commandId: string, locationId: string) => `command:status:${commandId}-${locationId}`,
+  commandLog: (commandId: string, locationId: string) => `command:log:${commandId}-${locationId}`,
+  commandPorts: (commandId: string, locationId: string) => `command:ports:${commandId}-${locationId}`,
 } as const
 
 export const channelPrefixes = {

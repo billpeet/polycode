@@ -1,9 +1,12 @@
 import type {
+  CommandLogLine,
+  CommandStatus,
   FileEntry,
   GitStatus,
   LastCommitInfo,
   Message,
   ModelOption,
+  ProjectCommand,
   PullResult,
   PermissionMode,
   PermissionRequest,
@@ -63,6 +66,7 @@ export interface RpcChannelMap {
 
   'sessions:list': [[threadId: string], Session[]]
   'sessions:getActive': [[threadId: string], Session | null]
+  'sessions:switch': [[threadId: string, sessionId: string], void]
 
   'messages:list': [[threadId: string], Message[]]
   'messages:listBySession': [[sessionId: string], Message[]]
@@ -85,6 +89,14 @@ export interface RpcChannelMap {
 
   'files:list': [[dirPath: string], FileEntry[]]
   'files:read': [[filePath: string], { content: string; truncated: boolean } | null]
+
+  'commands:list': [[projectId: string], ProjectCommand[]]
+  'commands:start': [[commandId: string, locationId: string], void]
+  'commands:stop': [[commandId: string, locationId: string], void]
+  'commands:restart': [[commandId: string, locationId: string], void]
+  'commands:getStatus': [[commandId: string, locationId: string], CommandStatus]
+  'commands:getLogs': [[commandId: string, locationId: string], CommandLogLine[]]
+  'commands:getPorts': [[commandId: string, locationId: string], number[]]
 
   'models:claudeAvailable': [[threadId?: string], ModelOption[]]
   'models:codexAvailable': [[threadId?: string], ModelOption[]]
