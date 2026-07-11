@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   DEFAULT_CONTEXT_LIMIT,
   MODEL_CONTEXT_LIMITS,
@@ -68,6 +69,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
+  const insets = useSafeAreaInsets()
 
   const status: ThreadStatus = thread?.status ?? 'idle'
 
@@ -237,6 +239,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         ) : null}
 
         <InputBar status={status} onSend={handleSend} onStop={handleStop} />
+        <View style={{ height: insets.bottom, backgroundColor: colors.surface }} />
       </KeyboardAvoidingView>
 
       {/* Sheets */}

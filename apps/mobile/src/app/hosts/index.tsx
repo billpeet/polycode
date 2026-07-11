@@ -2,6 +2,7 @@ import { useRouter } from 'expo-router'
 import { useCallback, useEffect } from 'react'
 import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native'
 import { useState } from 'react'
+import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { useHostsStore, type HostMeta } from '@/stores/hosts'
 import { useProjectsStore } from '@/stores/projects'
@@ -59,6 +60,7 @@ function HostCard(props: { host: HostMeta }) {
 
 export default function HostsScreen() {
   const router = useRouter()
+  const insets = useSafeAreaInsets()
   const hosts = useHostsStore((s) => s.hosts)
   const hydrated = useHostsStore((s) => s.hydrated)
   const checkHealth = useHostsStore((s) => s.checkHealth)
@@ -92,7 +94,7 @@ export default function HostsScreen() {
           />
         }
       />
-      <View style={styles.footer}>
+      <View style={[styles.footer, { paddingBottom: 16 + insets.bottom }]}>
         <Button title="Scan QR Code" variant="secondary" onPress={() => router.push('/hosts/scan')} style={{ flex: 1 }} />
         <Button title="Add Host" onPress={() => router.push('/hosts/new')} style={{ flex: 1 }} />
       </View>
