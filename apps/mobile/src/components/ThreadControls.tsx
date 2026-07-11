@@ -105,6 +105,16 @@ export function ModelPickerSheet(props: {
 
 const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
+/**
+ * Desktop parity: 'off' means "provider default" for Claude/OpenCode/Cursor
+ * (their CLIs pick an effort when none is forced) and "reasoning off" for
+ * Codex/Pi.
+ */
+export function effortLabel(provider: string, level: ReasoningLevel): string {
+  if (level !== 'off') return level
+  return provider === 'claude-code' || provider === 'opencode' || provider === 'cursor' ? 'default' : 'off'
+}
+
 /** Levels supported by the thread's current model (static catalog), or the full set for unknown models. */
 export function reasoningLevelsForThread(thread: Thread): ReasoningLevel[] {
   const options = getModelsForProvider(thread.provider as Provider)
@@ -115,6 +125,7 @@ export function reasoningLevelsForThread(thread: Thread): ReasoningLevel[] {
 export function ReasoningLevelSheet(props: {
   current: ReasoningLevel
   levels: ReasoningLevel[]
+  provider: string
   visible: boolean
   onClose: () => void
   onSelect: (level: ReasoningLevel) => void
@@ -128,7 +139,7 @@ export function ReasoningLevelSheet(props: {
             {props.levels.map((level) => (
               <Chip
                 key={level}
-                label={level}
+                label={effortLabel(props.provider, level)}
                 active={props.current === level}
                 onPress={() => {
                   props.onSelect(level)

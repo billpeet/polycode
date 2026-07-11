@@ -27,6 +27,7 @@ import {
   ModelPickerSheet,
   PermissionModeSheet,
   ReasoningLevelSheet,
+  effortLabel,
   reasoningLevelsForThread,
 } from '@/components/ThreadControls'
 import { TodoBadge, TodoSheet } from '@/components/TodoPanel'
@@ -367,7 +368,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
                 <Chip label={providerLabel(thread.provider)} onPress={() => setShowModelPicker(true)} />
                 <Chip label={modelLabel(thread.provider, thread.model)} onPress={() => setShowModelPicker(true)} active />
                 <Chip
-                  label={thread.reasoning_level === 'off' ? 'effort: off' : thread.reasoning_level}
+                  label={`effort: ${effortLabel(thread.provider, thread.reasoning_level)}`}
                   onPress={() => setShowEffortPicker(true)}
                 />
                 <Chip
@@ -418,6 +419,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           <ReasoningLevelSheet
             current={thread.reasoning_level}
             levels={reasoningLevelsForThread(thread)}
+            provider={thread.provider}
             visible={showEffortPicker}
             onClose={() => setShowEffortPicker(false)}
             onSelect={(level) =>
