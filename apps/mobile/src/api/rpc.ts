@@ -10,6 +10,7 @@ import type {
   RepoLocation,
   SendOptions,
   Session,
+  SlashCommand,
   Thread,
 } from '@polycode/shared'
 import { rpcRequest, type HostConnection } from './client'
@@ -37,6 +38,7 @@ export interface RpcChannelMap {
   'threads:setPermissionMode': [[threadId: string, permissionMode: PermissionMode], void]
   'threads:start': [[threadId: string], void]
   'threads:stop': [[threadId: string], void]
+  'threads:reset': [[threadId: string], void]
   'threads:send': [[threadId: string, content: string, options?: SendOptions], void]
   'threads:approvePlan': [[threadId: string], void]
   'threads:rejectPlan': [[threadId: string], void]
@@ -60,6 +62,8 @@ export interface RpcChannelMap {
 
   'messages:list': [[threadId: string], Message[]]
   'messages:listBySession': [[sessionId: string], Message[]]
+
+  'slash-commands:list': [[projectId?: string | null], SlashCommand[]]
 
   'models:claudeAvailable': [[threadId?: string], ModelOption[]]
   'models:codexAvailable': [[threadId?: string], ModelOption[]]

@@ -12,6 +12,11 @@ interface ThreadsState {
   create: (projectId: string, name: string, locationId: string) => Promise<Thread>
   rename: (projectId: string, threadId: string, name: string) => Promise<void>
   archive: (projectId: string, threadId: string) => Promise<void>
+  unarchive: (projectId: string, threadId: string) => Promise<void>
+  remove: (projectId: string, threadId: string) => Promise<void>
+  reset: (threadId: string) => Promise<void>
+  listArchived: (projectId: string) => Promise<Thread[]>
+  archivedCount: (projectId: string) => Promise<number>
   send: (threadId: string, content: string, options?: SendOptions) => Promise<void>
   stop: (threadId: string) => Promise<void>
   setUnread: (projectId: string, threadId: string, unread: boolean) => Promise<void>
@@ -84,6 +89,33 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         [projectId]: (s.threadsByProject[projectId] ?? []).filter((t) => t.id !== threadId),
       },
     }))
+  },
+
+  unarchive: async (projectId, threadId) => {
+    await rpc(requireConnection(), 'threads:unarchive', threadId)
+    await get().fetch(projectId)
+  },
+
+  remove: async (projectId, threadId) => {
+    await rpc(requireConnection(), 'threads:delete', threadId)
+    set((s) => ({
+      threadsByProject: {
+        ...s.threadsByProject,
+        [projectId]: (s.threadsByProject[projectId] ?? []).filter((t) => t.id !== threadId),
+      },
+    }))
+  },
+
+  reset: async (threadId) => {
+    await rpc(requireConnection(), 'threads:reset', threadId)
+  },
+
+  listArchived: async (projectId) => {
+    return rpc(requireConnection(), 'threads:listArchived', projectId)
+  },
+
+  archivedCount: async (projectId) => {
+    return rpc(requireConnection(), 'threads:archivedCount', projectId)
   },
 
   send: async (threadId, content, options) => {

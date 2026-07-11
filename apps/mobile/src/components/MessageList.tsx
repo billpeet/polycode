@@ -2,6 +2,7 @@ import { memo, useCallback, useMemo, useRef, useState } from 'react'
 import {
   FlatList,
   Pressable,
+  Share,
   StyleSheet,
   Text,
   View,
@@ -357,16 +358,20 @@ function buildItems(messages: Message[]): RenderItem[] {
   return result
 }
 
+function shareContent(content: string): void {
+  void Share.share({ message: content }).catch(() => undefined)
+}
+
 const Row = memo(function Row({ item }: { item: RenderItem }) {
   switch (item.kind) {
     case 'user':
       return (
         <View style={styles.userRow}>
-          <View style={styles.userBubble}>
+          <Pressable style={styles.userBubble} onLongPress={() => shareContent(item.content)}>
             <Text style={styles.userText} selectable>
               {item.content}
             </Text>
-          </View>
+          </Pressable>
         </View>
       )
     case 'thinking':
@@ -403,9 +408,9 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
     default:
       return (
         <View style={styles.assistantRow}>
-          <View style={styles.assistantBubble}>
+          <Pressable style={styles.assistantBubble} onLongPress={() => shareContent(item.content)}>
             <Markdown>{item.content}</Markdown>
-          </View>
+          </Pressable>
         </View>
       )
   }

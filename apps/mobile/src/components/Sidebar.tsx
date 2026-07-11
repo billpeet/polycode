@@ -4,6 +4,7 @@ import {
   Alert,
   Animated,
   Dimensions,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -67,20 +68,94 @@ function ThreadRow(props: {
   )
 }
 
+/** Modal listing a project's archived threads with unarchive/delete actions. */
+function ArchivedThreadsModal(props: { projectId: string | null; onClose: () => void }) {
+  const { projectId, onClose } = props
+  const [archived, setArchived] = useState<Thread[]>([])
+  const listArchived = useThreadsStore((s) => s.listArchived)
+  const unarchive = useThreadsStore((s) => s.unarchive)
+  const remove = useThreadsStore((s) => s.remove)
+
+  const reload = useCallback(() => {
+    if (!projectId) return
+    listArchived(projectId)
+      .then(setArchived)
+      .catch((error: unknown) => Alert.alert('Could not load archived threads', String(error)))
+  }, [projectId, listArchived])
+
+  useEffect(() => {
+    setArchived([])
+    reload()
+  }, [reload])
+
+  return (
+    <Modal visible={projectId !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <Text style={styles.modalTitle}>Archived Threads</Text>
+          <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 10 }}>
+            {archived.length === 0 ? <Text style={styles.emptyText}>No archived threads.</Text> : null}
+            {archived.map((thread) => (
+              <View key={thread.id} style={styles.archivedRow}>
+                <Text style={styles.archivedName} numberOfLines={1}>
+                  {thread.name}
+                </Text>
+                <Pressable
+                  hitSlop={6}
+                  onPress={() => {
+                    if (!projectId) return
+                    void unarchive(projectId, thread.id).then(reload)
+                  }}
+                >
+                  <Text style={styles.archivedAction}>Restore</Text>
+                </Pressable>
+                <Pressable
+                  hitSlop={6}
+                  onPress={() => {
+                    if (!projectId) return
+                    Alert.alert('Delete thread?', `Permanently delete "${thread.name}"?`, [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: () => void remove(projectId, thread.id).then(reload),
+                      },
+                    ])
+                  }}
+                >
+                  <Text style={[styles.archivedAction, { color: colors.danger }]}>Delete</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  )
+}
+
 function ProjectSection(props: {
   project: Project
   onNewThread: (projectId: string) => void
   onThreadLongPress: (projectId: string, thread: Thread) => void
+  onShowArchived: (projectId: string) => void
 }) {
   const { project } = props
   const expanded = useUiStore((s) => s.expandedProjectIds.includes(project.id))
   const toggleProject = useUiStore((s) => s.toggleProject)
   const threads = useThreadsStore((s) => s.threadsByProject[project.id] ?? EMPTY_THREADS)
   const fetchThreads = useThreadsStore((s) => s.fetch)
+  const archivedCount = useThreadsStore((s) => s.archivedCount)
+  const [archivedTotal, setArchivedTotal] = useState(0)
 
   useEffect(() => {
-    if (expanded) void fetchThreads(project.id)
-  }, [expanded, project.id, fetchThreads])
+    if (expanded) {
+      void fetchThreads(project.id)
+      archivedCount(project.id)
+        .then(setArchivedTotal)
+        .catch(() => setArchivedTotal(0))
+    }
+  }, [expanded, project.id, fetchThreads, archivedCount])
 
   return (
     <View>
@@ -112,6 +187,14 @@ function ProjectSection(props: {
           >
             <Text style={styles.newThreadText}>＋ New thread</Text>
           </Pressable>
+          {archivedTotal > 0 ? (
+            <Pressable
+              onPress={() => props.onShowArchived(project.id)}
+              style={({ pressed }) => [styles.newThreadRow, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.archivedLink}>Archived ({archivedTotal})</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -130,6 +213,7 @@ export function Sidebar() {
 
   const [newThreadProjectId, setNewThreadProjectId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
+  const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
 
   const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current
   const [rendered, setRendered] = useState(open)
@@ -150,17 +234,38 @@ export function Sidebar() {
 
   const handleThreadLongPress = useCallback(
     (projectId: string, thread: Thread) => {
+      const clearIfSelected = () => {
+        const { selectedThreadId, clearSelection } = useUiStore.getState()
+        if (selectedThreadId === thread.id) clearSelection()
+      }
       Alert.alert(thread.name, undefined, [
         { text: 'Cancel', style: 'cancel' },
         { text: 'Rename', onPress: () => setRenameTarget({ projectId, thread }) },
         {
+          text: 'Reset session',
+          onPress: () => {
+            Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Reset', style: 'destructive', onPress: () => void useThreadsStore.getState().reset(thread.id) },
+            ])
+          },
+        },
+        {
           text: 'Archive',
+          onPress: () => void archive(projectId, thread.id).then(clearIfSelected),
+        },
+        {
+          text: 'Delete',
           style: 'destructive',
           onPress: () => {
-            const { selectedThreadId, clearSelection } = useUiStore.getState()
-            void archive(projectId, thread.id).then(() => {
-              if (selectedThreadId === thread.id) clearSelection()
-            })
+            Alert.alert('Delete thread?', `Permanently delete "${thread.name}" and its messages?`, [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive',
+                onPress: () => void useThreadsStore.getState().remove(projectId, thread.id).then(clearIfSelected),
+              },
+            ])
           },
         },
       ])
@@ -173,6 +278,8 @@ export function Sidebar() {
       <>
         <NewThreadModal projectId={newThreadProjectId} onClose={() => setNewThreadProjectId(null)} />
         <RenameThreadModal target={renameTarget} onClose={() => setRenameTarget(null)} />
+      <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
+        <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       </>
     )
   }
@@ -208,6 +315,7 @@ export function Sidebar() {
                 project={project}
                 onNewThread={setNewThreadProjectId}
                 onThreadLongPress={handleThreadLongPress}
+                onShowArchived={setArchivedProjectId}
               />
             ))}
             {projects.length === 0 ? (
@@ -271,4 +379,20 @@ const styles = StyleSheet.create({
   newThreadRow: { paddingLeft: 34, paddingVertical: 7 },
   newThreadText: { color: colors.claude, fontSize: 12.5, fontWeight: '500' },
   emptyText: { color: colors.textMuted, fontSize: 13, padding: 16 },
+  archivedLink: { color: colors.textMuted, fontSize: 12.5, fontWeight: '500' },
+  modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
+  modalSheet: {
+    backgroundColor: colors.surface,
+    borderTopLeftRadius: 18,
+    borderTopRightRadius: 18,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: 18,
+    paddingBottom: 28,
+    gap: 12,
+  },
+  modalTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
+  archivedRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
+  archivedName: { color: colors.text, fontSize: 13.5, flex: 1 },
+  archivedAction: { color: colors.claude, fontSize: 13, fontWeight: '600' },
 })

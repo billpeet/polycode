@@ -1,6 +1,6 @@
 import { useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
-import type { ThreadStatus } from '@polycode/shared'
+import type { SlashCommand, ThreadStatus } from '@polycode/shared'
 import { colors } from '@/theme/colors'
 
 export function InputBar(props: {
@@ -9,10 +9,19 @@ export function InputBar(props: {
   onStop: () => void
   /** Extra parameter chips rendered beside the Plan mode toggle. */
   accessories?: ReactNode
+  /** Available slash commands — typing "/" filters and inserts them. */
+  slashCommands?: SlashCommand[]
 }) {
   const [text, setText] = useState('')
   const [planMode, setPlanMode] = useState(false)
   const busy = props.status === 'running' || props.status === 'stopping'
+
+  // "/" at the start (before any space) opens the command popup.
+  const slashQuery = text.startsWith('/') && !/\s/.test(text) ? text.slice(1).toLowerCase() : null
+  const slashMatches =
+    slashQuery !== null
+      ? (props.slashCommands ?? []).filter((cmd) => cmd.name.toLowerCase().startsWith(slashQuery)).slice(0, 8)
+      : []
 
   const submit = () => {
     const content = text.trim()
@@ -23,6 +32,24 @@ export function InputBar(props: {
 
   return (
     <View style={styles.container}>
+      {slashMatches.length > 0 ? (
+        <ScrollView style={styles.slashPopup} keyboardShouldPersistTaps="handled" nestedScrollEnabled>
+          {slashMatches.map((cmd) => (
+            <Pressable
+              key={cmd.id}
+              onPress={() => setText(`/${cmd.invocation ?? cmd.name} `)}
+              style={({ pressed }) => [styles.slashRow, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.slashName}>/{cmd.name}</Text>
+              {cmd.description ? (
+                <Text style={styles.slashDescription} numberOfLines={1}>
+                  {cmd.description}
+                </Text>
+              ) : null}
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
@@ -75,6 +102,23 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   topRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
+  slashPopup: {
+    maxHeight: 220,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 10,
+    backgroundColor: colors.surface2,
+    marginBottom: 4,
+  },
+  slashRow: {
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: colors.border,
+    gap: 2,
+  },
+  slashName: { color: colors.claude, fontSize: 13.5, fontWeight: '600', fontFamily: 'monospace' },
+  slashDescription: { color: colors.textMuted, fontSize: 12 },
   planChip: {
     borderWidth: 1,
     borderColor: colors.border,

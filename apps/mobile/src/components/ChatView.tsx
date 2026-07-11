@@ -11,10 +11,13 @@ import {
   type OutputEvent,
   type PermissionMode,
   type Provider,
+  type SlashCommand,
   type ThreadStatus,
 } from '@polycode/shared'
 import { channels, onChannel } from '@/api/events'
+import { rpc } from '@/api/rpc'
 import { sseManager } from '@/api/sse'
+import { useHostsStore } from '@/stores/hosts'
 import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banners'
 import { InputBar } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
@@ -66,6 +69,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
   const messages = useMessagesStore((s) => s.messagesByThread[threadId] ?? EMPTY_MESSAGES)
   const usage = useMessagesStore((s) => s.usageByThread[threadId])
+  const rateLimit = useMessagesStore((s) => s.rateLimitByThread[threadId])
   const fetchMessages = useMessagesStore((s) => s.fetch)
   const appendEvent = useMessagesStore((s) => s.appendEvent)
   const appendUserMessage = useMessagesStore((s) => s.appendUserMessage)
@@ -82,6 +86,22 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
   const [showEffortPicker, setShowEffortPicker] = useState(false)
   const [showTodos, setShowTodos] = useState(false)
+  const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
+
+  // Slash commands for the "/" popup (global + project scoped).
+  useEffect(() => {
+    const connection = useHostsStore.getState().activeConnection()
+    if (!connection) return
+    let cancelled = false
+    rpc(connection, 'slash-commands:list', projectId)
+      .then((commands) => {
+        if (!cancelled) setSlashCommands(commands)
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [projectId])
   const insets = useSafeAreaInsets()
   // Precise IME tracking (native inset animation via Reanimated) — the
   // Keyboard-event heights under-report on some edge-to-edge devices.
@@ -207,6 +227,16 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           <MessageList messages={messages} />
         </View>
 
+        {rateLimit && (rateLimit.status === 'blocked' || rateLimit.status === 'allowed_warning') ? (
+          <View style={styles.rateLimitBanner}>
+            <Text style={styles.rateLimitText}>
+              {rateLimit.status === 'blocked' ? 'Rate limited' : 'Approaching rate limit'}
+              {typeof rateLimit.utilization === 'number' ? ` · ${Math.round(rateLimit.utilization)}% used` : ''}
+              {rateLimit.resetsAt ? ` · resets ${new Date(rateLimit.resetsAt * 1000).toLocaleTimeString()}` : ''}
+            </Text>
+          </View>
+        ) : null}
+
         {status === 'plan_pending' ? (
           <PlanBanner
             onApprove={() => void interactions.approvePlan(threadId).catch((e: unknown) => Alert.alert('Failed', errorText(e)))}
@@ -244,6 +274,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           status={status}
           onSend={handleSend}
           onStop={handleStop}
+          slashCommands={slashCommands}
           accessories={
             thread ? (
               <>
@@ -323,6 +354,14 @@ const styles = StyleSheet.create({
   menuIcon: { color: colors.text, fontSize: 20 },
   title: { color: colors.text, fontSize: 16, fontWeight: '700' },
   statusText: { color: colors.textMuted, fontSize: 12 },
+  rateLimitBanner: {
+    backgroundColor: 'rgba(251, 191, 36, 0.10)',
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(251, 191, 36, 0.35)',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  rateLimitText: { color: colors.warning, fontSize: 12, fontWeight: '500' },
   controls: {
     flexDirection: 'row',
     gap: 8,

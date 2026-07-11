@@ -4,6 +4,7 @@ import {
   eventRole,
   type Message,
   type OutputEvent,
+  type RateLimitInfo,
   type TokenUsage,
 } from '@polycode/shared'
 import { rpc } from '../api/rpc'
@@ -14,6 +15,7 @@ let streamCounter = 0
 interface MessagesState {
   messagesByThread: Record<string, Message[]>
   usageByThread: Record<string, TokenUsage>
+  rateLimitByThread: Record<string, RateLimitInfo>
   loadingByThread: Record<string, boolean>
 
   fetch: (threadId: string) => Promise<Message[]>
@@ -25,6 +27,7 @@ interface MessagesState {
 export const useMessagesStore = create<MessagesState>((set) => ({
   messagesByThread: {},
   usageByThread: {},
+  rateLimitByThread: {},
   loadingByThread: {},
 
   fetch: async (threadId) => {
@@ -54,8 +57,15 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       set((s) => ({ usageByThread: { ...s.usageByThread, [threadId]: usage } }))
       return
     }
-    // status / rate_limit events are not message bubbles (mirrors desktop).
-    if (event.type === 'status' || event.type === 'rate_limit') return
+    if (event.type === 'rate_limit') {
+      if (event.metadata) {
+        const info = event.metadata as unknown as RateLimitInfo
+        set((s) => ({ rateLimitByThread: { ...s.rateLimitByThread, [threadId]: info } }))
+      }
+      return
+    }
+    // status events are not message bubbles (mirrors desktop).
+    if (event.type === 'status') return
     // question / permission_request drive banner state, not bubbles.
     if (event.type === 'question' || event.type === 'permission_request') return
 
