@@ -28,7 +28,11 @@
       },
       "predictiveBackGestureEnabled": false,
       "usesCleartextTraffic": true,
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.billpeet.polycodemobile"
     },
     "plugins": [
       "expo-router",
@@ -51,6 +55,22 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "768d5775-ba38-4409-a36b-21a4d8f79cdb"
+      }
+    },
+    "owner": "billpeet",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/768d5775-ba38-4409-a36b-21a4d8f79cdb",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
     }
   }
 }

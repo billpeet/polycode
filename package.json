@@ -15,7 +15,8 @@
     "test": "bun run --cwd apps/desktop test",
     "dist": "bun run --cwd apps/desktop dist",
     "dist:publish": "bun run --cwd apps/desktop dist:publish",
-    "mobile": "bun run --cwd apps/mobile start"
+    "mobile": "bun run --cwd apps/mobile start",
+    "mobile:update": "bun run --cwd apps/mobile update"
   },
   "overrides": {
     "vite": "^8.0.0"
