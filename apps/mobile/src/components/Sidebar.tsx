@@ -12,7 +12,7 @@ import {
   View,
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import type { Project, Thread } from '@polycode/shared'
+import type { Project, RepoLocation, Thread } from '@polycode/shared'
 import { sseManager, type ConnectionState } from '@/api/sse'
 import { useHostsStore } from '@/stores/hosts'
 import { useProjectsStore } from '@/stores/projects'
@@ -146,16 +146,43 @@ function ProjectSection(props: {
   const threads = useThreadsStore((s) => s.threadsByProject[project.id] ?? EMPTY_THREADS)
   const fetchThreads = useThreadsStore((s) => s.fetch)
   const archivedCount = useThreadsStore((s) => s.archivedCount)
+  const locations = useProjectsStore((s) => s.locationsByProject[project.id])
+  const fetchLocations = useProjectsStore((s) => s.fetchLocations)
   const [archivedTotal, setArchivedTotal] = useState(0)
 
   useEffect(() => {
     if (expanded) {
       void fetchThreads(project.id)
+      void fetchLocations(project.id).catch(() => undefined)
       archivedCount(project.id)
         .then(setArchivedTotal)
         .catch(() => setArchivedTotal(0))
     }
-  }, [expanded, project.id, fetchThreads, archivedCount])
+  }, [expanded, project.id, fetchThreads, fetchLocations, archivedCount])
+
+  // Desktop parity: with multiple locations (e.g. worktrees), group threads
+  // under muted location headers instead of one flat list.
+  const grouped = (() => {
+    if (!locations || locations.length <= 1) return null
+    const byLocation = new Map<string, Thread[]>()
+    const orphans: Thread[] = []
+    for (const thread of threads) {
+      if (thread.location_id && locations.some((l) => l.id === thread.location_id)) {
+        const list = byLocation.get(thread.location_id) ?? []
+        list.push(thread)
+        byLocation.set(thread.location_id, list)
+      } else {
+        orphans.push(thread)
+      }
+    }
+    const sections: { location: RepoLocation | null; threads: Thread[] }[] = []
+    for (const location of locations) {
+      const list = byLocation.get(location.id)
+      if (list && list.length > 0) sections.push({ location, threads: list })
+    }
+    if (orphans.length > 0) sections.push({ location: null, threads: orphans })
+    return sections
+  })()
 
   return (
     <View>
@@ -173,14 +200,34 @@ function ProjectSection(props: {
       </Pressable>
       {expanded ? (
         <View style={styles.threadList}>
-          {threads.map((thread) => (
-            <ThreadRow
-              key={thread.id}
-              projectId={project.id}
-              thread={thread}
-              onLongPress={props.onThreadLongPress}
-            />
-          ))}
+          {grouped
+            ? grouped.map((section, index) => (
+                <View key={section.location?.id ?? `other-${index}`}>
+                  <View style={styles.locationHeader}>
+                    <Text style={styles.locationLabel} numberOfLines={1}>
+                      {section.location
+                        ? `${section.location.is_worktree ? '⎇ ' : ''}${section.location.label || section.location.path}`
+                        : 'Other'}
+                    </Text>
+                  </View>
+                  {section.threads.map((thread) => (
+                    <ThreadRow
+                      key={thread.id}
+                      projectId={project.id}
+                      thread={thread}
+                      onLongPress={props.onThreadLongPress}
+                    />
+                  ))}
+                </View>
+              ))
+            : threads.map((thread) => (
+                <ThreadRow
+                  key={thread.id}
+                  projectId={project.id}
+                  thread={thread}
+                  onLongPress={props.onThreadLongPress}
+                />
+              ))}
           <Pressable
             onPress={() => props.onNewThread(project.id)}
             style={({ pressed }) => [styles.newThreadRow, pressed && { opacity: 0.7 }]}
@@ -380,6 +427,15 @@ const styles = StyleSheet.create({
   newThreadText: { color: colors.claude, fontSize: 12.5, fontWeight: '500' },
   emptyText: { color: colors.textMuted, fontSize: 13, padding: 16 },
   archivedLink: { color: colors.textMuted, fontSize: 12.5, fontWeight: '500' },
+  locationHeader: { paddingLeft: 26, paddingTop: 7, paddingBottom: 2 },
+  locationLabel: {
+    color: colors.textMuted,
+    fontSize: 10.5,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    opacity: 0.8,
+  },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: colors.surface,

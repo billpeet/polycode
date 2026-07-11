@@ -63,7 +63,7 @@ export function NewThreadModal(props: {
                 {locations.map((location) => (
                   <Chip
                     key={location.id}
-                    label={location.label || location.path}
+                    label={`${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}${location.pool_id && !location.checked_out ? ' (pooled)' : ''}`}
                     active={locationId === location.id}
                     onPress={() => setLocationId(location.id)}
                   />
