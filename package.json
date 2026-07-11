@@ -1,118 +1,23 @@
 {
-  "name": "polycode-electron",
-  "version": "0.14.0",
-  "description": "Desktop app for orchestrating multiple Claude Code sessions",
-  "main": "out/main/index.js",
-  "author": "billpeet",
+  "name": "polycode",
+  "version": "0.0.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
   "scripts": {
-    "postinstall": "node scripts/postinstall.js",
-    "dev": "electron-vite dev",
-    "build": "electron-vite build",
-    "preview": "electron-vite preview",
-    "start": "electron .",
-    "start:prod": "bun run build && NODE_ENV=production electron .",
-    "test": "bun test src/main/driver/__tests__",
-    "dist": "bun run build && electron-builder --win",
-    "dist:publish": "bun run build && electron-builder --win --publish always"
-  },
-  "dependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.3.173",
-    "@openai/codex-sdk": "^0.143.0",
-    "@pierre/diffs": "^1.0.11",
-    "@sentry/electron": "^7.8.0",
-    "@sentry/react": "^10.40.0",
-    "@tanstack/react-virtual": "^3.13.21",
-    "@tiptap/core": "^3.27.1",
-    "@tiptap/pm": "^3.27.1",
-    "@tiptap/react": "^3.27.1",
-    "@tiptap/starter-kit": "^3.27.1",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-search": "^0.16.0",
-    "@xterm/xterm": "^6.0.0",
-    "better-sqlite3": "^12.11.1",
-    "class-variance-authority": "^0.7.1",
-    "clsx": "^2.1.1",
-    "dompurify": "^3.3.1",
-    "electron-updater": "^6.3.9",
-    "fuse.js": "^7.1.0",
-    "lucide-react": "^0.577.0",
-    "marked": "^15.0.12",
-    "node-pty": "^1.1.0",
-    "shiki": "^4.0.1",
-    "tailwind-merge": "^3.5.0",
-    "tiptap-markdown": "^0.9.0",
-    "uuid": "^11.1.0",
-    "zustand": "^5.0.11"
-  },
-  "devDependencies": {
-    "@sentry/vite-plugin": "^5.1.0",
-    "@tailwindcss/vite": "^4.0.6",
-    "@types/better-sqlite3": "^7.6.12",
-    "@types/dompurify": "^3.0.5",
-    "@types/node": "^22.13.4",
-    "@types/react": "^19.0.8",
-    "@types/react-dom": "^19.0.3",
-    "@types/uuid": "^10.0.0",
-    "@vitejs/plugin-react": "^6.0.1",
-    "electron": "39.8.5",
-    "electron-builder": "^25.1.8",
-    "electron-vite": "^5.0.0",
-    "png-to-ico": "^3.0.1",
-    "react": "^19.0.0",
-    "react-dom": "^19.0.0",
-    "sharp": "^0.34.5",
-    "tailwindcss": "^4.0.6",
-    "typescript": "^5.9.3",
-    "vite": "^8.0.0"
+    "postinstall": "node apps/desktop/scripts/postinstall.js",
+    "dev": "bun run --cwd apps/desktop dev",
+    "build": "bun run --cwd apps/desktop build",
+    "start": "bun run --cwd apps/desktop start",
+    "start:prod": "bun run --cwd apps/desktop start:prod",
+    "test": "bun run --cwd apps/desktop test",
+    "dist": "bun run --cwd apps/desktop dist",
+    "dist:publish": "bun run --cwd apps/desktop dist:publish",
+    "mobile": "bun run --cwd apps/mobile start"
   },
   "overrides": {
-    "electron-vite": {
-      "vite": "^8.0.0"
-    },
-    "@tailwindcss/vite": {
-      "vite": "^8.0.0"
-    }
-  },
-  "build": {
-    "appId": "com.polycode.app",
-    "productName": "PolyCode",
-    "copyright": "Copyright © 2026 billpeet",
-    "npmRebuild": false,
-    "asar": true,
-    "asarUnpack": [
-      "node_modules/better-sqlite3/**",
-      "node_modules/node-pty/**",
-      "**/*.node"
-    ],
-    "files": [
-      "out/**",
-      "resources/**"
-    ],
-    "directories": {
-      "output": "release"
-    },
-    "win": {
-      "target": [
-        {
-          "target": "nsis",
-          "arch": [
-            "x64"
-          ]
-        }
-      ],
-      "icon": "resources/icon.ico"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true
-    },
-    "publish": {
-      "provider": "github",
-      "owner": "billpeet",
-      "repo": "polycode",
-      "releaseType": "release"
-    }
+    "vite": "^8.0.0"
   }
 }

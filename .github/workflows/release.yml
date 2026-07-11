@@ -34,13 +34,14 @@ jobs:
           # Auto-incrementing version: major.minor from package.json + run number.
           # Bump major/minor in package.json to reset the series; the run number
           # is monotonically increasing so versions never collide.
-          BASE=$(node -p "require('./package.json').version.split('.').slice(0,2).join('.')")
+          BASE=$(node -p "require('./apps/desktop/package.json').version.split('.').slice(0,2).join('.')")
           VERSION="${BASE}.${{ github.run_number }}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
 
       - name: Set package.json version
         shell: bash
+        working-directory: apps/desktop
         run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
 
       # --ignore-scripts stops better-sqlite3 (and friends) from compiling via
@@ -51,12 +52,14 @@ jobs:
         run: bun install --ignore-scripts
 
       - name: Install native prebuilts
-        run: node scripts/postinstall.js
+        run: node apps/desktop/scripts/postinstall.js
 
       - name: Build app
+        working-directory: apps/desktop
         run: bun run build
 
       - name: Build installer and publish to GitHub
+        working-directory: apps/desktop
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

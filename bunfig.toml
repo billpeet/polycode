@@ -1,2 +1,5 @@
-[test]
-preload = ["./src/main/driver/__tests__/setup.ts"]
+# Force the classic hoisted node_modules layout. Bun 1.3+ defaults workspaces
+# to the "isolated" linker (pnpm-style symlink farm), which breaks
+# electron-builder's node-module collection when packaging the desktop app.
+[install]
+linker = "hoisted"

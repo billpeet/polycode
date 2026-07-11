@@ -5,5 +5,11 @@ release
 .DS_Store
 *.log
 bun.lockb
-tsconfig.web.tsbuildinfo
+*.tsbuildinfo
 electron.vite.config.*.mjs
+
+# Expo / React Native
+.expo/
+expo-env.d.ts
+apps/mobile/android/
+apps/mobile/ios/
