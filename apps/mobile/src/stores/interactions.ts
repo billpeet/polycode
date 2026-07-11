@@ -26,6 +26,7 @@ interface InteractionsState {
 
   approvePlan: (threadId: string) => Promise<void>
   rejectPlan: (threadId: string) => Promise<void>
+  executePlanInNewContext: (threadId: string) => Promise<void>
 
   clear: (threadId: string) => void
 }
@@ -79,6 +80,10 @@ export const useInteractionsStore = create<InteractionsState>((set, get) => ({
 
   rejectPlan: async (threadId) => {
     await rpc(requireConnection(), 'threads:rejectPlan', threadId)
+  },
+
+  executePlanInNewContext: async (threadId) => {
+    await rpc(requireConnection(), 'threads:executePlanInNewContext', threadId)
   },
 
   clear: (threadId) =>

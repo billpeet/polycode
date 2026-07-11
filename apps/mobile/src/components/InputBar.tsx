@@ -1,0 +1,104 @@
+import { useState } from 'react'
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import type { ThreadStatus } from '@polycode/shared'
+import { colors } from '@/theme/colors'
+
+export function InputBar(props: {
+  status: ThreadStatus
+  onSend: (content: string, planMode: boolean) => void
+  onStop: () => void
+}) {
+  const [text, setText] = useState('')
+  const [planMode, setPlanMode] = useState(false)
+  const busy = props.status === 'running' || props.status === 'stopping'
+
+  const submit = () => {
+    const content = text.trim()
+    if (!content) return
+    props.onSend(content, planMode)
+    setText('')
+  }
+
+  return (
+    <View style={styles.container}>
+      <View style={styles.topRow}>
+        <Pressable onPress={() => setPlanMode((v) => !v)} hitSlop={6}>
+          <View style={[styles.planChip, planMode && styles.planChipActive]}>
+            <Text style={[styles.planChipText, planMode && { color: colors.info }]}>Plan mode</Text>
+          </View>
+        </Pressable>
+        {props.status === 'stopping' ? <Text style={styles.statusHint}>Stopping…</Text> : null}
+      </View>
+      <View style={styles.row}>
+        <TextInput
+          style={styles.input}
+          placeholder={busy ? 'Agent is working… (message will queue)' : 'Message the agent…'}
+          placeholderTextColor={colors.textMuted}
+          value={text}
+          onChangeText={setText}
+          multiline
+          submitBehavior="newline"
+        />
+        {busy ? (
+          <Pressable style={[styles.sendButton, styles.stopButton]} onPress={props.onStop}>
+            <Text style={styles.stopIcon}>■</Text>
+          </Pressable>
+        ) : null}
+        <Pressable
+          style={[styles.sendButton, !text.trim() && { opacity: 0.4 }]}
+          onPress={submit}
+          disabled={!text.trim()}
+        >
+          <Text style={styles.sendIcon}>➤</Text>
+        </Pressable>
+      </View>
+    </View>
+  )
+}
+
+const styles = StyleSheet.create({
+  container: {
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.surface,
+    paddingHorizontal: 12,
+    paddingTop: 8,
+    paddingBottom: 10,
+    gap: 8,
+  },
+  topRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  planChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 999,
+    paddingVertical: 3,
+    paddingHorizontal: 10,
+  },
+  planChipActive: { borderColor: colors.info, backgroundColor: 'rgba(96, 165, 250, 0.12)' },
+  planChipText: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
+  statusHint: { color: colors.warning, fontSize: 12 },
+  row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  input: {
+    flex: 1,
+    backgroundColor: colors.bg,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+    color: colors.text,
+    fontSize: 15,
+    maxHeight: 130,
+  },
+  sendButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.claude,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stopButton: { backgroundColor: colors.surface2, borderWidth: 1, borderColor: colors.danger },
+  sendIcon: { color: '#1a1a1a', fontSize: 16, fontWeight: '700' },
+  stopIcon: { color: colors.danger, fontSize: 14 },
+})
