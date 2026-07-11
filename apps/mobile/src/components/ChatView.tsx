@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Alert, Pressable, StyleSheet, Text, View } from 'react-native'
+import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   DEFAULT_CONTEXT_LIMIT,
@@ -13,7 +14,6 @@ import {
 } from '@polycode/shared'
 import { channels, onChannel } from '@/api/events'
 import { sseManager } from '@/api/sse'
-import { useKeyboardHeight } from '@/lib/useKeyboardHeight'
 import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banners'
 import { InputBar } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
@@ -71,11 +71,13 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
   const insets = useSafeAreaInsets()
-  const keyboardHeight = useKeyboardHeight()
-  // Android edge-to-edge: the keyboard overlays the app, so pad the layout
-  // up manually. iOS is handled by KeyboardAvoidingView's padding behavior.
-  const bottomPad =
-    Platform.OS === 'android' && keyboardHeight > 0 ? keyboardHeight : insets.bottom
+  // Precise IME tracking (native inset animation via Reanimated) — the
+  // Keyboard-event heights under-report on some edge-to-edge devices.
+  const keyboard = useAnimatedKeyboard()
+  const bottomInset = insets.bottom
+  const keyboardPadStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(keyboard.height.value, bottomInset),
+  }))
 
   const status: ThreadStatus = thread?.status ?? 'idle'
 
@@ -200,12 +202,8 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       ) : null}
 
       {/* Messages */}
-      <KeyboardAvoidingView
-        style={{ flex: 1 }}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
-      >
-        <View style={{ flex: 1 }}>
+      <Animated.View style={[{ flex: 1, backgroundColor: colors.surface }, keyboardPadStyle]}>
+        <View style={{ flex: 1, backgroundColor: colors.bg }}>
           <MessageList messages={messages} />
         </View>
 
@@ -245,8 +243,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         ) : null}
 
         <InputBar status={status} onSend={handleSend} onStop={handleStop} />
-        <View style={{ height: bottomPad, backgroundColor: colors.surface }} />
-      </KeyboardAvoidingView>
+      </Animated.View>
 
       {/* Sheets */}
       {thread ? (
