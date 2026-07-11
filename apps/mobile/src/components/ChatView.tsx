@@ -24,13 +24,8 @@ import { InputBar, type PendingImage } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
 import { StatusDot } from '@/components/StatusDot'
 import { SessionTabs } from '@/components/SessionTabs'
-import {
-  ModelPickerSheet,
-  PermissionModeSheet,
-  ReasoningLevelSheet,
-  effortLabel,
-  reasoningLevelsForThread,
-} from '@/components/ThreadControls'
+import { effortLabel } from '@/components/ThreadControls'
+import { ThreadSettingsSheet } from '@/components/ThreadSettingsSheet'
 import { TodoBadge, TodoSheet } from '@/components/TodoPanel'
 import { Chip } from '@/components/ui'
 import { ActionSheet } from '@/components/ActionSheet'
@@ -38,6 +33,8 @@ import { FileBrowser } from '@/components/FileBrowser'
 import { GitPanel } from '@/components/GitPanel'
 import { useInteractionsStore } from '@/stores/interactions'
 import { useMessagesStore } from '@/stores/messages'
+import { favouriteChipLabel, favouriteEquals, type Favourite } from '@/stores/favourites'
+import { useFavouritesStore } from '@/stores/favourites'
 import { useProjectsStore } from '@/stores/projects'
 import { useSessionsStore } from '@/stores/sessions'
 import { useUiStore } from '@/stores/ui'
@@ -91,10 +88,9 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const questions = useInteractionsStore((s) => s.questionsByThread[threadId] ?? null)
   const interactions = useInteractionsStore()
 
-  const [showModelPicker, setShowModelPicker] = useState(false)
-  const [showPermissionPicker, setShowPermissionPicker] = useState(false)
-  const [showEffortPicker, setShowEffortPicker] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
   const [showTodos, setShowTodos] = useState(false)
+  const favourites = useFavouritesStore((s) => s.favourites)
   const [showGit, setShowGit] = useState(false)
   const [showFiles, setShowFiles] = useState(false)
   const [showThreadMenu, setShowThreadMenu] = useState(false)
@@ -409,18 +405,34 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           accessories={
             thread ? (
               <>
-                <Chip label={providerLabel(thread.provider)} onPress={() => setShowModelPicker(true)} />
-                <Chip label={modelLabel(thread.provider, thread.model)} onPress={() => setShowModelPicker(true)} active />
                 <Chip
-                  label={`effort: ${effortLabel(thread.provider, thread.reasoning_level)}`}
-                  onPress={() => setShowEffortPicker(true)}
-                />
-                <Chip
-                  label={thread.permission_mode === 'yolo' ? 'YOLO' : thread.permission_mode === 'workspace' ? 'Workspace' : 'Ask'}
-                  onPress={() => setShowPermissionPicker(true)}
-                  active={thread.permission_mode === 'yolo'}
+                  label={`⚙ ${modelLabel(thread.provider, thread.model)} · ${effortLabel(thread.provider, thread.reasoning_level)}${thread.permission_mode === 'yolo' ? ' · YOLO' : ''}`}
+                  onPress={() => setShowSettings(true)}
+                  active
                   color={thread.permission_mode === 'yolo' ? colors.danger : undefined}
                 />
+                {favourites.map((favourite, index) => {
+                  const current: Favourite = {
+                    provider: thread.provider as Favourite['provider'],
+                    model: thread.model,
+                    reasoningLevel: thread.reasoning_level,
+                  }
+                  const isActive = favouriteEquals(favourite, current)
+                  return (
+                    <Chip
+                      key={index}
+                      label={`★ ${favouriteChipLabel(favourite)}`}
+                      active={isActive}
+                      onPress={() => {
+                        if (isActive) return
+                        void (async () => {
+                          await updateProviderAndModel(projectId, threadId, favourite.provider, favourite.model)
+                          await useThreadsStore.getState().updateReasoningLevel(threadId, favourite.reasoningLevel)
+                        })().catch((e: unknown) => Alert.alert('Failed to apply favourite', errorText(e)))
+                      }}
+                    />
+                  )
+                })}
               </>
             ) : undefined
           }
@@ -437,43 +449,29 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       <GitPanel repoPath={repoPath} visible={showGit} onClose={() => setShowGit(false)} />
       <FileBrowser rootPath={repoPath} visible={showFiles} onClose={() => setShowFiles(false)} />
 
-      {/* Sheets */}
+      {/* Settings drawer */}
       {thread ? (
-        <>
-          <ModelPickerSheet
-            thread={thread}
-            visible={showModelPicker}
-            onClose={() => setShowModelPicker(false)}
-            onSelect={(provider, model) =>
-              void updateProviderAndModel(projectId, threadId, provider, model).catch((e: unknown) =>
-                Alert.alert('Failed to update model', errorText(e)),
-              )
-            }
-          />
-          <PermissionModeSheet
-            current={thread.permission_mode}
-            visible={showPermissionPicker}
-            onClose={() => setShowPermissionPicker(false)}
-            onSelect={(mode: PermissionMode) =>
-              void setPermissionMode(projectId, threadId, mode).catch((e: unknown) =>
-                Alert.alert('Failed to update permission mode', errorText(e)),
-              )
-            }
-          />
-          <ReasoningLevelSheet
-            current={thread.reasoning_level}
-            levels={reasoningLevelsForThread(thread)}
-            provider={thread.provider}
-            visible={showEffortPicker}
-            onClose={() => setShowEffortPicker(false)}
-            onSelect={(level) =>
-              void useThreadsStore
-                .getState()
-                .updateReasoningLevel(threadId, level)
-                .catch((e: unknown) => Alert.alert('Failed to update reasoning level', errorText(e)))
-            }
-          />
-        </>
+        <ThreadSettingsSheet
+          thread={thread}
+          visible={showSettings}
+          onClose={() => setShowSettings(false)}
+          onSelectModel={(provider, model) =>
+            void updateProviderAndModel(projectId, threadId, provider, model).catch((e: unknown) =>
+              Alert.alert('Failed to update model', errorText(e)),
+            )
+          }
+          onSelectEffort={(level) =>
+            void useThreadsStore
+              .getState()
+              .updateReasoningLevel(threadId, level)
+              .catch((e: unknown) => Alert.alert('Failed to update reasoning level', errorText(e)))
+          }
+          onSelectPermissionMode={(mode: PermissionMode) =>
+            void setPermissionMode(projectId, threadId, mode).catch((e: unknown) =>
+              Alert.alert('Failed to update permission mode', errorText(e)),
+            )
+          }
+        />
       ) : null}
     </View>
   )

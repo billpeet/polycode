@@ -20,24 +20,24 @@ export const colors = {
   toolResultAccent: 'rgba(74, 222, 128, 0.45)',
 } as const
 
-/** Status dot colors matching desktop semantics. */
+/** Status dot colors matching desktop semantics: green = running, grey = idle. */
 export function statusColor(status: ThreadStatus): string {
   switch (status) {
     case 'running':
-      return colors.claude
+      return '#4ade80'
     case 'stopping':
-      return colors.warning
+      return '#fb923c'
     case 'error':
       return colors.danger
     case 'stopped':
-      return colors.textMuted
+      return '#facc15'
     case 'plan_pending':
     case 'question_pending':
     case 'permission_pending':
       return colors.info
     case 'idle':
     default:
-      return colors.success
+      return colors.textMuted
   }
 }
 
