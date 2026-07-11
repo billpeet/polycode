@@ -73,6 +73,8 @@ export interface RpcChannelMap {
 
   'slash-commands:list': [[projectId?: string | null], SlashCommand[]]
 
+  'attachments:save': [[dataUrl: string, filename: string, threadId: string], { tempPath: string; id: string }]
+
   'git:branch': [[repoPath: string], string | null]
   'git:status': [[repoPath: string], GitStatus | null]
   'git:commit': [[repoPath: string, message: string], void]

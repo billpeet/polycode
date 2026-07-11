@@ -3,6 +3,12 @@ import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-
 import type { SlashCommand, ThreadStatus } from '@polycode/shared'
 import { colors } from '@/theme/colors'
 
+export interface PendingImage {
+  id: string
+  name: string
+  dataUrl: string
+}
+
 export function InputBar(props: {
   status: ThreadStatus
   onSend: (content: string, planMode: boolean) => void
@@ -11,10 +17,15 @@ export function InputBar(props: {
   accessories?: ReactNode
   /** Available slash commands — typing "/" filters and inserts them. */
   slashCommands?: SlashCommand[]
+  /** Pending image attachments (chips above the input). */
+  attachments?: PendingImage[]
+  onAddAttachment?: () => void
+  onRemoveAttachment?: (id: string) => void
 }) {
   const [text, setText] = useState('')
   const [planMode, setPlanMode] = useState(false)
   const busy = props.status === 'running' || props.status === 'stopping'
+  const attachments = props.attachments ?? []
 
   // "/" at the start (before any space) opens the command popup.
   const slashQuery = text.startsWith('/') && !/\s/.test(text) ? text.slice(1).toLowerCase() : null
@@ -25,10 +36,11 @@ export function InputBar(props: {
 
   const submit = () => {
     const content = text.trim()
-    if (!content) return
+    if (!content && attachments.length === 0) return
     props.onSend(content, planMode)
     setText('')
   }
+  const canSend = text.trim().length > 0 || attachments.length > 0
 
   return (
     <View style={styles.container}>
@@ -64,7 +76,26 @@ export function InputBar(props: {
         {props.accessories}
         {props.status === 'stopping' ? <Text style={styles.statusHint}>Stopping…</Text> : null}
       </ScrollView>
+      {attachments.length > 0 ? (
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachmentRow}>
+          {attachments.map((attachment) => (
+            <View key={attachment.id} style={styles.attachmentChip}>
+              <Text style={styles.attachmentName} numberOfLines={1}>
+                🖼 {attachment.name}
+              </Text>
+              <Pressable onPress={() => props.onRemoveAttachment?.(attachment.id)} hitSlop={8}>
+                <Text style={styles.attachmentRemove}>✕</Text>
+              </Pressable>
+            </View>
+          ))}
+        </ScrollView>
+      ) : null}
       <View style={styles.row}>
+        {props.onAddAttachment ? (
+          <Pressable style={styles.attachButton} onPress={props.onAddAttachment} hitSlop={6}>
+            <Text style={styles.attachIcon}>＋</Text>
+          </Pressable>
+        ) : null}
         <TextInput
           style={styles.input}
           placeholder={busy ? 'Agent is working… (message will queue)' : 'Message the agent…'}
@@ -79,11 +110,7 @@ export function InputBar(props: {
             <Text style={styles.stopIcon}>■</Text>
           </Pressable>
         ) : null}
-        <Pressable
-          style={[styles.sendButton, !text.trim() && { opacity: 0.4 }]}
-          onPress={submit}
-          disabled={!text.trim()}
-        >
+        <Pressable style={[styles.sendButton, !canSend && { opacity: 0.4 }]} onPress={submit} disabled={!canSend}>
           <Text style={styles.sendIcon}>➤</Text>
         </Pressable>
       </View>
@@ -130,6 +157,32 @@ const styles = StyleSheet.create({
   planChipText: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
   statusHint: { color: colors.warning, fontSize: 12 },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
+  attachmentRow: { flexDirection: 'row', gap: 8, paddingBottom: 2 },
+  attachmentChip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    maxWidth: 220,
+  },
+  attachmentName: { color: colors.text, fontSize: 12.5, flexShrink: 1 },
+  attachmentRemove: { color: colors.textMuted, fontSize: 13 },
+  attachButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.surface2,
+    borderWidth: 1,
+    borderColor: colors.border,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  attachIcon: { color: colors.textMuted, fontSize: 20, marginTop: -2 },
   input: {
     flex: 1,
     backgroundColor: colors.bg,

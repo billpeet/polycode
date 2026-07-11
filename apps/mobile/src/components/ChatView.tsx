@@ -19,7 +19,8 @@ import { rpc } from '@/api/rpc'
 import { sseManager } from '@/api/sse'
 import { useHostsStore } from '@/stores/hosts'
 import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banners'
-import { InputBar } from '@/components/InputBar'
+import * as ImagePicker from 'expo-image-picker'
+import { InputBar, type PendingImage } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
 import { StatusDot } from '@/components/StatusDot'
 import { SessionTabs } from '@/components/SessionTabs'
@@ -97,6 +98,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const [showGit, setShowGit] = useState(false)
   const [showFiles, setShowFiles] = useState(false)
   const [showThreadMenu, setShowThreadMenu] = useState(false)
+  const [attachments, setAttachments] = useState<PendingImage[]>([])
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
 
   // The thread's repo location path drives the git panel and file browser.
@@ -220,11 +222,50 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const contextTokens = usage?.context_window ?? thread?.context_window ?? 0
   const contextPercent = contextLimit > 0 ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0
 
-  const handleSend = (content: string, planMode: boolean) => {
-    appendUserMessage(threadId, content)
-    sendMessage(threadId, content, planMode ? { planMode: true } : undefined).catch((error: unknown) => {
-      Alert.alert('Send failed', errorText(error))
+  const pickImages = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ['images'],
+      allowsMultipleSelection: true,
+      selectionLimit: 5,
+      base64: true,
+      quality: 0.8,
     })
+    if (result.canceled) return
+    const picked: PendingImage[] = result.assets
+      .filter((asset) => asset.base64)
+      .map((asset, index) => ({
+        id: `${Date.now()}-${index}`,
+        name: asset.fileName ?? `image-${index + 1}.jpg`,
+        dataUrl: `data:${asset.mimeType ?? 'image/jpeg'};base64,${asset.base64}`,
+      }))
+    setAttachments((prev) => [...prev, ...picked])
+  }
+
+  const handleSend = (content: string, planMode: boolean) => {
+    const pending = attachments
+    setAttachments([])
+    void (async () => {
+      try {
+        // Desktop parity: save attachments host-side, reference as @ mentions.
+        let finalContent = content
+        if (pending.length > 0) {
+          const connection = useHostsStore.getState().activeConnection()
+          if (!connection) throw new Error('No active host connection')
+          const savedPaths: string[] = []
+          for (const attachment of pending) {
+            const { tempPath } = await rpc(connection, 'attachments:save', attachment.dataUrl, attachment.name, threadId)
+            savedPaths.push(tempPath)
+          }
+          const mentions = savedPaths.map((p) => `@${p}`).join(' ')
+          finalContent = finalContent ? `${mentions}\n\n${finalContent}` : mentions
+        }
+        appendUserMessage(threadId, finalContent)
+        await sendMessage(threadId, finalContent, planMode ? { planMode: true } : undefined)
+      } catch (error) {
+        setAttachments(pending)
+        Alert.alert('Send failed', errorText(error))
+      }
+    })()
   }
 
   const handleStop = () => {
@@ -362,6 +403,9 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           onSend={handleSend}
           onStop={handleStop}
           slashCommands={slashCommands}
+          attachments={attachments}
+          onAddAttachment={() => void pickImages().catch((e: unknown) => Alert.alert('Could not pick image', errorText(e)))}
+          onRemoveAttachment={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
           accessories={
             thread ? (
               <>
