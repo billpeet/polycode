@@ -5,6 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   DEFAULT_CONTEXT_LIMIT,
   MODEL_CONTEXT_LIMITS,
+  PROVIDERS,
   getModelsForProvider,
   type Message,
   type OutputEvent,
@@ -18,7 +19,12 @@ import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banne
 import { InputBar } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
 import { StatusDot } from '@/components/StatusDot'
-import { ModelPickerSheet, PermissionModeSheet } from '@/components/ThreadControls'
+import {
+  ModelPickerSheet,
+  PermissionModeSheet,
+  ReasoningLevelSheet,
+  reasoningLevelsForThread,
+} from '@/components/ThreadControls'
 import { TodoBadge, TodoSheet } from '@/components/TodoPanel'
 import { Chip } from '@/components/ui'
 import { useInteractionsStore } from '@/stores/interactions'
@@ -41,6 +47,10 @@ function formatTokens(count: number): string {
 function modelLabel(provider: string, model: string): string {
   const options = getModelsForProvider(provider as Provider)
   return options.find((option) => option.id === model)?.label ?? model
+}
+
+function providerLabel(provider: string): string {
+  return PROVIDERS.find((p) => p.id === provider)?.label ?? provider
 }
 
 export function ChatView(props: { threadId: string; projectId: string; onOpenSidebar: () => void }) {
@@ -70,6 +80,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
+  const [showEffortPicker, setShowEffortPicker] = useState(false)
   const [showTodos, setShowTodos] = useState(false)
   const insets = useSafeAreaInsets()
   // Precise IME tracking (native inset animation via Reanimated) — the
@@ -190,19 +201,6 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         <TodoBadge todos={todos ?? []} onPress={() => setShowTodos(true)} />
       </View>
 
-      {/* Controls */}
-      {thread ? (
-        <View style={styles.controls}>
-          <Chip label={modelLabel(thread.provider, thread.model)} onPress={() => setShowModelPicker(true)} active />
-          <Chip
-            label={thread.permission_mode === 'yolo' ? 'YOLO' : thread.permission_mode === 'workspace' ? 'Workspace' : 'Ask'}
-            onPress={() => setShowPermissionPicker(true)}
-            active
-            color={thread.permission_mode === 'yolo' ? colors.danger : colors.textMuted}
-          />
-        </View>
-      ) : null}
-
       {/* Messages */}
       <Animated.View style={[{ flex: 1, backgroundColor: colors.surface }, keyboardPadStyle]}>
         <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -242,7 +240,29 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           />
         ) : null}
 
-        <InputBar status={status} onSend={handleSend} onStop={handleStop} />
+        <InputBar
+          status={status}
+          onSend={handleSend}
+          onStop={handleStop}
+          accessories={
+            thread ? (
+              <>
+                <Chip label={providerLabel(thread.provider)} onPress={() => setShowModelPicker(true)} />
+                <Chip label={modelLabel(thread.provider, thread.model)} onPress={() => setShowModelPicker(true)} active />
+                <Chip
+                  label={thread.reasoning_level === 'off' ? 'effort: off' : thread.reasoning_level}
+                  onPress={() => setShowEffortPicker(true)}
+                />
+                <Chip
+                  label={thread.permission_mode === 'yolo' ? 'YOLO' : thread.permission_mode === 'workspace' ? 'Workspace' : 'Ask'}
+                  onPress={() => setShowPermissionPicker(true)}
+                  active={thread.permission_mode === 'yolo'}
+                  color={thread.permission_mode === 'yolo' ? colors.danger : undefined}
+                />
+              </>
+            ) : undefined
+          }
+        />
       </Animated.View>
 
       <TodoSheet todos={todos ?? []} visible={showTodos} onClose={() => setShowTodos(false)} />
@@ -268,6 +288,18 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
               void setPermissionMode(projectId, threadId, mode).catch((e: unknown) =>
                 Alert.alert('Failed to update permission mode', errorText(e)),
               )
+            }
+          />
+          <ReasoningLevelSheet
+            current={thread.reasoning_level}
+            levels={reasoningLevelsForThread(thread)}
+            visible={showEffortPicker}
+            onClose={() => setShowEffortPicker(false)}
+            onSelect={(level) =>
+              void useThreadsStore
+                .getState()
+                .updateReasoningLevel(threadId, level)
+                .catch((e: unknown) => Alert.alert('Failed to update reasoning level', errorText(e)))
             }
           />
         </>

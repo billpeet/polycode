@@ -17,6 +17,7 @@ interface ThreadsState {
   setUnread: (projectId: string, threadId: string, unread: boolean) => Promise<void>
   setPermissionMode: (projectId: string, threadId: string, mode: Thread['permission_mode']) => Promise<void>
   updateProviderAndModel: (projectId: string, threadId: string, provider: string, model: string) => Promise<void>
+  updateReasoningLevel: (threadId: string, level: Thread['reasoning_level']) => Promise<void>
 
   /** Apply a live status/title update coming from the SSE stream. */
   applyStatus: (threadId: string, status: ThreadStatus) => void
@@ -108,6 +109,11 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   updateProviderAndModel: async (projectId, threadId, provider, model) => {
     get().patchThread(threadId, { provider, model })
     await rpc(requireConnection(), 'threads:updateProviderAndModel', threadId, provider, model)
+  },
+
+  updateReasoningLevel: async (threadId, level) => {
+    get().patchThread(threadId, { reasoning_level: level })
+    await rpc(requireConnection(), 'threads:updateReasoningLevel', threadId, level)
   },
 
   applyStatus: (threadId, status) => {

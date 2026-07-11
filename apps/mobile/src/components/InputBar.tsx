@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native'
+import { useState, type ReactNode } from 'react'
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import type { ThreadStatus } from '@polycode/shared'
 import { colors } from '@/theme/colors'
 
@@ -7,6 +7,8 @@ export function InputBar(props: {
   status: ThreadStatus
   onSend: (content: string, planMode: boolean) => void
   onStop: () => void
+  /** Extra parameter chips rendered beside the Plan mode toggle. */
+  accessories?: ReactNode
 }) {
   const [text, setText] = useState('')
   const [planMode, setPlanMode] = useState(false)
@@ -21,14 +23,20 @@ export function InputBar(props: {
 
   return (
     <View style={styles.container}>
-      <View style={styles.topRow}>
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.topRow}
+        keyboardShouldPersistTaps="handled"
+      >
         <Pressable onPress={() => setPlanMode((v) => !v)} hitSlop={6}>
           <View style={[styles.planChip, planMode && styles.planChipActive]}>
             <Text style={[styles.planChipText, planMode && { color: colors.info }]}>Plan mode</Text>
           </View>
         </Pressable>
+        {props.accessories}
         {props.status === 'stopping' ? <Text style={styles.statusHint}>Stopping…</Text> : null}
-      </View>
+      </ScrollView>
       <View style={styles.row}>
         <TextInput
           style={styles.input}
@@ -66,7 +74,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     gap: 8,
   },
-  topRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  topRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
   planChip: {
     borderWidth: 1,
     borderColor: colors.border,

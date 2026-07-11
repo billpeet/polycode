@@ -6,6 +6,7 @@ import {
   type ModelOption,
   type PermissionMode,
   type Provider,
+  type ReasoningLevel,
   type Thread,
 } from '@polycode/shared'
 import { rpc } from '@/api/rpc'
@@ -96,6 +97,46 @@ export function ModelPickerSheet(props: {
               )
             })}
           </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  )
+}
+
+const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+
+/** Levels supported by the thread's current model (static catalog), or the full set for unknown models. */
+export function reasoningLevelsForThread(thread: Thread): ReasoningLevel[] {
+  const options = getModelsForProvider(thread.provider as Provider)
+  const model = options.find((option) => option.id === thread.model) as ModelOption | undefined
+  return model?.reasoningLevels ?? ALL_REASONING_LEVELS
+}
+
+export function ReasoningLevelSheet(props: {
+  current: ReasoningLevel
+  levels: ReasoningLevel[]
+  visible: boolean
+  onClose: () => void
+  onSelect: (level: ReasoningLevel) => void
+}) {
+  return (
+    <Modal visible={props.visible} transparent animationType="slide" onRequestClose={props.onClose}>
+      <Pressable style={styles.backdrop} onPress={props.onClose}>
+        <Pressable style={styles.sheet} onPress={() => undefined}>
+          <Text style={styles.sheetTitle}>Reasoning Effort</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+            {props.levels.map((level) => (
+              <Chip
+                key={level}
+                label={level}
+                active={props.current === level}
+                onPress={() => {
+                  props.onSelect(level)
+                  props.onClose()
+                }}
+              />
+            ))}
+          </View>
         </Pressable>
       </Pressable>
     </Modal>
