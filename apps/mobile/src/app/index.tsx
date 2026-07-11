@@ -15,5 +15,5 @@ export default function Index() {
     )
   }
 
-  return <Redirect href={activeHostId ? '/projects' : '/hosts'} />
+  return <Redirect href={activeHostId ? '/home' : '/hosts'} />
 }

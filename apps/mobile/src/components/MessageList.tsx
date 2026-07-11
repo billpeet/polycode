@@ -1,19 +1,30 @@
-import { memo, useMemo } from 'react'
-import { FlatList, StyleSheet, Text, View } from 'react-native'
+import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import {
+  FlatList,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
+} from 'react-native'
 import { parseMetadata, type Message } from '@polycode/shared'
+import { colors } from '@/theme/colors'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
-import { ToolCallBlock, type ToolCallData } from './ToolCallBlock'
-import { colors } from '@/theme/colors'
+import { ToolCallBlock, deriveToolStatus, type ToolCallProps, type ToolResultData } from './ToolCallBlock'
+import { GROUP_THRESHOLD, ToolCallGroupBlock, toolGroupKey } from './ToolCallGroupBlock'
+import { canonicalToolName } from './ToolCallBlock'
 
-type ItemKind = 'user' | 'text' | 'thinking' | 'tool_call' | 'tool_result' | 'error' | 'plan'
+type ItemKind = 'user' | 'text' | 'thinking' | 'tool_call' | 'tool_group' | 'error' | 'plan'
 
 interface RenderItem {
   key: string
   kind: ItemKind
   content: string
   subagent: boolean
-  toolCall?: ToolCallData
+  toolCall?: ToolCallProps
+  group?: { calls: ToolCallProps[]; groupKey: string }
 }
 
 function isSubagent(meta: Record<string, unknown> | null): boolean {
@@ -22,22 +33,25 @@ function isSubagent(meta: Record<string, unknown> | null): boolean {
 }
 
 /**
- * Build render items from raw messages: pairs each tool_result with its
- * tool_call by tool_use_id so results render inside the call block, and
- * classifies the remaining bubbles.
+ * Build render items from raw messages:
+ * 1. pair each tool_result with its tool_call by tool_use_id,
+ * 2. classify bubbles (text/thinking/plan/error/tool),
+ * 3. group 4+ consecutive same-kind, same-status tool calls (desktop parity).
  */
 function buildItems(messages: Message[]): RenderItem[] {
   const parsed = messages.map((message) => ({ message, meta: parseMetadata(message.metadata) }))
 
   // tool_use_id → result payload
-  const resultsByToolUseId = new Map<string, { content: string; isError: boolean; cancelled: boolean }>()
+  const resultsByToolUseId = new Map<string, ToolResultData>()
+  const pairedToolUseIds = new Set<string>()
   for (const { message, meta } of parsed) {
     if (meta?.type === 'tool_result' && typeof meta.tool_use_id === 'string') {
-      resultsByToolUseId.set(meta.tool_use_id, {
-        content: message.content,
-        isError: Boolean(meta.is_error),
-        cancelled: Boolean(meta.cancelled),
-      })
+      resultsByToolUseId.set(meta.tool_use_id, { content: message.content, metadata: meta })
+    }
+  }
+  for (const { meta } of parsed) {
+    if (meta?.type === 'tool_call' && typeof meta.id === 'string' && resultsByToolUseId.has(meta.id)) {
+      pairedToolUseIds.add(meta.id)
     }
   }
 
@@ -53,9 +67,10 @@ function buildItems(messages: Message[]): RenderItem[] {
         content: message.content,
         subagent,
         toolCall: {
-          name: typeof meta.name === 'string' ? meta.name : message.content || 'tool',
-          input: (meta.input as Record<string, unknown> | undefined) ?? undefined,
-          result: toolUseId ? resultsByToolUseId.get(toolUseId) : undefined,
+          content: message.content,
+          metadata: meta,
+          result: toolUseId ? (resultsByToolUseId.get(toolUseId) ?? null) : null,
+          subagent,
         },
       })
       continue
@@ -63,17 +78,17 @@ function buildItems(messages: Message[]): RenderItem[] {
 
     if (meta?.type === 'tool_result') {
       // Rendered inside its tool_call block; only show orphans.
-      if (typeof meta.tool_use_id === 'string' && parsed.some((p) => p.meta?.type === 'tool_call' && p.meta.id === meta.tool_use_id)) {
-        continue
-      }
+      if (typeof meta.tool_use_id === 'string' && pairedToolUseIds.has(meta.tool_use_id)) continue
       items.push({
         key: message.id,
-        kind: 'tool_result',
+        kind: 'tool_call',
         content: message.content,
         subagent,
         toolCall: {
-          name: 'result',
-          result: { content: message.content, isError: Boolean(meta.is_error), cancelled: Boolean(meta.cancelled) },
+          content: typeof meta.name === 'string' ? meta.name : 'result',
+          metadata: { name: typeof meta.name === 'string' ? meta.name : 'result' },
+          result: { content: message.content, metadata: meta },
+          subagent,
         },
       })
       continue
@@ -103,7 +118,54 @@ function buildItems(messages: Message[]): RenderItem[] {
       items.push({ key: message.id, kind: 'text', content: message.content, subagent })
     }
   }
-  return items
+
+  return groupToolRuns(items)
+}
+
+/** Collapse runs of >GROUP_THRESHOLD consecutive tool calls sharing a group key + status. */
+function groupToolRuns(items: RenderItem[]): RenderItem[] {
+  const out: RenderItem[] = []
+  let run: RenderItem[] = []
+  let runKey = ''
+  let runStatus = ''
+  let runSubagent = false
+
+  const flush = () => {
+    if (run.length > GROUP_THRESHOLD) {
+      out.push({
+        key: `group-${run[0].key}`,
+        kind: 'tool_group',
+        content: '',
+        subagent: runSubagent,
+        group: { calls: run.map((item) => item.toolCall!), groupKey: runKey },
+      })
+    } else {
+      out.push(...run)
+    }
+    run = []
+  }
+
+  for (const item of items) {
+    if (item.kind === 'tool_call' && item.toolCall) {
+      const rawName = typeof item.toolCall.metadata.name === 'string' ? item.toolCall.metadata.name : item.content
+      const key = toolGroupKey(canonicalToolName(rawName, item.toolCall.metadata))
+      const status = deriveToolStatus(item.toolCall.result)
+      if (run.length > 0 && key === runKey && status === runStatus && item.subagent === runSubagent) {
+        run.push(item)
+        continue
+      }
+      flush()
+      run = [item]
+      runKey = key
+      runStatus = status
+      runSubagent = item.subagent
+      continue
+    }
+    flush()
+    out.push(item)
+  }
+  flush()
+  return out
 }
 
 const Row = memo(function Row({ item }: { item: RenderItem }) {
@@ -121,12 +183,16 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
     case 'thinking':
       return <ThinkingBlock content={item.content} subagent={item.subagent} />
     case 'tool_call':
-    case 'tool_result':
-      return item.toolCall ? <ToolCallBlock data={item.toolCall} subagent={item.subagent} /> : null
+      return item.toolCall ? <ToolCallBlock {...item.toolCall} /> : null
+    case 'tool_group':
+      return item.group ? (
+        <ToolCallGroupBlock calls={item.group.calls} groupKey={item.group.groupKey} subagent={item.subagent} />
+      ) : null
     case 'error':
       return (
         <View style={styles.errorBlock}>
           <Text style={styles.errorText} selectable>
+            <Text style={{ fontWeight: '700' }}>Error: </Text>
             {item.content}
           </Text>
         </View>
@@ -141,26 +207,70 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
     case 'text':
     default:
       return (
-        <View style={item.subagent ? styles.subagentText : undefined}>
-          <Markdown>{item.content}</Markdown>
+        <View style={[styles.assistantRow, item.subagent && styles.subagentText]}>
+          <View style={styles.assistantBubble}>
+            <Markdown>{item.content}</Markdown>
+          </View>
         </View>
       )
   }
 })
 
+/** Mirrors desktop MessageStream: 64px follow threshold + "↓ Latest" pill. */
+const AUTO_SCROLL_THRESHOLD_PX = 64
+
 export function MessageList(props: { messages: Message[] }) {
   const items = useMemo(() => buildItems(props.messages), [props.messages])
   const reversed = useMemo(() => [...items].reverse(), [items])
+  const listRef = useRef<FlatList<RenderItem>>(null)
+  const [showLatest, setShowLatest] = useState(false)
+  // Desktop MessageStream parity: while the user is at (or near) the bottom,
+  // stay pinned there through streaming — even when regrouping re-keys items
+  // and the list loses its scroll anchor.
+  const followBottom = useRef(true)
+
+  // Inverted list: contentOffset.y === 0 is the visual bottom.
+  const handleScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    const atBottom = event.nativeEvent.contentOffset.y < AUTO_SCROLL_THRESHOLD_PX
+    followBottom.current = atBottom
+    setShowLatest((prev) => (prev === !atBottom ? prev : !atBottom))
+  }, [])
+
+  const scrollToBottom = useCallback(() => {
+    followBottom.current = true
+    listRef.current?.scrollToOffset({ offset: 0, animated: true })
+    setShowLatest(false)
+  }, [])
+
+  const handleContentSizeChange = useCallback(() => {
+    if (followBottom.current) {
+      listRef.current?.scrollToOffset({ offset: 0, animated: false })
+    }
+  }, [])
 
   return (
-    <FlatList
-      data={reversed}
-      inverted
-      keyExtractor={(item) => item.key}
-      renderItem={({ item }) => <Row item={item} />}
-      contentContainerStyle={styles.content}
-      keyboardShouldPersistTaps="handled"
-    />
+    <View style={{ flex: 1 }}>
+      <FlatList
+        ref={listRef}
+        data={reversed}
+        inverted
+        keyExtractor={(item) => item.key}
+        renderItem={({ item }) => <Row item={item} />}
+        contentContainerStyle={styles.content}
+        keyboardShouldPersistTaps="handled"
+        onScroll={handleScroll}
+        scrollEventThrottle={48}
+        onContentSizeChange={handleContentSizeChange}
+        // Keeps the viewport stable while streamed chunks resize items when
+        // the user has scrolled up.
+        maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+      />
+      {showLatest ? (
+        <Pressable onPress={scrollToBottom} style={({ pressed }) => [styles.latestButton, pressed && { opacity: 0.8 }]}>
+          <Text style={styles.latestButtonText}>↓ Latest</Text>
+        </Pressable>
+      ) : null}
+    </View>
   )
 }
 
@@ -168,22 +278,32 @@ const styles = StyleSheet.create({
   content: { padding: 14, gap: 8 },
   userRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   userBubble: {
-    backgroundColor: colors.surface2,
-    borderRadius: 14,
-    borderBottomRightRadius: 4,
-    paddingHorizontal: 12,
+    backgroundColor: colors.claude,
+    borderRadius: 10,
+    paddingHorizontal: 13,
     paddingVertical: 8,
     maxWidth: '85%',
   },
-  userText: { color: colors.text, fontSize: 15, lineHeight: 21 },
-  errorBlock: {
-    backgroundColor: 'rgba(248, 113, 113, 0.08)',
+  userText: { color: '#ffffff', fontSize: 14.5, lineHeight: 21 },
+  assistantRow: { flexDirection: 'row', justifyContent: 'flex-start' },
+  assistantBubble: {
+    backgroundColor: colors.surface,
     borderWidth: 1,
-    borderColor: 'rgba(248, 113, 113, 0.35)',
+    borderColor: colors.border,
+    borderRadius: 10,
+    paddingHorizontal: 13,
+    paddingVertical: 6,
+    maxWidth: '94%',
+    flexShrink: 1,
+  },
+  errorBlock: {
+    backgroundColor: '#3b0000',
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
     borderRadius: 8,
     padding: 10,
   },
-  errorText: { color: colors.danger, fontSize: 13, fontFamily: 'monospace' },
+  errorText: { color: '#f87171', fontSize: 12.5, fontFamily: 'monospace', lineHeight: 18 },
   planBlock: {
     borderWidth: 1,
     borderColor: colors.info,
@@ -191,6 +311,28 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: 'rgba(96, 165, 250, 0.06)',
   },
-  planLabel: { color: colors.info, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 4 },
+  planLabel: {
+    color: colors.info,
+    fontSize: 11,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+    marginBottom: 4,
+  },
   subagentText: { marginLeft: 16, opacity: 0.9 },
+  latestButton: {
+    position: 'absolute',
+    bottom: 14,
+    right: 14,
+    backgroundColor: colors.claude,
+    borderRadius: 999,
+    paddingHorizontal: 13,
+    paddingVertical: 7,
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+    shadowOffset: { width: 0, height: 2 },
+  },
+  latestButtonText: { color: '#fff', fontSize: 12.5, fontWeight: '600' },
 })

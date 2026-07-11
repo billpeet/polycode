@@ -67,13 +67,11 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
+        <Stack.Screen name="home" options={{ headerShown: false }} />
         <Stack.Screen name="hosts/index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="hosts/new" options={{ title: 'Add Host' }} />
         <Stack.Screen name="hosts/scan" options={{ title: 'Scan QR Code' }} />
         <Stack.Screen name="hosts/[hostId]/edit" options={{ title: 'Edit Host' }} />
-        <Stack.Screen name="projects/index" options={{ title: 'Projects' }} />
-        <Stack.Screen name="projects/[projectId]/index" options={{ title: 'Threads' }} />
-        <Stack.Screen name="threads/[threadId]/index" options={{ headerShown: false }} />
       </Stack>
     </>
   )

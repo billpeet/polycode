@@ -4,6 +4,9 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'rea
 import { useState } from 'react'
 import { Button, Card, EmptyState } from '@/components/ui'
 import { useHostsStore, type HostMeta } from '@/stores/hosts'
+import { useProjectsStore } from '@/stores/projects'
+import { useThreadsStore } from '@/stores/threads'
+import { useUiStore } from '@/stores/ui'
 import { colors } from '@/theme/colors'
 
 function HostCard(props: { host: HostMeta }) {
@@ -19,8 +22,14 @@ function HostCard(props: { host: HostMeta }) {
   return (
     <Pressable
       onPress={() => {
-        setActiveHost(host.id)
-        router.push('/projects')
+        if (activeHostId !== host.id) {
+          // Switching hosts: reset everything scoped to the previous host.
+          setActiveHost(host.id)
+          useUiStore.getState().clearSelection()
+          useProjectsStore.getState().clear()
+          useThreadsStore.setState({ threadsByProject: {} })
+        }
+        router.push('/home')
       }}
       onLongPress={() => router.push({ pathname: '/hosts/[hostId]/edit', params: { hostId: host.id } })}
     >

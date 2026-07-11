@@ -1,15 +1,5 @@
-import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import {
-  Alert,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Alert, KeyboardAvoidingView, Platform, Pressable, StyleSheet, Text, View } from 'react-native'
 import {
   DEFAULT_CONTEXT_LIMIT,
   MODEL_CONTEXT_LIMITS,
@@ -51,11 +41,10 @@ function modelLabel(provider: string, model: string): string {
   return options.find((option) => option.id === model)?.label ?? model
 }
 
-export default function ThreadScreen() {
-  const router = useRouter()
-  const { threadId, projectId } = useLocalSearchParams<{ threadId: string; projectId?: string }>()
+export function ChatView(props: { threadId: string; projectId: string; onOpenSidebar: () => void }) {
+  const { threadId, projectId, onOpenSidebar } = props
 
-  const thread = useThreadsStore((s) => (threadId ? s.findThread(threadId) : undefined))
+  const thread = useThreadsStore((s) => s.findThread(threadId))
   const fetchThreads = useThreadsStore((s) => s.fetch)
   const sendMessage = useThreadsStore((s) => s.send)
   const stopThread = useThreadsStore((s) => s.stop)
@@ -63,28 +52,26 @@ export default function ThreadScreen() {
   const setPermissionMode = useThreadsStore((s) => s.setPermissionMode)
   const updateProviderAndModel = useThreadsStore((s) => s.updateProviderAndModel)
 
-  const messages = useMessagesStore((s) => (threadId ? (s.messagesByThread[threadId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES))
-  const usage = useMessagesStore((s) => (threadId ? s.usageByThread[threadId] : undefined))
+  const messages = useMessagesStore((s) => s.messagesByThread[threadId] ?? EMPTY_MESSAGES)
+  const usage = useMessagesStore((s) => s.usageByThread[threadId])
   const fetchMessages = useMessagesStore((s) => s.fetch)
   const appendEvent = useMessagesStore((s) => s.appendEvent)
   const appendUserMessage = useMessagesStore((s) => s.appendUserMessage)
 
-  const todos = useTodosStore((s) => (threadId ? (s.todosByThread[threadId] ?? null) : null))
+  const todos = useTodosStore((s) => s.todosByThread[threadId] ?? null)
   const applyTodoEvent = useTodosStore((s) => s.applyEvent)
   const syncTodos = useTodosStore((s) => s.syncFromMessages)
 
-  const permissions = useInteractionsStore((s) => (threadId ? (s.permissionsByThread[threadId] ?? null) : null))
-  const questions = useInteractionsStore((s) => (threadId ? (s.questionsByThread[threadId] ?? null) : null))
+  const permissions = useInteractionsStore((s) => s.permissionsByThread[threadId] ?? null)
+  const questions = useInteractionsStore((s) => s.questionsByThread[threadId] ?? null)
   const interactions = useInteractionsStore()
 
   const [showModelPicker, setShowModelPicker] = useState(false)
   const [showPermissionPicker, setShowPermissionPicker] = useState(false)
-  const insets = useSafeAreaInsets()
 
   const status: ThreadStatus = thread?.status ?? 'idle'
 
   const refetchAll = useCallback(() => {
-    if (!threadId) return
     fetchMessages(threadId)
       .then((loaded) => syncTodos(threadId, loaded))
       .catch(() => {
@@ -92,9 +79,9 @@ export default function ThreadScreen() {
       })
   }, [threadId, fetchMessages, syncTodos])
 
-  // Ensure the thread object exists (deep links land here without the list loaded).
+  // Ensure the thread object exists (selection can be restored before lists load).
   useEffect(() => {
-    if (!thread && projectId) void fetchThreads(projectId)
+    if (!thread) void fetchThreads(projectId)
   }, [thread, projectId, fetchThreads])
 
   // Initial load + refetch on SSE reconnect (missed frames are not replayed).
@@ -105,8 +92,6 @@ export default function ThreadScreen() {
 
   // Live event wiring for this thread.
   useEffect(() => {
-    if (!threadId) return
-
     const offOutput = onChannel(channels.threadOutput(threadId), (_channel, rawEvent) => {
       const event = rawEvent as OutputEvent
       if (!event || typeof event.type !== 'string') return
@@ -138,30 +123,24 @@ export default function ThreadScreen() {
 
   // Fetch pending interactions when we open a thread that is already waiting.
   useEffect(() => {
-    if (!threadId) return
     if (status === 'permission_pending') void interactions.fetchPermissions(threadId)
     if (status === 'question_pending') void interactions.fetchQuestions(threadId)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId, status])
 
-  // Clear unread on focus.
-  useFocusEffect(
-    useCallback(() => {
-      if (threadId && projectId && thread?.unread) {
-        void setUnread(projectId, threadId, false)
-      }
-    }, [threadId, projectId, thread?.unread, setUnread]),
-  )
+  // Clear unread once the thread is open.
+  useEffect(() => {
+    if (thread?.unread) void setUnread(projectId, threadId, false)
+  }, [thread?.unread, projectId, threadId, setUnread])
 
+  // Unknown models fall back to the default limit — never to the thread's own
+  // current usage, which would always read as 100%.
   const contextLimit = useMemo(() => {
     if (!thread) return DEFAULT_CONTEXT_LIMIT
-    return MODEL_CONTEXT_LIMITS[thread.model] ?? (thread.context_window || DEFAULT_CONTEXT_LIMIT)
+    return MODEL_CONTEXT_LIMITS[thread.model] ?? DEFAULT_CONTEXT_LIMIT
   }, [thread])
 
-  if (!threadId) return <View style={styles.screen} />
-
-  // context_window on usage/thread = tokens currently in the context window
-  // (input_tokens is the cumulative total across the session — not what we want).
+  // context_window on usage/thread = tokens currently in the context window.
   const contextTokens = usage?.context_window ?? thread?.context_window ?? 0
   const contextPercent = contextLimit > 0 ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0
 
@@ -177,11 +156,11 @@ export default function ThreadScreen() {
   }
 
   return (
-    <View style={[styles.screen, { paddingTop: insets.top }]}>
+    <View style={styles.screen}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={() => router.back()} hitSlop={10}>
-          <Text style={styles.backIcon}>‹</Text>
+        <Pressable onPress={onOpenSidebar} hitSlop={10}>
+          <Text style={styles.menuIcon}>☰</Text>
         </Pressable>
         <View style={{ flex: 1, gap: 2 }}>
           <Text style={styles.title} numberOfLines={1}>
@@ -229,9 +208,7 @@ export default function ThreadScreen() {
             onApprove={() => void interactions.approvePlan(threadId).catch((e: unknown) => Alert.alert('Failed', errorText(e)))}
             onReject={() => void interactions.rejectPlan(threadId).catch((e: unknown) => Alert.alert('Failed', errorText(e)))}
             onExecuteInNewContext={() =>
-              void interactions
-                .executePlanInNewContext(threadId)
-                .catch((e: unknown) => Alert.alert('Failed', errorText(e)))
+              void interactions.executePlanInNewContext(threadId).catch((e: unknown) => Alert.alert('Failed', errorText(e)))
             }
           />
         ) : null}
@@ -260,11 +237,10 @@ export default function ThreadScreen() {
         ) : null}
 
         <InputBar status={status} onSend={handleSend} onStop={handleStop} />
-        <View style={{ height: insets.bottom, backgroundColor: colors.surface }} />
       </KeyboardAvoidingView>
 
       {/* Sheets */}
-      {thread && projectId ? (
+      {thread ? (
         <>
           <ModelPickerSheet
             thread={thread}
@@ -297,14 +273,14 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
     paddingHorizontal: 14,
     paddingVertical: 10,
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  backIcon: { color: colors.text, fontSize: 30, lineHeight: 32, marginTop: -4 },
+  menuIcon: { color: colors.text, fontSize: 20 },
   title: { color: colors.text, fontSize: 16, fontWeight: '700' },
   statusText: { color: colors.textMuted, fontSize: 12 },
   controls: {
