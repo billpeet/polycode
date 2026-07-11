@@ -105,6 +105,7 @@ import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
 import { emitAppEvent } from '../app-events'
+import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
@@ -294,54 +295,6 @@ function invalidateRepoGitCache(repoPath: string): void {
   invalidateGitCache(repoPath, ssh, wsl)
 }
 
-/** Expand a leading `~` to the user's home directory. */
-function resolveHome(p: string): string {
-  return p.startsWith('~') ? p.replace(/^~/, homedir()) : p
-}
-
-/** Derive a directory-friendly name from a git URL (last path segment, sans `.git`). */
-function repoNameFromGitUrl(gitUrl: string): string {
-  return gitUrl.replace(/\.git$/i, '').split(/[/\\]/).filter(Boolean).pop() ?? 'repo'
-}
-
-/** Resolve a unique, non-existent path under `baseDir`, appending `-2`, `-3`, … on collision. */
-function suggestUniquePath(baseDir: string, name: string): string {
-  const resolvedBase = resolveHome(baseDir)
-  const candidate = join(resolvedBase, name)
-  if (!existsSync(candidate)) return candidate
-  let n = 2
-  while (existsSync(join(resolvedBase, `${name}-${n}`))) n++
-  return join(resolvedBase, `${name}-${n}`)
-}
-
-/** Run `git clone <gitUrl> <clonePath>`, creating the parent directory first. */
-function cloneRepo(gitUrl: string, clonePath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    try {
-      mkdirSync(join(clonePath, '..'), { recursive: true })
-    } catch {
-      // parent may already exist
-    }
-
-    const proc = spawn('git', ['clone', gitUrl, clonePath], {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stderr = ''
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-
-    proc.on('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(stderr.trim() || `git clone exited with code ${code}`))
-    })
-
-    proc.on('error', (err) => {
-      reject(new Error(`Failed to run git: ${err.message}`))
-    })
-  })
-}
-
 async function assertMainBranchCommitAllowed(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   const location = getLocationByPath(repoPath)
   if (!location) return
@@ -352,104 +305,6 @@ async function assertMainBranchCommitAllowed(repoPath: string, ssh?: SshConfig |
   if (status?.branch === 'main' || status?.branch === 'master') {
     throw new Error(`Commits are disabled on ${status.branch} for this project`)
   }
-}
-
-function sanitizeWorktreeSegment(value: string): string {
-  const cleaned = value.trim().replace(/[^A-Za-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
-  return cleaned || `worktree-${Date.now()}`
-}
-
-function runGit(args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('git', args, {
-      cwd,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let stdout = ''
-    let stderr = ''
-    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout)
-        return
-      }
-      reject(new Error(stderr.trim() || `git exited with code ${code}`))
-    })
-    proc.on('error', (err) => reject(new Error(`Failed to run git: ${err.message}`)))
-  })
-}
-
-async function resolveWorktreeBaseRef(repoPath: string): Promise<string> {
-  for (const ref of ['main', 'master', 'origin/main', 'origin/master']) {
-    try {
-      await runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], repoPath)
-      return ref
-    } catch {
-      // Try the next conventional default branch ref.
-    }
-  }
-
-  throw new Error('Could not find a main or master branch to create the worktree from.')
-}
-
-function isNotRegisteredWorktreeError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.includes('is not a working tree') || message.includes('is not a git repository')
-}
-
-function isWorktreeDirectoryCleanupError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.includes('failed to delete') && (
-    message.includes('Directory not empty') ||
-    message.includes('Permission denied')
-  )
-}
-
-function removeWorktreeDirectoryBestEffort(path: string): void {
-  if (!existsSync(path)) return
-  try {
-    rmSync(path, { recursive: true, force: true })
-  } catch (removeError) {
-    const code = removeError && typeof removeError === 'object' && 'code' in removeError
-      ? String((removeError as { code?: unknown }).code)
-      : ''
-    if (code !== 'EBUSY' && code !== 'EPERM') throw removeError
-    console.warn(`[worktree] Could not remove locked worktree directory "${path}"; removing PolyCode location only.`)
-  }
-}
-
-async function createLocalWorktree(parentLocationId: string, label?: string | null): Promise<ReturnType<typeof createWorktreeLocation>> {
-  const parent = getLocationById(parentLocationId)
-  if (!parent) throw new Error('Parent location not found')
-  if (parent.connection_type !== 'local') throw new Error('Worktree creation is currently supported for local locations only.')
-  if (parent.is_worktree) throw new Error('Create new worktrees from the main checkout location.')
-  if (!existsSync(parent.path)) throw new Error(`Directory not found: "${parent.path}"`)
-
-  const currentBranch = (await runGit(['branch', '--show-current'], parent.path)).trim()
-  const baseName = sanitizeWorktreeSegment(label || currentBranch || 'worktree')
-  const repoName = sanitizeWorktreeSegment(basename(parent.path))
-  const worktreesRoot = join(dirname(parent.path), `${repoName}-worktrees`)
-  mkdirSync(worktreesRoot, { recursive: true })
-
-  let worktreePath = join(worktreesRoot, baseName)
-  let suffix = 2
-  while (existsSync(worktreePath)) {
-    worktreePath = join(worktreesRoot, `${baseName}-${suffix}`)
-    suffix += 1
-  }
-
-  const branchName = `polycode/${baseName}-${Date.now().toString(36)}`
-  const baseRef = await resolveWorktreeBaseRef(parent.path)
-  await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
-  const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
-
-  for (const command of listCommands(parent.project_id).filter((cmd) => cmd.run_on_worktree_create)) {
-    void commandManager.start(command.id, location.id)
-  }
-
-  return location
 }
 
 let cachedWslDistros: { expiresAt: number; value: string[] } | null = null
@@ -482,44 +337,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   // Atomically provision a brand-new project *and* its first local location in one shot.
   // All filesystem/git work (mkdir + init, clone, remote detection) happens BEFORE any DB
   // rows are written, so a failure never leaves an orphaned project behind.
-  ipcMain.handle('projects:createFull', async (_event, spec: NewProjectSpec) => {
-    const name = spec.name?.trim()
-    if (!name) throw new Error('Project name is required.')
-    const label = spec.label?.trim() || 'Local'
-    const allow = spec.allowMainBranchCommits ?? true
-    const source = spec.source
-
-    let locationPath: string
-    let gitUrl: string | null = null
-
-    if (source.kind === 'new') {
-      const resolved = resolveHome(source.path?.trim() ?? '')
-      if (!resolved) throw new Error('Directory path is required.')
-      mkdirSync(resolved, { recursive: true })
-      await gitInit(resolved)
-      locationPath = resolved
-    } else if (source.kind === 'existing') {
-      const resolved = resolveHome(source.path?.trim() ?? '')
-      if (!resolved) throw new Error('Directory is required.')
-      if (!existsSync(resolved)) throw new Error(`Directory does not exist: ${resolved}`)
-      locationPath = resolved
-      gitUrl = await getRemoteUrl(resolved).catch(() => null)
-    } else if (source.kind === 'clone') {
-      const url = source.gitUrl?.trim()
-      if (!url) throw new Error('Git URL is required.')
-      // Fall back to the saved default (or ~/source) when no base dir is supplied,
-      // mirroring the UI's own default so a blank/stale setting can't hard-fail the clone.
-      const parentDir = source.parentDir?.trim() || getSetting('default_source_dir')?.trim() || '~/source'
-      locationPath = suggestUniquePath(parentDir, repoNameFromGitUrl(url))
-      await cloneRepo(url, locationPath)
-      gitUrl = url
-    } else {
-      throw new Error('Unknown project source.')
-    }
-
-    const project = createProject(name, gitUrl, allow)
-    const location = createLocation(project.id, label, 'local', locationPath, null, null, null)
-    return { project, location }
+  ipcMain.handle('projects:createFull', (_event, spec: NewProjectSpec) => {
+    return createFullProject(spec)
   })
 
   ipcMain.handle('projects:update', (_event, id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
@@ -566,31 +385,8 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return createLocalWorktree(parentLocationId, label)
   })
 
-  ipcMain.handle('locations:removeWorktree', async (_event, id: string) => {
-    const location = getLocationById(id)
-    if (!location) return
-    if (!location.is_worktree) throw new Error('Location is not a worktree.')
-    if (location.connection_type !== 'local') throw new Error('Worktree removal is currently supported for local locations only.')
-    for (const thread of listActiveThreadsForLocation(location.id)) {
-      sessionManager.remove(thread.id)
-      if (thread.has_messages) {
-        archiveThread(thread.id)
-      } else {
-        deleteThread(thread.id)
-      }
-    }
-    const parent = location.parent_location_id ? getLocationById(location.parent_location_id) : null
-    const gitCwd = parent?.path && existsSync(parent.path) ? parent.path : location.path
-    try {
-      await runGit(['worktree', 'remove', '--force', location.path], gitCwd)
-    } catch (error) {
-      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
-      if (parent?.path && existsSync(parent.path)) {
-        await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
-      }
-      removeWorktreeDirectoryBestEffort(location.path)
-    }
-    deleteLocation(id)
+  ipcMain.handle('locations:removeWorktree', (_event, id: string) => {
+    return removeWorktreeLocation(id)
   })
 
   proxyable('locations:checkout', (id: string) => {
@@ -622,17 +418,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   ipcMain.handle('locations:suggestPath', (_event, baseDir: string, repoName: string): string => {
-    const resolvedBase = baseDir.replace(/^~/, homedir())
-    const candidate = join(resolvedBase, repoName)
-    if (!existsSync(candidate)) return candidate
-    let n = 2
-    while (existsSync(join(resolvedBase, `${repoName}-${n}`))) n++
-    return join(resolvedBase, `${repoName}-${n}`)
+    return suggestUniquePath(baseDir, repoName)
   })
 
-  ipcMain.handle('locations:clone', async (_event, projectId: string, label: string, gitUrl: string, clonePath: string) => {
-    await cloneRepo(gitUrl, clonePath)
-    return createLocation(projectId, label, 'local', clonePath, null, null, null)
+  ipcMain.handle('locations:clone', (_event, projectId: string, label: string, gitUrl: string, clonePath: string) => {
+    return cloneLocation(projectId, label, gitUrl, clonePath)
   })
 
   // ── SSH / WSL test ──────────────────────────────────────────────────────────

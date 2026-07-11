@@ -4,7 +4,15 @@ import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
 import {
   archivedThreadCount,
+  archiveProject,
   archiveThread,
+  createLocation,
+  createProject,
+  deleteLocation,
+  deleteProject,
+  unarchiveProject,
+  updateLocation,
+  updateProject,
   checkoutLocation,
   createSlashCommand,
   createThread,
@@ -126,18 +134,32 @@ import { listPiAvailableModels } from '../pi-models'
 import { listCursorAvailableModels } from '../cursor-models'
 import { listDetectedSkills } from '../skills'
 import { emitAppEvent } from '../app-events'
-import { Provider, QuestionAnswerValue, SendOptions, SshConfig, WslConfig } from '../../shared/types'
+import { NewProjectSpec, Provider, QuestionAnswerValue, SendOptions, SshConfig, WslConfig } from '../../shared/types'
 import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslExec, wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
 import { startFileWatch, stopFileWatch } from '../file-watch'
 import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
+import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 
 export const CONTROL_RPC_CHANNELS = new Set([
   'projects:list',
   'projects:listArchived',
+  'projects:create',
+  'projects:createFull',
+  'projects:update',
+  'projects:delete',
+  'projects:archive',
+  'projects:unarchive',
   'locations:list',
   'locations:pathExists',
+  'locations:create',
+  'locations:update',
+  'locations:delete',
+  'locations:createWorktree',
+  'locations:removeWorktree',
+  'locations:clone',
+  'locations:suggestPath',
   'locations:checkout',
   'locations:returnToPool',
   'location-pools:list',
@@ -491,6 +513,52 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return listProjects()
     case 'projects:listArchived':
       return listArchivedProjects()
+    case 'projects:create': {
+      const [name, gitUrl, allowMainBranchCommits] = args as [string, string | null | undefined, boolean | undefined]
+      return createProject(name, gitUrl, allowMainBranchCommits ?? true)
+    }
+    case 'projects:createFull':
+      return createFullProject(args[0] as NewProjectSpec)
+    case 'projects:update': {
+      const [id, name, gitUrl, allowMainBranchCommits] = args as [string, string, string | null | undefined, boolean | undefined]
+      return updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
+    }
+    case 'projects:delete':
+      sessionManager.stopAll()
+      commandManager.stopAll()
+      return deleteProject(args[0] as string)
+    case 'projects:archive':
+      return archiveProject(args[0] as string)
+    case 'projects:unarchive':
+      return unarchiveProject(args[0] as string)
+    case 'locations:create': {
+      const [projectId, label, connectionType, locationPath, poolId, ssh, wsl] = args as [
+        string, string, 'local' | 'ssh' | 'wsl', string, string | null | undefined, SshConfig | null | undefined, WslConfig | null | undefined,
+      ]
+      return createLocation(projectId, label, connectionType, locationPath, poolId ?? null, ssh ?? null, wsl ?? null)
+    }
+    case 'locations:update': {
+      const [id, label, connectionType, locationPath, poolId, ssh, wsl] = args as [
+        string, string, 'local' | 'ssh' | 'wsl', string, string | null | undefined, SshConfig | null | undefined, WslConfig | null | undefined,
+      ]
+      return updateLocation(id, label, connectionType, locationPath, poolId ?? null, ssh ?? null, wsl ?? null)
+    }
+    case 'locations:delete':
+      return deleteLocation(args[0] as string)
+    case 'locations:createWorktree': {
+      const [parentLocationId, label] = args as [string, string | null | undefined]
+      return createLocalWorktree(parentLocationId, label ?? null)
+    }
+    case 'locations:removeWorktree':
+      return removeWorktreeLocation(args[0] as string)
+    case 'locations:clone': {
+      const [projectId, label, gitUrl, clonePath] = args as [string, string, string, string]
+      return cloneLocation(projectId, label, gitUrl, clonePath)
+    }
+    case 'locations:suggestPath': {
+      const [baseDir, repoName] = args as [string, string]
+      return suggestUniquePath(baseDir, repoName)
+    }
 
     case 'locations:list':
       return listLocations(args[0] as string)

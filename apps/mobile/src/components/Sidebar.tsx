@@ -13,6 +13,7 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Project, RepoLocation, Thread } from '@polycode/shared'
+import { rpc } from '@/api/rpc'
 import { sseManager, type ConnectionState } from '@/api/sse'
 import { useHostsStore } from '@/stores/hosts'
 import { useProjectsStore } from '@/stores/projects'
@@ -22,6 +23,7 @@ import { colors } from '@/theme/colors'
 import { ThreadStatusIndicator } from './StatusDot'
 import { ActionSheet } from './ActionSheet'
 import { CommandsPanel } from './CommandsPanel'
+import { NewProjectSheet, NewWorktreeSheet } from './ProjectAdmin'
 import { RenameThreadModal } from './ThreadModals'
 
 const SIDEBAR_WIDTH = Math.min(320, Dimensions.get('window').width * 0.85)
@@ -142,6 +144,8 @@ function ProjectSection(props: {
   onThreadLongPress: (projectId: string, thread: Thread) => void
   onShowArchived: (projectId: string) => void
   onShowCommands: (projectId: string) => void
+  onProjectLongPress: (project: Project) => void
+  onLocationLongPress: (projectId: string, location: RepoLocation) => void
 }) {
   const { project } = props
   const expanded = useUiStore((s) => s.expandedProjectIds.includes(project.id))
@@ -191,6 +195,7 @@ function ProjectSection(props: {
     <View>
       <Pressable
         onPress={() => toggleProject(project.id)}
+        onLongPress={() => props.onProjectLongPress(project)}
         style={({ pressed }) => [styles.projectRow, pressed && { opacity: 0.7 }]}
       >
         <Text style={[styles.projectChevron, expanded && { transform: [{ rotate: '90deg' }] }]}>▸</Text>
@@ -272,6 +277,9 @@ export function Sidebar() {
   const [locationPicker, setLocationPicker] = useState<{ projectId: string; locations: RepoLocation[] } | null>(null)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
   const [commandsProjectId, setCommandsProjectId] = useState<string | null>(null)
+  const [showNewProject, setShowNewProject] = useState(false)
+  const [projectAction, setProjectAction] = useState<Project | null>(null)
+  const [worktreeTarget, setWorktreeTarget] = useState<{ projectId: string; parentLocationId: string } | null>(null)
 
   const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current
   const [rendered, setRendered] = useState(open)
@@ -311,6 +319,31 @@ export function Sidebar() {
     } catch (error) {
       Alert.alert('Could not create thread', error instanceof Error ? error.message : String(error))
     }
+  }, [])
+
+  const handleProjectLongPress = useCallback((project: Project) => {
+    setProjectAction(project)
+  }, [])
+
+  const handleLocationLongPress = useCallback((projectId: string, location: RepoLocation) => {
+    if (!location.is_worktree) return
+    Alert.alert('Remove worktree?', `Remove "${location.label || location.path}"? Threads with messages are archived; the worktree directory is deleted.`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Remove',
+        style: 'destructive',
+        onPress: () => {
+          const conn = useHostsStore.getState().activeConnection()
+          if (!conn) return
+          rpc(conn, 'locations:removeWorktree', location.id)
+            .then(() => Promise.all([
+              useProjectsStore.getState().fetchLocations(projectId),
+              useThreadsStore.getState().fetch(projectId),
+            ]))
+            .catch((error: unknown) => Alert.alert('Remove failed', error instanceof Error ? error.message : String(error)))
+        },
+      },
+    ])
   }, [])
 
   const pickLocationForNewThread = useCallback((projectId: string) => {
@@ -395,7 +428,131 @@ export function Sidebar() {
         />
       <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
+      <NewProjectSheet visible={showNewProject} onClose={() => setShowNewProject(false)} />
+      <NewWorktreeSheet target={worktreeTarget} onClose={() => setWorktreeTarget(null)} />
+      <ActionSheet
+        visible={projectAction !== null}
+        title={projectAction?.name}
+        onClose={() => setProjectAction(null)}
+        options={
+          projectAction
+            ? [
+                {
+                  label: 'New worktree',
+                  onPress: () => {
+                    const proj = projectAction
+                    void (async () => {
+                      let locs = useProjectsStore.getState().locationsByProject[proj.id]
+                      if (!locs) locs = await useProjectsStore.getState().fetchLocations(proj.id)
+                      const parent = locs.find((l) => l.connection_type === 'local' && !l.is_worktree)
+                      if (!parent) {
+                        Alert.alert('No local checkout', 'Worktrees are created from a local, non-worktree location.')
+                        return
+                      }
+                      setWorktreeTarget({ projectId: proj.id, parentLocationId: parent.id })
+                    })().catch((error: unknown) => Alert.alert('Failed', error instanceof Error ? error.message : String(error)))
+                  },
+                },
+                {
+                  label: 'Archive project',
+                  onPress: () => {
+                    const conn = useHostsStore.getState().activeConnection()
+                    if (!conn) return
+                    void rpc(conn, 'projects:archive', projectAction.id)
+                      .then(() => useProjectsStore.getState().fetch())
+                      .catch((error: unknown) => Alert.alert('Archive failed', error instanceof Error ? error.message : String(error)))
+                  },
+                },
+                {
+                  label: 'Delete project',
+                  destructive: true,
+                  onPress: () =>
+                    Alert.alert('Delete project?', `Permanently delete "${projectAction.name}" and all its threads?`, [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: () => {
+                          const conn = useHostsStore.getState().activeConnection()
+                          if (!conn) return
+                          const { selectedProjectId, clearSelection } = useUiStore.getState()
+                          void rpc(conn, 'projects:delete', projectAction.id)
+                            .then(() => {
+                              if (selectedProjectId === projectAction.id) clearSelection()
+                              return useProjectsStore.getState().fetch()
+                            })
+                            .catch((error: unknown) => Alert.alert('Delete failed', error instanceof Error ? error.message : String(error)))
+                        },
+                      },
+                    ]),
+                },
+              ]
+            : []
+        }
+      />
         <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
+      <NewProjectSheet visible={showNewProject} onClose={() => setShowNewProject(false)} />
+      <NewWorktreeSheet target={worktreeTarget} onClose={() => setWorktreeTarget(null)} />
+      <ActionSheet
+        visible={projectAction !== null}
+        title={projectAction?.name}
+        onClose={() => setProjectAction(null)}
+        options={
+          projectAction
+            ? [
+                {
+                  label: 'New worktree',
+                  onPress: () => {
+                    const proj = projectAction
+                    void (async () => {
+                      let locs = useProjectsStore.getState().locationsByProject[proj.id]
+                      if (!locs) locs = await useProjectsStore.getState().fetchLocations(proj.id)
+                      const parent = locs.find((l) => l.connection_type === 'local' && !l.is_worktree)
+                      if (!parent) {
+                        Alert.alert('No local checkout', 'Worktrees are created from a local, non-worktree location.')
+                        return
+                      }
+                      setWorktreeTarget({ projectId: proj.id, parentLocationId: parent.id })
+                    })().catch((error: unknown) => Alert.alert('Failed', error instanceof Error ? error.message : String(error)))
+                  },
+                },
+                {
+                  label: 'Archive project',
+                  onPress: () => {
+                    const conn = useHostsStore.getState().activeConnection()
+                    if (!conn) return
+                    void rpc(conn, 'projects:archive', projectAction.id)
+                      .then(() => useProjectsStore.getState().fetch())
+                      .catch((error: unknown) => Alert.alert('Archive failed', error instanceof Error ? error.message : String(error)))
+                  },
+                },
+                {
+                  label: 'Delete project',
+                  destructive: true,
+                  onPress: () =>
+                    Alert.alert('Delete project?', `Permanently delete "${projectAction.name}" and all its threads?`, [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: () => {
+                          const conn = useHostsStore.getState().activeConnection()
+                          if (!conn) return
+                          const { selectedProjectId, clearSelection } = useUiStore.getState()
+                          void rpc(conn, 'projects:delete', projectAction.id)
+                            .then(() => {
+                              if (selectedProjectId === projectAction.id) clearSelection()
+                              return useProjectsStore.getState().fetch()
+                            })
+                            .catch((error: unknown) => Alert.alert('Delete failed', error instanceof Error ? error.message : String(error)))
+                        },
+                      },
+                    ]),
+                },
+              ]
+            : []
+        }
+      />
         <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       </>
     )
@@ -421,6 +578,9 @@ export function Sidebar() {
             <Text style={styles.hostLabel} numberOfLines={1}>
               {activeHost?.label ?? 'PolyCode'}
             </Text>
+            <Pressable onPress={() => setShowNewProject(true)} hitSlop={8}>
+              <Text style={styles.hostsLink}>＋</Text>
+            </Pressable>
             <Pressable onPress={() => router.push('/hosts')} hitSlop={8}>
               <Text style={styles.hostsLink}>Hosts</Text>
             </Pressable>
@@ -434,6 +594,8 @@ export function Sidebar() {
                 onThreadLongPress={handleThreadLongPress}
                 onShowArchived={setArchivedProjectId}
                 onShowCommands={setCommandsProjectId}
+                onProjectLongPress={handleProjectLongPress}
+                onLocationLongPress={handleLocationLongPress}
               />
             ))}
             {projects.length === 0 ? (

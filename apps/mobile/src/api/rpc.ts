@@ -2,6 +2,8 @@ import type {
   CommandLogLine,
   CommandStatus,
   FileEntry,
+  NewProjectResult,
+  NewProjectSpec,
   GitStatus,
   LastCommitInfo,
   Message,
@@ -29,7 +31,22 @@ import { rpcRequest, type HostConnection } from './client'
  */
 export interface RpcChannelMap {
   'projects:list': [[], Project[]]
+  'projects:create': [[name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean], Project]
+  'projects:createFull': [[spec: NewProjectSpec], NewProjectResult]
+  'projects:update': [[id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean], void]
+  'projects:delete': [[id: string], void]
+  'projects:archive': [[id: string], void]
+  'projects:unarchive': [[id: string], void]
   'locations:list': [[projectId: string], RepoLocation[]]
+  'locations:create': [
+    [projectId: string, label: string, connectionType: 'local' | 'ssh' | 'wsl', locationPath: string],
+    RepoLocation,
+  ]
+  'locations:delete': [[id: string], void]
+  'locations:createWorktree': [[parentLocationId: string, label?: string | null], RepoLocation]
+  'locations:removeWorktree': [[id: string], void]
+  'locations:clone': [[projectId: string, label: string, gitUrl: string, clonePath: string], RepoLocation]
+  'locations:suggestPath': [[baseDir: string, repoName: string], string]
 
   'threads:list': [[projectId: string], Thread[]]
   'threads:create': [[projectId: string, name: string, locationId: string], Thread]
