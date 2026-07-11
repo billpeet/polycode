@@ -39,10 +39,18 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
 
+      # npm version chokes on the workspace:* protocol (bun-only), so stamp
+      # the version field directly.
       - name: Set package.json version
         shell: bash
         working-directory: apps/desktop
-        run: npm version "${{ steps.version.outputs.version }}" --no-git-tag-version
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ steps.version.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
 
       # --ignore-scripts stops better-sqlite3 (and friends) from compiling via
       # node-gyp, which breaks whenever the runner image's Visual Studio is newer
