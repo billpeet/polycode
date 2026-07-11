@@ -1,0 +1,83 @@
+{
+  "expo": {
+    "name": "PolyCode",
+    "slug": "polycode-mobile",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "scheme": "polycode",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#0d1117",
+    "ios": {
+      "icon": "./assets/expo.icon",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoads": true,
+          "NSAllowsLocalNetworking": true
+        },
+        "NSLocalNetworkUsageDescription": "PolyCode connects to PolyCode desktop instances on your local network.",
+        "NSCameraUsageDescription": "PolyCode uses the camera to scan pairing QR codes shown by the desktop app."
+      }
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#0d1117",
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundImage": "./assets/images/android-icon-background.png",
+        "monochromeImage": "./assets/images/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false,
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.RECORD_AUDIO"
+      ],
+      "package": "com.billpeet.polycodemobile"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "PolyCode uses the camera to scan pairing QR codes shown by the desktop app."
+        }
+      ],
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0d1117",
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 76
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "768d5775-ba38-4409-a36b-21a4d8f79cdb"
+      }
+    },
+    "owner": "billpeet",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/768d5775-ba38-4409-a36b-21a4d8f79cdb",
+      "requestHeaders": {
+        "expo-channel-name": "production"
+      }
+    }
+  }
+}

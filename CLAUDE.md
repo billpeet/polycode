@@ -2,26 +2,39 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-# PolyCode Electron — Claude Notes
+# PolyCode — Claude Notes
+
+## Monorepo Layout
+
+Bun workspaces monorepo (hoisted linker forced in root `bunfig.toml` — the isolated linker breaks electron-builder packaging and phantom-dep resolution):
+
+- **`apps/desktop`** — the Electron desktop app (package name `polycode-electron`; do NOT rename it — the Electron userData dir, and therefore every user's SQLite DB path, derives from it).
+- **`apps/mobile`** — Expo (React Native) app for remote-controlling desktop instances over the remote-control HTTP/SSE API.
+- **`packages/shared`** — `@polycode/shared`: dependency-free TS source shared by both apps (domain types, message-merge and todo-extraction logic). Consumed as raw TS; no build step.
 
 ## Commands
 
+Run from the repo root (they proxy into `apps/desktop` unless noted):
+
 ```bash
-bun run dev          # Dev server with hot-reload (Vite + Electron)
-bun run build        # Production build into out/
+bun run dev          # Desktop dev server with hot-reload (Vite + Electron)
+bun run build        # Desktop production build into apps/desktop/out/
 bun run start        # Run after build (dev mode)
 bun run start:prod   # Build + run isolated prod instance (separate DB, no DevTools)
+bun run test         # Driver tests (bun test); some are environment-dependent
+bun run dist         # Windows installer via electron-builder
+bun run mobile       # Expo dev server for apps/mobile
 ```
 
-There are no test or lint scripts configured.
+`node apps/desktop/scripts/postinstall.js` runs on `bun install` (root postinstall) — it downloads the Electron binary and the Electron-ABI better-sqlite3 prebuilt. It resolves package dirs via `require.resolve`, so it works with root-hoisted node_modules.
 
-## Architecture
+## Desktop Architecture (`apps/desktop`)
 
 PolyCode is an Electron desktop app that provides a UI for orchestrating Claude Code CLI sessions. It has three layers:
 
-**Main Process** (`src/main/`) — Node.js, runs Claude CLI subprocesses, owns the SQLite DB.
-**Renderer Process** (`src/renderer/src/`) — React + Zustand, all UI.
-**Shared types** (`src/shared/types.ts`) — Types used by both processes.
+**Main Process** (`apps/desktop/src/main/`) — Node.js, runs Claude CLI subprocesses, owns the SQLite DB.
+**Renderer Process** (`apps/desktop/src/renderer/src/`) — React + Zustand, all UI.
+**Shared types** (`packages/shared/src/types.ts`, re-exported via `apps/desktop/src/shared/types.ts`) — Types used by both processes and the mobile app.
 
 ### IPC Communication
 
@@ -34,6 +47,15 @@ The renderer never accesses Node APIs directly. It communicates via `window.api`
 Main-side handlers live in `src/main/ipc/handlers.ts`. Streaming events are pushed from main to renderer via `webContents.send()` on channels like `thread:output:${threadId}`, `thread:status:${threadId}`, and `thread:complete:${threadId}`.
 
 IPC channel types are documented in `src/renderer/src/types/ipc.ts`.
+
+### Remote Control API (used by the mobile app)
+
+`src/main/remote/server.ts` — plain Node HTTP server (default port 3285, Bearer-token auth):
+- `GET /api/remote/health` — connection test (auth required)
+- `POST /api/remote/rpc` — `{channel, args[]}` dispatch over the `CONTROL_RPC_CHANNELS` set (`src/main/control/control-rpc.ts`)
+- `GET /api/remote/events` — SSE stream of app events (`thread:*`, `command:*`, …) via `src/main/app-events.ts`
+
+The desktop-side remote client (desktop controlling another desktop) is `src/main/remote/client.ts`; the mobile app implements the same protocol.
 
 ### Session / Claude Driver
 
@@ -66,6 +88,10 @@ SQLite via `better-sqlite3` (synchronous). Schema lives in `src/main/db/index.ts
 
 Messages are appended immediately with `optimistic-` prefixed IDs. On stream completion, the renderer re-fetches from DB to replace optimistic entries with persisted ones.
 
+## Mobile App (`apps/mobile`)
+
+Expo + expo-router + Zustand. Pure client of the remote-control API: typed RPC wrapper (`src/api/rpc.ts`), SSE manager using `expo/fetch` streaming (`src/api/sse.ts` — global RN fetch does not stream), event router with exact/prefix channel subscriptions (`src/api/events.ts`). Hosts are paired manually or by scanning the QR code in the desktop Remote Control panel (`polycode://pair?...`); tokens live in expo-secure-store.
+
 ## Common Pitfalls
 
 ### Zustand selector stability
@@ -90,7 +116,7 @@ To run a fully isolated production instance (separate DB, no hot-reload, no DevT
 bun run start:prod
 ```
 
-This builds into `out/` and launches with `NODE_ENV=production`, which causes the main process to load the renderer from `out/renderer/index.html` instead of the Vite dev server. The prod instance uses a separate userData directory (`%APPDATA%/polycode-electron-prod`) so it won't share state with a simultaneously running dev instance.
+This builds into `apps/desktop/out/` and launches with `NODE_ENV=production`, which causes the main process to load the renderer from `out/renderer/index.html` instead of the Vite dev server. The prod instance uses a separate userData directory (`%APPDATA%/polycode-electron-prod`) so it won't share state with a simultaneously running dev instance.
 
 The `isDev` guard in `src/main/index.ts` is:
 ```ts
