@@ -1,3 +1,4 @@
+import { emitAppEvent } from './app-events'
 import { watch, readFileSync, readdirSync, existsSync, mkdirSync, statSync, FSWatcher } from 'fs'
 import { join } from 'path'
 import { homedir } from 'os'
@@ -63,7 +64,7 @@ export function startPlanWatcher(win: BrowserWindow): void {
         try {
           const content = readFileSync(fullPath, 'utf-8')
           const stat = statSync(fullPath)
-          win.webContents.send('plan-file:changed', {
+          emitAppEvent(win, 'plan-file:changed', {
             name: filename,
             path: fullPath,
             content,

@@ -1,5 +1,6 @@
 import { exec, execFile } from 'child_process'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
 import {
   archivedThreadCount,
@@ -130,7 +131,7 @@ import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslExec, wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
 import { startFileWatch, stopFileWatch } from '../file-watch'
-import { cleanupThreadAttachments, saveAttachment } from '../attachments'
+import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
 
 export const CONTROL_RPC_CHANNELS = new Set([
   'projects:list',
@@ -258,6 +259,8 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'terminal:getBuffer',
   'attachments:save',
   'attachments:cleanup',
+  'attachments:readDataUrl',
+  'plans:getForThread',
   'process:kill',
   'cli:health',
   'cli:update',
@@ -1217,6 +1220,24 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
     case 'attachments:cleanup':
       cleanupThreadAttachments(args[0] as string)
       return undefined
+    case 'attachments:readDataUrl': {
+      // Serve a saved attachment back to remote clients (they cannot use the
+      // Electron-only attachment:// protocol). Filename is sanitized against
+      // path traversal; responses capped at 15 MB to match the RPC body limit.
+      const [threadId, filename] = args as [string, string]
+      const safeName = basename(filename)
+      const filePath = join(getAttachmentDir(), basename(threadId), safeName)
+      try {
+        const info = getFileInfo(filePath)
+        if (!info || info.size > 15 * 1024 * 1024) return null
+        const data = readFileSync(filePath)
+        return `data:${info.mimeType};base64,${data.toString('base64')}`
+      } catch {
+        return null
+      }
+    }
+    case 'plans:getForThread':
+      return sessionManager.get(args[0] as string)?.getAssociatedPlan() ?? null
 
     case 'process:kill': {
       const [target, type, threadId] = args as [string, 'pid' | 'port', string | undefined]

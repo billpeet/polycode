@@ -22,6 +22,7 @@ import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banne
 import * as ImagePicker from 'expo-image-picker'
 import { InputBar, type PendingImage } from '@/components/InputBar'
 import { MessageList } from '@/components/MessageList'
+import { PlanSheet } from '@/components/PlanSheet'
 import { StatusDot } from '@/components/StatusDot'
 import { SessionTabs } from '@/components/SessionTabs'
 import { effortLabel } from '@/components/ThreadControls'
@@ -35,6 +36,7 @@ import { useInteractionsStore } from '@/stores/interactions'
 import { useMessagesStore } from '@/stores/messages'
 import { favouriteChipLabel, favouriteEquals, type Favourite } from '@/stores/favourites'
 import { useFavouritesStore } from '@/stores/favourites'
+import { usePlansStore } from '@/stores/plans'
 import { useProjectsStore } from '@/stores/projects'
 import { useSessionsStore } from '@/stores/sessions'
 import { useUiStore } from '@/stores/ui'
@@ -90,7 +92,30 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
   const [showSettings, setShowSettings] = useState(false)
   const [showTodos, setShowTodos] = useState(false)
+  const [showPlan, setShowPlan] = useState(false)
   const favourites = useFavouritesStore((s) => s.favourites)
+  const plan = usePlansStore((s) => s.planByThread[threadId] ?? null)
+
+  // Plan pane: seed on open, follow live association/content updates.
+  useEffect(() => {
+    void usePlansStore.getState().fetch(threadId).catch(() => undefined)
+    const offAssociated = onChannel(channels.planAssociated, (_channel, payload) => {
+      const data = payload as { threadId?: string; name?: string; path?: string | null; content?: string }
+      if (data?.threadId === threadId && typeof data.name === 'string') {
+        usePlansStore.getState().setPlan(threadId, { name: data.name, path: data.path ?? null, content: data.content ?? null })
+      }
+    })
+    const offChanged = onChannel(channels.planFileChanged, (_channel, payload) => {
+      const data = payload as { name?: string; content?: string }
+      if (typeof data?.name === 'string' && typeof data.content === 'string') {
+        usePlansStore.getState().updateByName(data.name, data.content)
+      }
+    })
+    return () => {
+      offAssociated()
+      offChanged()
+    }
+  }, [threadId])
   const [showGit, setShowGit] = useState(false)
   const [showFiles, setShowFiles] = useState(false)
   const [showThreadMenu, setShowThreadMenu] = useState(false)
@@ -330,6 +355,11 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
             ) : null}
           </View>
         </Pressable>
+        {plan ? (
+          <Pressable onPress={() => setShowPlan(true)} hitSlop={8}>
+            <Text style={styles.headerIcon}>📋</Text>
+          </Pressable>
+        ) : null}
         {repoPath ? (
           <>
             <Pressable onPress={() => setShowFiles(true)} hitSlop={8}>
@@ -448,6 +478,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       />
       <GitPanel repoPath={repoPath} visible={showGit} onClose={() => setShowGit(false)} />
       <FileBrowser rootPath={repoPath} visible={showFiles} onClose={() => setShowFiles(false)} />
+      <PlanSheet plan={plan} visible={showPlan} onClose={() => setShowPlan(false)} />
 
       {/* Settings drawer */}
       {thread ? (

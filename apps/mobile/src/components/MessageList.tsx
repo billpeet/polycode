@@ -14,6 +14,7 @@ import {
 import { parseMetadata, type Message } from '@polycode/shared'
 import { colors } from '@/theme/colors'
 import { AgentGroupBlock, type AgentGroupMeta, type AgentStatus } from './AgentGroupBlock'
+import { AttachmentView, extractAttachments } from './AttachmentImage'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import {
@@ -396,16 +397,23 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
   switch (item.kind) {
     case 'working':
       return <WorkingIndicator />
-    case 'user':
+    case 'user': {
+      const { attachments, text } = extractAttachments(item.content)
       return (
         <View style={styles.userRow}>
           <Pressable style={styles.userBubble} onLongPress={() => shareContent(item.content)}>
-            <Text style={styles.userText} selectable>
-              {item.content}
-            </Text>
+            {attachments.map((attachment, index) => (
+              <AttachmentView key={index} {...attachment} />
+            ))}
+            {text ? (
+              <Text style={styles.userText} selectable>
+                {text}
+              </Text>
+            ) : null}
           </Pressable>
         </View>
       )
+    }
     case 'thinking':
       return <ThinkingBlock content={item.content} />
     case 'tool_call':
@@ -437,14 +445,19 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
         </View>
       )
     case 'text':
-    default:
+    default: {
+      const { attachments, text } = extractAttachments(item.content)
       return (
         <View style={styles.assistantRow}>
           <Pressable style={styles.assistantBubble} onLongPress={() => shareContent(item.content)}>
-            <Markdown>{item.content}</Markdown>
+            {attachments.map((attachment, index) => (
+              <AttachmentView key={index} {...attachment} />
+            ))}
+            {text ? <Markdown>{text}</Markdown> : null}
           </Pressable>
         </View>
       )
+    }
   }
 })
 
@@ -542,6 +555,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 13,
     paddingVertical: 8,
     maxWidth: '85%',
+    gap: 6,
   },
   userText: { color: '#ffffff', fontSize: 14.5, lineHeight: 21 },
   assistantRow: { flexDirection: 'row', justifyContent: 'flex-start' },

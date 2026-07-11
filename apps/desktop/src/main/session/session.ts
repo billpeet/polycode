@@ -539,6 +539,16 @@ export class Session {
     return this.pendingQuestions
   }
 
+  /** The plan file associated with the current run (for remote clients). */
+  getAssociatedPlan(): { name: string; path: string | null; content: string | null } | null {
+    if (!this.lastPlanFileName) return null
+    return {
+      name: this.lastPlanFileName,
+      path: this.lastPlanFilePath,
+      content: this.pendingPlanContent,
+    }
+  }
+
   /** Answer pending question and continue execution */
   answerQuestion(answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string> = {}, generalComment = ''): void {
     if (!this.questionPending || !this.activeSessionId) return

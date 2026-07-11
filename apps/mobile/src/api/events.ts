@@ -72,6 +72,8 @@ export const channels = {
   commandStatus: (commandId: string, locationId: string) => `command:status:${commandId}-${locationId}`,
   commandLog: (commandId: string, locationId: string) => `command:log:${commandId}-${locationId}`,
   commandPorts: (commandId: string, locationId: string) => `command:ports:${commandId}-${locationId}`,
+  planAssociated: 'plan:associated',
+  planFileChanged: 'plan-file:changed',
 } as const
 
 export const channelPrefixes = {

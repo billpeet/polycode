@@ -43,6 +43,7 @@ function shouldStreamEvent(channel: string): boolean {
     || channel.startsWith('command:')
     || channel.startsWith('terminal:')
     || channel === 'plan:associated'
+    || channel.startsWith('plan-file:')
     || channel === 'webhook:thread-created'
     || channel === 'files:changed'
     || channel === 'git:repoChanged'
