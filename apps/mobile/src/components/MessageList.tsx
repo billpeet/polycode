@@ -1,5 +1,7 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react'
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  Animated,
+  Easing,
   FlatList,
   Pressable,
   Share,
@@ -23,7 +25,7 @@ import {
 } from './ToolCallBlock'
 import { GROUP_THRESHOLD, ToolCallGroupBlock, toolGroupKey } from './ToolCallGroupBlock'
 
-type ItemKind = 'user' | 'text' | 'thinking' | 'tool_call' | 'tool_group' | 'error' | 'plan' | 'agent'
+type ItemKind = 'user' | 'text' | 'thinking' | 'tool_call' | 'tool_group' | 'error' | 'plan' | 'agent' | 'working'
 
 interface RenderItem {
   key: string
@@ -362,8 +364,38 @@ function shareContent(content: string): void {
   void Share.share({ message: content }).catch(() => undefined)
 }
 
+/** Bouncing-dots indicator shown while the agent is working (desktop parity). */
+const WorkingIndicator = memo(function WorkingIndicator() {
+  const dots = useRef([new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]).current
+
+  useEffect(() => {
+    const animations = dots.map((dot, index) =>
+      Animated.loop(
+        Animated.sequence([
+          Animated.delay(index * 140),
+          Animated.timing(dot, { toValue: -6, duration: 280, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(dot, { toValue: 0, duration: 280, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+          Animated.delay((2 - index) * 140 + 160),
+        ]),
+      ),
+    )
+    animations.forEach((animation) => animation.start())
+    return () => animations.forEach((animation) => animation.stop())
+  }, [dots])
+
+  return (
+    <View style={styles.workingRow}>
+      {dots.map((dot, index) => (
+        <Animated.View key={index} style={[styles.workingDot, { transform: [{ translateY: dot }] }]} />
+      ))}
+    </View>
+  )
+})
+
 const Row = memo(function Row({ item }: { item: RenderItem }) {
   switch (item.kind) {
+    case 'working':
+      return <WorkingIndicator />
     case 'user':
       return (
         <View style={styles.userRow}>
@@ -419,9 +451,16 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
 /** Mirrors desktop MessageStream: 64px follow threshold + "↓ Latest" pill. */
 const AUTO_SCROLL_THRESHOLD_PX = 64
 
-export function MessageList(props: { messages: Message[] }) {
+const WORKING_ITEM: RenderItem = { key: '__working', kind: 'working', content: '' }
+
+export function MessageList(props: { messages: Message[]; working?: boolean }) {
   const items = useMemo(() => buildItems(props.messages), [props.messages])
-  const reversed = useMemo(() => [...items].reverse(), [items])
+  const reversed = useMemo(() => {
+    const list = [...items].reverse()
+    // Inverted list: index 0 renders at the visual bottom.
+    if (props.working) list.unshift(WORKING_ITEM)
+    return list
+  }, [items, props.working])
   const listRef = useRef<FlatList<RenderItem>>(null)
   const [showLatest, setShowLatest] = useState(false)
   // Desktop MessageStream parity: while the user is at (or near) the bottom,
@@ -554,4 +593,19 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
   },
   latestButtonText: { color: '#fff', fontSize: 12.5, fontWeight: '600' },
+  workingRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    gap: 6,
+    paddingHorizontal: 6,
+    paddingTop: 10,
+    paddingBottom: 4,
+    height: 30,
+  },
+  workingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.claude,
+  },
 })

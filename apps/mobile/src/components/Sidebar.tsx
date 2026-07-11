@@ -20,8 +20,9 @@ import { useThreadsStore } from '@/stores/threads'
 import { useUiStore } from '@/stores/ui'
 import { colors } from '@/theme/colors'
 import { ThreadStatusIndicator } from './StatusDot'
+import { ActionSheet } from './ActionSheet'
 import { CommandsPanel } from './CommandsPanel'
-import { NewThreadModal, RenameThreadModal } from './ThreadModals'
+import { RenameThreadModal } from './ThreadModals'
 
 const SIDEBAR_WIDTH = Math.min(320, Dimensions.get('window').width * 0.85)
 const EMPTY_THREADS: Thread[] = []
@@ -266,8 +267,9 @@ export function Sidebar() {
   const activeHost = useHostsStore((s) => s.hosts.find((h) => h.id === s.activeHostId))
   const archive = useThreadsStore((s) => s.archive)
 
-  const [newThreadProjectId, setNewThreadProjectId] = useState<string | null>(null)
   const [renameTarget, setRenameTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
+  const [actionTarget, setActionTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
+  const [locationPicker, setLocationPicker] = useState<{ projectId: string; locations: RepoLocation[] } | null>(null)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
   const [commandsProjectId, setCommandsProjectId] = useState<string | null>(null)
 
@@ -288,52 +290,109 @@ export function Sidebar() {
     }
   }, [open, translateX, fetchProjects])
 
-  const handleThreadLongPress = useCallback(
-    (projectId: string, thread: Thread) => {
-      const clearIfSelected = () => {
-        const { selectedThreadId, clearSelection } = useUiStore.getState()
-        if (selectedThreadId === thread.id) clearSelection()
+  const handleThreadLongPress = useCallback((projectId: string, thread: Thread) => {
+    setActionTarget({ projectId, thread })
+  }, [])
+
+  // Desktop parity: create instantly (auto-titled after the first message).
+  const quickCreateThread = useCallback(async (projectId: string, locationId?: string) => {
+    try {
+      let locs = useProjectsStore.getState().locationsByProject[projectId]
+      if (!locs || locs.length === 0) locs = await useProjectsStore.getState().fetchLocations(projectId)
+      const location = locationId
+        ? locs.find((l) => l.id === locationId)
+        : (locs.find((l) => l.checked_out) ?? locs[0])
+      if (!location) {
+        Alert.alert('No location', 'This project has no repo locations yet — add one on the desktop.')
+        return
       }
-      Alert.alert(thread.name, undefined, [
-        { text: 'Cancel', style: 'cancel' },
-        { text: 'Rename', onPress: () => setRenameTarget({ projectId, thread }) },
-        {
-          text: 'Reset session',
-          onPress: () => {
-            Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
-              { text: 'Cancel', style: 'cancel' },
-              { text: 'Reset', style: 'destructive', onPress: () => void useThreadsStore.getState().reset(thread.id) },
-            ])
-          },
-        },
-        {
-          text: 'Archive',
-          onPress: () => void archive(projectId, thread.id).then(clearIfSelected),
-        },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            Alert.alert('Delete thread?', `Permanently delete "${thread.name}" and its messages?`, [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Delete',
-                style: 'destructive',
-                onPress: () => void useThreadsStore.getState().remove(projectId, thread.id).then(clearIfSelected),
-              },
-            ])
-          },
-        },
-      ])
-    },
-    [archive],
-  )
+      const thread = await useThreadsStore.getState().create(projectId, 'New thread', location.id)
+      useUiStore.getState().selectThread(projectId, thread.id)
+    } catch (error) {
+      Alert.alert('Could not create thread', error instanceof Error ? error.message : String(error))
+    }
+  }, [])
+
+  const pickLocationForNewThread = useCallback((projectId: string) => {
+    const locations = useProjectsStore.getState().locationsByProject[projectId] ?? []
+    if (locations.length > 1) {
+      setLocationPicker({ projectId, locations })
+    } else {
+      void quickCreateThread(projectId)
+    }
+  }, [quickCreateThread])
 
   if (!rendered && !open) {
     return (
       <>
-        <NewThreadModal projectId={newThreadProjectId} onClose={() => setNewThreadProjectId(null)} />
         <RenameThreadModal target={renameTarget} onClose={() => setRenameTarget(null)} />
+        <ActionSheet
+          visible={actionTarget !== null}
+          title={actionTarget?.thread.name}
+          onClose={() => setActionTarget(null)}
+          options={
+            actionTarget
+              ? [
+                  { label: 'Rename', onPress: () => setRenameTarget(actionTarget) },
+                  {
+                    label: 'Reset session',
+                    onPress: () =>
+                      Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Reset',
+                          style: 'destructive',
+                          onPress: () => void useThreadsStore.getState().reset(actionTarget.thread.id),
+                        },
+                      ]),
+                  },
+                  {
+                    label: 'Archive',
+                    onPress: () => {
+                      const { selectedThreadId, clearSelection } = useUiStore.getState()
+                      void archive(actionTarget.projectId, actionTarget.thread.id).then(() => {
+                        if (selectedThreadId === actionTarget.thread.id) clearSelection()
+                      })
+                    },
+                  },
+                  {
+                    label: 'Delete',
+                    destructive: true,
+                    onPress: () =>
+                      Alert.alert('Delete thread?', `Permanently delete "${actionTarget.thread.name}" and its messages?`, [
+                        { text: 'Cancel', style: 'cancel' },
+                        {
+                          text: 'Delete',
+                          style: 'destructive',
+                          onPress: () => {
+                            const { selectedThreadId, clearSelection } = useUiStore.getState()
+                            void useThreadsStore
+                              .getState()
+                              .remove(actionTarget.projectId, actionTarget.thread.id)
+                              .then(() => {
+                                if (selectedThreadId === actionTarget.thread.id) clearSelection()
+                              })
+                          },
+                        },
+                      ]),
+                  },
+                ]
+              : []
+          }
+        />
+        <ActionSheet
+          visible={locationPicker !== null}
+          title="New thread location"
+          onClose={() => setLocationPicker(null)}
+          options={
+            locationPicker
+              ? locationPicker.locations.map((location) => ({
+                  label: `${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`,
+                  onPress: () => void quickCreateThread(locationPicker.projectId, location.id),
+                }))
+              : []
+          }
+        />
       <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
         <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
@@ -371,7 +430,7 @@ export function Sidebar() {
               <ProjectSection
                 key={project.id}
                 project={project}
-                onNewThread={setNewThreadProjectId}
+                onNewThread={pickLocationForNewThread}
                 onThreadLongPress={handleThreadLongPress}
                 onShowArchived={setArchivedProjectId}
                 onShowCommands={setCommandsProjectId}
@@ -383,8 +442,74 @@ export function Sidebar() {
           </ScrollView>
         </Animated.View>
       </View>
-      <NewThreadModal projectId={newThreadProjectId} onClose={() => setNewThreadProjectId(null)} />
       <RenameThreadModal target={renameTarget} onClose={() => setRenameTarget(null)} />
+      <ActionSheet
+        visible={actionTarget !== null}
+        title={actionTarget?.thread.name}
+        onClose={() => setActionTarget(null)}
+        options={
+          actionTarget
+            ? [
+                { label: 'Rename', onPress: () => setRenameTarget(actionTarget) },
+                {
+                  label: 'Reset session',
+                  onPress: () =>
+                    Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Reset',
+                        style: 'destructive',
+                        onPress: () => void useThreadsStore.getState().reset(actionTarget.thread.id),
+                      },
+                    ]),
+                },
+                {
+                  label: 'Archive',
+                  onPress: () => {
+                    const { selectedThreadId, clearSelection } = useUiStore.getState()
+                    void archive(actionTarget.projectId, actionTarget.thread.id).then(() => {
+                      if (selectedThreadId === actionTarget.thread.id) clearSelection()
+                    })
+                  },
+                },
+                {
+                  label: 'Delete',
+                  destructive: true,
+                  onPress: () =>
+                    Alert.alert('Delete thread?', `Permanently delete "${actionTarget.thread.name}" and its messages?`, [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Delete',
+                        style: 'destructive',
+                        onPress: () => {
+                          const { selectedThreadId, clearSelection } = useUiStore.getState()
+                          void useThreadsStore
+                            .getState()
+                            .remove(actionTarget.projectId, actionTarget.thread.id)
+                            .then(() => {
+                              if (selectedThreadId === actionTarget.thread.id) clearSelection()
+                            })
+                        },
+                      },
+                    ]),
+                },
+              ]
+            : []
+        }
+      />
+      <ActionSheet
+        visible={locationPicker !== null}
+        title="New thread location"
+        onClose={() => setLocationPicker(null)}
+        options={
+          locationPicker
+            ? locationPicker.locations.map((location) => ({
+                label: `${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`,
+                onPress: () => void quickCreateThread(locationPicker.projectId, location.id),
+              }))
+            : []
+        }
+      />
     </>
   )
 }

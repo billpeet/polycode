@@ -31,6 +31,7 @@ import {
 } from '@/components/ThreadControls'
 import { TodoBadge, TodoSheet } from '@/components/TodoPanel'
 import { Chip } from '@/components/ui'
+import { ActionSheet } from '@/components/ActionSheet'
 import { FileBrowser } from '@/components/FileBrowser'
 import { GitPanel } from '@/components/GitPanel'
 import { useInteractionsStore } from '@/stores/interactions'
@@ -94,6 +95,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const [showTodos, setShowTodos] = useState(false)
   const [showGit, setShowGit] = useState(false)
   const [showFiles, setShowFiles] = useState(false)
+  const [showThreadMenu, setShowThreadMenu] = useState(false)
   const [slashCommands, setSlashCommands] = useState<SlashCommand[]>([])
 
   // The thread's repo location path drives the git panel and file browser.
@@ -228,40 +230,46 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
     stopThread(threadId).catch((error: unknown) => Alert.alert('Stop failed', errorText(error)))
   }
 
-  // Long-press the header title for thread actions (same menu as the sidebar).
-  const showThreadActions = () => {
-    if (!thread) return
-    const store = useThreadsStore.getState()
-    const closeThread = () => useUiStore.getState().clearSelection()
-    Alert.alert(thread.name, undefined, [
-      { text: 'Cancel', style: 'cancel' },
-      {
-        text: 'Reset session',
-        onPress: () =>
-          Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
-            { text: 'Cancel', style: 'cancel' },
-            { text: 'Reset', style: 'destructive', onPress: () => void store.reset(threadId) },
-          ]),
-      },
-      {
-        text: 'Archive',
-        onPress: () => void store.archive(projectId, threadId).then(closeThread).catch((e: unknown) => Alert.alert('Archive failed', errorText(e))),
-      },
-      {
-        text: 'Delete',
-        style: 'destructive',
-        onPress: () =>
-          Alert.alert('Delete thread?', `Permanently delete "${thread.name}" and its messages?`, [
-            { text: 'Cancel', style: 'cancel' },
-            {
-              text: 'Delete',
-              style: 'destructive',
-              onPress: () => void store.remove(projectId, threadId).then(closeThread).catch((e: unknown) => Alert.alert('Delete failed', errorText(e))),
-            },
-          ]),
-      },
-    ])
-  }
+  // Thread action menu (Android caps Alert.alert at 3 buttons — use a sheet).
+  const threadMenuOptions = thread
+    ? [
+        {
+          label: 'Reset session',
+          onPress: () =>
+            Alert.alert('Reset session?', 'Clears the agent context for this thread (messages are kept).', [
+              { text: 'Cancel', style: 'cancel' },
+              { text: 'Reset', style: 'destructive' as const, onPress: () => void useThreadsStore.getState().reset(threadId) },
+            ]),
+        },
+        {
+          label: 'Archive',
+          onPress: () =>
+            void useThreadsStore
+              .getState()
+              .archive(projectId, threadId)
+              .then(() => useUiStore.getState().clearSelection())
+              .catch((e: unknown) => Alert.alert('Archive failed', errorText(e))),
+        },
+        {
+          label: 'Delete',
+          destructive: true,
+          onPress: () =>
+            Alert.alert('Delete thread?', `Permanently delete "${thread.name}" and its messages?`, [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Delete',
+                style: 'destructive' as const,
+                onPress: () =>
+                  void useThreadsStore
+                    .getState()
+                    .remove(projectId, threadId)
+                    .then(() => useUiStore.getState().clearSelection())
+                    .catch((e: unknown) => Alert.alert('Delete failed', errorText(e))),
+              },
+            ]),
+        },
+      ]
+    : []
 
   return (
     <View style={styles.screen}>
@@ -270,7 +278,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
         <Pressable onPress={onOpenSidebar} hitSlop={10}>
           <Text style={styles.menuIcon}>☰</Text>
         </Pressable>
-        <Pressable style={{ flex: 1, gap: 2 }} onLongPress={showThreadActions}>
+        <Pressable style={{ flex: 1, gap: 2 }} onLongPress={() => setShowThreadMenu(true)}>
           <Text style={styles.title} numberOfLines={1}>
             {thread?.name ?? 'Thread'}
           </Text>
@@ -302,7 +310,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       {/* Messages */}
       <Animated.View style={[{ flex: 1, backgroundColor: colors.surface }, keyboardPadStyle]}>
         <View style={{ flex: 1, backgroundColor: colors.bg }}>
-          <MessageList messages={messages} />
+          <MessageList messages={messages} working={status === 'running' || status === 'stopping'} />
         </View>
 
         {rateLimit && (rateLimit.status === 'blocked' || rateLimit.status === 'allowed_warning') ? (
@@ -375,6 +383,12 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       </Animated.View>
 
       <TodoSheet todos={todos ?? []} visible={showTodos} onClose={() => setShowTodos(false)} />
+      <ActionSheet
+        visible={showThreadMenu}
+        title={thread?.name}
+        options={threadMenuOptions}
+        onClose={() => setShowThreadMenu(false)}
+      />
       <GitPanel repoPath={repoPath} visible={showGit} onClose={() => setShowGit(false)} />
       <FileBrowser rootPath={repoPath} visible={showFiles} onClose={() => setShowFiles(false)} />
 
