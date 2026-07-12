@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { useMessageStore } from '../messages'
 import { groupByAgent } from '../../components/MessageStream'
 import type { OutputEvent } from '../../types/ipc'

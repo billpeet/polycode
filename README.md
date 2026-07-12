@@ -41,8 +41,9 @@ PolyCode can also check and update these CLIs from the app for local, SSH, and W
 
 ## Prerequisites
 
-- [Bun](https://bun.sh/) for installing dependencies and running scripts.
-- [Node.js](https://nodejs.org/) 20+ recommended.
+- [pnpm](https://pnpm.io/) 11.x for installing dependencies and running scripts.
+- Node.js 22.x is the supported runtime. pnpm automatically downloads and locks
+  Node 22.23.1 for project scripts, even if a different Node version is active.
 - At least one supported agent CLI installed and authenticated.
 - Git, if you want git status/branch/stash/commit features.
 - Optional: WSL and/or SSH access for remote execution locations.
@@ -52,23 +53,23 @@ PolyCode can also check and update these CLIs from the app for local, SSH, and W
 ```bash
 git clone https://github.com/billpeet/polycode.git
 cd polycode
-bun install
+pnpm install
 ```
 
 ## Usage
 
 ```bash
-bun run dev          # Start Electron + Vite dev server with hot reload
-bun run build        # Build production assets into out/
-bun run preview      # Run electron-vite preview
-bun run start        # Run Electron from the built main entry
-bun run start:prod   # Build + run an isolated production-like instance
-bun run test         # Run Bun tests for main driver tests
-bun run dist         # Build a Windows NSIS installer
-bun run dist:publish # Build and publish a Windows release via electron-builder
+pnpm run dev          # Start Electron + Vite dev server with hot reload
+pnpm run build        # Build production assets into out/
+pnpm run preview      # Run electron-vite preview
+pnpm run start        # Run Electron from the built main entry
+pnpm run start:prod   # Build + run an isolated production-like instance
+pnpm run test         # Run Vitest tests for the main process and drivers
+pnpm run dist         # Build a Windows NSIS installer
+pnpm run dist:publish # Build and publish a Windows release via electron-builder
 ```
 
-`bun run start:prod` sets `NODE_ENV=production` and uses a separate Windows user data directory, `%APPDATA%/polycode-electron-prod`, so it does not share state with a development instance.
+`pnpm run start:prod` sets `NODE_ENV=production` and uses a separate Windows user data directory, `%APPDATA%/polycode-electron-prod`, so it does not share state with a development instance.
 
 ## Architecture
 

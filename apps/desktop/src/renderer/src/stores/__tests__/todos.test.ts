@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'bun:test'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { extractTodosFromMessages, useTodoStore, type Todo } from '../todos'
 import type { Message } from '../../types/ipc'
 

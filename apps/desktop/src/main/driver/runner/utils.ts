@@ -175,7 +175,14 @@ export function expandHomePath(
 ): string | undefined {
   if (!input) return undefined
   if (input === '~') return homeDir
-  if (input.startsWith('~/')) return path.join(homeDir, input.slice(2))
+  if (input.startsWith('~/')) {
+    const pathApi = /^[A-Za-z]:[\\/]/.test(homeDir)
+      ? path.win32
+      : homeDir.startsWith('/')
+        ? path.posix
+        : path
+    return pathApi.join(homeDir, input.slice(2))
+  }
   return input
 }
 

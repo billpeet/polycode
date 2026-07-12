@@ -1,4 +1,4 @@
-import { describe, it, expect, mock } from 'bun:test'
+import { describe, it, expect, vi } from 'vitest'
 import { PiDriver, buildPiArgs } from '../pi'
 import type { OutputEvent } from '../../../shared/types'
 import type { DriverOptions } from '../types'
@@ -50,7 +50,7 @@ describe('PiDriver command transport', () => {
 describe('PiDriver RPC control', () => {
   it('injects follow-up user input via steer', async () => {
     const driver = makeDriver()
-    const sendRequest = mock(async () => ({ type: 'response', command: 'steer', success: true }))
+    const sendRequest = vi.fn(async () => ({ type: 'response', command: 'steer', success: true }))
     ;(driver as any).sendRequest = sendRequest
     makeActiveTurn(driver)
 
@@ -62,7 +62,7 @@ describe('PiDriver RPC control', () => {
 
   it('stops by sending abort before killing the process', async () => {
     const driver = makeDriver()
-    const sendRequest = mock(async () => ({ type: 'response', command: 'abort', success: true }))
+    const sendRequest = vi.fn(async () => ({ type: 'response', command: 'abort', success: true }))
     ;(driver as any).sendRequest = sendRequest
     ;(driver as any).process = { stdin: { writable: true } }
 
@@ -78,7 +78,7 @@ describe('PiDriver session capture', () => {
     let captured: string | undefined
     const driver = makeDriver({ onSessionId: (id) => { captured = id } })
 
-    const sendRequest = mock(async () => ({
+    const sendRequest = vi.fn(async () => ({
       type: 'response',
       command: 'get_state',
       success: true,
@@ -227,7 +227,7 @@ describe('PiDriver JSONL buffering', () => {
 
   it('finishes the active turn on agent_end', () => {
     const driver = makeDriver()
-    const done = mock(() => {})
+    const done = vi.fn(() => {})
     makeActiveTurn(driver, () => {}, done)
 
     ;(driver as any).buffer = `${JSON.stringify({ type: 'agent_end', messages: [] })}\n`
@@ -239,8 +239,8 @@ describe('PiDriver JSONL buffering', () => {
 
   it('restarts the Pi RPC process after successful compaction', () => {
     const driver = makeDriver()
-    const done = mock(() => {})
-    const cleanupProcess = mock(() => {})
+    const done = vi.fn(() => {})
+    const cleanupProcess = vi.fn(() => {})
     ;(driver as any).cleanupProcess = cleanupProcess
     makeActiveTurn(driver, () => {}, done)
 
@@ -257,8 +257,8 @@ describe('PiDriver JSONL buffering', () => {
 
   it('restarts the Pi RPC process after surfaced provider errors', () => {
     const driver = makeDriver()
-    const done = mock(() => {})
-    const cleanupProcess = mock(() => {})
+    const done = vi.fn(() => {})
+    const cleanupProcess = vi.fn(() => {})
     const events: OutputEvent[] = []
     ;(driver as any).cleanupProcess = cleanupProcess
     makeActiveTurn(driver, (event) => events.push(event), done)

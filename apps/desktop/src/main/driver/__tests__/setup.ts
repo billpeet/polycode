@@ -1,11 +1,11 @@
 /**
- * Bun test preload: mock @sentry/electron/main before any test file imports it.
- * In the bun test environment (not Electron), electron cannot be loaded so Sentry
+ * Vitest setup: mock @sentry/electron/main before any test file imports it.
+ * Outside Electron, the module cannot be loaded normally, so Sentry
  * would throw "Export named 'app' not found in module 'electron'".
  */
-import { mock } from 'bun:test'
+import { vi } from 'vitest'
 
-mock.module('@sentry/electron/main', () => ({
+vi.mock('@sentry/electron/main', () => ({
   init: () => {},
   addBreadcrumb: () => {},
   captureException: () => {},

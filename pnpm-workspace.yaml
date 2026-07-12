@@ -1,0 +1,24 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Electron Builder and React Native tooling both expect a conventional, flat
+# node_modules tree. Keep pnpm's deterministic resolver and workspace support
+# while using the compatible on-disk layout.
+nodeLinker: hoisted
+
+overrides:
+  vite: ^8.0.0
+
+# pnpm 11 blocks unreviewed dependency lifecycle scripts. These packages need
+# their platform binaries during install; better-sqlite3 is handled by the root
+# postinstall so it gets the Electron ABI build rather than the host Node build.
+allowBuilds:
+  '@sentry/cli': true
+  better-sqlite3: false
+  electron: true
+  esbuild: true
+  node-pty: true
+  sharp: true
+
+strictDepBuilds: true

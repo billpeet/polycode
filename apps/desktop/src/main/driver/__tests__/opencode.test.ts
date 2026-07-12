@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'bun:test'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { OpenCodeDriver, buildOpenCodeArgs } from '../opencode'
 import type { OutputEvent } from '../../../shared/types'
 import type { DriverOptions } from '../types'

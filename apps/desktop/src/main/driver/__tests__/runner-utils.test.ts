@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'

@@ -2,23 +2,29 @@
   "name": "polycode",
   "version": "0.0.0",
   "private": true,
-  "workspaces": [
-    "apps/*",
-    "packages/*"
-  ],
+  "packageManager": "pnpm@11.5.3",
+  "engines": {
+    "node": "22.x",
+    "pnpm": "11.x"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": "22.23.1",
+      "onFail": "download"
+    }
+  },
   "scripts": {
     "postinstall": "node apps/desktop/scripts/postinstall.js",
-    "dev": "bun run --cwd apps/desktop dev",
-    "build": "bun run --cwd apps/desktop build",
-    "start": "bun run --cwd apps/desktop start",
-    "start:prod": "bun run --cwd apps/desktop start:prod",
-    "test": "bun run --cwd apps/desktop test",
-    "dist": "bun run --cwd apps/desktop dist",
-    "dist:publish": "bun run --cwd apps/desktop dist:publish",
-    "mobile": "bun run --cwd apps/mobile start",
-    "mobile:update": "bun run --cwd apps/mobile update"
-  },
-  "overrides": {
-    "vite": "^8.0.0"
+    "dev": "pnpm --filter polycode-electron dev",
+    "build": "pnpm --filter polycode-electron build",
+    "preview": "pnpm --filter polycode-electron preview",
+    "start": "pnpm --filter polycode-electron start",
+    "start:prod": "pnpm --filter polycode-electron start:prod",
+    "test": "pnpm --filter polycode-electron test",
+    "dist": "pnpm --filter polycode-electron dist",
+    "dist:publish": "pnpm --filter polycode-electron dist:publish",
+    "mobile": "pnpm --filter polycode-mobile start",
+    "mobile:update": "pnpm --filter polycode-mobile update"
   }
 }

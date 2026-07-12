@@ -2,11 +2,13 @@
 /**
  * postinstall.js
  *
- * Runs after `bun install` (or npm install) to ensure native binaries are present:
+ * Runs under pnpm's project-managed Node 22 after `pnpm install` to ensure
+ * native binaries are present:
  *   1. Electron binary  — runs node_modules/electron/install.js if path.txt is missing
  *   2. better-sqlite3   — downloads the prebuilt .node for the installed Electron ABI
  *
- * Needed because `bun install --ignore-scripts` skips postinstall hooks in sub-packages.
+ * The managed runtime matters: newer host Node versions can exit during Electron
+ * extraction without an error and leave the package without path.txt.
  */
 
 const { execSync, spawnSync } = require('child_process')
@@ -15,8 +17,8 @@ const path = require('path')
 const https = require('https')
 
 // Resolve package directories via require.resolve rather than assuming a
-// node_modules layout — in the bun workspace, dependencies are hoisted to the
-// repo-root node_modules, not this app's own directory.
+// node_modules layout — the pnpm workspace uses a hoisted linker so dependencies
+// live in the repo-root node_modules, not this app's own directory.
 function resolvePackageDir(name) {
   try {
     return path.dirname(require.resolve(`${name}/package.json`, { paths: [__dirname] }))
@@ -27,7 +29,7 @@ function resolvePackageDir(name) {
 
 const electronDir = resolvePackageDir('electron')
 if (!electronDir) {
-  console.error('[postinstall] electron package not found — run bun install first.')
+  console.error('[postinstall] electron package not found — run pnpm install first.')
   process.exit(1)
 }
 
