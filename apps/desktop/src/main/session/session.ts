@@ -845,6 +845,27 @@ export class Session {
         updateThreadUsage(this.threadId, inputTokens, outputTokens, contextWindow)
         break
       }
+      case 'status': {
+        if (event.metadata?.type !== 'server_request_resolved') break
+        const requestId = event.metadata.requestId as string | undefined
+        if (!requestId) break
+        if (this.pendingPermissions.has(requestId)) {
+          this.removePendingPermission(requestId)
+        }
+        if (this.pendingQuestionRequestId === requestId) {
+          this.questionPending = false
+          this.pendingQuestionRequestId = null
+          this.pendingQuestions = []
+        }
+        if (this.activeSessionId) {
+          this.setStatus(this.pendingPermissions.size > 0
+            ? 'permission_pending'
+            : this.questionPending
+              ? 'question_pending'
+              : 'running')
+        }
+        break
+      }
     }
   }
 

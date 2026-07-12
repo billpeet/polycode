@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'bun:test'
 import path from 'path'
 import {
   buildCodexEnvironment,
+  buildCodexAppServerThreadParams,
   buildCodexSdkOptions,
   CodexDriver,
   buildCodexArgs,
@@ -276,6 +277,57 @@ describe('parseCodexAppServerNotification', () => {
       { error: { message: 'internal app-server error' } },
       state,
     )).toEqual([])
+  })
+
+  it('renders unknown item types as generic tool items', () => {
+    const events = parseCodexAppServerNotification(
+      'item/completed',
+      { item: { id: 'future_1', type: 'futureItem', value: 42 } },
+      state,
+    )
+
+    expect(events).toEqual([
+      {
+        type: 'tool_call',
+        content: 'futureItem',
+        metadata: expect.objectContaining({ id: 'future_1', name: 'futureItem', codex_item_type: 'futureItem' }),
+      },
+      {
+        type: 'tool_result',
+        content: '',
+        metadata: expect.objectContaining({ tool_use_id: 'future_1', codex_item_type: 'futureItem' }),
+      },
+    ])
+  })
+
+  it('renders canonical dynamicToolCall and hookPrompt items', () => {
+    expect(parseCodexAppServerNotification(
+      'item/completed',
+      {
+        item: {
+          id: 'dynamic_1',
+          type: 'dynamicToolCall',
+          namespace: 'apps',
+          tool: 'lookup',
+          arguments: { id: '123' },
+          status: 'completed',
+          contentItems: [{ type: 'inputText', text: 'found' }],
+          success: true,
+        },
+      },
+      state,
+    )).toEqual([
+      expect.objectContaining({ type: 'tool_call', content: 'lookup', metadata: expect.objectContaining({ name: 'apps.lookup' }) }),
+      expect.objectContaining({ type: 'tool_result', content: 'found', metadata: expect.objectContaining({ tool_use_id: 'dynamic_1' }) }),
+    ])
+
+    expect(parseCodexAppServerNotification(
+      'item/completed',
+      { item: { id: 'hook_1', type: 'hookPrompt', fragments: [{ text: 'Injected context' }] } },
+      state,
+    )).toEqual([
+      expect.objectContaining({ type: 'thinking', content: 'Injected context', metadata: expect.objectContaining({ source: 'codex_hook_prompt' }) }),
+    ])
   })
 
   it('renders context compaction notifications as informational tool events', () => {
@@ -677,6 +729,22 @@ describe('CodexDriver transport selection', () => {
   })
 })
 
+describe('Codex app-server protocol parameters', () => {
+  it('uses thread-level sandbox modes and excludes reconstructed turns on resume', () => {
+    expect(buildCodexAppServerThreadParams({
+      workingDir: '/repo',
+      permissionMode: 'workspace',
+      threadId: 'thread_1',
+    })).toEqual({
+      cwd: '/repo',
+      approvalPolicy: 'on-request',
+      sandbox: 'workspace-write',
+      threadId: 'thread_1',
+      excludeTurns: true,
+    })
+  })
+})
+
 describe('CodexDriver app-server approvals', () => {
   function setupLocalDriver(opts: Partial<DriverOptions> = {}) {
     const driver = makeDriver(opts)
@@ -871,6 +939,109 @@ describe('CodexDriver app-server approvals', () => {
         },
       },
     })
+  })
+
+  it('steers the active turn for live message injection', async () => {
+    const { driver, local } = setupLocalDriver()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).activeTurnId = 'turn_1'
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      return {}
+    }
+
+    driver.injectMessage?.('change direction')
+    await Promise.resolve()
+
+    expect(requests).toEqual([{
+      method: 'turn/steer',
+      params: {
+        threadId: 'thread_1',
+        expectedTurnId: 'turn_1',
+        input: [{ type: 'text', text: 'change direction', text_elements: [] }],
+      },
+    }])
+  })
+
+  it('keeps a turn alive for recoverable errors', () => {
+    const { local } = setupLocalDriver()
+    let done = false
+    ;(local as any).currentTurn.onDone = () => { done = true }
+    ;(local as any).outstandingTurnCount = 1
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'error',
+      params: { error: { message: 'transient disconnect' }, willRetry: true, threadId: 'thread_1', turnId: 'turn_1' },
+    }))
+
+    expect(done).toBe(false)
+    expect((local as any).currentTurn).not.toBeNull()
+  })
+
+  it('ignores restored usage replay before an active turn starts', () => {
+    const { local, events } = setupLocalDriver()
+    ;(local as any).activeTurnId = null
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread_1',
+        turnId: 'historical_turn',
+        tokenUsage: {
+          last: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 25, totalTokens: 125 },
+          total: { inputTokens: 1000, cachedInputTokens: 0, outputTokens: 250, totalTokens: 1250 },
+          modelContextWindow: 200000,
+        },
+      },
+    }))
+
+    expect(events).toEqual([])
+  })
+
+  it('clears server requests resolved by Codex and emits a resolution event', () => {
+    const { local, events } = setupLocalDriver()
+    ;(local as any).handleServerRequest(45, 'item/tool/requestUserInput', {
+      threadId: 'thread_1', turnId: 'turn_1', itemId: 'question_1', questions: [],
+    })
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'serverRequest/resolved',
+      params: { threadId: 'thread_1', requestId: 45 },
+    }))
+
+    expect((local as any).pendingQuestionRequests.size).toBe(0)
+    expect(events.at(-1)).toMatchObject({
+      type: 'status',
+      metadata: { type: 'server_request_resolved', requestId: 'codex:item/tool/requestUserInput:45' },
+    })
+  })
+
+  it('returns a structured failure for unregistered dynamic tool calls', () => {
+    const { local, writes } = setupLocalDriver()
+    ;(local as any).handleServerRequest(46, 'item/tool/call', {
+      threadId: 'thread_1', turnId: 'turn_1', callId: 'dynamic_1', tool: 'lookup', arguments: {},
+    })
+
+    expect(writes).toEqual([{
+      id: 46,
+      result: {
+        contentItems: [{ type: 'inputText', text: 'Dynamic tool lookup is not registered in PolyCode.' }],
+        success: false,
+      },
+    }])
+  })
+
+  it('forceStop immediately kills and detaches the app-server', () => {
+    const { driver, local } = setupLocalDriver()
+    let kills = 0
+    ;(local as any).child.kill = () => { kills += 1 }
+
+    driver.forceStop?.()
+
+    expect(kills).toBe(1)
+    expect((local as any).child).toBeNull()
+    expect(driver.isRunning()).toBe(false)
   })
 })
 

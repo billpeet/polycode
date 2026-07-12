@@ -90,6 +90,30 @@ type SubAgentActivityItem = {
   agent_path: string
 }
 
+type DynamicToolCallItem = {
+  id: string
+  type: 'dynamic_tool_call'
+  namespace: string | null
+  tool: string
+  arguments: unknown
+  status: string
+  content_items: Array<Record<string, unknown>>
+  success: boolean | null
+}
+
+type HookPromptItem = {
+  id: string
+  type: 'hook_prompt'
+  fragments: Array<{ text: string; hookRunId?: string }>
+}
+
+type GenericCodexItem = {
+  id: string
+  type: 'generic'
+  codex_item_type: string
+  raw: Record<string, unknown>
+}
+
 type CodexThreadItem =
   | ThreadItem
   | ContextCompactionItem
@@ -100,6 +124,9 @@ type CodexThreadItem =
   | ReviewModeItem
   | CollabAgentToolCallItem
   | SubAgentActivityItem
+  | DynamicToolCallItem
+  | HookPromptItem
+  | GenericCodexItem
 
 type CodexStreamState = {
   streamedItemIds: Set<string>
@@ -198,6 +225,28 @@ function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
         type: 'tool_call',
         name: item.tool,
         input: { server: item.server, arguments: item.arguments },
+      },
+    }
+  }
+
+  if (item.type === 'dynamic_tool_call') {
+    const name = item.namespace ? `${item.namespace}.${item.tool}` : item.tool
+    return {
+      content: item.tool,
+      metadata: { ...item, type: 'tool_call', name, input: item.arguments },
+    }
+  }
+
+  if (item.type === 'generic') {
+    return {
+      content: item.codex_item_type,
+      metadata: {
+        ...item.raw,
+        id: item.id,
+        type: 'tool_call',
+        name: item.codex_item_type,
+        codex_item_type: item.codex_item_type,
+        input: item.raw,
       },
     }
   }
@@ -333,6 +382,34 @@ function buildToolResult(item: CodexThreadItem): OutputEvent | null {
           type: 'tool_result',
           tool_use_id: item.id,
           ...(item.status === 'failed' ? { is_error: true } : {}),
+        },
+      }
+    case 'dynamic_tool_call': {
+      const content = item.content_items
+        .map((contentItem) => contentItem.type === 'inputText' && typeof contentItem.text === 'string' ? contentItem.text : '')
+        .filter(Boolean)
+        .join('\n')
+      return {
+        type: 'tool_result',
+        content,
+        metadata: {
+          ...item,
+          type: 'tool_result',
+          tool_use_id: item.id,
+          ...(item.success === false ? { is_error: true } : {}),
+        },
+      }
+    }
+    case 'generic':
+      return {
+        type: 'tool_result',
+        content: '',
+        metadata: {
+          ...item.raw,
+          id: item.id,
+          type: 'tool_result',
+          tool_use_id: item.id,
+          codex_item_type: item.codex_item_type,
         },
       }
     case 'file_change':
@@ -719,6 +796,30 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
         agent_thread_id: String(raw.agentThreadId ?? ''),
         agent_path: String(raw.agentPath ?? ''),
       }
+    case 'dynamicToolCall':
+      return {
+        id,
+        type: 'dynamic_tool_call',
+        namespace: typeof raw.namespace === 'string' ? raw.namespace : null,
+        tool: String(raw.tool ?? 'dynamicTool'),
+        arguments: raw.arguments,
+        status: String(raw.status ?? 'inProgress'),
+        content_items: Array.isArray(raw.contentItems) ? raw.contentItems as Array<Record<string, unknown>> : [],
+        success: typeof raw.success === 'boolean' ? raw.success : null,
+      }
+    case 'hookPrompt':
+      return {
+        id,
+        type: 'hook_prompt',
+        fragments: Array.isArray(raw.fragments)
+          ? raw.fragments.map((fragment) => ({
+              text: String((fragment as Record<string, unknown>).text ?? ''),
+              ...(typeof (fragment as Record<string, unknown>).hookRunId === 'string'
+                ? { hookRunId: (fragment as Record<string, unknown>).hookRunId as string }
+                : {}),
+            }))
+          : [],
+      }
     case 'error':
       return {
         id,
@@ -728,8 +829,9 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
     default:
       return {
         id,
-        type: 'error',
-        message: `Unsupported Codex item type: ${itemType}`,
+        type: 'generic',
+        codex_item_type: itemType,
+        raw,
       }
   }
 }
@@ -840,6 +942,21 @@ export function parseCodexAppServerNotification(
 
       if (item.type === 'sub_agent_activity') {
         events.push(buildSubAgentActivityEvent(item))
+        break
+      }
+
+      if (item.type === 'hook_prompt') {
+        if (!state.announcedItemIds.has(item.id)) {
+          const content = item.fragments.map((fragment) => fragment.text).filter(Boolean).join('\n')
+          if (content) {
+            events.push(thinking(content, {
+              source: 'codex_hook_prompt',
+              item_id: item.id,
+              fragments: item.fragments,
+            }))
+          }
+          state.announcedItemIds.add(item.id)
+        }
         break
       }
 
@@ -1079,6 +1196,23 @@ function codexAppServerSandboxPolicy(permissionMode: PermissionMode): { type: 'r
   if (permissionMode === 'yolo') return { type: 'dangerFullAccess' }
   if (permissionMode === 'workspace') return { type: 'workspaceWrite' }
   return { type: 'readOnly' }
+}
+
+export function buildCodexAppServerThreadParams(options: {
+  workingDir: string
+  model?: string
+  permissionMode?: PermissionMode
+  yoloMode?: boolean
+  threadId?: string
+}): Record<string, unknown> {
+  const permissionMode = resolvePermissionMode(options)
+  return {
+    ...(options.model ? { model: options.model } : {}),
+    cwd: options.workingDir,
+    approvalPolicy: codexApprovalPolicy(permissionMode),
+    sandbox: codexSdkSandboxMode(permissionMode),
+    ...(options.threadId ? { threadId: options.threadId, excludeTurns: true } : {}),
+  }
 }
 
 function codexCollaborationMode(
@@ -1427,8 +1561,24 @@ class CodexAppServerDriver implements CLIDriver {
       return
     }
 
-    this.startTurn(content, options).catch((error) => {
+    if (!this.activeTurnId || !this.codexThreadId) {
+      console.warn('[CodexAppServerDriver] injectMessage called without an active Codex turn')
+      return
+    }
+
+    this.steerTurn(content).catch((error) => {
       this.finishTurn(normalizeRunError(error))
+    })
+  }
+
+  private async steerTurn(content: string): Promise<void> {
+    if (!this.activeTurnId || !this.codexThreadId) {
+      throw new Error('Codex session is missing an active turn')
+    }
+    await this.sendRequest('turn/steer', {
+      threadId: this.codexThreadId,
+      input: [{ type: 'text', text: content, text_elements: [] }],
+      expectedTurnId: this.activeTurnId,
     })
   }
 
@@ -1444,6 +1594,12 @@ class CodexAppServerDriver implements CLIDriver {
       return
     }
     this.cleanupProcess()
+  }
+
+  forceStop(): void {
+    this.stopRequested = true
+    this.cleanupProcess(true)
+    this.finishTurn()
   }
 
   isRunning(): boolean {
@@ -1559,13 +1715,13 @@ class CodexAppServerDriver implements CLIDriver {
       this.writeMessage({ method: 'initialized' })
 
       const threadMethod = this.codexThreadId ? 'thread/resume' : 'thread/start'
-      const result = await this.sendRequest(threadMethod, {
+      const result = await this.sendRequest(threadMethod, buildCodexAppServerThreadParams({
+        workingDir: this.options.workingDir,
         model: this.options.model,
-        cwd: this.options.workingDir,
-        approvalPolicy: codexApprovalPolicy(resolvePermissionMode(this.options)),
-        sandboxPolicy: codexAppServerSandboxPolicy(resolvePermissionMode(this.options)),
+        permissionMode: this.options.permissionMode,
+        yoloMode: this.options.yoloMode,
         ...(this.codexThreadId ? { threadId: this.codexThreadId } : {}),
-      })
+      }))
       const record = result && typeof result === 'object' ? result as Record<string, unknown> : {}
       const thread = record.thread && typeof record.thread === 'object' ? record.thread as Record<string, unknown> : undefined
       const threadId = (thread?.id as string | undefined) ?? (record.threadId as string | undefined)
@@ -1602,13 +1758,17 @@ class CodexAppServerDriver implements CLIDriver {
       const params = parsed.params && typeof parsed.params === 'object'
         ? parsed.params as Record<string, unknown>
         : undefined
-      const outputEvents = parseCodexAppServerNotification(parsed.method, params, this.state, (sessionId) => {
+      const isRestoredUsage = parsed.method === 'thread/tokenUsage/updated'
+        && (!this.activeTurnId || params?.turnId !== this.activeTurnId)
+      const outputEvents = isRestoredUsage ? [] : parseCodexAppServerNotification(parsed.method, params, this.state, (sessionId) => {
         this.codexThreadId = sessionId
         this.options.onSessionId?.(sessionId)
       })
       for (const event of outputEvents) this.emit(event)
 
-      if (parsed.method === 'turn/started') {
+      if (parsed.method === 'serverRequest/resolved') {
+        this.resolveServerRequest(params?.requestId)
+      } else if (parsed.method === 'turn/started') {
         const turn = params?.turn as Record<string, unknown> | undefined
         this.activeTurnId = (turn?.id as string | undefined) ?? this.activeTurnId
       } else if (parsed.method === 'turn/completed') {
@@ -1625,7 +1785,7 @@ class CodexAppServerDriver implements CLIDriver {
             this.finishTurn()
           }
         }
-      } else if (parsed.method === 'error') {
+      } else if (parsed.method === 'error' && params?.willRetry !== true) {
         const error = params?.error as Record<string, unknown> | undefined
         this.outstandingTurnCount = 0
         this.finishTurn(new Error(String(error?.message ?? 'Codex app-server error')))
@@ -1671,6 +1831,17 @@ class CodexAppServerDriver implements CLIDriver {
       case 'mcpServer/elicitation/request':
         this.emitMcpElicitationRequest(rpcId, params)
         return
+      case 'item/tool/call': {
+        const tool = typeof params.tool === 'string' ? params.tool : 'dynamic tool'
+        this.writeMessage({
+          id: rpcId,
+          result: {
+            contentItems: [{ type: 'inputText', text: `Dynamic tool ${tool} is not registered in PolyCode.` }],
+            success: false,
+          },
+        })
+        return
+      }
       default:
         this.writeMessage({
           id: rpcId,
@@ -1679,6 +1850,30 @@ class CodexAppServerDriver implements CLIDriver {
             message: `Unsupported Codex app-server request: ${method}`,
           },
         })
+    }
+  }
+
+  private resolveServerRequest(rpcId: unknown): void {
+    const matchesRpcId = (candidate: number | string) => String(candidate) === String(rpcId)
+    for (const [requestId, pending] of this.pendingPermissionRequests) {
+      if (!matchesRpcId(pending.rpcId)) continue
+      this.pendingPermissionRequests.delete(requestId)
+      this.emit({
+        type: 'status',
+        content: '',
+        metadata: { type: 'server_request_resolved', requestId },
+      })
+      return
+    }
+    for (const [requestId, pending] of this.pendingQuestionRequests) {
+      if (!matchesRpcId(pending.rpcId)) continue
+      this.pendingQuestionRequests.delete(requestId)
+      this.emit({
+        type: 'status',
+        content: '',
+        metadata: { type: 'server_request_resolved', requestId },
+      })
+      return
     }
   }
 
@@ -1865,7 +2060,7 @@ class CodexAppServerDriver implements CLIDriver {
     this.stopRequested = false
   }
 
-  private cleanupProcess(): void {
+  private cleanupProcess(force = false): void {
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout)
       pending.reject(new Error('Codex app-server stopped'))
@@ -1877,7 +2072,15 @@ class CodexAppServerDriver implements CLIDriver {
     this.output = null
     if (this.child && !this.child.killed) {
       try {
-        this.child.kill()
+        if (force && process.platform === 'win32' && this.child.pid != null) {
+          spawn('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], {
+            shell: false,
+            stdio: 'ignore',
+            windowsHide: true,
+          })
+        } else {
+          this.child.kill(force ? 'SIGKILL' : undefined)
+        }
       } catch {
         // ignore
       }
@@ -1926,6 +2129,14 @@ export class CodexDriver implements CLIDriver {
       return
     }
     this.localDriver?.stop()
+  }
+
+  forceStop(): void {
+    if (this.fallbackDriver) {
+      this.fallbackDriver.forceStop?.()
+      return
+    }
+    this.localDriver?.forceStop()
   }
 
   isRunning(): boolean {
