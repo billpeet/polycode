@@ -58,6 +58,16 @@ describe('message store streaming merge', () => {
     expect(results[0].content).toBe('line 1\nline 2')
   })
 
+  it('replaces authoritative turn diff snapshots instead of concatenating them', () => {
+    const first: OutputEvent = { type: 'tool_result', content: 'old diff', metadata: { type: 'tool_result', tool_use_id: 'turn-diff:1', authoritative: true } }
+    const latest: OutputEvent = { type: 'tool_result', content: 'latest diff', metadata: { type: 'tool_result', tool_use_id: 'turn-diff:1', authoritative: true } }
+    useMessageStore.getState().appendEvent(THREAD, first)
+    useMessageStore.getState().appendEvent(THREAD, latest)
+    const replaced = useMessageStore.getState().messagesByThread[THREAD]
+    expect(replaced).toHaveLength(1)
+    expect(replaced[0].content).toBe('latest diff')
+  })
+
   it('does NOT merge task lifecycle bubbles, so the group derives completed status', () => {
     const base = { agent_scope: 'subagent', agent_parent_tool_use_id: 'X', agent_subagent_type: 'Plan' }
     // A regular sub-agent thinking, then a progress bubble, then the terminal notification —

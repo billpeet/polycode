@@ -74,6 +74,7 @@ export default function InputBar({ threadId }: Props) {
     type: 'file',
   })
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
+  const [selectedSkills, setSelectedSkills] = useState<Array<{ name: string; path: string; invocation: string }>>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [slashCmd, setSlashCmd] = useState<SlashState>({
@@ -118,6 +119,10 @@ export default function InputBar({ threadId }: Props) {
 
   const [locationPathMissing, setLocationPathMissing] = useState(false)
 
+  useEffect(() => {
+    setSelectedSkills([])
+  }, [threadId])
+
   // Check if the thread's local location path exists
   useEffect(() => {
     if (isPendingThread) return
@@ -137,6 +142,8 @@ export default function InputBar({ threadId }: Props) {
   const setProviderAndModel = useThreadStore((s) => s.setProviderAndModel)
   const setModel = useThreadStore((s) => s.setModel)
   const setReasoningLevel = useThreadStore((s) => s.setReasoningLevel)
+  const setCodexPersonality = useThreadStore((s) => s.setCodexPersonality)
+  const setCodexReasoningSummary = useThreadStore((s) => s.setCodexReasoningSummary)
   const setCursorThinking = useThreadStore((s) => s.setCursorThinking)
   const setCursorContext = useThreadStore((s) => s.setCursorContext)
   const setPermissionMode = useThreadStore((s) => s.setPermissionMode)
@@ -276,19 +283,22 @@ export default function InputBar({ threadId }: Props) {
 
     // Snapshot state before any async work
     const currentAttachments = attachments
+    const currentSkills = selectedSkills.filter((skill) => trimmed.includes(skill.invocation))
     const currentPlanMode = planMode
     const currentFastMode = fastMode
+    const clientUserMessageId = globalThis.crypto.randomUUID()
 
     // Clear input immediately so the UI feels responsive before async work completes
     setDraft(threadId, '')
     setAttachments([])
+    setSelectedSkills([])
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto'
     }
 
     try {
       // Save attachments to temp and build @ mentions
-      const savedPaths: string[] = []
+      const savedAttachments: Array<{ path: string; type: PendingAttachment['type'] }> = []
       for (const att of currentAttachments) {
         if (att.dataUrl) {
           const { tempPath } = await window.api.invoke(
@@ -297,35 +307,44 @@ export default function InputBar({ threadId }: Props) {
             att.name,
             threadId
           )
-          savedPaths.push(tempPath)
+          savedAttachments.push({ path: tempPath, type: att.type })
         } else if (att.tempPath) {
-          savedPaths.push(att.tempPath)
+          savedAttachments.push({ path: att.tempPath, type: att.type })
         }
       }
 
       // Build final message with @ mentions for attachments
       let finalContent = trimmed
-      if (savedPaths.length > 0) {
-        const mentions = savedPaths.map((p) => `@${p}`).join(' ')
+      if (savedAttachments.length > 0) {
+        const mentions = savedAttachments.map(({ path }) => `@${path}`).join(' ')
         finalContent = finalContent ? `${mentions}\n\n${trimmed}` : mentions
+      }
+      const sendOptions = {
+        planMode: currentPlanMode,
+        fastMode: currentFastMode,
+        clientUserMessageId,
+        attachments: savedAttachments
+          .filter((attachment) => attachment.type === 'image')
+          .map((attachment) => ({ path: attachment.path, detail: 'auto' as const })),
+        skills: currentSkills,
       }
 
       // Claude, Codex, and Pi support live input while the provider is still running.
       if (canInject) {
         const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
         if (activeSessionId) {
-          useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent)
+          useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent, clientUserMessageId)
         } else {
-          appendUserMessage(threadId, finalContent)
+          appendUserMessage(threadId, finalContent, clientUserMessageId)
         }
-        await send(threadId, finalContent, { planMode: currentPlanMode, fastMode: currentFastMode })
+        await send(threadId, finalContent, sendOptions)
         if (currentPlanMode) setPlanMode(threadId, false)
         return
       }
 
       // Providers without live input support still queue the message.
       if (isProcessing) {
-        queueMessage(threadId, finalContent, currentPlanMode, currentFastMode)
+        queueMessage(threadId, finalContent, sendOptions)
         if (currentPlanMode) setPlanMode(threadId, false)
         return
       }
@@ -333,11 +352,11 @@ export default function InputBar({ threadId }: Props) {
       // Append optimistic user message to the correct store based on active session
       const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
       if (activeSessionId) {
-        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent)
+        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent, clientUserMessageId)
       } else {
-        appendUserMessage(threadId, finalContent)
+        appendUserMessage(threadId, finalContent, clientUserMessageId)
       }
-      await send(threadId, finalContent, { planMode: currentPlanMode, fastMode: currentFastMode })
+      await send(threadId, finalContent, sendOptions)
       if (currentPlanMode) setPlanMode(threadId, false)
     } finally {
       sendingRef.current = false
@@ -495,6 +514,12 @@ export default function InputBar({ threadId }: Props) {
     const before = value.slice(0, slashCmd.startIndex)
     const after = value.slice(el.selectionStart)
     const newValue = `${before}${cmd.prompt}${after}`
+
+    if (cmd.kind === 'skill' && cmd.path) {
+      setSelectedSkills((skills) => skills.some((skill) => skill.path === cmd.path)
+        ? skills
+        : [...skills, { name: cmd.name, path: cmd.path!, invocation: cmd.invocation ?? cmd.prompt }])
+    }
 
     setDraft(threadId, newValue)
     setSlashCmd({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
@@ -883,6 +908,8 @@ export default function InputBar({ threadId }: Props) {
           setProviderAndModel={setProviderAndModel}
           setModel={setModel}
           setReasoningLevel={setReasoningLevel}
+          setCodexPersonality={setCodexPersonality}
+          setCodexReasoningSummary={setCodexReasoningSummary}
           setCursorThinking={setCursorThinking}
           setCursorContext={setCursorContext}
           elapsedSeconds={elapsedSeconds}
@@ -998,6 +1025,22 @@ export default function InputBar({ threadId }: Props) {
               >
                 <StopIcon className={isStopping ? 'text-gray-500' : 'text-white'} />
               </button>
+              {currentThread?.provider === 'codex' && (
+                <button
+                  onClick={() => !isStopping && stop(threadId, true)}
+                  disabled={isStopping}
+                  className="flex h-9 flex-shrink-0 items-center justify-center rounded-lg px-2 text-[0.65rem] font-semibold transition-all duration-150"
+                  style={{
+                    background: isStopping ? 'var(--color-surface-2)' : 'rgba(239, 68, 68, 0.18)',
+                    border: '1px solid rgba(248, 113, 113, 0.45)',
+                    color: isStopping ? '#6b7280' : '#f87171',
+                    opacity: isStopping ? 0.5 : 1,
+                  }}
+                  title="Stop this turn and terminate all background processes from the Codex thread"
+                >
+                  Stop + BG
+                </button>
+              )}
             </>
           ) : (
             <button

@@ -175,6 +175,12 @@ function runMigrations(database: Database.Database): void {
   if (!threadColsReasoning.some((c) => c.name === 'reasoning_level')) {
     database.exec("ALTER TABLE threads ADD COLUMN reasoning_level TEXT NOT NULL DEFAULT 'off'")
   }
+  if (!threadColsReasoning.some((c) => c.name === 'codex_personality')) {
+    database.exec("ALTER TABLE threads ADD COLUMN codex_personality TEXT NOT NULL DEFAULT 'none'")
+  }
+  if (!threadColsReasoning.some((c) => c.name === 'codex_reasoning_summary')) {
+    database.exec("ALTER TABLE threads ADD COLUMN codex_reasoning_summary TEXT NOT NULL DEFAULT 'auto'")
+  }
 
   // ── Cursor per-thread config options (thinking / context window) ─────────
   // Nullable: NULL means "no override — use the provider default".

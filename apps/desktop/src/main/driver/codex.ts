@@ -7,7 +7,7 @@ import type {
 } from '@openai/codex-sdk'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
-import { OutputEvent, PermissionMode, ReasoningLevel } from '../../shared/types'
+import { BackgroundTerminal, OutputEvent, PermissionMode, ReasoningLevel } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
 import { BaseDriver } from './base'
 import { augmentWindowsPath } from './runner'
@@ -16,6 +16,12 @@ import path from 'path'
 import readline from 'readline'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
+
+type CodexAppServerUserInput =
+  | { type: 'text'; text: string; text_elements: [] }
+  | { type: 'image'; url: string; detail?: 'auto' | 'low' | 'high' | 'original' }
+  | { type: 'localImage'; path: string; detail?: 'auto' | 'low' | 'high' | 'original' }
+  | { type: 'skill'; name: string; path: string }
 
 type ContextCompactionItem = {
   id: string
@@ -114,6 +120,20 @@ type GenericCodexItem = {
   raw: Record<string, unknown>
 }
 
+type AppServerCommandExecutionItem = {
+  id: string
+  type: 'command_execution'
+  command: string
+  cwd: string
+  process_id: string | null
+  source: string
+  status: 'in_progress' | 'completed' | 'failed'
+  command_actions: Array<Record<string, unknown>>
+  aggregated_output: string
+  exit_code?: number
+  duration_ms?: number
+}
+
 type CodexThreadItem =
   | ThreadItem
   | ContextCompactionItem
@@ -127,6 +147,7 @@ type CodexThreadItem =
   | DynamicToolCallItem
   | HookPromptItem
   | GenericCodexItem
+  | AppServerCommandExecutionItem
 
 type CodexStreamState = {
   streamedItemIds: Set<string>
@@ -204,7 +225,18 @@ function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
     const label = innerCmd.split('\n')[0].slice(0, 120) || name
     return {
       content: label,
-      metadata: { ...item, type: 'tool_call', name, input: { command: innerCmd } },
+      metadata: {
+        ...item,
+        type: 'tool_call',
+        name,
+        input: {
+          command: innerCmd,
+          ...('cwd' in item && item.cwd ? { cwd: item.cwd } : {}),
+          ...('process_id' in item && item.process_id ? { processId: item.process_id } : {}),
+          ...('source' in item && item.source ? { source: item.source } : {}),
+          ...('command_actions' in item && item.command_actions.length > 0 ? { commandActions: item.command_actions } : {}),
+        },
+      },
     }
   }
 
@@ -218,13 +250,21 @@ function makeToolCallEvent(item: CodexThreadItem): ToolCallPayload {
   }
 
   if (item.type === 'mcp_tool_call') {
+    const metadata = item as unknown as Record<string, unknown>
+    const appName = typeof metadata.app_name === 'string' ? metadata.app_name : ''
+    const actionName = typeof metadata.action_name === 'string' ? metadata.action_name : item.tool
     return {
-      content: item.tool,
+      content: actionName,
       metadata: {
         ...item,
         type: 'tool_call',
-        name: item.tool,
-        input: { server: item.server, arguments: item.arguments },
+        name: appName ? `${appName}: ${actionName}` : item.tool,
+        input: {
+          server: item.server,
+          arguments: item.arguments,
+          ...(metadata.app_context ? { appContext: metadata.app_context } : {}),
+          ...(metadata.plugin_id ? { pluginId: metadata.plugin_id } : {}),
+        },
       },
     }
   }
@@ -675,9 +715,14 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
         id,
         type: 'command_execution',
         command: String(raw.command ?? ''),
+        cwd: String(raw.cwd ?? ''),
+        process_id: typeof raw.processId === 'string' ? raw.processId : null,
+        source: String(raw.source ?? 'agent'),
+        command_actions: Array.isArray(raw.commandActions) ? raw.commandActions as Array<Record<string, unknown>> : [],
         aggregated_output: String(raw.aggregatedOutput ?? ''),
         status: ((raw.status as string | undefined) ?? 'in_progress') as 'in_progress' | 'completed' | 'failed',
         ...(typeof raw.exitCode === 'number' ? { exit_code: raw.exitCode } : {}),
+        ...(typeof raw.durationMs === 'number' ? { duration_ms: raw.durationMs } : {}),
       }
     case 'fileChange':
       return {
@@ -687,12 +732,25 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
         status: ((raw.status as string | undefined) ?? 'completed') as 'completed' | 'failed',
       }
     case 'mcpToolCall':
+      {
+        const appContext = raw.appContext && typeof raw.appContext === 'object'
+          ? raw.appContext as Record<string, unknown>
+          : null
       return {
         id,
         type: 'mcp_tool_call',
         server: String(raw.server ?? ''),
         tool: String(raw.tool ?? ''),
         arguments: raw.arguments,
+        app_context: appContext,
+        app_name: typeof appContext?.appName === 'string' ? appContext.appName : null,
+        action_name: typeof appContext?.actionName === 'string' ? appContext.actionName : null,
+        connector_id: typeof appContext?.connectorId === 'string' ? appContext.connectorId : null,
+        resource_uri: typeof appContext?.resourceUri === 'string'
+          ? appContext.resourceUri
+          : typeof raw.mcpAppResourceUri === 'string' ? raw.mcpAppResourceUri : null,
+        plugin_id: typeof raw.pluginId === 'string' ? raw.pluginId : null,
+        duration_ms: typeof raw.durationMs === 'number' ? raw.durationMs : null,
         ...(raw.result && typeof raw.result === 'object'
           ? {
               result: {
@@ -712,6 +770,7 @@ function normalizeAppServerItem(raw: Record<string, unknown>): CodexThreadItem |
           : {}),
         status: ((raw.status as string | undefined) ?? 'in_progress') as 'in_progress' | 'completed' | 'failed',
       } as unknown as CodexThreadItem
+      }
     case 'webSearch':
       return {
         id,
@@ -972,6 +1031,24 @@ export function parseCodexAppServerNotification(
       }
       break
     }
+    case 'item/commandExecution/terminalInteraction': {
+      const stdin = typeof params?.stdin === 'string' ? params.stdin : ''
+      const itemId = typeof params?.itemId === 'string' ? params.itemId : ''
+      if (itemId && stdin) {
+        events.push({
+          type: 'tool_result',
+          content: `\n› ${stdin}`,
+          metadata: {
+            ...(params ?? {}),
+            type: 'tool_result',
+            tool_use_id: itemId,
+            process_id: params?.processId,
+            terminal_interaction: true,
+          },
+        })
+      }
+      break
+    }
     case 'item/commandExecution/outputDelta':
     case 'item/fileChange/outputDelta': {
       const delta = params?.delta as string | undefined
@@ -1033,6 +1110,32 @@ export function parseCodexAppServerNotification(
           },
         })
       }
+      break
+    }
+    case 'turn/diff/updated': {
+      const turnId = String(params?.turnId ?? '')
+      const diff = typeof params?.diff === 'string' ? params.diff : ''
+      if (!turnId) break
+      const itemId = `turn-diff:${turnId}`
+      if (!state.announcedItemIds.has(itemId)) {
+        events.push({
+          type: 'tool_call',
+          content: 'Changes made this turn',
+          metadata: { id: itemId, type: 'tool_call', name: 'TurnDiff', input: {}, turn_id: turnId },
+        })
+        state.announcedItemIds.add(itemId)
+      }
+      events.push({
+        type: 'tool_result',
+        content: diff || 'No changes made this turn.',
+        metadata: {
+          type: 'tool_result',
+          tool_use_id: itemId,
+          turn_id: turnId,
+          authoritative: true,
+          unified_diff: true,
+        },
+      })
       break
     }
     case 'turn/plan/updated': {
@@ -1169,6 +1272,51 @@ export function parseCodexAppServerNotification(
   return events
 }
 
+function removeNativeInputReferences(content: string, references: string[]): string {
+  let text = content
+  for (const reference of references.filter(Boolean)) {
+    text = text.split(reference).join('')
+  }
+  return text.replace(/^[ \t]+|[ \t]+$/gm, '').replace(/^\s*\n/, '').trim()
+}
+
+export function buildCodexAppServerInput(content: string, options?: MessageOptions): CodexAppServerUserInput[] {
+  const attachmentReferences = (options?.attachments ?? [])
+    .map((attachment) => attachment.path ? `@${attachment.path}` : '')
+  const skillReferences = (options?.skills ?? [])
+    .map((skill) => skill.invocation ?? '')
+  const text = removeNativeInputReferences(content, [...attachmentReferences, ...skillReferences])
+  const input: CodexAppServerUserInput[] = []
+  if (text) input.push({ type: 'text', text, text_elements: [] })
+
+  for (const attachment of options?.attachments ?? []) {
+    if (attachment.url) {
+      input.push({ type: 'image', url: attachment.url, ...(attachment.detail ? { detail: attachment.detail } : {}) })
+    } else if (attachment.path) {
+      input.push({ type: 'localImage', path: attachment.path, ...(attachment.detail ? { detail: attachment.detail } : {}) })
+    }
+  }
+  for (const skill of options?.skills ?? []) {
+    input.push({ type: 'skill', name: skill.name, path: skill.path })
+  }
+  return input
+}
+
+function boundedAdditionalContext(
+  context: MessageOptions['additionalContext']
+): MessageOptions['additionalContext'] {
+  if (!context) return undefined
+  let remaining = 16_000
+  const bounded: NonNullable<MessageOptions['additionalContext']> = {}
+  for (const [key, entry] of Object.entries(context)) {
+    if (remaining <= 0) break
+    const value = entry.value.slice(0, remaining)
+    bounded[key] = { ...entry, value }
+    remaining -= value.length
+  }
+  return bounded
+}
+
 /** Codex service tier used for fast mode (priority processing). */
 export const CODEX_FAST_SERVICE_TIER = 'fast'
 
@@ -1246,7 +1394,7 @@ function normalizeRunError(error: unknown): Error {
 
 function sanitizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
   return Object.fromEntries(
-    Object.entries(env).filter(([, value]): value is string => typeof value === 'string')
+    Object.entries(env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
   )
 }
 
@@ -1566,18 +1714,22 @@ class CodexAppServerDriver implements CLIDriver {
       return
     }
 
-    this.steerTurn(content).catch((error) => {
+    this.steerTurn(content, options).catch((error) => {
       this.finishTurn(normalizeRunError(error))
     })
   }
 
-  private async steerTurn(content: string): Promise<void> {
+  private async steerTurn(content: string, options?: MessageOptions): Promise<void> {
     if (!this.activeTurnId || !this.codexThreadId) {
       throw new Error('Codex session is missing an active turn')
     }
     await this.sendRequest('turn/steer', {
       threadId: this.codexThreadId,
-      input: [{ type: 'text', text: content, text_elements: [] }],
+      input: buildCodexAppServerInput(content, options),
+      ...(options?.clientUserMessageId ? { clientUserMessageId: options.clientUserMessageId } : {}),
+      ...(boundedAdditionalContext(options?.additionalContext)
+        ? { additionalContext: boundedAdditionalContext(options?.additionalContext) }
+        : {}),
       expectedTurnId: this.activeTurnId,
     })
   }
@@ -1608,6 +1760,49 @@ class CodexAppServerDriver implements CLIDriver {
 
   getPid(): number | null {
     return this.child?.pid ?? null
+  }
+
+  async listBackgroundTerminals(): Promise<BackgroundTerminal[]> {
+    await this.ensureReady()
+    if (!this.codexThreadId) return []
+    const terminals: BackgroundTerminal[] = []
+    let cursor: string | undefined
+    do {
+      const response = await this.sendRequest('thread/backgroundTerminals/list', {
+        threadId: this.codexThreadId,
+        limit: 100,
+        ...(cursor ? { cursor } : {}),
+      })
+      const record = response && typeof response === 'object' ? response as Record<string, unknown> : {}
+      const data = Array.isArray(record.data) ? record.data as Array<Record<string, unknown>> : []
+      terminals.push(...data.map((terminal) => ({
+        itemId: String(terminal.itemId ?? ''),
+        processId: String(terminal.processId ?? ''),
+        command: String(terminal.command ?? ''),
+        cwd: String(terminal.cwd ?? ''),
+        osPid: typeof terminal.osPid === 'number' ? terminal.osPid : null,
+        cpuPercent: typeof terminal.cpuPercent === 'number' ? terminal.cpuPercent : null,
+        rssKb: typeof terminal.rssKb === 'number' ? terminal.rssKb : null,
+      })))
+      cursor = typeof record.nextCursor === 'string' ? record.nextCursor : undefined
+    } while (cursor)
+    return terminals
+  }
+
+  async terminateBackgroundTerminal(processId: string): Promise<boolean> {
+    await this.ensureReady()
+    if (!this.codexThreadId) return false
+    const response = await this.sendRequest('thread/backgroundTerminals/terminate', {
+      threadId: this.codexThreadId,
+      processId,
+    })
+    return Boolean(response && typeof response === 'object' && (response as Record<string, unknown>).terminated)
+  }
+
+  async cleanBackgroundTerminals(): Promise<void> {
+    await this.ensureReady()
+    if (!this.codexThreadId) return
+    await this.sendRequest('thread/backgroundTerminals/clean', { threadId: this.codexThreadId })
   }
 
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
@@ -1660,11 +1855,18 @@ class CodexAppServerDriver implements CLIDriver {
       const collaborationMode = codexCollaborationMode(options?.planMode, this.options.model)
       const response = await this.sendRequest('turn/start', {
         threadId: this.codexThreadId,
-        input: [{ type: 'text', text: content, text_elements: [] }],
+        input: buildCodexAppServerInput(content, options),
+        ...(options?.clientUserMessageId ? { clientUserMessageId: options.clientUserMessageId } : {}),
+        ...(boundedAdditionalContext(options?.additionalContext)
+          ? { additionalContext: boundedAdditionalContext(options?.additionalContext) }
+          : {}),
         ...(this.options.model ? { model: this.options.model } : {}),
         ...(codexReasoningLevelToEffort(this.options.reasoningLevel) ? { effort: codexReasoningLevelToEffort(this.options.reasoningLevel) } : {}),
         ...(options?.fastMode ? { serviceTier: CODEX_FAST_SERVICE_TIER } : {}),
         ...(collaborationMode ? { collaborationMode } : {}),
+        ...(options?.outputSchema ? { outputSchema: options.outputSchema } : {}),
+        ...(this.options.codexReasoningSummary ? { summary: this.options.codexReasoningSummary } : {}),
+        ...(this.options.codexPersonality ? { personality: this.options.codexPersonality } : {}),
         approvalPolicy: codexApprovalPolicy(permissionMode),
         sandboxPolicy: codexAppServerSandboxPolicy(permissionMode),
       })
@@ -2117,7 +2319,8 @@ export class CodexDriver implements CLIDriver {
 
   injectMessage(content: string, options?: MessageOptions): void {
     if (this.fallbackDriver) {
-      this.fallbackDriver.injectMessage?.(content, options)
+      const fallback: CLIDriver = this.fallbackDriver
+      fallback.injectMessage?.(content, options)
       return
     }
     this.localDriver?.injectMessage?.(content, options)
@@ -2147,6 +2350,18 @@ export class CodexDriver implements CLIDriver {
     return this.fallbackDriver ? this.fallbackDriver.getPid() : (this.localDriver?.getPid() ?? null)
   }
 
+  async listBackgroundTerminals(): Promise<BackgroundTerminal[]> {
+    return this.localDriver?.listBackgroundTerminals() ?? []
+  }
+
+  async terminateBackgroundTerminal(processId: string): Promise<boolean> {
+    return this.localDriver?.terminateBackgroundTerminal(processId) ?? false
+  }
+
+  async cleanBackgroundTerminals(): Promise<void> {
+    await this.localDriver?.cleanBackgroundTerminals()
+  }
+
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
     if (this.fallbackDriver) {
       this.fallbackDriver.sendControlResponse(requestId, behavior, message)
@@ -2157,7 +2372,8 @@ export class CodexDriver implements CLIDriver {
 
   answerQuestion(requestId: string, answers: Record<string, unknown>, message?: string): void {
     if (this.fallbackDriver) {
-      this.fallbackDriver.answerQuestion?.(requestId, answers, message)
+      const fallback: CLIDriver = this.fallbackDriver
+      fallback.answerQuestion?.(requestId, answers, message)
       return
     }
     this.localDriver?.answerQuestion?.(requestId, answers, message)

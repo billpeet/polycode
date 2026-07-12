@@ -223,15 +223,15 @@ export default function ThreadView({ threadId }: Props) {
         // Append optimistic user message to the correct store based on active session
         const activeSession = useSessionStore.getState().activeSessionByThread[threadId]
         if (activeSession) {
-          useMessageStore.getState().appendUserMessageToSession(activeSession, threadId, queuedMessage.content)
+          useMessageStore.getState().appendUserMessageToSession(activeSession, threadId, queuedMessage.content, queuedMessage.options.clientUserMessageId)
         } else {
-          useMessageStore.getState().appendUserMessage(threadId, queuedMessage.content)
+          useMessageStore.getState().appendUserMessage(threadId, queuedMessage.content, queuedMessage.options.clientUserMessageId)
         }
 
         useThreadStore.getState().send(
           threadId,
           queuedMessage.content,
-          { planMode: queuedMessage.planMode, fastMode: queuedMessage.fastMode }
+          queuedMessage.options
         )
         // Skip completion toast since we're continuing with queued message
         return

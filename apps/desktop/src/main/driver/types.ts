@@ -1,6 +1,6 @@
-import { OutputEvent, PermissionMode, ReasoningLevel, SshConfig, WslConfig } from '../../shared/types'
+import { BackgroundTerminal, CodexPersonality, CodexReasoningSummary, OutputEvent, PermissionMode, ReasoningLevel, SendOptions, SshConfig, WslConfig } from '../../shared/types'
 
-export interface MessageOptions {
+export interface MessageOptions extends SendOptions {
   planMode?: boolean
   permissionMode?: PermissionMode
   yoloMode?: boolean
@@ -33,6 +33,9 @@ export interface CLIDriver {
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void
   /** Structured answer path for drivers that surface AskUserQuestion via a permission callback. */
   answerQuestion?(requestId: string, answers: Record<string, unknown>, message?: string): void
+  listBackgroundTerminals?(): Promise<BackgroundTerminal[]>
+  terminateBackgroundTerminal?(processId: string): Promise<boolean>
+  cleanBackgroundTerminals?(): Promise<void>
 }
 
 export interface DriverOptions {
@@ -40,6 +43,8 @@ export interface DriverOptions {
   threadId: string
   model?: string
   reasoningLevel?: ReasoningLevel
+  codexPersonality?: CodexPersonality
+  codexReasoningSummary?: CodexReasoningSummary
   /** Cursor: thinking toggle override; null/undefined = use provider default. */
   thinking?: boolean | null
   /** Cursor: selected context-window value; null/undefined = use provider default. */

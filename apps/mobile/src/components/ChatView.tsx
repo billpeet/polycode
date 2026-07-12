@@ -269,10 +269,10 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       try {
         // Desktop parity: save attachments host-side, reference as @ mentions.
         let finalContent = content
+        let savedPaths: string[] = []
         if (pending.length > 0) {
           const connection = useHostsStore.getState().activeConnection()
           if (!connection) throw new Error('No active host connection')
-          const savedPaths: string[] = []
           for (const attachment of pending) {
             const { tempPath } = await rpc(connection, 'attachments:save', attachment.dataUrl, attachment.name, threadId)
             savedPaths.push(tempPath)
@@ -280,8 +280,13 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           const mentions = savedPaths.map((p) => `@${p}`).join(' ')
           finalContent = finalContent ? `${mentions}\n\n${finalContent}` : mentions
         }
-        appendUserMessage(threadId, finalContent)
-        await sendMessage(threadId, finalContent, planMode ? { planMode: true } : undefined)
+        const clientUserMessageId = `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`
+        appendUserMessage(threadId, finalContent, clientUserMessageId)
+        await sendMessage(threadId, finalContent, {
+          ...(planMode ? { planMode: true } : {}),
+          clientUserMessageId,
+          attachments: savedPaths.map((path) => ({ path, detail: 'auto' as const })),
+        })
       } catch (error) {
         setAttachments(pending)
         Alert.alert('Send failed', errorText(error))

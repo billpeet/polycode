@@ -20,7 +20,7 @@ interface MessagesState {
 
   fetch: (threadId: string) => Promise<Message[]>
   appendEvent: (threadId: string, event: OutputEvent) => void
-  appendUserMessage: (threadId: string, content: string) => void
+  appendUserMessage: (threadId: string, content: string, messageId?: string) => void
   clear: (threadId: string) => void
 }
 
@@ -86,9 +86,9 @@ export const useMessagesStore = create<MessagesState>((set) => ({
     }))
   },
 
-  appendUserMessage: (threadId, content) => {
+  appendUserMessage: (threadId, content, messageId) => {
     const msg: Message = {
-      id: `optimistic-${Date.now()}-${streamCounter++}`,
+      id: messageId ?? `optimistic-${Date.now()}-${streamCounter++}`,
       thread_id: threadId,
       session_id: null,
       role: 'user',

@@ -50,6 +50,8 @@ export interface ThreadRow {
   provider: string
   model: string
   reasoning_level: string
+  codex_personality: string
+  codex_reasoning_summary: string
   cursor_thinking: number | null
   cursor_context: string | null
   status: string

@@ -38,6 +38,8 @@ import {
   updateThreadModel,
   updateThreadProviderAndModel,
   updateThreadReasoningLevel,
+  updateThreadCodexPersonality,
+  updateThreadCodexReasoningSummary,
   updateThreadCursorThinking,
   updateThreadCursorContext,
   updateThreadPermissionMode,
@@ -497,6 +499,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return updateThreadReasoningLevel(id, reasoningLevel)
   })
 
+  proxyable('threads:updateCodexPersonality', (id: string, personality: string) => {
+    sessionManager.remove(id)
+    return updateThreadCodexPersonality(id, personality)
+  })
+
+  proxyable('threads:updateCodexReasoningSummary', (id: string, summary: string) => {
+    sessionManager.remove(id)
+    return updateThreadCodexReasoningSummary(id, summary)
+  })
+
   proxyable('threads:updateCursorThinking', (id: string, thinking: boolean | null) => {
     sessionManager.remove(id)
     return updateThreadCursorThinking(id, thinking)
@@ -540,16 +552,28 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  proxyable('threads:stop', (threadId: string) => {
+  proxyable('threads:stop', (threadId: string, cleanBackgroundTerminals = false) => {
     const session = sessionManager.get(threadId)
     if (session?.isRunning()) {
-      session.stop()
+      session.stop(cleanBackgroundTerminals === true)
     } else {
       // No live session (e.g. after restart) — force-reset stuck status in DB and notify renderer
       updateThreadStatus(threadId, 'idle')
       emitAppEvent(window, `thread:status:${threadId}`, 'idle')
       emitAppEvent(window, `thread:pid:${threadId}`, null)
     }
+  })
+
+  proxyable('threads:backgroundTerminals:list', async (threadId: string) => {
+    return await sessionManager.get(threadId)?.listBackgroundTerminals() ?? []
+  })
+
+  proxyable('threads:backgroundTerminals:terminate', async (threadId: string, processId: string) => {
+    return await sessionManager.get(threadId)?.terminateBackgroundTerminal(processId) ?? false
+  })
+
+  proxyable('threads:backgroundTerminals:clean', async (threadId: string) => {
+    await sessionManager.get(threadId)?.cleanBackgroundTerminals()
   })
 
   proxyable('threads:reset', (threadId: string) => {

@@ -52,12 +52,12 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
       // Append optimistic user message to the correct store based on active session
       const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
       if (activeSessionId) {
-        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, msg.content)
+        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, msg.content, msg.options.clientUserMessageId)
       } else {
-        appendUserMessage(threadId, msg.content)
+        appendUserMessage(threadId, msg.content, msg.options.clientUserMessageId)
       }
 
-      await send(threadId, msg.content, { planMode: msg.planMode, fastMode: msg.fastMode })
+      await send(threadId, msg.content, msg.options)
     }, 100)
   }
 
@@ -81,7 +81,7 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
           <span className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
             Message queued
           </span>
-          {queuedMessage.planMode && (
+          {queuedMessage.options.planMode && (
             <span
               className="rounded px-1.5 py-0.5 text-xs font-medium"
               style={{ background: 'rgba(232, 123, 95, 0.2)', color: 'var(--color-claude)' }}
@@ -89,7 +89,7 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
               Plan
             </span>
           )}
-          {queuedMessage.fastMode && (
+          {queuedMessage.options.fastMode && (
             <span
               className="rounded px-1.5 py-0.5 text-xs font-medium"
               style={{ background: 'rgba(255, 106, 0, 0.2)', color: '#ff6a00' }}

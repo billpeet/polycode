@@ -107,6 +107,13 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
       return [...messages, incoming]
     }
 
+    if (nextMetadata?.authoritative === true) {
+      return [
+        ...messages.slice(0, -1),
+        { ...incoming, id: previous.id },
+      ]
+    }
+
     const previousContent = previous.content
     const nextContent =
       incoming.content.startsWith(previousContent)

@@ -197,6 +197,23 @@ function BodyContent({ text }: { text: string }) {
   )
 }
 
+function UnifiedDiffBody({ diff }: { diff: string }) {
+  return (
+    <pre style={{ margin: 0, maxHeight: 520, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', lineHeight: 1.55 }}>
+      {diff.split('\n').map((line, index) => {
+        const color = line.startsWith('+') && !line.startsWith('+++')
+          ? '#4ade80'
+          : line.startsWith('-') && !line.startsWith('---')
+            ? '#f87171'
+            : line.startsWith('@@')
+              ? '#60a5fa'
+              : 'var(--color-text-muted)'
+        return <div key={index} style={{ color, whiteSpace: 'pre' }}>{line || ' '}</div>
+      })}
+    </pre>
+  )
+}
+
 /** Renders the input section of a tool call with tool-specific formatting. */
 function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
   const inp = (input && typeof input === 'object') ? input as Record<string, unknown> : null
@@ -257,6 +274,24 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
             <div style={labelStyle}>Timeout</div>
             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>
               {String(inp.timeout)}
+            </div>
+          </div>
+        )}
+        {typeof inp.cwd === 'string' && inp.cwd && (
+          <div>
+            <div style={labelStyle}>Working directory</div>
+            <div style={filePathStyle}>{inp.cwd}</div>
+          </div>
+        )}
+        {Array.isArray(inp.commandActions) && inp.commandActions.length > 0 && (
+          <div>
+            <div style={labelStyle}>Parsed actions</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem' }}>
+              {(inp.commandActions as Array<Record<string, unknown>>).map((action, index) => (
+                <div key={index} style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--color-text-muted)' }}>
+                  {String(action.type ?? 'unknown')}: {String(action.path ?? action.query ?? action.command ?? '')}
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -418,6 +453,17 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
           ? result.content
           : 'Completed')
     : null
+  const detailEntries = [
+    ['cwd', metadata?.cwd ?? input?.cwd],
+    ['process', metadata?.process_id ?? input?.processId],
+    ['source', metadata?.source ?? input?.source],
+    ['duration', typeof resultMetadata?.duration_ms === 'number' ? `${resultMetadata.duration_ms} ms` : typeof metadata?.duration_ms === 'number' ? `${metadata.duration_ms} ms` : null],
+    ['exit', resultMetadata?.exit_code ?? metadata?.exit_code],
+    ['connector', metadata?.connector_id],
+    ['resource', metadata?.resource_uri],
+    ['plugin', metadata?.plugin_id],
+  ].filter((entry): entry is [string, string | number] => typeof entry[1] === 'string' || typeof entry[1] === 'number')
+  const isUnifiedDiff = resultMetadata?.unified_diff === true
 
   return (
     <div style={{ borderLeft: `2px solid ${accentColor}`, background: tintColor, borderRadius: '0 4px 4px 0' }}>
@@ -469,6 +515,15 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
 
       {expanded && (
         <div style={{ padding: '0 0.75rem 0.75rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {detailEntries.length > 0 && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.35rem' }}>
+              {detailEntries.map(([label, value]) => (
+                <span key={label} style={{ fontSize: '0.65rem', fontFamily: 'var(--font-mono)', color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', borderRadius: 4, padding: '1px 5px' }}>
+                  {label}: {String(value)}
+                </span>
+              ))}
+            </div>
+          )}
           {/* Input args */}
           {showInput && (
             <div>
@@ -504,7 +559,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
               <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
                 {isError ? 'Error' : 'Output'}
               </div>
-              <BodyContent text={resultBody} />
+              {isUnifiedDiff ? <UnifiedDiffBody diff={resultBody} /> : <BodyContent text={resultBody} />}
             </div>
           )}
         </div>

@@ -155,6 +155,10 @@ export const PI_MODELS = [
 export type PiModelId = typeof PI_MODELS[number]['id']
 
 export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type CodexImageDetail = 'auto' | 'low' | 'high' | 'original'
+export type CodexPersonality = 'none' | 'friendly' | 'pragmatic'
+export type CodexReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none'
+export type CodexJsonValue = null | boolean | number | string | CodexJsonValue[] | { [key: string]: CodexJsonValue }
 
 export interface ModelOption {
   id: string
@@ -214,6 +218,8 @@ export interface Thread {
   provider: string
   model: string
   reasoning_level: ReasoningLevel
+  codex_personality: CodexPersonality
+  codex_reasoning_summary: CodexReasoningSummary
   /** Cursor: thinking toggle override; null = use provider default. */
   cursor_thinking: boolean | null
   /** Cursor: selected context-window value; null = use provider default. */
@@ -468,6 +474,26 @@ export interface SendOptions {
   planMode?: boolean
   /** Request the provider's fast / priority processing tier for this message. */
   fastMode?: boolean
+  /** Stable ID shared by the optimistic UI message and supporting providers. */
+  clientUserMessageId?: string
+  /** Saved attachments that providers may send using native multimodal input. */
+  attachments?: Array<{ path?: string; url?: string; detail?: CodexImageDetail }>
+  /** Exact skills selected in the composer, including their resolved SKILL.md paths. */
+  skills?: Array<{ name: string; path: string; invocation?: string }>
+  /** Bounded context fragments kept separate from the user's text. */
+  additionalContext?: Record<string, { value: string; kind: 'untrusted' | 'application' }>
+  /** Optional JSON Schema for workflows that require a constrained final response. */
+  outputSchema?: CodexJsonValue
+}
+
+export interface BackgroundTerminal {
+  itemId: string
+  processId: string
+  command: string
+  cwd: string
+  osPid: number | null
+  cpuPercent: number | null
+  rssKb: number | null
 }
 
 /** A question option from AskUserQuestion tool */

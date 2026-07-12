@@ -12,8 +12,8 @@ interface MessageStore {
   appendEvent: (threadId: string, event: OutputEvent) => void
   appendEventToSession: (sessionId: string, threadId: string, event: OutputEvent) => void
 
-  appendUserMessage: (threadId: string, content: string) => void
-  appendUserMessageToSession: (sessionId: string, threadId: string, content: string) => void
+  appendUserMessage: (threadId: string, content: string, messageId?: string) => void
+  appendUserMessageToSession: (sessionId: string, threadId: string, content: string, messageId?: string) => void
 
   clear: (threadId: string) => void
   clearSession: (sessionId: string) => void
@@ -76,9 +76,9 @@ export const useMessageStore = create<MessageStore>((set) => ({
     }))
   },
 
-  appendUserMessage: (threadId, content) => {
+  appendUserMessage: (threadId, content, messageId) => {
     const msg: Message = {
-      id: `optimistic-${Date.now()}-${Math.random()}`,
+      id: messageId ?? `optimistic-${Date.now()}-${Math.random()}`,
       thread_id: threadId,
       session_id: null,
       role: 'user',
@@ -94,9 +94,9 @@ export const useMessageStore = create<MessageStore>((set) => ({
     }))
   },
 
-  appendUserMessageToSession: (sessionId, threadId, content) => {
+  appendUserMessageToSession: (sessionId, threadId, content, messageId) => {
     const msg: Message = {
-      id: `optimistic-${Date.now()}-${Math.random()}`,
+      id: messageId ?? `optimistic-${Date.now()}-${Math.random()}`,
       thread_id: threadId,
       session_id: sessionId,
       role: 'user',

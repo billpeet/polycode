@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow } from './models'
-import { Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
+import { CodexPersonality, CodexReasoningSummary, Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -372,6 +372,8 @@ export function getLocationByPath(path: string): RepoLocation | null {
 
 const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 const VALID_PERMISSION_MODES: PermissionMode[] = ['ask', 'workspace', 'yolo']
+const VALID_CODEX_PERSONALITIES: CodexPersonality[] = ['none', 'friendly', 'pragmatic']
+const VALID_CODEX_SUMMARIES: CodexReasoningSummary[] = ['auto', 'concise', 'detailed', 'none']
 
 function normalizeReasoningLevel(level: string | null | undefined): ReasoningLevel {
   return VALID_REASONING_LEVELS.includes(level as ReasoningLevel) ? level as ReasoningLevel : 'off'
@@ -380,6 +382,14 @@ function normalizeReasoningLevel(level: string | null | undefined): ReasoningLev
 function normalizePermissionMode(mode: string | null | undefined, yoloMode?: number | boolean): PermissionMode {
   if (VALID_PERMISSION_MODES.includes(mode as PermissionMode)) return mode as PermissionMode
   return yoloMode === 1 || yoloMode === true ? 'yolo' : 'ask'
+}
+
+function normalizeCodexPersonality(value: string | null | undefined): CodexPersonality {
+  return VALID_CODEX_PERSONALITIES.includes(value as CodexPersonality) ? value as CodexPersonality : 'none'
+}
+
+function normalizeCodexReasoningSummary(value: string | null | undefined): CodexReasoningSummary {
+  return VALID_CODEX_SUMMARIES.includes(value as CodexReasoningSummary) ? value as CodexReasoningSummary : 'auto'
 }
 
 function rowToThread(r: ThreadRow): Thread {
@@ -396,6 +406,8 @@ function rowToThread(r: ThreadRow): Thread {
     provider,
     model,
     reasoning_level: normalizeReasoningLevel(r.reasoning_level),
+    codex_personality: normalizeCodexPersonality(r.codex_personality),
+    codex_reasoning_summary: normalizeCodexReasoningSummary(r.codex_reasoning_summary),
     cursor_thinking: r.cursor_thinking == null ? null : r.cursor_thinking === 1,
     cursor_context: r.cursor_context ?? null,
     status: r.status as Thread['status'],
@@ -478,6 +490,8 @@ export function createThread(projectId: string, name: string, locationId: string
     provider,
     model,
     reasoning_level: 'off',
+    codex_personality: 'none',
+    codex_reasoning_summary: 'auto',
     cursor_thinking: null,
     cursor_context: null,
     status: 'idle',
@@ -535,6 +549,18 @@ export function updateThreadReasoningLevel(id: string, reasoningLevel: string): 
   getDb()
     .prepare('UPDATE threads SET reasoning_level = ?, updated_at = ? WHERE id = ?')
     .run(normalizeReasoningLevel(reasoningLevel), new Date().toISOString(), id)
+}
+
+export function updateThreadCodexPersonality(id: string, personality: string): void {
+  getDb()
+    .prepare('UPDATE threads SET codex_personality = ?, updated_at = ? WHERE id = ?')
+    .run(normalizeCodexPersonality(personality), new Date().toISOString(), id)
+}
+
+export function updateThreadCodexReasoningSummary(id: string, summary: string): void {
+  getDb()
+    .prepare('UPDATE threads SET codex_reasoning_summary = ?, updated_at = ? WHERE id = ?')
+    .run(normalizeCodexReasoningSummary(summary), new Date().toISOString(), id)
 }
 
 export function updateThreadCursorThinking(id: string, thinking: boolean | null): void {
@@ -656,6 +682,20 @@ export function getThreadReasoningLevel(threadId: string): ReasoningLevel {
     .prepare('SELECT reasoning_level FROM threads WHERE id = ?')
     .get(threadId) as { reasoning_level: string | null } | undefined
   return normalizeReasoningLevel(row?.reasoning_level)
+}
+
+export function getThreadCodexPersonality(threadId: string): CodexPersonality {
+  const row = getDb()
+    .prepare('SELECT codex_personality FROM threads WHERE id = ?')
+    .get(threadId) as { codex_personality: string | null } | undefined
+  return normalizeCodexPersonality(row?.codex_personality)
+}
+
+export function getThreadCodexReasoningSummary(threadId: string): CodexReasoningSummary {
+  const row = getDb()
+    .prepare('SELECT codex_reasoning_summary FROM threads WHERE id = ?')
+    .get(threadId) as { codex_reasoning_summary: string | null } | undefined
+  return normalizeCodexReasoningSummary(row?.codex_reasoning_summary)
 }
 
 export function getThreadCursorThinking(threadId: string): boolean | null {
@@ -829,6 +869,12 @@ function compactStreamingMessages(messages: MessageRow[]): Message[] {
       const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
       const currentToolUseId = typeof currentMetadata?.tool_use_id === 'string' ? currentMetadata.tool_use_id : null
       if (previousToolUseId && previousToolUseId === currentToolUseId) {
+        if (currentMetadata?.authoritative === true) {
+          previous.content = message.content
+          previous.metadata = message.metadata
+          previous.created_at = message.created_at
+          continue
+        }
         previous.content = message.content.startsWith(previous.content)
           ? message.content
           : previous.content + message.content
@@ -869,11 +915,12 @@ export function insertMessage(
   role: string,
   content: string,
   metadata?: Record<string, unknown>,
-  sessionId?: string
+  sessionId?: string,
+  messageId?: string
 ): Message {
   const now = new Date().toISOString()
   const msg: MessageRow = {
-    id: uuidv4(),
+    id: messageId ?? uuidv4(),
     thread_id: threadId,
     session_id: sessionId ?? null,
     role,
@@ -1217,6 +1264,8 @@ export function importThread(
     provider,
     model,
     reasoning_level: 'off',
+    codex_personality: 'none',
+    codex_reasoning_summary: 'auto',
     cursor_thinking: null,
     cursor_context: null,
     status: 'idle',

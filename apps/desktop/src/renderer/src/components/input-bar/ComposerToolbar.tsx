@@ -1,96 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Thread, PROVIDERS, Provider, PermissionMode, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
+import { useEffect, useMemo, useState } from 'react'
+import { CodexPersonality, CodexReasoningSummary, Thread, Provider, PermissionMode, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
+import ModelSelectorMenu from './ModelSelectorMenu'
 import { PlanIcon, YoloIcon, FastIcon, formatElapsed } from './icons'
-import { useFavouritesStore, formatFavourite, FAVOURITE_SLOTS, Favourite } from '../../stores/favourites'
-import { useToastStore } from '../../stores/toast'
-
-function FavouritesMenu({
-  currentThread,
-  applyFavourite,
-}: {
-  currentThread: Thread | undefined
-  applyFavourite: (fav: Favourite) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const bySlot = useFavouritesStore((s) => s.bySlot)
-  const saveFav = useFavouritesStore((s) => s.save)
-  const clearFav = useFavouritesStore((s) => s.clear)
-  const addToast = useToastStore((s) => s.add)
-
-  useEffect(() => {
-    if (!open) return
-    function onClick(e: MouseEvent): void {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    window.addEventListener('mousedown', onClick)
-    return () => window.removeEventListener('mousedown', onClick)
-  }, [open])
-
-  const current: Favourite | null = currentThread
-    ? { provider: currentThread.provider as Provider, model: currentThread.model, reasoningLevel: currentThread.reasoning_level ?? 'off' }
-    : null
-
-  return (
-    <div ref={ref} className="relative mb-2">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        title="Favourite provider/model/effort combos (Ctrl+1…9 to load, Ctrl+Shift+1…9 to save)"
-        className="flex items-center rounded-md px-1.5 py-0.5 text-xs transition-all duration-150"
-        style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)', background: 'var(--color-surface)' }}
-      >
-        ★
-      </button>
-      {open && (
-        <div
-          className="absolute right-0 z-50 mt-1 w-72 rounded-md p-1 text-xs shadow-lg"
-          style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', bottom: '100%', marginBottom: 4 }}
-        >
-          {FAVOURITE_SLOTS.map((slot) => {
-            const fav = bySlot[slot]
-            return (
-              <div key={slot} className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-[rgba(255,255,255,0.05)]">
-                <span className="w-4 text-center" style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>{slot}</span>
-                <button
-                  onClick={() => { if (fav) { applyFavourite(fav); setOpen(false) } }}
-                  disabled={!fav}
-                  className="flex-1 truncate text-left disabled:opacity-40"
-                  style={{ color: fav ? 'var(--color-text)' : 'var(--color-text-muted)' }}
-                  title={fav ? `Load: ${formatFavourite(fav)}` : 'Empty slot'}
-                >
-                  {fav ? formatFavourite(fav) : 'Empty'}
-                </button>
-                <button
-                  onClick={() => {
-                    if (!current) return
-                    saveFav(slot, current)
-                    addToast({ type: 'success', message: `Saved favourite ${slot}: ${formatFavourite(current)}` })
-                  }}
-                  disabled={!current}
-                  className="rounded px-1 disabled:opacity-40"
-                  style={{ color: 'var(--color-text-muted)' }}
-                  title="Save current combo to this slot"
-                >
-                  Set
-                </button>
-                <button
-                  onClick={() => clearFav(slot)}
-                  disabled={!fav}
-                  className="rounded px-1 disabled:opacity-30"
-                  style={{ color: 'var(--color-text-muted)' }}
-                  title="Clear this slot"
-                >
-                  ✕
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      )}
-    </div>
-  )
-}
+import { Favourite } from '../../stores/favourites'
+import BackgroundTerminals from './BackgroundTerminals'
 
 function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -116,6 +30,8 @@ interface ComposerToolbarProps {
   setProviderAndModel: (threadId: string, provider: Provider, model: string) => void
   setModel: (threadId: string, model: string) => void
   setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => void
+  setCodexPersonality: (threadId: string, personality: CodexPersonality) => void
+  setCodexReasoningSummary: (threadId: string, summary: CodexReasoningSummary) => void
   setCursorThinking: (threadId: string, thinking: boolean | null) => void
   setCursorContext: (threadId: string, context: string | null) => void
   elapsedSeconds: number
@@ -139,6 +55,8 @@ export default function ComposerToolbar({
   setProviderAndModel,
   setModel,
   setReasoningLevel,
+  setCodexPersonality,
+  setCodexReasoningSummary,
   setCursorThinking,
   setCursorContext,
   elapsedSeconds,
@@ -287,7 +205,28 @@ export default function ComposerToolbar({
   // Context-window selector: Cursor surfaces it via discovery; Claude Code
   // surfaces it on models that support the opt-in 1M window (Opus 4.6, Sonnet 4.6).
   const contextWindows = selectedModel?.contextWindows ?? EMPTY_CONTEXT_WINDOWS
-  const currentContextWindow = currentThread?.cursor_context ?? ''
+
+  const handleProviderChange = (provider: Provider): void => {
+    const staticDefault = getDefaultModelForProvider(provider)
+    const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : []
+    const defaultModel = liveModels.length > 0
+      ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
+      : staticDefault
+    setProviderAndModel(threadId, provider, defaultModel)
+    const defaultReasoningLevels = getReasoningLevels(liveModels.find((model) => model.id === defaultModel) ?? getModelsForProvider(provider).find((model) => model.id === defaultModel))
+    if (!defaultReasoningLevels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, defaultReasoningLevels[0])
+  }
+
+  const handleModelChange = (nextModel: string): void => {
+    setModel(threadId, nextModel)
+    const levels = getReasoningLevels(modelOptions.find((m) => m.id === nextModel))
+    if (!levels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, levels[0])
+  }
+
+  const handleApplyFavourite = (fav: Favourite): void => {
+    setProviderAndModel(threadId, fav.provider, fav.model)
+    setReasoningLevel(threadId, fav.reasoningLevel)
+  }
 
   return (
     <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -444,117 +383,27 @@ export default function ComposerToolbar({
         </span>
       )}
 
-      <FavouritesMenu
-        currentThread={currentThread}
-        applyFavourite={(fav) => {
-          setProviderAndModel(threadId, fav.provider, fav.model)
-          setReasoningLevel(threadId, fav.reasoningLevel)
-        }}
-      />
-
       <span className="flex items-center gap-1 flex-shrink-0 mb-2">
         <CliHealthIndicator threadId={threadId} />
-        <select
-          value={currentThread?.provider ?? 'claude-code'}
-          onChange={(e) => {
-            const provider = e.target.value as Provider
-            const staticDefault = getDefaultModelForProvider(provider)
-            const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : []
-            const defaultModel = liveModels.length > 0
-              ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
-              : staticDefault
-            setProviderAndModel(threadId, provider, defaultModel)
-            const defaultReasoningLevels = getReasoningLevels(liveModels.find((model) => model.id === defaultModel) ?? getModelsForProvider(provider).find((model) => model.id === defaultModel))
-            if (!defaultReasoningLevels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, defaultReasoningLevels[0])
-          }}
-          disabled={isProcessing}
-          className="text-xs bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer"
-          style={{
-            color: 'var(--color-text-muted)',
-            borderColor: 'var(--color-border)',
-            background: 'var(--color-surface)',
-            opacity: isProcessing ? 0.4 : 1,
-          }}
-          title="Select provider"
-        >
-          {PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {p.label}
-            </option>
-          ))}
-        </select>
+        <ModelSelectorMenu
+          isProcessing={isProcessing}
+          currentThread={currentThread}
+          modelOptions={modelOptions}
+          reasoningOptions={reasoningOptions}
+          currentReasoningLevel={currentReasoningLevel}
+          showReasoningSelector={showReasoningSelector}
+          contextWindows={contextWindows}
+          onSelectProvider={handleProviderChange}
+          onSelectModel={handleModelChange}
+          onSelectReasoning={(level) => setReasoningLevel(threadId, level)}
+          onSelectCodexSummary={(summary) => setCodexReasoningSummary(threadId, summary)}
+          onSelectPersonality={(personality) => setCodexPersonality(threadId, personality)}
+          onSelectContextWindow={(context) => setCursorContext(threadId, context)}
+          applyFavourite={handleApplyFavourite}
+        />
       </span>
-      <select
-        value={currentThread?.model ?? getDefaultModelForProvider(currentProvider)}
-        onChange={(e) => {
-          const nextModel = e.target.value
-          setModel(threadId, nextModel)
-          const levels = getReasoningLevels(modelOptions.find((m) => m.id === nextModel))
-          if (!levels.includes(currentThread?.reasoning_level ?? 'off')) setReasoningLevel(threadId, levels[0])
-        }}
-        disabled={isProcessing}
-        className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
-        style={{
-          color: 'var(--color-text-muted)',
-          borderColor: 'var(--color-border)',
-          background: 'var(--color-surface)',
-          opacity: isProcessing ? 0.4 : 1,
-        }}
-        title="Select model"
-      >
-        {modelOptions.map((m) => (
-          <option key={m.id} value={m.id} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-            {m.label}
-          </option>
-        ))}
-      </select>
 
-      {showReasoningSelector && (
-        <select
-          value={currentReasoningLevel}
-          onChange={(e) => setReasoningLevel(threadId, e.target.value as ReasoningLevel)}
-          disabled={isProcessing || reasoningOptions.length <= 1}
-          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
-          style={{
-            color: 'var(--color-text-muted)',
-            borderColor: 'var(--color-border)',
-            background: 'var(--color-surface)',
-            opacity: isProcessing || reasoningOptions.length <= 1 ? 0.4 : 1,
-          }}
-          title={`Select ${currentProvider === 'claude-code' ? 'Claude effort' : currentProvider === 'codex' ? 'Codex reasoning' : currentProvider === 'opencode' ? 'OpenCode reasoning' : currentProvider === 'cursor' ? 'Cursor effort' : 'Pi reasoning'} level`}
-        >
-          {reasoningOptions.map((level) => (
-            <option key={level} value={level} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {level === 'off' ? (currentProvider === 'claude-code' ? 'Effort default' : currentProvider === 'opencode' || currentProvider === 'cursor' ? 'Effort default' : 'Reasoning off') : `${currentProvider === 'claude-code' || currentProvider === 'cursor' ? 'Effort' : 'Reasoning'} ${level}`}
-            </option>
-          ))}
-        </select>
-      )}
-
-      {contextWindows.length > 0 && (
-        <select
-          value={currentContextWindow}
-          onChange={(e) => setCursorContext(threadId, e.target.value ? e.target.value : null)}
-          disabled={isProcessing}
-          className="text-xs flex-shrink-0 bg-transparent border rounded px-1.5 py-0.5 outline-none cursor-pointer mb-2"
-          style={{
-            color: 'var(--color-text-muted)',
-            borderColor: 'var(--color-border)',
-            background: 'var(--color-surface)',
-            opacity: isProcessing ? 0.4 : 1,
-          }}
-          title="Select context window"
-        >
-          <option value="" style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-            Context default
-          </option>
-          {contextWindows.map((cw) => (
-            <option key={cw.value} value={cw.value} style={{ background: 'var(--color-surface)', color: 'var(--color-text)' }}>
-              {cw.label}
-            </option>
-          ))}
-        </select>
-      )}
+      {currentProvider === 'codex' && <BackgroundTerminals threadId={threadId} />}
 
       {isProcessing && (
         <>

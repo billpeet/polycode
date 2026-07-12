@@ -52,6 +52,8 @@ import {
   updateThreadProviderAndModel,
   updateThreadPermissionMode,
   updateThreadReasoningLevel,
+  updateThreadCodexPersonality,
+  updateThreadCodexReasoningSummary,
   updateThreadCursorThinking,
   updateThreadCursorContext,
   updateThreadStatus,
@@ -194,6 +196,8 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'threads:updateModel',
   'threads:updateProviderAndModel',
   'threads:updateReasoningLevel',
+  'threads:updateCodexPersonality',
+  'threads:updateCodexReasoningSummary',
   'threads:updateCursorThinking',
   'threads:updateCursorContext',
   'threads:setUnread',
@@ -202,6 +206,9 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'threads:setWsl',
   'threads:start',
   'threads:stop',
+  'threads:backgroundTerminals:list',
+  'threads:backgroundTerminals:terminate',
+  'threads:backgroundTerminals:clean',
   'threads:reset',
   'threads:getPid',
   'threads:send',
@@ -674,6 +681,16 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       sessionManager.remove(id)
       return updateThreadReasoningLevel(id, reasoningLevel)
     }
+    case 'threads:updateCodexPersonality': {
+      const [id, personality] = args as [string, string]
+      sessionManager.remove(id)
+      return updateThreadCodexPersonality(id, personality)
+    }
+    case 'threads:updateCodexReasoningSummary': {
+      const [id, summary] = args as [string, string]
+      sessionManager.remove(id)
+      return updateThreadCodexReasoningSummary(id, summary)
+    }
     case 'threads:updateCursorThinking': {
       const [id, thinking] = args as [string, boolean | null]
       sessionManager.remove(id)
@@ -720,15 +737,26 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return undefined
     }
     case 'threads:stop': {
-      const [threadId] = args as [string]
+      const [threadId, cleanBackgroundTerminals] = args as [string, boolean | undefined]
       const session = sessionManager.get(threadId)
       if (session?.isRunning()) {
-        session.stop()
+        session.stop(cleanBackgroundTerminals === true)
       } else {
         updateThreadStatus(threadId, 'idle')
         emitAppEvent(window, `thread:status:${threadId}`, 'idle')
         emitAppEvent(window, `thread:pid:${threadId}`, null)
       }
+      return undefined
+    }
+    case 'threads:backgroundTerminals:list': {
+      return await sessionManager.get(args[0] as string)?.listBackgroundTerminals() ?? []
+    }
+    case 'threads:backgroundTerminals:terminate': {
+      const [threadId, processId] = args as [string, string]
+      return await sessionManager.get(threadId)?.terminateBackgroundTerminal(processId) ?? false
+    }
+    case 'threads:backgroundTerminals:clean': {
+      await sessionManager.get(args[0] as string)?.cleanBackgroundTerminals()
       return undefined
     }
     case 'threads:reset': {

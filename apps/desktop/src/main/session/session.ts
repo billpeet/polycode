@@ -7,7 +7,7 @@ import { OpenCodeDriver } from '../driver/opencode'
 import { PiDriver } from '../driver/pi'
 import { CursorDriver } from '../driver/cursor'
 import { CLIDriver } from '../driver/types'
-import { OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
+import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
 import {
@@ -17,6 +17,8 @@ import {
   getThreadModel,
   getThreadProvider,
   getThreadReasoningLevel,
+  getThreadCodexPersonality,
+  getThreadCodexReasoningSummary,
   getThreadCursorThinking,
   getThreadCursorContext,
   getThreadPermissionMode,
@@ -85,6 +87,8 @@ export class Session {
       threadId: this.threadId,
       model,
       reasoningLevel: getThreadReasoningLevel(this.threadId),
+      codexPersonality: getThreadCodexPersonality(this.threadId),
+      codexReasoningSummary: getThreadCodexReasoningSummary(this.threadId),
       thinking: getThreadCursorThinking(this.threadId),
       contextWindow,
       permissionMode: getThreadPermissionMode(this.threadId),
@@ -176,7 +180,16 @@ export class Session {
     this.pendingPlanContent = null
 
     // Send the plan to the new context for execution
-    this.sendMessage(`Execute this plan:\n\n${planContent}`, { planMode: false })
+    if (getThreadProvider(this.threadId) === 'codex') {
+      this.sendMessage('Execute the approved plan.', {
+        planMode: false,
+        additionalContext: {
+          approved_plan: { value: planContent, kind: 'application' },
+        },
+      })
+    } else {
+      this.sendMessage(`Execute this plan:\n\n${planContent}`, { planMode: false })
+    }
   }
 
   sendMessage(content: string, options?: SendOptions): void {
@@ -184,6 +197,10 @@ export class Session {
 
     const driver = this.drivers.get(this.activeSessionId)
     if (!driver) return
+    const messageOptions: SendOptions = {
+      ...options,
+      clientUserMessageId: options?.clientUserMessageId ?? randomUUID(),
+    }
 
     if (driver.isRunning()) {
       if (driver.injectMessage) {
@@ -192,9 +209,9 @@ export class Session {
           type: 'message_injected',
           content: content.slice(0, 500),
         })
-        insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId)
+        insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId, messageOptions.clientUserMessageId)
         const permissionMode = getThreadPermissionMode(this.threadId)
-        driver.injectMessage(content, { planMode: options?.planMode, fastMode: options?.fastMode, permissionMode, yoloMode: permissionMode === 'yolo' })
+        driver.injectMessage(content, { ...messageOptions, permissionMode, yoloMode: permissionMode === 'yolo' })
       } else {
         console.warn('[Session] sendMessage called while driver is already running — ignoring for thread', this.threadId)
       }
@@ -211,7 +228,7 @@ export class Session {
     this.pendingQuestions = []
     this.clearPendingPermissions()
     this.recentToolCalls.clear()
-    this.lastMessageOptions = options
+    this.lastMessageOptions = messageOptions
     this.suppressAssistantTextForPermissionTurn = false
 
     logThreadEvent(this.threadId, {
@@ -221,7 +238,7 @@ export class Session {
     })
 
     // Persist to DB with session ID
-    insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId)
+    insertMessage(this.threadId, 'user', content, undefined, this.activeSessionId, messageOptions.clientUserMessageId)
 
     const count = (this.messageCountBySession.get(this.activeSessionId) ?? 0) + 1
     this.messageCountBySession.set(this.activeSessionId, count)
@@ -246,7 +263,7 @@ export class Session {
         content,
         (event: OutputEvent) => this.handleEvent(event),
         (error?: Error) => this.handleDone(error),
-        { planMode: options?.planMode, fastMode: options?.fastMode, permissionMode, yoloMode: permissionMode === 'yolo' }
+        { ...messageOptions, permissionMode, yoloMode: permissionMode === 'yolo' }
       )
     }
 
@@ -254,10 +271,15 @@ export class Session {
     this.emit(`thread:pid:${this.threadId}`, this.getPid())
   }
 
-  stop(): void {
+  stop(cleanBackgroundTerminals = false): void {
     this.stopped = true
     if (this.activeSessionId) {
       const driver = this.drivers.get(this.activeSessionId)
+      if (cleanBackgroundTerminals) {
+        void driver?.cleanBackgroundTerminals?.().catch((error) => {
+          console.warn('[Session] Failed to clean Codex background terminals', error)
+        })
+      }
       for (const request of this.getPendingPermissions()) {
         if (request.source === 'native') {
           driver?.sendControlResponse(request.requestId, 'deny', 'User interrupted the turn')
@@ -279,6 +301,21 @@ export class Session {
     // the DB in 'stopping' which startup wouldn't know to handle).
     // The DB and final UI status are both set in handleDone() when the process exits.
     this.emit(`thread:status:${this.threadId}`, 'stopping')
+  }
+
+  async listBackgroundTerminals(): Promise<BackgroundTerminal[]> {
+    if (!this.activeSessionId) return []
+    return await this.drivers.get(this.activeSessionId)?.listBackgroundTerminals?.() ?? []
+  }
+
+  async terminateBackgroundTerminal(processId: string): Promise<boolean> {
+    if (!this.activeSessionId) return false
+    return await this.drivers.get(this.activeSessionId)?.terminateBackgroundTerminal?.(processId) ?? false
+  }
+
+  async cleanBackgroundTerminals(): Promise<void> {
+    if (!this.activeSessionId) return
+    await this.drivers.get(this.activeSessionId)?.cleanBackgroundTerminals?.()
   }
 
   forceReset(): void {

@@ -3,6 +3,7 @@ import path from 'path'
 import {
   buildCodexEnvironment,
   buildCodexAppServerThreadParams,
+  buildCodexAppServerInput,
   buildCodexSdkOptions,
   CodexDriver,
   buildCodexArgs,
@@ -713,6 +714,75 @@ describe('parseCodexAppServerNotification', () => {
       } satisfies OutputEvent,
     ])
   })
+
+  it('renders turn-wide diffs as authoritative replaceable tool output', () => {
+    const events = parseCodexAppServerNotification(
+      'turn/diff/updated',
+      { threadId: 'thread_1', turnId: 'turn_1', diff: 'diff --git a/a.ts b/a.ts\n+old\n-new\n+new' },
+      state,
+    )
+
+    expect(events).toEqual([
+      expect.objectContaining({
+        type: 'tool_call',
+        content: 'Changes made this turn',
+        metadata: expect.objectContaining({ id: 'turn-diff:turn_1', name: 'TurnDiff' }),
+      }),
+      expect.objectContaining({
+        type: 'tool_result',
+        content: 'diff --git a/a.ts b/a.ts\n+old\n-new\n+new',
+        metadata: expect.objectContaining({ tool_use_id: 'turn-diff:turn_1', authoritative: true }),
+      }),
+    ])
+  })
+
+  it('renders terminal interaction input against its command item', () => {
+    expect(parseCodexAppServerNotification(
+      'item/commandExecution/terminalInteraction',
+      { threadId: 'thread_1', turnId: 'turn_1', itemId: 'cmd_1', processId: 'proc_1', stdin: 'yes\n' },
+      state,
+    )).toEqual([
+      {
+        type: 'tool_result',
+        content: '\n› yes\n',
+        metadata: expect.objectContaining({
+          tool_use_id: 'cmd_1',
+          process_id: 'proc_1',
+          terminal_interaction: true,
+        }),
+      },
+    ])
+  })
+
+  it('preserves canonical command and MCP app context metadata', () => {
+    const command = parseCodexAppServerNotification('item/completed', {
+      item: {
+        id: 'cmd_meta', type: 'commandExecution', command: 'npm test', cwd: '/repo', processId: 'proc_9',
+        source: 'unifiedExecInteraction', status: 'completed', commandActions: [{ type: 'unknown', command: 'npm test' }],
+        aggregatedOutput: 'ok', exitCode: 0, durationMs: 1234,
+      },
+    }, state)
+    expect(command[0].metadata).toMatchObject({
+      cwd: '/repo', process_id: 'proc_9', source: 'unifiedExecInteraction',
+      command_actions: [{ type: 'unknown', command: 'npm test' }],
+    })
+    expect(command[1].metadata).toMatchObject({ exit_code: 0, duration_ms: 1234, status: 'completed' })
+
+    const mcp = parseCodexAppServerNotification('item/completed', {
+      item: {
+        id: 'mcp_meta', type: 'mcpToolCall', server: 'apps', tool: 'calendar_lookup', status: 'completed', arguments: {},
+        appContext: { connectorId: 'calendar', linkId: 'link_1', resourceUri: 'calendar://event/1', appName: 'Calendar', templateId: 'template_1', actionName: 'Find event' },
+        pluginId: 'calendar-plugin', durationMs: 88, result: { content: [] }, error: null,
+      },
+    }, state)
+    expect(mcp[0]).toMatchObject({
+      content: 'Find event',
+      metadata: {
+        name: 'Calendar: Find event', app_name: 'Calendar', connector_id: 'calendar',
+        resource_uri: 'calendar://event/1', plugin_id: 'calendar-plugin', duration_ms: 88,
+      },
+    })
+  })
 })
 
 describe('CodexDriver transport selection', () => {
@@ -742,6 +812,24 @@ describe('Codex app-server protocol parameters', () => {
       threadId: 'thread_1',
       excludeTurns: true,
     })
+  })
+
+  it('builds native text, image, local image, and skill inputs', () => {
+    expect(buildCodexAppServerInput(
+      '@C:\\tmp\\shot.png\n\nUse $review carefully',
+      {
+        attachments: [
+          { path: 'C:\\tmp\\shot.png', detail: 'high' },
+          { url: 'data:image/png;base64,AAA', detail: 'original' },
+        ],
+        skills: [{ name: 'review', path: 'C:\\skills\\review\\SKILL.md', invocation: '$review' }],
+      },
+    )).toEqual([
+      { type: 'text', text: 'Use  carefully', text_elements: [] },
+      { type: 'localImage', path: 'C:\\tmp\\shot.png', detail: 'high' },
+      { type: 'image', url: 'data:image/png;base64,AAA', detail: 'original' },
+      { type: 'skill', name: 'review', path: 'C:\\skills\\review\\SKILL.md' },
+    ])
   })
 })
 
@@ -941,6 +1029,38 @@ describe('CodexDriver app-server approvals', () => {
     })
   })
 
+  it('passes message identity, bounded context, output schema, personality, and summary', async () => {
+    const { local } = setupLocalDriver({
+      codexPersonality: 'friendly',
+      codexReasoningSummary: 'concise',
+    })
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).ensureReady = async () => {}
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      return { turn: { id: 'turn_1' } }
+    }
+
+    await (local as any).startTurn('Return JSON', {
+      clientUserMessageId: 'message_1',
+      additionalContext: {
+        polycode: { value: 'x'.repeat(20_000), kind: 'application' },
+      },
+      outputSchema: { type: 'object', required: ['result'] },
+    })
+
+    expect(requests[0].params).toMatchObject({
+      clientUserMessageId: 'message_1',
+      additionalContext: {
+        polycode: { value: 'x'.repeat(16_000), kind: 'application' },
+      },
+      outputSchema: { type: 'object', required: ['result'] },
+      personality: 'friendly',
+      summary: 'concise',
+    })
+  })
+
   it('steers the active turn for live message injection', async () => {
     const { driver, local } = setupLocalDriver()
     const requests: Array<{ method: string; params: Record<string, unknown> }> = []
@@ -1042,6 +1162,32 @@ describe('CodexDriver app-server approvals', () => {
     expect(kills).toBe(1)
     expect((local as any).child).toBeNull()
     expect(driver.isRunning()).toBe(false)
+  })
+
+  it('lists, terminates, and cleans background terminals through app-server', async () => {
+    const { driver, local } = setupLocalDriver()
+    const requests: Array<{ method: string; params: Record<string, unknown> }> = []
+    ;(local as any).codexThreadId = 'thread_1'
+    ;(local as any).readyPromise = Promise.resolve()
+    ;(local as any).sendRequest = async (method: string, params: Record<string, unknown>) => {
+      requests.push({ method, params })
+      if (method.endsWith('/list')) {
+        return { data: [{ itemId: 'cmd_1', processId: 'proc_1', command: 'npm dev', cwd: '/repo', osPid: 123, cpuPercent: 1.5, rssKb: 2048 }], nextCursor: null }
+      }
+      if (method.endsWith('/terminate')) return { terminated: true }
+      return {}
+    }
+
+    expect(await driver.listBackgroundTerminals?.()).toEqual([{
+      itemId: 'cmd_1', processId: 'proc_1', command: 'npm dev', cwd: '/repo', osPid: 123, cpuPercent: 1.5, rssKb: 2048,
+    }])
+    expect(await driver.terminateBackgroundTerminal?.('proc_1')).toBe(true)
+    await driver.cleanBackgroundTerminals?.()
+    expect(requests.map((request) => request.method)).toEqual([
+      'thread/backgroundTerminals/list',
+      'thread/backgroundTerminals/terminate',
+      'thread/backgroundTerminals/clean',
+    ])
   })
 })
 

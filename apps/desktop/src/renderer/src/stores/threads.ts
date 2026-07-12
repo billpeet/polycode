@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel } from '../types/ipc'
+import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary } from '../types/ipc'
 import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 
@@ -19,8 +19,7 @@ function removeThreadFromList(threads: Thread[], threadId: string): Thread[] {
 
 export interface QueuedMessage {
   content: string
-  planMode: boolean
-  fastMode: boolean
+  options: SendOptions
 }
 
 interface ThreadStore {
@@ -69,13 +68,15 @@ interface ThreadStore {
   setModel: (threadId: string, model: string) => Promise<void>
   setProviderAndModel: (threadId: string, provider: string, model: string) => Promise<void>
   setReasoningLevel: (threadId: string, reasoningLevel: ReasoningLevel) => Promise<void>
+  setCodexPersonality: (threadId: string, personality: CodexPersonality) => Promise<void>
+  setCodexReasoningSummary: (threadId: string, summary: CodexReasoningSummary) => Promise<void>
   setCursorThinking: (threadId: string, thinking: boolean | null) => Promise<void>
   setCursorContext: (threadId: string, context: string | null) => Promise<void>
   setPermissionMode: (threadId: string, permissionMode: PermissionMode) => Promise<void>
   setYolo: (threadId: string, yoloMode: boolean) => Promise<void>
   setWsl: (threadId: string, useWsl: boolean, wslDistro: string | null) => Promise<void>
   start: (threadId: string) => Promise<void>
-  stop: (threadId: string) => Promise<void>
+  stop: (threadId: string, cleanBackgroundTerminals?: boolean) => Promise<void>
   reset: (threadId: string) => Promise<void>
   send: (threadId: string, content: string, options?: SendOptions) => Promise<void>
   approvePlan: (threadId: string) => Promise<void>
@@ -88,7 +89,7 @@ interface ThreadStore {
   setDraft: (threadId: string, draft: string) => void
   setPlanMode: (threadId: string, planMode: boolean) => void
   setFastMode: (threadId: string, fastMode: boolean) => void
-  queueMessage: (threadId: string, content: string, planMode: boolean, fastMode: boolean) => void
+  queueMessage: (threadId: string, content: string, options: SendOptions) => void
   clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
   addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window?: number | null) => void
@@ -179,6 +180,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       provider: sourceThread?.provider ?? 'claude-code',
       model: sourceThread?.model ?? 'claude-opus-4-8',
       reasoning_level: sourceThread?.reasoning_level ?? 'off',
+      codex_personality: sourceThread?.codex_personality ?? 'none',
+      codex_reasoning_summary: sourceThread?.codex_reasoning_summary ?? 'auto',
       cursor_thinking: sourceThread?.cursor_thinking ?? null,
       cursor_context: sourceThread?.cursor_context ?? null,
       status: 'idle',
@@ -218,12 +221,16 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           thread.use_wsl !== sourceThread.use_wsl ||
           thread.wsl_distro !== sourceThread.wsl_distro ||
           thread.permission_mode !== sourceThread.permission_mode ||
-          thread.reasoning_level !== sourceThread.reasoning_level
+          thread.reasoning_level !== sourceThread.reasoning_level ||
+          thread.codex_personality !== sourceThread.codex_personality ||
+          thread.codex_reasoning_summary !== sourceThread.codex_reasoning_summary
         )
       ) {
         await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
         await window.api.invoke('threads:setPermissionMode', thread.id, sourceThread.permission_mode)
         await window.api.invoke('threads:updateReasoningLevel', thread.id, sourceThread.reasoning_level)
+        await window.api.invoke('threads:updateCodexPersonality', thread.id, sourceThread.codex_personality)
+        await window.api.invoke('threads:updateCodexReasoningSummary', thread.id, sourceThread.codex_reasoning_summary)
         thread = {
           ...thread,
           use_wsl: sourceThread.use_wsl,
@@ -231,6 +238,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           permission_mode: sourceThread.permission_mode,
           yolo_mode: sourceThread.permission_mode === 'yolo',
           reasoning_level: sourceThread.reasoning_level,
+          codex_personality: sourceThread.codex_personality,
+          codex_reasoning_summary: sourceThread.codex_reasoning_summary,
         }
       }
 
@@ -271,7 +280,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         if (pid !== undefined) nextPidByThread[thread.id] = pid
         delete nextPidByThread[optimisticId]
 
-        const nextStatusMap = { ...s.statusMap, [thread.id]: 'idle' }
+        const nextStatusMap: Record<string, ThreadStatus> = { ...s.statusMap, [thread.id]: 'idle' }
         delete nextStatusMap[optimisticId]
 
         const nextUnreadByThread = { ...s.unreadByThread, [thread.id]: false }
@@ -632,6 +641,28 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
   },
 
+  setCodexPersonality: async (threadId, personality) => {
+    await window.api.invoke('threads:updateCodexPersonality', threadId, personality)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, codex_personality: personality } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
+  setCodexReasoningSummary: async (threadId, summary) => {
+    await window.api.invoke('threads:updateCodexReasoningSummary', threadId, summary)
+    set((s) => {
+      const updated = { ...s.byProject }
+      for (const pid of Object.keys(updated)) {
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, codex_reasoning_summary: summary } : t))
+      }
+      return { byProject: updated }
+    })
+  },
+
   setCursorThinking: async (threadId, thinking) => {
     await window.api.invoke('threads:updateCursorThinking', threadId, thinking)
     set((s) => {
@@ -688,8 +719,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     await window.api.invoke('threads:start', threadId)
   },
 
-  stop: async (threadId) => {
-    await window.api.invoke('threads:stop', threadId)
+  stop: async (threadId, cleanBackgroundTerminals = false) => {
+    await window.api.invoke('threads:stop', threadId, cleanBackgroundTerminals)
   },
 
   reset: async (threadId) => {
@@ -776,9 +807,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   setFastMode: (threadId, fastMode) =>
     set((s) => ({ fastModeByThread: { ...s.fastModeByThread, [threadId]: fastMode } })),
 
-  queueMessage: (threadId, content, planMode, fastMode) =>
+  queueMessage: (threadId, content, options) =>
     set((s) => ({
-      queuedMessageByThread: { ...s.queuedMessageByThread, [threadId]: { content, planMode, fastMode } }
+      queuedMessageByThread: { ...s.queuedMessageByThread, [threadId]: { content, options } }
     })),
 
   clearQueue: (threadId) =>
