@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, rmSync, readFileSync } from 'fs'
 import { basename, dirname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { homedir } from 'os'
-import { listPlanFiles, readPlanFile } from '../plans'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import {
@@ -90,7 +89,7 @@ import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stage
 import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch, getPullRequestsWebUrl, getRepoWebUrl } from '../azure-devops'
 import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch, getGitHubPullRequestsWebUrl, getGitHubRepoWebUrl } from '../github'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
-import { startFileWatch, stopFileWatch } from '../file-watch'
+import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
 import { wslExec, wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
@@ -107,6 +106,8 @@ import { listDetectedSkills } from '../skills'
 import { emitAppEvent } from '../app-events'
 import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
+import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
+import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
 
@@ -307,8 +308,6 @@ async function assertMainBranchCommitAllowed(repoPath: string, ssh?: SshConfig |
   }
 }
 
-let cachedWslDistros: { expiresAt: number; value: string[] } | null = null
-
 export function registerIpcHandlers(window: BrowserWindow): void {
   commandManager.init(window)
   ptyManager.init(window)
@@ -330,22 +329,22 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listProjects()
   })
 
-  ipcMain.handle('projects:create', (_event, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
+  proxyable('projects:create', (name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
     return createProject(name, gitUrl, allowMainBranchCommits ?? true)
   })
 
   // Atomically provision a brand-new project *and* its first local location in one shot.
   // All filesystem/git work (mkdir + init, clone, remote detection) happens BEFORE any DB
   // rows are written, so a failure never leaves an orphaned project behind.
-  ipcMain.handle('projects:createFull', (_event, spec: NewProjectSpec) => {
+  proxyable('projects:createFull', (spec: NewProjectSpec) => {
     return createFullProject(spec)
   })
 
-  ipcMain.handle('projects:update', (_event, id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
+  proxyable('projects:update', (id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
     return updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
   })
 
-  ipcMain.handle('projects:delete', (_event, id: string) => {
+  proxyable('projects:delete', (id: string) => {
     sessionManager.stopAll()
     commandManager.stopAll()
     return deleteProject(id)
@@ -355,11 +354,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listArchivedProjects()
   })
 
-  ipcMain.handle('projects:archive', (_event, id: string) => {
+  proxyable('projects:archive', (id: string) => {
     return archiveProject(id)
   })
 
-  ipcMain.handle('projects:unarchive', (_event, id: string) => {
+  proxyable('projects:unarchive', (id: string) => {
     return unarchiveProject(id)
   })
 
@@ -369,23 +368,23 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listLocations(projectId)
   })
 
-  ipcMain.handle('locations:create', (_event, projectId: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+  proxyable('locations:create', (projectId: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
     return createLocation(projectId, label, connectionType, locationPath, poolId, ssh, wsl)
   })
 
-  ipcMain.handle('locations:update', (_event, id: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
+  proxyable('locations:update', (id: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
     return updateLocation(id, label, connectionType, locationPath, poolId, ssh, wsl)
   })
 
-  ipcMain.handle('locations:delete', (_event, id: string) => {
+  proxyable('locations:delete', (id: string) => {
     return deleteLocation(id)
   })
 
-  ipcMain.handle('locations:createWorktree', (_event, parentLocationId: string, label?: string | null) => {
+  proxyable('locations:createWorktree', (parentLocationId: string, label?: string | null) => {
     return createLocalWorktree(parentLocationId, label)
   })
 
-  ipcMain.handle('locations:removeWorktree', (_event, id: string) => {
+  proxyable('locations:removeWorktree', (id: string) => {
     return removeWorktreeLocation(id)
   })
 
@@ -401,15 +400,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listLocationPools(projectId)
   })
 
-  ipcMain.handle('location-pools:create', (_event, projectId: string, name: string) => {
+  proxyable('location-pools:create', (projectId: string, name: string) => {
     return createLocationPool(projectId, name)
   })
 
-  ipcMain.handle('location-pools:update', (_event, id: string, name: string) => {
+  proxyable('location-pools:update', (id: string, name: string) => {
     return updateLocationPool(id, name)
   })
 
-  ipcMain.handle('location-pools:delete', (_event, id: string) => {
+  proxyable('location-pools:delete', (id: string) => {
     return deleteLocationPool(id)
   })
 
@@ -417,125 +416,26 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return existsSync(path)
   })
 
-  ipcMain.handle('locations:suggestPath', (_event, baseDir: string, repoName: string): string => {
+  proxyable('locations:suggestPath', (baseDir: string, repoName: string): string => {
     return suggestUniquePath(baseDir, repoName)
   })
 
-  ipcMain.handle('locations:clone', (_event, projectId: string, label: string, gitUrl: string, clonePath: string) => {
+  proxyable('locations:clone', (projectId: string, label: string, gitUrl: string, clonePath: string) => {
     return cloneLocation(projectId, label, gitUrl, clonePath)
   })
 
   // ── SSH / WSL test ──────────────────────────────────────────────────────────
 
-  ipcMain.handle('ssh:test', (_event, ssh: SshConfig, remotePath: string): Promise<{ ok: boolean; error?: string }> => {
-    return new Promise((resolve) => {
-      const sshArgs = [
-        '-T',
-        '-o', 'ConnectTimeout=10',
-        '-o', 'StrictHostKeyChecking=accept-new',
-        '-o', 'BatchMode=yes',
-      ]
-      if (ssh.port) sshArgs.push('-p', String(ssh.port))
-      if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
-      // ~ doesn't expand inside single quotes, so use "$HOME" for tilde prefix
-      const testPath = remotePath.startsWith('~')
-        ? '"$HOME"' + "'" + remotePath.slice(1).replace(/'/g, "'\\''") + "'"
-        : "'" + remotePath.replace(/'/g, "'\\''") + "'"
-      sshArgs.push(`${ssh.user}@${ssh.host}`, `test -d ${testPath} && echo __POLYCODE_OK__`)
-
-      const proc = spawn('ssh', sshArgs, {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 15000,
-      })
-
-      let stdout = ''
-      let stderr = ''
-
-      proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-      proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-
-      proc.on('close', (code) => {
-        if (code === 0 && stdout.includes('__POLYCODE_OK__')) {
-          resolve({ ok: true })
-        } else {
-          const msg = stderr.trim() || `SSH exited with code ${code}`
-          resolve({ ok: false, error: msg })
-        }
-      })
-
-      proc.on('error', (err) => {
-        resolve({ ok: false, error: err.message })
-      })
-    })
+  proxyable('ssh:test', (ssh: SshConfig, remotePath: string) => {
+    return testSshConnection(ssh, remotePath)
   })
 
-  ipcMain.handle('wsl:test', (_event, wsl: WslConfig, wslPath: string): Promise<{ ok: boolean; error?: string }> => {
-    return new Promise((resolve) => {
-      const testPath = wslPath.startsWith('~')
-        ? '"$HOME"' + "'" + wslPath.slice(1).replace(/'/g, "'\\''") + "'"
-        : "'" + wslPath.replace(/'/g, "'\\''") + "'"
-      const innerCmd = `test -d ${testPath} && echo __POLYCODE_OK__`
-
-      const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 15000,
-      })
-
-      const stdoutChunks: Buffer[] = []
-      const stderrChunks: Buffer[] = []
-
-      proc.stdout?.on('data', (chunk: Buffer) => { stdoutChunks.push(chunk) })
-      proc.stderr?.on('data', (chunk: Buffer) => { stderrChunks.push(chunk) })
-
-      proc.on('close', (code) => {
-        const stdout = decodeWslBuffer(Buffer.concat(stdoutChunks))
-        const stderr = decodeWslBuffer(Buffer.concat(stderrChunks))
-        if (code === 0 && stdout.includes('__POLYCODE_OK__')) {
-          resolve({ ok: true })
-        } else {
-          const msg = stderr || (code === 1 ? 'Directory not found in WSL distro' : `WSL exited with code ${code}`)
-          resolve({ ok: false, error: msg })
-        }
-      })
-
-      proc.on('error', (err) => {
-        resolve({ ok: false, error: err.message })
-      })
-    })
+  proxyable('wsl:test', (wsl: WslConfig, wslPath: string) => {
+    return testWslConnection(wsl, wslPath)
   })
 
-  ipcMain.handle('wsl:list-distros', (): Promise<string[]> => {
-    if (cachedWslDistros && cachedWslDistros.expiresAt > Date.now()) {
-      return Promise.resolve(cachedWslDistros.value)
-    }
-    return new Promise((resolve) => {
-      const proc = spawn('wsl', ['--list', '--quiet'], {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 10000,
-      })
-
-      const stdoutChunks: Buffer[] = []
-
-      proc.stdout?.on('data', (chunk: Buffer) => { stdoutChunks.push(chunk) })
-
-      proc.on('close', (code) => {
-        if (code === 0) {
-          const stdout = decodeWslBuffer(Buffer.concat(stdoutChunks))
-          const distros = stdout.split(/\r?\n/).map(s => s.trim()).filter(Boolean)
-          cachedWslDistros = { value: distros, expiresAt: Date.now() + 10 * 60_000 }
-          resolve(distros)
-        } else {
-          resolve([])
-        }
-      })
-
-      proc.on('error', () => {
-        resolve([])
-      })
-    })
+  proxyable('wsl:list-distros', () => {
+    return listWslDistros()
   })
 
   // ── Threads ───────────────────────────────────────────────────────────────
@@ -1017,6 +917,14 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return listCachedBranches(repoPath, ssh, wsl)
   })
 
+  proxyable('git:watchStart', (repoPath: string) => {
+    return startRepoGitWatch(window, repoPath, invalidateRepoGitCache)
+  })
+
+  proxyable('git:watchStop', (repoPath: string) => {
+    stopRepoGitWatch(repoPath)
+  })
+
   proxyable('git:checkout', async (repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await checkoutBranch(repoPath, branch, ssh, wsl)
@@ -1160,16 +1068,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getGitHubRepoWebUrl(repoPath, ssh, wsl)
   })
 
-  // ── Plan files ──────────────────────────────────────────────────────────
-
-  ipcMain.handle('plans:list', () => {
-    return listPlanFiles()
-  })
-
-  ipcMain.handle('plans:read', (_event, filePath: string) => {
-    return readPlanFile(filePath)
-  })
-
   // ── Files ────────────────────────────────────────────────────────────────
 
   proxyable('files:list', (dirPath: string) => {
@@ -1205,19 +1103,19 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Claude History ─────────────────────────────────────────────────────────
 
-  ipcMain.handle('claude-history:listProjects', () => {
+  proxyable('claude-history:listProjects', () => {
     return listClaudeProjects()
   })
 
-  ipcMain.handle('claude-history:listSessions', (_event, encodedPath: string) => {
+  proxyable('claude-history:listSessions', (encodedPath: string) => {
     return listClaudeSessions(encodedPath)
   })
 
-  ipcMain.handle('claude-history:importedIds', (_event, projectId: string) => {
+  proxyable('claude-history:importedIds', (projectId: string) => {
     return getImportedSessionIds(projectId)
   })
 
-  ipcMain.handle('claude-history:import', (_event, projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => {
+  proxyable('claude-history:import', (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => {
     const messages = parseSessionMessages(sessionFilePath)
     const importedMessages = messages.map(m => ({
       role: m.role,
@@ -1321,47 +1219,26 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── YouTrack ───────────────────────────────────────────────────────────────
 
-  ipcMain.handle('youtrack:servers:list', () => listYouTrackServers())
+  proxyable('youtrack:servers:list', () => listYouTrackServers())
 
-  ipcMain.handle('youtrack:servers:create', (_event, name: string, url: string, token: string) => {
+  proxyable('youtrack:servers:create', (name: string, url: string, token: string) => {
     return createYouTrackServer(name, url, token)
   })
 
-  ipcMain.handle('youtrack:servers:update', (_event, id: string, name: string, url: string, token: string) => {
+  proxyable('youtrack:servers:update', (id: string, name: string, url: string, token: string) => {
     return updateYouTrackServer(id, name, url, token)
   })
 
-  ipcMain.handle('youtrack:servers:delete', (_event, id: string) => {
+  proxyable('youtrack:servers:delete', (id: string) => {
     return deleteYouTrackServer(id)
   })
 
-  ipcMain.handle('youtrack:test', async (_event, url: string, token: string) => {
-    try {
-      const apiUrl = `${url.replace(/\/$/, '')}/api/users/me?fields=login,name`
-      const resp = await fetch(apiUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!resp.ok) return { ok: false, error: `HTTP ${resp.status}` }
-      return { ok: true }
-    } catch (err: unknown) {
-      return { ok: false, error: err instanceof Error ? err.message : String(err) }
-    }
+  proxyable('youtrack:test', (url: string, token: string) => {
+    return testYouTrackConnection(url, token)
   })
 
-  ipcMain.handle('youtrack:search', async (_event, url: string, token: string, query: string) => {
-    try {
-      const params = new URLSearchParams({ query, fields: 'id,idReadable,summary', $top: '20' })
-      const apiUrl = `${url.replace(/\/$/, '')}/api/issues?${params}`
-      const resp = await fetch(apiUrl, {
-        headers: { Authorization: `Bearer ${token}`, Accept: 'application/json' },
-        signal: AbortSignal.timeout(8000),
-      })
-      if (!resp.ok) return []
-      return resp.json()
-    } catch {
-      return []
-    }
+  proxyable('youtrack:search', (url: string, token: string, query: string) => {
+    return searchYouTrack(url, token, query)
   })
 
   // ── Slash Commands ─────────────────────────────────────────────────────────
@@ -1744,18 +1621,4 @@ $udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Sel
     setSetting('webhook:token', config.token)
     restartWebhookServer(config, window)
   })
-}
-
-/**
- * Decode a buffer from WSL, handling UTF-16LE encoding.
- * `wsl.exe` on Windows outputs UTF-16LE for its own messages (errors, --list, etc.).
- * Bash output from inside WSL is UTF-8, but WSL error messages before bash starts are UTF-16LE.
- */
-function decodeWslBuffer(buf: Buffer): string {
-  if (buf.length === 0) return ''
-  // Detect UTF-16LE: check for NUL bytes interleaved with ASCII (every other byte is 0)
-  if (buf.length >= 2 && buf[1] === 0) {
-    return buf.toString('utf16le').replace(/^\uFEFF/, '').trim()
-  }
-  return buf.toString('utf8').trim()
 }

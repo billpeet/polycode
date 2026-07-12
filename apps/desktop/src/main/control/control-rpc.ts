@@ -7,11 +7,14 @@ import {
   archiveProject,
   archiveThread,
   createLocation,
+  createLocationPool,
   createProject,
   deleteLocation,
+  deleteLocationPool,
   deleteProject,
   unarchiveProject,
   updateLocation,
+  updateLocationPool,
   updateProject,
   checkoutLocation,
   createSlashCommand,
@@ -25,6 +28,8 @@ import {
   getProjectById,
   getThreadModifiedFiles,
   getThreadWsl,
+  getImportedSessionIds,
+  importThread,
   listCommands,
   listArchivedProjects,
   listArchivedThreads,
@@ -47,6 +52,8 @@ import {
   updateThreadProviderAndModel,
   updateThreadPermissionMode,
   updateThreadReasoningLevel,
+  updateThreadCursorThinking,
+  updateThreadCursorContext,
   updateThreadStatus,
   updateThreadUnread,
   updateThreadWsl,
@@ -54,6 +61,10 @@ import {
   createCommand,
   updateCommand,
   deleteCommand,
+  listYouTrackServers,
+  createYouTrackServer,
+  updateYouTrackServer,
+  deleteYouTrackServer,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
@@ -138,9 +149,12 @@ import { NewProjectSpec, Provider, QuestionAnswerValue, SendOptions, SshConfig, 
 import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslExec, wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
-import { startFileWatch, stopFileWatch } from '../file-watch'
+import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
 import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
+import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
+import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
+import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 
 export const CONTROL_RPC_CHANNELS = new Set([
   'projects:list',
@@ -163,6 +177,12 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'locations:checkout',
   'locations:returnToPool',
   'location-pools:list',
+  'location-pools:create',
+  'location-pools:update',
+  'location-pools:delete',
+  'ssh:test',
+  'wsl:test',
+  'wsl:list-distros',
   'threads:list',
   'threads:create',
   'threads:delete',
@@ -174,6 +194,8 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'threads:updateModel',
   'threads:updateProviderAndModel',
   'threads:updateReasoningLevel',
+  'threads:updateCursorThinking',
+  'threads:updateCursorContext',
   'threads:setUnread',
   'threads:setYolo',
   'threads:setPermissionMode',
@@ -236,6 +258,8 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'git:commitFiles',
   'git:commitDiff',
   'git:branches',
+  'git:watchStart',
+  'git:watchStop',
   'git:checkout',
   'git:createBranch',
   'git:merge',
@@ -263,6 +287,10 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'files:searchList',
   'files:watchStart',
   'files:watchStop',
+  'claude-history:listProjects',
+  'claude-history:listSessions',
+  'claude-history:importedIds',
+  'claude-history:import',
   'commands:list',
   'commands:create',
   'commands:update',
@@ -274,6 +302,12 @@ export const CONTROL_RPC_CHANNELS = new Set([
   'commands:getLogs',
   'commands:getPid',
   'commands:getPorts',
+  'youtrack:servers:list',
+  'youtrack:servers:create',
+  'youtrack:servers:update',
+  'youtrack:servers:delete',
+  'youtrack:test',
+  'youtrack:search',
   'terminal:spawn',
   'terminal:write',
   'terminal:resize',
@@ -570,6 +604,26 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return returnLocationToPool(args[0] as string)
     case 'location-pools:list':
       return listLocationPools(args[0] as string)
+    case 'location-pools:create': {
+      const [projectId, name] = args as [string, string]
+      return createLocationPool(projectId, name)
+    }
+    case 'location-pools:update': {
+      const [id, name] = args as [string, string]
+      return updateLocationPool(id, name)
+    }
+    case 'location-pools:delete':
+      return deleteLocationPool(args[0] as string)
+    case 'ssh:test': {
+      const [ssh, remotePath] = args as [SshConfig, string]
+      return testSshConnection(ssh, remotePath)
+    }
+    case 'wsl:test': {
+      const [wsl, wslPath] = args as [WslConfig, string]
+      return testWslConnection(wsl, wslPath)
+    }
+    case 'wsl:list-distros':
+      return listWslDistros()
 
     case 'threads:list':
       return listThreads(args[0] as string)
@@ -619,6 +673,16 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       const [id, reasoningLevel] = args as [string, string]
       sessionManager.remove(id)
       return updateThreadReasoningLevel(id, reasoningLevel)
+    }
+    case 'threads:updateCursorThinking': {
+      const [id, thinking] = args as [string, boolean | null]
+      sessionManager.remove(id)
+      return updateThreadCursorThinking(id, thinking)
+    }
+    case 'threads:updateCursorContext': {
+      const [id, context] = args as [string, string | null]
+      sessionManager.remove(id)
+      return updateThreadCursorContext(id, context)
     }
     case 'threads:setUnread': {
       const [threadId, unread] = args as [string, boolean]
@@ -1028,6 +1092,11 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       const { ssh, wsl } = getConfigForPath(repoPath)
       return listCachedBranches(repoPath, ssh, wsl)
     }
+    case 'git:watchStart':
+      return startRepoGitWatch(window, args[0] as string, invalidateRepoGitCache)
+    case 'git:watchStop':
+      stopRepoGitWatch(args[0] as string)
+      return undefined
     case 'git:checkout': {
       const [repoPath, branch] = args as [string, string]
       const { ssh, wsl } = getConfigForPath(repoPath)
@@ -1203,6 +1272,23 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       stopFileWatch(args[0] as string)
       return undefined
 
+    case 'claude-history:listProjects':
+      return listClaudeProjects()
+    case 'claude-history:listSessions':
+      return listClaudeSessions(args[0] as string)
+    case 'claude-history:importedIds':
+      return getImportedSessionIds(args[0] as string)
+    case 'claude-history:import': {
+      const [projectId, locationId, sessionFilePath, sessionId, name] = args as [string, string, string, string, string]
+      const importedMessages = parseSessionMessages(sessionFilePath).map((message) => ({
+        role: message.role,
+        content: message.content,
+        metadata: message.metadata,
+        created_at: message.timestamp,
+      }))
+      return importThread(projectId, locationId, name, sessionId, importedMessages)
+    }
+
     case 'commands:list':
       return listCommands(args[0] as string)
     case 'commands:create': {
@@ -1246,6 +1332,29 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
     case 'commands:getPorts': {
       const [commandId, locationId] = args as [string, string]
       return commandManager.getPorts(commandId, locationId)
+    }
+
+    // The desktop settings and mention UIs need the stored token to edit a
+    // server and issue authenticated searches, matching the existing local IPC.
+    case 'youtrack:servers:list':
+      return listYouTrackServers()
+    case 'youtrack:servers:create': {
+      const [name, url, token] = args as [string, string, string]
+      return createYouTrackServer(name, url, token)
+    }
+    case 'youtrack:servers:update': {
+      const [id, name, url, token] = args as [string, string, string, string]
+      return updateYouTrackServer(id, name, url, token)
+    }
+    case 'youtrack:servers:delete':
+      return deleteYouTrackServer(args[0] as string)
+    case 'youtrack:test': {
+      const [url, token] = args as [string, string]
+      return testYouTrackConnection(url, token)
+    }
+    case 'youtrack:search': {
+      const [url, token, query] = args as [string, string, string]
+      return searchYouTrack(url, token, query)
     }
 
     case 'terminal:spawn': {

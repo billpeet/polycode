@@ -2,6 +2,10 @@
 
 PolyCode is an Electron desktop app for orchestrating multiple AI coding-agent sessions across projects. It provides a React UI around local or remote CLI agents, with streaming output, SQLite persistence, git tooling, terminals, project commands, todos, plans, and integrations.
 
+## Remote control security
+
+PolyCode's desktop-to-desktop and mobile remote-control protocol uses bearer-authenticated HTTP. HTTP does not encrypt bearer tokens, stored integration credentials, filesystem data, or command results in transit. When a remote host uses an `http://` URL, only run it on a trusted LAN or behind a trusted encrypted tunnel/reverse proxy; use HTTPS for traffic that crosses an untrusted network.
+
 Built with Electron, React, TypeScript, Vite, Tailwind CSS, Zustand, and Bun.
 
 ## Features

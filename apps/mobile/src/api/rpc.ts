@@ -1,11 +1,15 @@
 import type {
   CommandLogLine,
   CommandStatus,
+  ClaudeProject,
+  ClaudeSession,
+  ConnectionType,
   FileEntry,
   NewProjectResult,
   NewProjectSpec,
   GitStatus,
   LastCommitInfo,
+  LocationPool,
   Message,
   ModelOption,
   ProjectCommand,
@@ -20,7 +24,11 @@ import type {
   SendOptions,
   Session,
   SlashCommand,
+  SshConfig,
   Thread,
+  WslConfig,
+  YouTrackIssue,
+  YouTrackServer,
 } from '@polycode/shared'
 import { rpcRequest, type HostConnection } from './client'
 
@@ -39,14 +47,41 @@ export interface RpcChannelMap {
   'projects:unarchive': [[id: string], void]
   'locations:list': [[projectId: string], RepoLocation[]]
   'locations:create': [
-    [projectId: string, label: string, connectionType: 'local' | 'ssh' | 'wsl', locationPath: string],
+    [
+      projectId: string,
+      label: string,
+      connectionType: ConnectionType,
+      locationPath: string,
+      poolId?: string | null,
+      ssh?: SshConfig | null,
+      wsl?: WslConfig | null,
+    ],
     RepoLocation,
+  ]
+  'locations:update': [
+    [
+      id: string,
+      label: string,
+      connectionType: ConnectionType,
+      locationPath: string,
+      poolId?: string | null,
+      ssh?: SshConfig | null,
+      wsl?: WslConfig | null,
+    ],
+    void,
   ]
   'locations:delete': [[id: string], void]
   'locations:createWorktree': [[parentLocationId: string, label?: string | null], RepoLocation]
   'locations:removeWorktree': [[id: string], void]
   'locations:clone': [[projectId: string, label: string, gitUrl: string, clonePath: string], RepoLocation]
   'locations:suggestPath': [[baseDir: string, repoName: string], string]
+  'location-pools:list': [[projectId: string], LocationPool[]]
+  'location-pools:create': [[projectId: string, name: string], LocationPool]
+  'location-pools:update': [[id: string, name: string], void]
+  'location-pools:delete': [[id: string], void]
+  'ssh:test': [[ssh: SshConfig, remotePath: string], { ok: boolean; error?: string }]
+  'wsl:test': [[wsl: WslConfig, wslPath: string], { ok: boolean; error?: string }]
+  'wsl:list-distros': [[], string[]]
 
   'threads:list': [[projectId: string], Thread[]]
   'threads:create': [[projectId: string, name: string, locationId: string], Thread]
@@ -58,6 +93,8 @@ export interface RpcChannelMap {
   'threads:updateName': [[id: string, name: string], void]
   'threads:updateProviderAndModel': [[id: string, provider: string, model: string], void]
   'threads:updateReasoningLevel': [[id: string, reasoningLevel: ReasoningLevel], void]
+  'threads:updateCursorThinking': [[id: string, thinking: boolean | null], void]
+  'threads:updateCursorContext': [[id: string, context: string | null], void]
   'threads:setUnread': [[threadId: string, unread: boolean], void]
   'threads:setPermissionMode': [[threadId: string, permissionMode: PermissionMode], void]
   'threads:start': [[threadId: string], void]
@@ -107,9 +144,16 @@ export interface RpcChannelMap {
   'git:push': [[repoPath: string], void]
   'git:pushSetUpstream': [[repoPath: string, branch: string], void]
   'git:pull': [[repoPath: string, autoStash?: boolean], PullResult | void]
+  'git:watchStart': [[repoPath: string], boolean]
+  'git:watchStop': [[repoPath: string], void]
 
   'files:list': [[dirPath: string], FileEntry[]]
   'files:read': [[filePath: string], { content: string; truncated: boolean } | null]
+
+  'claude-history:listProjects': [[], ClaudeProject[]]
+  'claude-history:listSessions': [[encodedPath: string], ClaudeSession[]]
+  'claude-history:importedIds': [[projectId: string], string[]]
+  'claude-history:import': [[projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string], Thread]
 
   'commands:list': [[projectId: string], ProjectCommand[]]
   'commands:start': [[commandId: string, locationId: string], void]
@@ -118,6 +162,13 @@ export interface RpcChannelMap {
   'commands:getStatus': [[commandId: string, locationId: string], CommandStatus]
   'commands:getLogs': [[commandId: string, locationId: string], CommandLogLine[]]
   'commands:getPorts': [[commandId: string, locationId: string], number[]]
+
+  'youtrack:servers:list': [[], YouTrackServer[]]
+  'youtrack:servers:create': [[name: string, url: string, token: string], YouTrackServer]
+  'youtrack:servers:update': [[id: string, name: string, url: string, token: string], void]
+  'youtrack:servers:delete': [[id: string], void]
+  'youtrack:test': [[url: string, token: string], { ok: boolean; error?: string }]
+  'youtrack:search': [[url: string, token: string, query: string], YouTrackIssue[]]
 
   'models:claudeAvailable': [[threadId?: string], ModelOption[]]
   'models:codexAvailable': [[threadId?: string], ModelOption[]]
