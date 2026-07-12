@@ -237,4 +237,8 @@ describe('expandHomePath', () => {
   it('leaves non-tilde paths unchanged', () => {
     expect(expandHomePath('/tmp/work')).toBe('/tmp/work')
   })
+
+  it('expands ~/subdir with a Windows home directory', () => {
+    expect(expandHomePath('~/projects/app', 'C:\\Users\\alice')).toBe('C:\\Users\\alice\\projects\\app')
+  })
 })

@@ -257,6 +257,11 @@ export default function ComposerEditor({
         }
 
         if (event.key === 'Enter' && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
+          // Never send while an IME composition is committing: Chromium can
+          // surface the composition-commit Enter as a normal keydown
+          // (isComposing may already be false, but keyCode stays 229)
+          if (event.isComposing || event.keyCode === 229) return false
+
           // Inside code blocks and tables, Enter keeps its editing behavior
           if (isInEnterCapturingNode(view)) return false
 

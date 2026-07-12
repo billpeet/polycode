@@ -466,7 +466,7 @@ kbd {
   line-height: 1.625;
   color: var(--color-text);
   white-space: pre-wrap;
-  word-break: break-word;
+  overflow-wrap: break-word;
 }
 
 .composer-editor .ProseMirror.is-editor-empty:first-child::before,
