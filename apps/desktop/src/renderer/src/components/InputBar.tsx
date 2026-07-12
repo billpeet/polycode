@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect, KeyboardEvent, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import type { Editor } from '@tiptap/react'
 import { useThreadStore } from '../stores/threads'
 import { useMessageStore } from '../stores/messages'
 import { useProjectStore } from '../stores/projects'
@@ -28,6 +29,9 @@ import { useSlashCommandStore } from '../stores/slashCommands'
 import { useCliHealthStore } from '../stores/cliHealth'
 import QueuedMessageBanner from './QueuedMessageBanner'
 import ComposerToolbar from './input-bar/ComposerToolbar'
+import ComposerEditor, { ComposerTrigger } from './input-bar/ComposerEditor'
+import FormatToolbar from './input-bar/FormatToolbar'
+import { composerHighlightPluginKey } from './input-bar/composerHighlight'
 import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PermissionBanner, PlanBanner, QuestionBanner } from './input-bar/Banners'
 import { PaperclipIcon, QueueIcon, SendIcon, StopIcon } from './input-bar/icons'
 import { formatErrorDetails } from '../lib/errorDetails'
@@ -40,49 +44,25 @@ const EMPTY_THREADS: Thread[] = []
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_SLASH_COMMANDS: SlashCommand[] = []
 
-interface MentionState {
-  active: boolean
-  startIndex: number
-  query: string
-  position: { top: number; left: number }
-  type: 'file' | 'youtrack'
-}
-
-interface SlashState {
-  active: boolean
-  startIndex: number
-  query: string
+/** An active '@'/'/' trigger plus the popup anchor position. */
+interface PopupState extends ComposerTrigger {
   position: { top: number; left: number }
 }
-
-/** Matches YouTrack issue ID patterns like JS-, JS-123, MYPROJ-42 (all uppercase project code) */
-const YOUTRACK_QUERY_REGEX = /^[A-Z][A-Z0-9]*(-[0-9]*)?$/
 
 export default function InputBar({ threadId }: Props) {
   const [isFocused, setIsFocused] = useState(false)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const [editor, setEditor] = useState<Editor | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
   const [questions, setQuestions] = useState<Question[]>([])
   const [selectedAnswers, setSelectedAnswers] = useState<Record<string, QuestionAnswerValue>>({})
   const [questionComments, setQuestionComments] = useState<Record<string, string>>({})
   const [generalComment, setGeneralComment] = useState('')
   const [permissions, setPermissions] = useState<PermissionRequest[]>([])
-  const [mention, setMention] = useState<MentionState>({
-    active: false,
-    startIndex: -1,
-    query: '',
-    position: { top: 0, left: 0 },
-    type: 'file',
-  })
+  const [popup, setPopup] = useState<PopupState | null>(null)
   const [attachments, setAttachments] = useState<PendingAttachment[]>([])
   const [selectedSkills, setSelectedSkills] = useState<Array<{ name: string; path: string; invocation: string }>>([])
   const [isDragOver, setIsDragOver] = useState(false)
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
-  const [slashCmd, setSlashCmd] = useState<SlashState>({
-    active: false,
-    startIndex: -1,
-    query: '',
-    position: { top: 0, left: 0 },
-  })
   const runStartedAt = useThreadStore((s) => s.runStartedAtByThread[threadId] ?? 0)
 
   const send = useThreadStore((s) => s.send)
@@ -250,20 +230,22 @@ export default function InputBar({ threadId }: Props) {
 
   useEffect(() => {
     function onFocusInput(): void {
-      textareaRef.current?.focus()
+      editor?.commands.focus()
     }
     window.addEventListener('focus-input', onFocusInput)
     return () => window.removeEventListener('focus-input', onFocusInput)
-  }, [])
+  }, [editor])
 
-  // Recalculate textarea height when the draft value changes (e.g. switching threads
-  // restores a multi-line draft but onInput doesn't fire for programmatic value updates)
+  // Keep the composer's known command/skill invocations up to date so it can
+  // highlight them, and refresh the highlight decorations when the list changes.
+  const knownCommandsRef = useRef<ReadonlySet<string>>(new Set())
   useEffect(() => {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }, [value])
+    knownCommandsRef.current = new Set(slashCommands.map((c) => c.invocation ?? `/${c.name}`))
+    if (editor && !editor.isDestroyed) {
+      editor.view.dispatch(editor.state.tr.setMeta(composerHighlightPluginKey, true))
+    }
+  }, [slashCommands, editor])
+  const getKnownCommands = useCallback(() => knownCommandsRef.current, [])
 
   // Fetch slash commands and harness skills whenever the active project/provider/location changes
   useEffect(() => {
@@ -292,9 +274,6 @@ export default function InputBar({ threadId }: Props) {
     setDraft(threadId, '')
     setAttachments([])
     setSelectedSkills([])
-    if (textareaRef.current) {
-      textareaRef.current.style.height = 'auto'
-    }
 
     try {
       // Save attachments to temp and build @ mentions
@@ -363,196 +342,59 @@ export default function InputBar({ threadId }: Props) {
     }
   }
 
-  function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>): void {
-    // If mention or slash popup is active, let it handle navigation keys
-    if (mention.active || slashCmd.active) {
-      if (['ArrowDown', 'ArrowUp', 'Enter', 'Tab', 'Escape'].includes(e.key)) {
-        // These are handled by the popup's document keydown listener
-        return
-      }
-    }
+  const handleDraftChange = useCallback((markdown: string) => {
+    setDraft(threadId, markdown)
+  }, [threadId, setDraft])
 
-    // Ctrl+J inserts newline (Unix terminal convention)
-    if (e.key === 'j' && e.ctrlKey && !e.altKey && !e.metaKey) {
-      e.preventDefault()
-      insertNewline()
+  // The composer reports '@'/'/' triggers; anchor the popup above the input container
+  const handleTriggerChange = useCallback((trigger: ComposerTrigger | null) => {
+    if (!trigger) {
+      setPopup(null)
       return
     }
-
-    // Backslash+Enter inserts newline (CLI convention)
-    if (e.key === 'Enter' && value.endsWith('\\')) {
-      e.preventDefault()
-      // Remove the trailing backslash and add newline
-      setDraft(threadId, value.slice(0, -1) + '\n')
-      return
-    }
-
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault()
-      handleSend()
-    }
-  }
-
-  function insertNewline(): void {
-    const el = textareaRef.current
-    if (!el) return
-
-    const start = el.selectionStart
-    const end = el.selectionEnd
-    const newValue = value.slice(0, start) + '\n' + value.slice(end)
-    setDraft(threadId, newValue)
-
-    // Move cursor after the newline
-    requestAnimationFrame(() => {
-      el.selectionStart = el.selectionEnd = start + 1
-      handleInput()
-    })
-  }
-
-  function handleInput(): void {
-    const el = textareaRef.current
-    if (!el) return
-    el.style.height = 'auto'
-    el.style.height = `${Math.min(el.scrollHeight, 200)}px`
-  }
-
-  // Detect '@' trigger for file or YouTrack mentions, and '/' trigger for slash commands
-  const checkForMention = useCallback((text: string, cursorPos: number) => {
-    const textBeforeCursor = text.slice(0, cursorPos)
-    const el = textareaRef.current
-    if (!el) return
-    const rect = el.getBoundingClientRect()
-    const popupPosition = { top: rect.top - 8, left: rect.left }
-
-    // ── Slash command detection ──────────────────────────────────────────────
-    const lastSlashIndex = textBeforeCursor.lastIndexOf('/')
-    if (lastSlashIndex !== -1) {
-      const charBeforeSlash = lastSlashIndex > 0 ? text[lastSlashIndex - 1] : ' '
-      const slashQuery = text.slice(lastSlashIndex + 1, cursorPos)
-      if (/\s/.test(charBeforeSlash) || lastSlashIndex === 0) {
-        if (!slashQuery.includes(' ') && !slashQuery.includes('\n')) {
-          setSlashCmd({ active: true, startIndex: lastSlashIndex, query: slashQuery, position: popupPosition })
-          setMention((m) => (m.active ? { ...m, active: false } : m))
-          return
-        }
-      }
-    }
-    setSlashCmd((s) => (s.active ? { ...s, active: false } : s))
-
-    // ── @ mention detection ──────────────────────────────────────────────────
-    const lastAtIndex = textBeforeCursor.lastIndexOf('@')
-
-    if (lastAtIndex === -1) {
-      setMention((m) => m.active ? { ...m, active: false } : m)
-      return
-    }
-
-    // Check if '@' is at start or preceded by whitespace
-    const charBefore = lastAtIndex > 0 ? text[lastAtIndex - 1] : ' '
-    if (!/\s/.test(charBefore) && lastAtIndex > 0) {
-      setMention((m) => m.active ? { ...m, active: false } : m)
-      return
-    }
-
-    // Extract query after '@'
-    const query = text.slice(lastAtIndex + 1, cursorPos)
-
-    // Don't trigger if query contains spaces (user moved past the mention)
-    if (query.includes(' ')) {
-      setMention((m) => m.active ? { ...m, active: false } : m)
-      return
-    }
-
-    // Determine mention type: YouTrack IDs are all-uppercase project codes (e.g. JS-, JS-123)
-    const type: 'youtrack' | 'file' =
-      query.length >= 1 && YOUTRACK_QUERY_REGEX.test(query) ? 'youtrack' : 'file'
-
-    setMention({
-      active: true,
-      startIndex: lastAtIndex,
-      query,
-      position: popupPosition,
-      type,
-    })
+    const rect = containerRef.current?.getBoundingClientRect()
+    const position = rect ? { top: rect.top - 8, left: rect.left } : { top: 0, left: 0 }
+    setPopup({ ...trigger, position })
   }, [])
 
-  const handleChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    const newValue = e.target.value
-    setDraft(threadId, newValue)
-    checkForMention(newValue, e.target.selectionStart)
-  }, [threadId, setDraft, checkForMention])
+  const closePopup = useCallback(() => {
+    setPopup(null)
+  }, [])
+
+  /**
+   * Replace the active trigger range ('@query' or '/query') with the given text.
+   * Newlines become hard breaks so multi-line prompts insert correctly.
+   */
+  const insertAtTrigger = useCallback((text: string) => {
+    if (!editor || !popup) return
+    const content: Array<{ type: string; text?: string }> = []
+    text.split('\n').forEach((part, i) => {
+      if (i > 0) content.push({ type: 'hardBreak' })
+      if (part.length > 0) content.push({ type: 'text', text: part })
+    })
+    editor.chain().focus().insertContentAt({ from: popup.from, to: popup.to }, content).run()
+    setPopup(null)
+  }, [editor, popup])
 
   const handleFileSelect = useCallback((file: SearchableFile) => {
-    const el = textareaRef.current
-    if (!el) return
-
     // Replace @query with @relativePath (append '/' for directories)
     const insertedPath = file.isDirectory ? `${file.relativePath}/` : file.relativePath
-    const before = value.slice(0, mention.startIndex)
-    const after = value.slice(el.selectionStart)
-    const newValue = `${before}@${insertedPath} ${after}`
+    insertAtTrigger(`@${insertedPath} `)
+  }, [insertAtTrigger])
 
-    setDraft(threadId, newValue)
-    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
-
-    // Focus back on textarea and move cursor after inserted path
-    requestAnimationFrame(() => {
-      el.focus()
-      const newCursorPos = mention.startIndex + insertedPath.length + 2 // +2 for '@' and space
-      el.selectionStart = el.selectionEnd = newCursorPos
-    })
-  }, [value, mention.startIndex, threadId, setDraft])
-
-  const closeMention = useCallback(() => {
-    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
-  }, [])
+  const handleYouTrackSelect = useCallback((issueId: string) => {
+    insertAtTrigger(`@${issueId} `)
+  }, [insertAtTrigger])
 
   const handleSlashSelect = useCallback((cmd: SlashCommand) => {
-    const el = textareaRef.current
-    if (!el) return
-
-    const before = value.slice(0, slashCmd.startIndex)
-    const after = value.slice(el.selectionStart)
-    const newValue = `${before}${cmd.prompt}${after}`
-
+    // Track selected skills so send() can pass them to the provider
     if (cmd.kind === 'skill' && cmd.path) {
       setSelectedSkills((skills) => skills.some((skill) => skill.path === cmd.path)
         ? skills
         : [...skills, { name: cmd.name, path: cmd.path!, invocation: cmd.invocation ?? cmd.prompt }])
     }
-
-    setDraft(threadId, newValue)
-    setSlashCmd({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
-
-    requestAnimationFrame(() => {
-      el.focus()
-      const cursorPos = slashCmd.startIndex + cmd.prompt.length
-      el.selectionStart = el.selectionEnd = cursorPos
-      handleInput()
-    })
-  }, [value, slashCmd.startIndex, threadId, setDraft])
-
-  const closeSlashCmd = useCallback(() => {
-    setSlashCmd({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 } })
-  }, [])
-
-  const handleYouTrackSelect = useCallback((issueId: string) => {
-    const el = textareaRef.current
-    if (!el) return
-
-    const before = value.slice(0, mention.startIndex)
-    const after = value.slice(el.selectionStart)
-    const newValue = `${before}@${issueId} ${after}`
-
-    setDraft(threadId, newValue)
-    setMention({ active: false, startIndex: -1, query: '', position: { top: 0, left: 0 }, type: 'file' })
-
-    requestAnimationFrame(() => {
-      el.focus()
-      const newCursorPos = mention.startIndex + issueId.length + 2 // +2 for '@' and space
-      el.selectionStart = el.selectionEnd = newCursorPos
-    })
-  }, [value, mention.startIndex, threadId, setDraft])
+    insertAtTrigger(cmd.prompt)
+  }, [insertAtTrigger])
 
   // ── Attachment handlers ─────────────────────────────────────────────────────
 
@@ -737,29 +579,20 @@ export default function InputBar({ threadId }: Props) {
     setAttachments((prev) => prev.filter((a) => a.id !== id))
   }
 
-  async function handlePaste(e: React.ClipboardEvent): Promise<void> {
-    const items = e.clipboardData.items
-    for (const item of items) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const file = item.getAsFile()
-        if (file) {
-          try {
-            await addAttachment(file)
-          } catch (err) {
-            addToast({
-              type: 'error',
-              title: 'Paste Attachment Failed',
-              message: err instanceof Error ? err.message : 'Failed to add pasted attachment',
-              details: formatErrorDetails({ action: 'attachment:paste', threadId, mimeType: file.type, fileName: file.name, size: file.size }, err),
-              duration: 0,
-            })
-          }
-        }
-        return
+  async function handlePasteImages(files: File[]): Promise<void> {
+    for (const file of files) {
+      try {
+        await addAttachment(file)
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Paste Attachment Failed',
+          message: err instanceof Error ? err.message : 'Failed to add pasted attachment',
+          details: formatErrorDetails({ action: 'attachment:paste', threadId, mimeType: file.type, fileName: file.name, size: file.size }, err),
+          duration: 0,
+        })
       }
     }
-    // Let default paste happen for text
   }
 
   function handleDragOver(e: React.DragEvent): void {
@@ -874,6 +707,7 @@ export default function InputBar({ threadId }: Props) {
 
       {/* Main input container with drop zone */}
       <div
+        ref={containerRef}
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
@@ -915,7 +749,13 @@ export default function InputBar({ threadId }: Props) {
           elapsedSeconds={elapsedSeconds}
         />
 
-        {/* Attachment previews above textarea */}
+        {/* Rich text formatting toolbar */}
+        <FormatToolbar
+          editor={editor}
+          disabled={isPlanPending || isQuestionPending || isPermissionPending || cliUnavailable}
+        />
+
+        {/* Attachment previews above the composer */}
         {attachments.length > 0 && (
           <div className="px-3 pt-3">
             <AttachmentPreview
@@ -927,7 +767,7 @@ export default function InputBar({ threadId }: Props) {
           </div>
         )}
 
-        {/* Textarea row */}
+        {/* Composer row */}
         <div className="flex items-end gap-2 px-3 py-3">
           {/* Paperclip button */}
           <button
@@ -940,16 +780,15 @@ export default function InputBar({ threadId }: Props) {
             <PaperclipIcon />
           </button>
 
-          <textarea
-            ref={textareaRef}
+          <ComposerEditor
             value={value}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            onInput={handleInput}
-            onPaste={handlePaste}
-            onFocus={() => setIsFocused(true)}
-            onBlur={() => setIsFocused(false)}
-            rows={1}
+            onChange={handleDraftChange}
+            onSend={handleSend}
+            onTriggerChange={handleTriggerChange}
+            onPasteImages={handlePasteImages}
+            onFocusChange={setIsFocused}
+            onEditorReady={setEditor}
+            getKnownCommands={getKnownCommands}
             placeholder={
               isPendingThread
                 ? 'Creating thread... you can type while it loads'
@@ -962,12 +801,6 @@ export default function InputBar({ threadId }: Props) {
                   : 'Ask Claude... (! for shell mode, / for slash commands, @ for files, @JS-123 for YouTrack)'
             }
             disabled={isPlanPending || isQuestionPending || isPermissionPending || cliUnavailable}
-            className="flex-1 resize-none bg-transparent text-sm leading-relaxed outline-none"
-            style={{
-              color: 'var(--color-text)',
-              maxHeight: '200px',
-              minHeight: '24px',
-            }}
           />
 
           {/* Send / Queue / Stop buttons */}
@@ -1068,40 +901,40 @@ export default function InputBar({ threadId }: Props) {
           <kbd className="rounded px-1 py-0.5" style={{ background: 'var(--color-surface-2)' }}>Enter</kbd> send
         </span>
         <span>
-          <kbd className="rounded px-1 py-0.5" style={{ background: 'var(--color-surface-2)' }}>Ctrl+J</kbd> newline
+          <kbd className="rounded px-1 py-0.5" style={{ background: 'var(--color-surface-2)' }}>Shift+Enter</kbd> newline
         </span>
       </div>
 
       {/* File mention popup */}
-      {mention.active && mention.type === 'file' && location?.path && (
+      {popup?.kind === 'file' && location?.path && (
         <FileMentionPopup
           projectPath={location.path}
-          query={mention.query}
+          query={popup.query}
           onSelect={handleFileSelect}
-          onClose={closeMention}
-          position={mention.position}
+          onClose={closePopup}
+          position={popup.position}
         />
       )}
 
       {/* YouTrack issue mention popup */}
-      {mention.active && mention.type === 'youtrack' && youtrackServers.length > 0 && (
+      {popup?.kind === 'youtrack' && youtrackServers.length > 0 && (
         <YouTrackMentionPopup
           servers={youtrackServers}
-          query={mention.query}
+          query={popup.query}
           onSelect={handleYouTrackSelect}
-          onClose={closeMention}
-          position={mention.position}
+          onClose={closePopup}
+          position={popup.position}
         />
       )}
 
       {/* Slash command popup */}
-      {slashCmd.active && slashCommands.length > 0 && (
+      {popup?.kind === 'slash' && slashCommands.length > 0 && (
         <SlashCommandPopup
           commands={slashCommands}
-          query={slashCmd.query}
+          query={popup.query}
           onSelect={handleSlashSelect}
-          onClose={closeSlashCmd}
-          position={slashCmd.position}
+          onClose={closePopup}
+          position={popup.position}
         />
       )}
     </div>
