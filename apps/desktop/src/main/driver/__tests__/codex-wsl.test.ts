@@ -2,9 +2,11 @@
  * WSL integration tests for CodexDriver.
  * These tests spawn real WSL processes to diagnose PATH and binary resolution.
  *
- * Run with:  bun test src/main/driver/__tests__/codex-wsl.test.ts
+ * Run with: cross-env POLYCODE_RUN_WSL_TESTS=1 pnpm exec vitest run src/main/driver/__tests__/codex-wsl.test.ts
  */
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect } from 'vitest'
+
+const describeWsl = process.env.POLYCODE_RUN_WSL_TESTS === '1' ? describe : describe.skip
 
 // nvm init alone takes ~5 s; codex exec is a network call — use generous timeouts.
 const NVM_TIMEOUT = 15_000
@@ -29,7 +31,7 @@ function wslBash(cmd: string, loginShell = true, timeout = 60_000) {
 
 // ── Sanity checks ─────────────────────────────────────────────────────────────
 
-describe('WSL availability', () => {
+describeWsl('WSL availability', () => {
   it('WSL is available and distro exists', () => {
     const result = spawnSync('wsl', ['-d', DISTRO, '--', 'echo', 'ok'], { encoding: 'utf8' })
     expect(result.stdout.trim()).toBe('ok')
@@ -39,7 +41,7 @@ describe('WSL availability', () => {
 
 // ── PATH diagnostics ──────────────────────────────────────────────────────────
 
-describe('bash -lc PATH diagnostics (no .bashrc)', () => {
+describeWsl('bash -lc PATH diagnostics (no .bashrc)', () => {
   it('shows PATH in login shell (may be empty when spawned from Windows)', () => {
     const { stdout } = wslBash('echo $PATH')
     console.log('bash -lc PATH:', stdout)
@@ -61,7 +63,7 @@ describe('bash -lc PATH diagnostics (no .bashrc)', () => {
   })
 })
 
-describe('bash -lc PATH diagnostics (with source ~/.bashrc)', () => {
+describeWsl('bash -lc PATH diagnostics (with source ~/.bashrc)', () => {
   it('which codex — after sourcing .bashrc', () => {
     const { stdout } = wslBash('source ~/.bashrc 2>/dev/null; which codex 2>&1 || echo NOT_FOUND')
     console.log('which codex (after .bashrc):', stdout)
@@ -83,7 +85,7 @@ describe('bash -lc PATH diagnostics (with source ~/.bashrc)', () => {
 
 // ── .bashrc inspection ────────────────────────────────────────────────────────
 
-describe('.bashrc inspection', () => {
+describeWsl('.bashrc inspection', () => {
   it('first 30 lines of ~/.bashrc', () => {
     const { stdout } = wslBash('head -30 ~/.bashrc 2>/dev/null || echo NO_BASHRC')
     console.log('~/.bashrc head:\n', stdout)
@@ -113,7 +115,7 @@ const LOAD_NODE_MANAGERS = [
   'command -v fnm &>/dev/null && eval "$(fnm env 2>/dev/null)"',
 ].join('; ')
 
-describe('node version manager direct loading (the actual fix)', () => {
+describeWsl('node version manager direct loading (the actual fix)', () => {
   it('which node — after sourcing nvm directly', () => {
     const { stdout } = wslBash(`${LOAD_NODE_MANAGERS}; which node 2>&1 || echo NOT_FOUND`)
     console.log('which node (after direct nvm load):', stdout)
@@ -136,7 +138,7 @@ describe('node version manager direct loading (the actual fix)', () => {
 
 // ── Minimal codex exec ────────────────────────────────────────────────────────
 
-describe('codex exec --json via WSL spawn', () => {
+describeWsl('codex exec --json via WSL spawn', () => {
   it('runs codex exec --json with a trivial prompt', () => {
     const cmd = `${LOAD_NODE_MANAGERS}; codex exec --json --full-auto 'say only the word pong'`
     const { stdout, stderr, exitCode } = wslBash(cmd)

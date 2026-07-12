@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'bun:test'
+import { describe, it, expect } from 'vitest'
 import { groupByAgent, collectActiveAgents, findAgentGroup, agentStatsLabel } from '../MessageStream'
 import type { Message } from '../../types/ipc'
 

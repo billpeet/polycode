@@ -5,7 +5,7 @@
  * WslRunner tests: skip if not Windows or WSL unavailable.
  * SshRunner tests: skip if SSH to localhost is unavailable.
  */
-import { describe, it, expect, beforeAll } from 'bun:test'
+import { describe, it, expect, beforeAll } from 'vitest'
 import { spawnSync } from 'child_process'
 import type { ChildProcess } from 'child_process'
 import { LocalRunner } from '../runner/local'

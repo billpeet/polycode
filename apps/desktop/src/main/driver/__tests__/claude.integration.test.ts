@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { mkdirSync, rmSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import path from 'path'

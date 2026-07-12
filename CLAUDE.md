@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Monorepo Layout
 
-Bun workspaces monorepo (hoisted linker forced in root `bunfig.toml` — the isolated linker breaks electron-builder packaging and phantom-dep resolution):
+pnpm workspace monorepo (the hoisted linker is configured in root
+`pnpm-workspace.yaml` because the isolated linker breaks electron-builder
+packaging and phantom-dependency resolution):
 
 - **`apps/desktop`** — the Electron desktop app (package name `polycode-electron`; do NOT rename it — the Electron userData dir, and therefore every user's SQLite DB path, derives from it).
 - **`apps/mobile`** — Expo (React Native) app for remote-controlling desktop instances over the remote-control HTTP/SSE API.
@@ -17,16 +19,16 @@ Bun workspaces monorepo (hoisted linker forced in root `bunfig.toml` — the iso
 Run from the repo root (they proxy into `apps/desktop` unless noted):
 
 ```bash
-bun run dev          # Desktop dev server with hot-reload (Vite + Electron)
-bun run build        # Desktop production build into apps/desktop/out/
-bun run start        # Run after build (dev mode)
-bun run start:prod   # Build + run isolated prod instance (separate DB, no DevTools)
-bun run test         # Driver tests (bun test); some are environment-dependent
-bun run dist         # Windows installer via electron-builder
-bun run mobile       # Expo dev server for apps/mobile
+pnpm run dev          # Desktop dev server with hot-reload (Vite + Electron)
+pnpm run build        # Desktop production build into apps/desktop/out/
+pnpm run start        # Run after build (dev mode)
+pnpm run start:prod   # Build + run isolated prod instance (separate DB, no DevTools)
+pnpm run test         # Driver tests (Vitest); some are environment-dependent
+pnpm run dist         # Windows installer via electron-builder
+pnpm run mobile       # Expo dev server for apps/mobile
 ```
 
-`node apps/desktop/scripts/postinstall.js` runs on `bun install` (root postinstall) — it downloads the Electron binary and the Electron-ABI better-sqlite3 prebuilt. It resolves package dirs via `require.resolve`, so it works with root-hoisted node_modules.
+`node apps/desktop/scripts/postinstall.js` runs on `pnpm install` (root postinstall) — it downloads the Electron binary and the Electron-ABI better-sqlite3 prebuilt. pnpm runs it with the project-managed Node 22 runtime. It resolves package dirs via `require.resolve`, so it works with root-hoisted node_modules.
 
 ## Desktop Architecture (`apps/desktop`)
 
@@ -113,7 +115,7 @@ const todos = useTodoStore((s) => s.todosByThread[threadId] ?? EMPTY)
 To run a fully isolated production instance (separate DB, no hot-reload, no DevTools):
 
 ```
-bun run start:prod
+pnpm run start:prod
 ```
 
 This builds into `apps/desktop/out/` and launches with `NODE_ENV=production`, which causes the main process to load the renderer from `out/renderer/index.html` instead of the Vite dev server. The prod instance uses a separate userData directory (`%APPDATA%/polycode-electron-prod`) so it won't share state with a simultaneously running dev instance.

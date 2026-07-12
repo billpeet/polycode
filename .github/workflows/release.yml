@@ -19,13 +19,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.3
+
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
-
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: latest
+          node-version: 22.23.1
+          cache: pnpm
 
       - name: Determine version
         id: version
@@ -39,8 +40,6 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Building version $VERSION"
 
-      # npm version chokes on the workspace:* protocol (bun-only), so stamp
-      # the version field directly.
       - name: Set package.json version
         shell: bash
         working-directory: apps/desktop
@@ -52,23 +51,15 @@ jobs:
             fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
 
-      # --ignore-scripts stops better-sqlite3 (and friends) from compiling via
-      # node-gyp, which breaks whenever the runner image's Visual Studio is newer
-      # than node-gyp understands. scripts/postinstall.js installs the Electron
-      # binary and the matching better-sqlite3 prebuilt instead.
       - name: Install dependencies
-        run: bun install --ignore-scripts
-
-      - name: Install native prebuilts
-        run: node apps/desktop/scripts/postinstall.js
+        run: pnpm install --frozen-lockfile
 
       - name: Build app
-        working-directory: apps/desktop
-        run: bun run build
+        run: pnpm run build
 
       - name: Build installer and publish to GitHub
         working-directory: apps/desktop
-        run: npx electron-builder --win --publish always
+        run: pnpm exec electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false

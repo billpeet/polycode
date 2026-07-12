@@ -4,7 +4,6 @@ dist
 release
 .DS_Store
 *.log
-bun.lockb
 *.tsbuildinfo
 electron.vite.config.*.mjs
 

@@ -46,6 +46,9 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
   }, [selectedIndex])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    // With no results the popup is invisible — don't swallow keys (e.g. Enter
+    // right after typing something like "$5" must still send the message)
+    if (results.length === 0) return
     if (e.key === 'ArrowDown') {
       e.preventDefault()
       e.stopPropagation()

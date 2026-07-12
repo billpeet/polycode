@@ -1,8 +1,13 @@
-import { afterEach, beforeEach, describe, it, expect, mock } from 'bun:test'
-import path from 'path'
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest'
 import { ClaudeDriver } from '../claude'
 import type { DriverOptions } from '../types'
 import type { OutputEvent } from '../../../shared/types'
+
+const { queryMock } = vi.hoisted(() => ({ queryMock: vi.fn() }))
+
+vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
+  query: queryMock,
+}))
 
 function makeDriver(opts: Partial<DriverOptions> = {}): ClaudeDriver {
   return new ClaudeDriver({
@@ -16,6 +21,7 @@ const BASE_ENV = process.env
 
 beforeEach(() => {
   process.env = BASE_ENV
+  queryMock.mockReset()
 })
 
 afterEach(() => {
@@ -144,12 +150,10 @@ describe('ClaudeDriver query configuration', () => {
       [Symbol.asyncIterator]: async function* () {},
     }
 
-    mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-      query: (input: any) => {
-        capturedInput = input
-        return fakeQuery
-      },
-    }))
+    queryMock.mockImplementation((input: any) => {
+      capturedInput = input
+      return fakeQuery
+    })
 
     process.env = {
       ...BASE_ENV,
@@ -176,12 +180,10 @@ describe('ClaudeDriver query configuration', () => {
       [Symbol.asyncIterator]: async function* () {},
     }
 
-    mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-      query: (input: any) => {
-        capturedInput = input
-        return fakeQuery
-      },
-    }))
+    queryMock.mockImplementation((input: any) => {
+      capturedInput = input
+      return fakeQuery
+    })
 
     process.env = {
       ...BASE_ENV,
@@ -210,12 +212,10 @@ describe('ClaudeDriver query configuration', () => {
       [Symbol.asyncIterator]: async function* () {},
     }
 
-    mock.module('@anthropic-ai/claude-agent-sdk', () => ({
-      query: (input: any) => {
-        capturedInput = input
-        return fakeQuery
-      },
-    }))
+    queryMock.mockImplementation((input: any) => {
+      capturedInput = input
+      return fakeQuery
+    })
 
     process.env = {
       ...BASE_ENV,
@@ -227,8 +227,8 @@ describe('ClaudeDriver query configuration', () => {
 
     await (driver as any).ensureQuery()
 
-    expect(capturedInput.options.cwd).toBe(path.join('/tmp/home', 'repo'))
-    expect(capturedInput.options.additionalDirectories).toEqual([path.join('/tmp/home', 'repo')])
+    expect(capturedInput.options.cwd).toBe('/tmp/home/repo')
+    expect(capturedInput.options.additionalDirectories).toEqual(['/tmp/home/repo'])
     expect(capturedInput.options.settingSources).toEqual(['user', 'project', 'local'])
   })
 })
@@ -236,7 +236,7 @@ describe('ClaudeDriver query configuration', () => {
 describe('ClaudeDriver live input', () => {
   it('keeps the turn open until queued injected prompts are finished', async () => {
     const driver = makeDriver()
-    const done = mock(() => {})
+    const done = vi.fn(() => {})
 
     ;(driver as any).currentTurn = {
       onEvent: () => {},
@@ -260,7 +260,7 @@ describe('ClaudeDriver live input', () => {
   it('emits Claude task progress as thinking updates', async () => {
     const driver = makeDriver()
     const events: OutputEvent[] = []
-    const done = mock(() => {})
+    const done = vi.fn(() => {})
 
     ;(driver as any).currentTurn = {
       onEvent: (event: OutputEvent) => events.push(event),
@@ -307,7 +307,7 @@ describe('ClaudeDriver live input', () => {
   it('keeps the turn open after a result while Claude background tasks are active', async () => {
     const driver = makeDriver()
     const events: OutputEvent[] = []
-    const done = mock(() => {})
+    const done = vi.fn(() => {})
 
     ;(driver as any).currentTurn = {
       onEvent: (event: OutputEvent) => events.push(event),
@@ -382,7 +382,7 @@ describe('ClaudeDriver live input', () => {
 
   it('completes a turn on Claude idle state when no result frame arrives', async () => {
     const driver = makeDriver()
-    const done = mock(() => {})
+    const done = vi.fn(() => {})
 
     ;(driver as any).currentTurn = {
       onEvent: () => {},
@@ -410,7 +410,7 @@ describe('ClaudeDriver live input', () => {
 
   it('fails a running turn when the Claude stream ends without result or idle state', async () => {
     const driver = makeDriver()
-    const done = mock(() => {})
+    const done = vi.fn(() => {})
 
     ;(driver as any).currentTurn = {
       onEvent: () => {},

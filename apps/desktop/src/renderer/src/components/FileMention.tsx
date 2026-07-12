@@ -300,7 +300,7 @@ function PdfIcon({ variant }: { variant: string }) {
  * Must be preceded by whitespace or start-of-string, and followed by whitespace,
  * end-of-string, or common punctuation.
  */
-const YOUTRACK_MENTION_REGEX = /(?<!\S)@([A-Z][A-Z0-9]+-[0-9]+)(?=[\s,!?.;]|$)/g
+export const YOUTRACK_MENTION_REGEX = /(?<!\S)@([A-Z][A-Z0-9]+-[0-9]+)(?=[\s,!?.;]|$)/g
 
 /**
  * Styled inline YouTrack issue mention badge
@@ -355,7 +355,7 @@ function YouTrackBadgeIcon() {
  * Requires @ to be at start-of-string or preceded by whitespace ((?<!\S)).
  * File pattern is first so paths like @src/file.ts match as files, not truncated dirs.
  */
-const FILE_MENTION_REGEX = /(?<!\S)@([A-Za-z]:)?([^\s@]+\.\w+|[^\s@/]+\/[^\s@]+\/)/g
+export const FILE_MENTION_REGEX = /(?<!\S)@([A-Za-z]:)?([^\s@]+\.\w+|[^\s@/]+\/[^\s@]+\/)/g
 
 /**
  * Parse text and replace file and YouTrack issue mentions with styled components.
