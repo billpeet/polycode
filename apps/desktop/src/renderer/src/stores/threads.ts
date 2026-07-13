@@ -166,8 +166,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     const previousSelectedThreadId = get().selectedThreadId
     const selectedThread = projectThreads.find((t) => t.id === get().selectedThreadId)
     const sourceThread =
-      (selectedThread && selectedThread.location_id === locationId) ? selectedThread
-        : projectThreads.find((t) => t.location_id === locationId) ?? null
+      projectThreads.find((t) => t.location_id === locationId && t.id === selectedThread?.id)
+        ?? projectThreads.find((t) => t.location_id === locationId)
+        ?? selectedThread
+        ?? null
 
     const optimisticId = makeOptimisticThreadId()
     const now = new Date().toISOString()
