@@ -22,6 +22,7 @@ import { Provider } from './types/ipc'
 import { useToastStore } from './stores/toast'
 import './stores/plans' // Initialize plan file watcher listener
 import { reportReactCommit } from './lib/perf'
+import { getCurrentLocationId } from './lib/currentLocation'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
@@ -141,11 +142,15 @@ export default function App() {
       if ((e.key === 't' || e.key === 'T') && !e.altKey && !e.shiftKey) {
         e.preventDefault()
         if (selectedProjectId) {
+          const threadState = useThreadStore.getState()
           const locations = useLocationStore.getState().byProject[selectedProjectId] ?? []
-          const activeLocations = locations.filter((location) => !location.pool_id || location.checked_out)
-          const locationId = activeLocations[0]?.id
+          const locationId = getCurrentLocationId(
+            threadState.byProject[selectedProjectId] ?? [],
+            threadState.selectedThreadId,
+            locations,
+          )
           if (locationId) {
-            useThreadStore.getState().create(selectedProjectId, 'New thread', locationId)
+            threadState.create(selectedProjectId, 'New thread', locationId)
           }
         }
       } else if ((e.key === 'w' || e.key === 'W') && !e.altKey && !e.shiftKey) {
