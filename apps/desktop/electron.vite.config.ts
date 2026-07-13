@@ -13,7 +13,12 @@ const sentryPlugin = process.env.SENTRY_AUTH_TOKEN
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin(), ...(sentryPlugin ? [sentryPlugin] : [])],
+    // Bundle Sentry's main-process SDK. electron-builder's pnpm dependency
+    // collector can omit its transitive browser-utils package from app.asar.
+    plugins: [
+      externalizeDepsPlugin({ exclude: ['@sentry/electron'] }),
+      ...(sentryPlugin ? [sentryPlugin] : []),
+    ],
     build: { sourcemap: true },
   },
   preload: {
