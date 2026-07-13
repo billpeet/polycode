@@ -155,7 +155,29 @@ export default function App() {
         }
       } else if ((e.key === 'w' || e.key === 'W') && !e.altKey && !e.shiftKey) {
         e.preventDefault()
-        useThreadStore.getState().select(null)
+        if (!selectedProjectId) return
+
+        const threadState = useThreadStore.getState()
+        const currentThread = (threadState.byProject[selectedProjectId] ?? [])
+          .find((thread) => thread.id === threadState.selectedThreadId)
+        if (!currentThread) return
+
+        const remainingThreads = (threadState.byProject[selectedProjectId] ?? [])
+          .filter((thread) => thread.id !== currentThread.id)
+        const replacementThread = remainingThreads
+          .filter((thread) => thread.location_id === currentThread.location_id)
+          .slice()
+          .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())[0]
+
+        if (replacementThread) {
+          threadState.select(replacementThread.id)
+        } else if (currentThread.location_id) {
+          void threadState.create(selectedProjectId, 'New thread', currentThread.location_id)
+        } else {
+          threadState.select(null)
+        }
+
+        await threadState.archive(currentThread.id, selectedProjectId)
       } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault()
         window.dispatchEvent(new CustomEvent('focus-input'))
