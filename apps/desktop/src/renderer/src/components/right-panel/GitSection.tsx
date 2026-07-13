@@ -667,6 +667,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const projects = useProjectStore((s) => s.projects)
   const archivedProjects = useProjectStore((s) => s.archivedProjects)
   const fetchLocations = useLocationStore((s) => s.fetch)
+  const removeWorktree = useLocationStore((s) => s.removeWorktree)
   const thread = Object.values(byProject).flat().find((t) => t.id === threadId) ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
   const threadProjectId = thread?.project_id ?? null
   const project = threadProjectId ? (projects.find((entry) => entry.id === threadProjectId) ?? archivedProjects.find((entry) => entry.id === threadProjectId) ?? null) : null
@@ -735,6 +736,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [checkingOutPrId, setCheckingOutPrId] = useState<number | null>(null)
   const [showCreatePr, setShowCreatePr] = useState(false)
   const [returningToDefault, setReturningToDefault] = useState(false)
+  const [deletingWorktree, setDeletingWorktree] = useState(false)
   const [prsCollapsed, setPrsCollapsed] = useState(false)
   const [prSearch, setPrSearch] = useState('')
   const [defaultBranch, setDefaultBranch] = useState('main')
@@ -917,6 +919,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
 
   async function handleCommit() {
     if (!projectPath) return
+    if (committing || isAmending || isGeneratingMessage) return
     if (mainBranchCommitsBlocked) {
       addToast({
         type: 'error',
@@ -932,8 +935,8 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       })
       return
     }
-    // In normal commit mode we require a message + changes to commit.
-    if (!amendMode && (!commitMsg.trim() || (gitStatus?.files.length ?? 0) === 0)) return
+    // In normal commit mode a blank message is generated automatically before committing.
+    if (!amendMode && (gitStatus?.files.length ?? 0) === 0) return
     // In amend mode we allow commits with no staged changes (message-only fix)
     // but require at least a message or an unchanged last message to fall back to.
     if (amendMode && !commitMsg.trim() && !lastCommit) return
@@ -956,8 +959,14 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         addToast({ type: 'success', message: 'Amended last commit', duration: 3000 })
         refreshCompareAfterGitOperation()
       } else {
+        let message = commitMsg.trim()
+        if (!message) {
+          await generateMsg(projectPath)
+          message = (useGitStore.getState().commitMessageByPath[projectPath] ?? '').trim()
+          if (!message) throw new Error('Generated commit message was blank')
+        }
         if (stagedFiles.length === 0) await stageAllFiles(projectPath)
-        await commitGit(projectPath, commitMsg.trim())
+        await commitGit(projectPath, message)
         addToast({ type: 'success', message: 'Commit successful', duration: 3000 })
         refreshCompareAfterGitOperation()
       }
@@ -1206,22 +1215,44 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     }
   }
 
-  const hasPendingChanges = unstagedFiles.length > 0
+  async function handleDeleteWorktree() {
+    if (!location?.is_worktree || !threadProjectId) return
+    if (!window.confirm(`Delete worktree "${location.label}"?\n\n${location.path}`)) return
+    setDeletingWorktree(true)
+    try {
+      await removeWorktree(location.id, threadProjectId)
+      addToast({ type: 'success', message: `Deleted worktree ${location.label}`, duration: 3000 })
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Delete Worktree Failed',
+        message: err instanceof Error ? err.message : 'Failed to delete worktree',
+        details: formatErrorDetails({ action: 'locations:removeWorktree', projectId: threadProjectId, location }, err),
+        duration: 0,
+      })
+    } finally {
+      setDeletingWorktree(false)
+    }
+  }
+
+  const hasPendingChanges = totalChanges > 0
   const showReturnToDefault = !!gitStatus && effectiveDefaultBranch.trim().length > 0 && gitStatus.branch !== effectiveDefaultBranch
   const returnToDefaultLabel =
     effectiveDefaultBranch === 'master' ? 'Return to master'
     : effectiveDefaultBranch === 'main' ? 'Return to main'
     : `Return to ${effectiveDefaultBranch}`
   const currentPrIsMerged = currentPr ? ['merged', 'completed'].includes(currentPr.status.toLowerCase()) : false
-  const returnToDefaultButton = showReturnToDefault && (
+  const postPrActionButton = (location?.is_worktree || showReturnToDefault) && (
     <button
-      onClick={() => void handleReturnToDefaultBranch()}
-      disabled={returningToDefault || hasPendingChanges}
+      onClick={() => void (location?.is_worktree ? handleDeleteWorktree() : handleReturnToDefaultBranch())}
+      disabled={returningToDefault || deletingWorktree || hasPendingChanges}
       className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
       style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-      title={hasPendingChanges ? `Commit or stash unstaged changes before switching to ${effectiveDefaultBranch}` : `Checkout ${effectiveDefaultBranch} and pull latest changes`}
+      title={hasPendingChanges
+        ? `Commit or stash all changes before ${location?.is_worktree ? 'deleting this worktree' : `switching to ${effectiveDefaultBranch}`}`
+        : location?.is_worktree ? 'Delete this worktree and archive its threads' : `Checkout ${effectiveDefaultBranch} and pull latest changes`}
     >
-      {returningToDefault ? 'Returning…' : returnToDefaultLabel}
+      {deletingWorktree ? 'Deleting…' : returningToDefault ? 'Returning…' : location?.is_worktree ? 'Delete worktree' : returnToDefaultLabel}
     </button>
   )
 
@@ -1250,13 +1281,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                   <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase" style={{ background: currentPrIsMerged ? 'rgba(74, 222, 128, 0.12)' : 'rgba(255, 255, 255, 0.08)', color: currentPrIsMerged ? '#4ade80' : 'var(--color-text-muted)' }}>{currentPr.status}</span>
                 </div>
                 <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{currentPr.sourceBranch} → {currentPr.targetBranch}</p>
-                {currentPrIsMerged && returnToDefaultButton}
+                {currentPrIsMerged && postPrActionButton}
               </div> : <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>No open PR for <code>{gitStatus.branch}</code>.</p>}
             </div>
             {otherOpenPrsAll.length > 5 && <input type="text" value={prSearch} onChange={(e) => setPrSearch(e.target.value)} placeholder={`Search ${otherOpenPrsAll.length} pull requests…`} className="mb-2 w-full rounded px-2 py-1 text-[11px] outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />}
             <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id} className="rounded px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : 'Checkout'}</button></div>)}</div>
             <button onClick={() => setShowCreatePr(true)} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
-            {!currentPrIsMerged && returnToDefaultButton}
+            {!currentPrIsMerged && postPrActionButton}
           </>)}
         </div>}
         <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
@@ -1278,7 +1309,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                 {isUndoingCommit ? 'Undoing…' : 'Undo'}
               </button>}
             </div>}
-            <button onClick={() => void handleCommit()} disabled={mainBranchCommitsBlocked || committing || isAmending || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : (!commitMsg.trim() || totalChanges === 0))} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={mainBranchCommitsBlocked ? `Commits are disabled on ${gitStatus.branch} for this project` : undefined}>{committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : mainBranchCommitsBlocked ? `Commit disabled on ${gitStatus.branch}` : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
+            <button onClick={() => void handleCommit()} disabled={mainBranchCommitsBlocked || committing || isAmending || isGeneratingMessage || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : totalChanges === 0)} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={mainBranchCommitsBlocked ? `Commits are disabled on ${gitStatus.branch} for this project` : undefined}>{isGeneratingMessage ? 'Generating…' : committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : mainBranchCommitsBlocked ? `Commit disabled on ${gitStatus.branch}` : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
             <div className="flex gap-1.5 mt-1.5">
               <button
                 onClick={async () => {
