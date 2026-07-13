@@ -951,13 +951,9 @@ export function parseCodexAppServerNotification(
       }
       break
     }
+    // Structural boundary only. Displayable summary text arrives separately in
+    // item/reasoning/summaryTextDelta notifications.
     case 'item/reasoning/summaryPartAdded':
-      events.push(thinking('Reasoning summary updated.', {
-        source: 'codex_reasoning_summary',
-        item_id: params?.itemId,
-        turn_id: params?.turnId,
-        summary_index: params?.summaryIndex,
-      }))
       break
     case 'item/started':
     case 'item/completed': {

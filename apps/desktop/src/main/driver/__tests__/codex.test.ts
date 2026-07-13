@@ -566,6 +566,14 @@ describe('parseCodexAppServerNotification', () => {
     ])
   })
 
+  it('does not render structural Codex reasoning summary notifications', () => {
+    expect(parseCodexAppServerNotification(
+      'item/reasoning/summaryPartAdded',
+      { itemId: 'reason_1', turnId: 'turn_1', summaryIndex: 0 },
+      state,
+    )).toEqual([])
+  })
+
   it('emits completed Codex plan items as plan_ready', () => {
     parseCodexAppServerNotification(
       'item/plan/delta',

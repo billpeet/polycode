@@ -23,6 +23,34 @@ describe('message store streaming merge', () => {
     expect(msgs[0].content).toBe('Hello world')
   })
 
+  it('drops legacy Codex summary markers and separates distinct summaries', () => {
+    const base = { type: 'thinking', source: 'codex_reasoning_summary', turn_id: 'turn-1' }
+    useMessageStore.getState().appendEvent(THREAD, thinking('Reasoning summary updated.', {
+      ...base,
+      item_id: 'reason-1',
+      summary_index: 0,
+    }))
+    useMessageStore.getState().appendEvent(THREAD, thinking('**Planning the change**', {
+      ...base,
+      item_id: 'reason-1',
+      summary_index: 0,
+    }))
+    useMessageStore.getState().appendEvent(THREAD, thinking(' safely', {
+      ...base,
+      item_id: 'reason-1',
+      summary_index: 0,
+    }))
+    useMessageStore.getState().appendEvent(THREAD, thinking('**Running verification**', {
+      ...base,
+      item_id: 'reason-1',
+      summary_index: 1,
+    }))
+
+    const msgs = useMessageStore.getState().messagesByThread[THREAD]
+    expect(msgs).toHaveLength(1)
+    expect(msgs[0].content).toBe('**Planning the change** safely\n\n**Running verification**')
+  })
+
   it('does not let a sub-agent tool_result clobber the completed notification (shared tool_use_id)', () => {
     // The Agent/Task tool_call, the sub-agent transcript, its terminal notification (which
     // carries the SAME tool_use_id as the Agent call), then the main-scope tool_result for

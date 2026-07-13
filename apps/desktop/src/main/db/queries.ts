@@ -838,10 +838,32 @@ function parseMessageMetadata(metadata: string | null): Record<string, unknown> 
   }
 }
 
-function compactStreamingMessages(messages: MessageRow[]): Message[] {
+const LEGACY_CODEX_REASONING_SUMMARY_MARKER = 'Reasoning summary updated.'
+
+function isCodexReasoningSummary(metadata: Record<string, unknown> | null): boolean {
+  return metadata?.source === 'codex_reasoning_summary'
+}
+
+function isSameCodexReasoningSummaryPart(
+  previous: Record<string, unknown> | null,
+  current: Record<string, unknown> | null,
+): boolean {
+  return previous?.item_id === current?.item_id && previous?.summary_index === current?.summary_index
+}
+
+export function compactStreamingMessages(messages: MessageRow[]): Message[] {
   const compacted: MessageRow[] = []
 
   for (const message of messages) {
+    const currentMetadata = parseMessageMetadata(message.metadata)
+    // Clean up structural markers persisted by older Polycode versions.
+    if (
+      message.content === LEGACY_CODEX_REASONING_SUMMARY_MARKER &&
+      isCodexReasoningSummary(currentMetadata)
+    ) {
+      continue
+    }
+
     const previous = compacted[compacted.length - 1]
     if (!previous || previous.role !== message.role) {
       compacted.push({ ...message })
@@ -849,7 +871,6 @@ function compactStreamingMessages(messages: MessageRow[]): Message[] {
     }
 
     const previousMetadata = parseMessageMetadata(previous.metadata)
-    const currentMetadata = parseMessageMetadata(message.metadata)
     const previousType = previousMetadata?.type
     const currentType = currentMetadata?.type
 
@@ -860,7 +881,14 @@ function compactStreamingMessages(messages: MessageRow[]): Message[] {
     }
 
     if (previousType === 'thinking' && currentType === 'thinking' && message.role === 'assistant') {
-      previous.content += message.content
+      const isCodexSummaryPair =
+        isCodexReasoningSummary(previousMetadata) && isCodexReasoningSummary(currentMetadata)
+      const separator =
+        isCodexSummaryPair && !isSameCodexReasoningSummaryPart(previousMetadata, currentMetadata)
+          ? '\n\n'
+          : ''
+      previous.content += separator + message.content
+      if (isCodexSummaryPair) previous.metadata = message.metadata
       previous.created_at = message.created_at
       continue
     }

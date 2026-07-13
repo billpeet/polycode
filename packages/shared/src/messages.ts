@@ -1,5 +1,18 @@
 import type { Message, OutputEvent } from './types'
 
+const LEGACY_CODEX_REASONING_SUMMARY_MARKER = 'Reasoning summary updated.'
+
+function isCodexReasoningSummary(metadata: Record<string, unknown> | null): boolean {
+  return metadata?.source === 'codex_reasoning_summary'
+}
+
+function isSameCodexReasoningSummaryPart(
+  previous: Record<string, unknown> | null,
+  next: Record<string, unknown> | null,
+): boolean {
+  return previous?.item_id === next?.item_id && previous?.summary_index === next?.summary_index
+}
+
 /** Parse a message's JSON metadata column, returning null on absence or corruption. */
 export function parseMetadata(metadata: string | null): Record<string, unknown> | null {
   if (!metadata) return null
@@ -40,6 +53,17 @@ export function eventRole(event: OutputEvent): Message['role'] {
  * desktop renderer and the mobile app.
  */
 export function appendOrMergeMessage(messages: Message[], incoming: Message, event: OutputEvent): Message[] {
+  // Older Polycode versions turned Codex's structural summaryPartAdded
+  // notification into this visible sentence. Ignore it when replayed by an
+  // older remote or encountered in an in-flight stream during an upgrade.
+  if (
+    event.type === 'thinking' &&
+    event.content === LEGACY_CODEX_REASONING_SUMMARY_MARKER &&
+    isCodexReasoningSummary(event.metadata ?? null)
+  ) {
+    return messages
+  }
+
   const previous = messages[messages.length - 1]
   if (!previous || previous.role !== incoming.role) {
     return [...messages, incoming]
@@ -82,11 +106,20 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
     const isTaskBubble =
       previousMetadata?.source === 'claude_task' || nextMetadata?.source === 'claude_task'
     if (previousType === 'thinking' && sameScope && !isTaskBubble) {
+      const isCodexSummaryPair =
+        isCodexReasoningSummary(previousMetadata) && isCodexReasoningSummary(nextMetadata)
+      const separator =
+        isCodexSummaryPair && !isSameCodexReasoningSummaryPart(previousMetadata, nextMetadata)
+          ? '\n\n'
+          : ''
       return [
         ...messages.slice(0, -1),
         {
           ...previous,
-          content: previous.content + incoming.content,
+          content: previous.content + separator + incoming.content,
+          // Track the current tail part so subsequent deltas for that part do
+          // not receive another separator.
+          metadata: isCodexSummaryPair ? incoming.metadata : previous.metadata,
           created_at: incoming.created_at,
         },
       ]
