@@ -667,7 +667,9 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const projects = useProjectStore((s) => s.projects)
   const archivedProjects = useProjectStore((s) => s.archivedProjects)
   const fetchLocations = useLocationStore((s) => s.fetch)
+  const createWorktree = useLocationStore((s) => s.createWorktree)
   const removeWorktree = useLocationStore((s) => s.removeWorktree)
+  const createThread = useThreadStore((s) => s.create)
   const thread = Object.values(byProject).flat().find((t) => t.id === threadId) ?? Object.values(archivedByProject).flat().find((t) => t.id === threadId)
   const threadProjectId = thread?.project_id ?? null
   const project = threadProjectId ? (projects.find((entry) => entry.id === threadProjectId) ?? archivedProjects.find((entry) => entry.id === threadProjectId) ?? null) : null
@@ -734,6 +736,8 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [loadingPrs, setLoadingPrs] = useState(false)
   const [prError, setPrError] = useState<string | null>(null)
   const [checkingOutPrId, setCheckingOutPrId] = useState<number | null>(null)
+  const [checkingOutPrWorktreeId, setCheckingOutPrWorktreeId] = useState<number | null>(null)
+  const [prCheckoutMenu, setPrCheckoutMenu] = useState<{ pr: PullRequestItem; x: number; y: number } | null>(null)
   const [showCreatePr, setShowCreatePr] = useState(false)
   const [returningToDefault, setReturningToDefault] = useState(false)
   const [deletingWorktree, setDeletingWorktree] = useState(false)
@@ -1193,6 +1197,40 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     }
   }
 
+  async function handleCheckoutPrInWorktree(pr: PullRequestItem) {
+    if (!prProvider || !threadProjectId) return
+    const parentLocation = location?.is_worktree
+      ? threadLocations.find((entry) => entry.id === location.parent_location_id)
+      : location
+    if (!parentLocation || parentLocation.connection_type !== 'local' || parentLocation.is_worktree) {
+      addToast({ type: 'error', title: 'Checkout PR In Worktree Failed', message: 'A local main checkout is required to create the worktree.', duration: 0 })
+      return
+    }
+
+    setCheckingOutPrWorktreeId(pr.id)
+    let worktree: RepoLocation | null = null
+    try {
+      worktree = await createWorktree(parentLocation.id, threadProjectId, `PR #${pr.id}`)
+      const result = prProvider === 'azure'
+        ? await window.api.invoke('azdo:pr:checkout', worktree.path, pr.id)
+        : await window.api.invoke('gh:pr:checkout', worktree.path, pr.id)
+      await createThread(threadProjectId, `PR #${pr.id}: ${pr.title}`, worktree.id)
+      addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)} in a new worktree`, duration: 3000 })
+      window.dispatchEvent(new Event('focus-input'))
+    } catch (err) {
+      if (worktree) await removeWorktree(worktree.id, threadProjectId).catch(() => undefined)
+      addToast({
+        type: 'error',
+        title: 'Checkout PR In Worktree Failed',
+        message: err instanceof Error ? err.message : 'Failed to checkout PR in a worktree',
+        details: formatErrorDetails({ action: 'pr:checkoutInWorktree', projectPath: parentLocation.path, prId: pr.id, provider: prProvider }, err),
+        duration: 0,
+      })
+    } finally {
+      setCheckingOutPrWorktreeId(null)
+    }
+  }
+
   async function handleReturnToDefaultBranch() {
     if (!projectPath || !effectiveDefaultBranch) return
     setReturningToDefault(true)
@@ -1285,7 +1323,8 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
               </div> : <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>No open PR for <code>{gitStatus.branch}</code>.</p>}
             </div>
             {otherOpenPrsAll.length > 5 && <input type="text" value={prSearch} onChange={(e) => setPrSearch(e.target.value)} placeholder={`Search ${otherOpenPrsAll.length} pull requests…`} className="mb-2 w-full rounded px-2 py-1 text-[11px] outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />}
-            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id} className="rounded px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : 'Checkout'}</button></div>)}</div>
+            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><div className="flex shrink-0 overflow-hidden rounded" style={{ background: 'var(--color-claude)' }}><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : checkingOutPrWorktreeId === pr.id ? 'Creating…' : 'C/O'}</button><button onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setPrCheckoutMenu({ pr, x: rect.right - 180, y: rect.bottom }) }} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-1 py-1 text-[10px] transition-opacity disabled:opacity-40 hover:bg-black/10" style={{ borderLeft: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} title="More checkout options" aria-label={`More checkout options for PR #${pr.id}`} aria-haspopup="menu"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true"><path d="M0 2l4 4 4-4z" /></svg></button></div></div>)}</div>
+            {prCheckoutMenu && <ContextMenu x={prCheckoutMenu.x} y={prCheckoutMenu.y} onClose={() => setPrCheckoutMenu(null)} items={[{ id: 'checkout-worktree', label: 'Checkout in worktree', onSelect: () => handleCheckoutPrInWorktree(prCheckoutMenu.pr) }]} />}
             <button onClick={() => setShowCreatePr(true)} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
             {!currentPrIsMerged && postPrActionButton}
           </>)}
