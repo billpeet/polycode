@@ -14,6 +14,7 @@ import { augmentWindowsPath } from './runner'
 import { homedir } from 'os'
 import path from 'path'
 import readline from 'readline'
+import { parseShellCommand } from '../../shared/shell-command'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
 
@@ -201,21 +202,12 @@ function thinking(content: string, metadata: Record<string, unknown>): OutputEve
  * Given a raw command string from a Codex command_execution item, return a
  * display-friendly name and the inner command to show in the UI.
  *
- * Commands are typically wrapped as:  /bin/bash -lc "actual command here"
- * We strip the wrapper so the UI shows "Bash" + the inner command, mirroring
+ * Commands are typically wrapped by the provider's platform shell. We strip
+ * that wrapper so the UI shows the shell name + the inner command, mirroring
  * how Claude Code's Bash tool is displayed.
  */
 export function parseBashCommand(raw: string): { name: string; innerCmd: string } {
-  const m = raw.match(/^(?:\/bin\/bash|bash)\s+-lc\s+([\s\S]+)$/)
-  if (!m) return { name: 'Shell', innerCmd: raw }
-  const arg = m[1].trim()
-  const innerCmd =
-    arg.length >= 2 &&
-    ((arg[0] === '"' && arg[arg.length - 1] === '"') ||
-      (arg[0] === "'" && arg[arg.length - 1] === "'"))
-      ? arg.slice(1, -1)
-      : arg
-  return { name: 'Bash', innerCmd }
+  return parseShellCommand(raw)
 }
 
 /** Build a tool_call event for a Codex item. */

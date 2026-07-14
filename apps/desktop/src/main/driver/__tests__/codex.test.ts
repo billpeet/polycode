@@ -15,6 +15,7 @@ import {
 } from '../codex'
 import type { DriverOptions } from '../types'
 import type { OutputEvent } from '../../../shared/types'
+import { normalizeShellToolPresentation } from '../../../shared/shell-command'
 
 function makeDriver(opts: Partial<DriverOptions> = {}): CodexDriver {
   return new CodexDriver({
@@ -112,10 +113,41 @@ describe('parseBashCommand', () => {
     })
   })
 
-  it('falls back to Shell for non-bash commands', () => {
+  it('unwraps a PowerShell command', () => {
     expect(parseBashCommand('pwsh.exe -Command ls')).toEqual({
+      name: 'PowerShell',
+      innerCmd: 'ls',
+    })
+  })
+
+  it('unwraps a quoted WindowsApps PowerShell invocation', () => {
+    expect(parseBashCommand('"C:\\Users\\marti\\AppData\\Local\\Microsoft\\WindowsApps\\pwsh.exe" -Command \'Get-Process dotnet,bun -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,CPU,StartTime\'')).toEqual({
+      name: 'PowerShell',
+      innerCmd: 'Get-Process dotnet,bun -ErrorAction SilentlyContinue | Select-Object ProcessName,Id,CPU,StartTime',
+    })
+  })
+
+  it('recognizes Windows PowerShell with options before -Command', () => {
+    expect(parseBashCommand('C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe -NoProfile -NonInteractive -Command "Get-Date"')).toEqual({
+      name: 'PowerShell',
+      innerCmd: 'Get-Date',
+    })
+  })
+
+  it('falls back to Shell for other commands', () => {
+    expect(parseBashCommand('cmd.exe /c dir')).toEqual({
       name: 'Shell',
-      innerCmd: 'pwsh.exe -Command ls',
+      innerCmd: 'cmd.exe /c dir',
+    })
+  })
+})
+
+describe('normalizeShellToolPresentation', () => {
+  it('repairs a legacy Shell payload at presentation time', () => {
+    const command = '"C:\\\\Users\\\\marti\\\\AppData\\\\Local\\\\Microsoft\\\\WindowsApps\\\\pwsh.exe" -Command \'git diff --check; git status --short\''
+    expect(normalizeShellToolPresentation('Shell', command)).toEqual({
+      name: 'PowerShell',
+      innerCmd: 'git diff --check; git status --short',
     })
   })
 })

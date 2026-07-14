@@ -2,6 +2,7 @@ import { Message } from '../types/ipc'
 import { useState, useMemo, type CSSProperties } from 'react'
 import EditDiffView from './EditDiffView'
 import MarkdownContent from './MarkdownContent'
+import { normalizeShellToolPresentation } from '../../../shared/shell-command'
 
 interface Props {
   message: Message
@@ -262,7 +263,7 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
     : undefined
 
   // Shell commands: show the command as shell content and scalar options as separate fields.
-  if ((normalizedToolName === 'bash' || normalizedToolName === 'shell') && inp && typeof inp.command === 'string') {
+  if ((normalizedToolName === 'bash' || normalizedToolName === 'shell' || normalizedToolName === 'powershell') && inp && typeof inp.command === 'string') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.55rem' }}>
         <div>
@@ -408,14 +409,22 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
   const [expanded, setExpanded] = useState(false)
 
   const rawToolName = (metadata?.name as string) ?? message.content
-  const toolName = canonicalToolName(rawToolName, metadata)
   const input = metadata?.input as Record<string, unknown> | undefined
+  // Normalize again at presentation time. Stored tool calls and events created
+  // by an already-running main process may still carry the legacy `Shell` name.
+  const shellCommand = normalizeShellToolPresentation(rawToolName, input?.command)
+  const toolName = shellCommand
+    ? shellCommand.name
+    : canonicalToolName(rawToolName, metadata)
+  const presentedInput = shellCommand
+    ? { ...input, command: shellCommand.innerCmd }
+    : input
   // For Task/Agent tool calls with a subagent_type, display the subagent type as the name
   const displayName =
     (toolName === 'Task' || toolName === 'Agent') && typeof input?.subagent_type === 'string'
       ? input.subagent_type
       : toolName
-  const inputSummary = getInputSummary(toolName, metadata?.input) ?? getResultSummary(resultMetadata)
+  const inputSummary = getInputSummary(toolName, presentedInput) ?? getResultSummary(resultMetadata)
   const isCancelled = resultMetadata?.cancelled === true
   const isError = !isCancelled && resultMetadata?.is_error === true
   const isPending = result === null
@@ -530,7 +539,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
               <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-muted)', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
                 Input
               </div>
-              <InputBody toolName={toolName} input={metadata?.input} />
+              <InputBody toolName={toolName} input={presentedInput} />
             </div>
           )}
 
