@@ -137,7 +137,7 @@ export interface WindowApi {
   invoke(channel: 'gh:pr:webUrl', repoPath: string): Promise<string>
   invoke(channel: 'gh:repo:webUrl', repoPath: string): Promise<string>
   invoke(channel: 'files:list', dirPath: string): Promise<FileEntry[]>
-  invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean } | null>
+  invoke(channel: 'files:read', filePath: string): Promise<{ content: string; truncated: boolean; mimeType?: string; dataUrl?: string } | null>
   invoke(channel: 'files:searchList', rootPath: string): Promise<SearchableFile[]>
   invoke(channel: 'files:watchStart', filePath: string): Promise<boolean>
   invoke(channel: 'files:watchStop', filePath: string): Promise<void>

@@ -3,6 +3,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WslConfig, FileEntry, SearchableFile } from '../shared/types'
 import { cdTarget } from './driver/runner'
+import { imageFileContent, imageMimeTypeForPath, type FileContent } from './files'
 
 // Cache resolved WSL home directories per distro
 const wslHomeCache = new Map<string, string>()
@@ -148,11 +149,16 @@ export function wslListDirectory(wsl: WslConfig, dirPath: string): FileEntry[] {
 export function wslReadFileContent(
   wsl: WslConfig,
   filePath: string
-): { content: string; truncated: boolean } | null {
+): FileContent | null {
   const MAX_FILE_SIZE = 1048576 // 1MB
   const uncPath = wslToUncPath(wsl, filePath)
 
   try {
+    const imageMimeType = imageMimeTypeForPath(filePath)
+    if (imageMimeType) {
+      return imageFileContent(fs.readFileSync(uncPath), imageMimeType)
+    }
+
     const stats = fs.statSync(uncPath)
     if (stats.size > MAX_FILE_SIZE) {
       const fd = fs.openSync(uncPath, 'r')

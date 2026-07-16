@@ -1,6 +1,7 @@
 import { spawn } from 'child_process'
 import { SshConfig, FileEntry, SearchableFile } from '../shared/types'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from './driver/runner'
+import { imageMimeTypeForPath, type FileContent } from './files'
 
 /**
  * Execute a command on a remote host via SSH.
@@ -111,11 +112,22 @@ export async function sshListDirectory(ssh: SshConfig, dirPath: string): Promise
 export async function sshReadFileContent(
   ssh: SshConfig,
   filePath: string
-): Promise<{ content: string; truncated: boolean } | null> {
+): Promise<FileContent | null> {
   const MAX_FILE_SIZE = 1048576 // 1MB
   const target = cdTarget(filePath)
 
   try {
+    const imageMimeType = imageMimeTypeForPath(filePath)
+    if (imageMimeType) {
+      const base64 = (await sshExec(ssh, '/', `base64 ${target}`)).replace(/\s/g, '')
+      return {
+        content: '',
+        truncated: false,
+        mimeType: imageMimeType,
+        dataUrl: `data:${imageMimeType};base64,${base64}`,
+      }
+    }
+
     // Check file size first
     const sizeStr = await sshExec(ssh, '/', `wc -c < ${target}`)
     const size = parseInt(sizeStr.trim(), 10) || 0

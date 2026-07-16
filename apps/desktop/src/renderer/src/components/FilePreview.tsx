@@ -378,6 +378,21 @@ function MarkdownPreview({ content }: { content: string }) {
   )
 }
 
+function ImagePreview({ dataUrl, fileName }: { dataUrl: string; fileName: string }) {
+  return (
+    <div
+      className="h-full w-full overflow-auto flex items-center justify-center p-4"
+      style={{ background: 'var(--color-surface)' }}
+    >
+      <img
+        src={dataUrl}
+        alt={fileName}
+        className="block max-w-full max-h-full object-contain"
+      />
+    </div>
+  )
+}
+
 // ─── Diff rendering ───────────────────────────────────────────────────────────
 
 const LARGE_DIFF_LINE_THRESHOLD = 2500
@@ -696,6 +711,7 @@ export function FilePane() {
 
   const language = getLanguageFromPath(selectedFilePath)
   const showMarkdown = isMarkdown(selectedFilePath)
+  const showImage = fileContent?.mimeType?.startsWith('image/') && !!fileContent.dataUrl
   const fileName = basename(selectedFilePath)
 
   return (
@@ -720,7 +736,7 @@ export function FilePane() {
             Truncated
           </span>
         )}
-        {!showMarkdown && (
+        {!showMarkdown && !showImage && (
           <span
             className="text-[10px] px-1.5 py-0.5 rounded uppercase"
             style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}
@@ -759,6 +775,8 @@ export function FilePane() {
           <div className="flex items-center justify-center h-full text-xs" style={{ color: 'var(--color-text-muted)' }}>
             Unable to read file
           </div>
+        ) : showImage ? (
+          <ImagePreview dataUrl={fileContent.dataUrl!} fileName={fileName} />
         ) : showMarkdown ? (
           <MarkdownPreview content={fileContent.content} />
         ) : (

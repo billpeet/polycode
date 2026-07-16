@@ -20,6 +20,37 @@ const IGNORED_DIRS = new Set([
 
 const MAX_FILE_SIZE = 1024 * 1024 // 1MB
 
+export interface FileContent {
+  content: string
+  truncated: boolean
+  mimeType?: string
+  dataUrl?: string
+}
+
+const IMAGE_MIME_TYPES: Record<string, string> = {
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.gif': 'image/gif',
+  '.ico': 'image/x-icon',
+  '.jpeg': 'image/jpeg',
+  '.jpg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+}
+
+export function imageMimeTypeForPath(filePath: string): string | undefined {
+  return IMAGE_MIME_TYPES[path.extname(filePath).toLowerCase()]
+}
+
+export function imageFileContent(data: Buffer, mimeType: string): FileContent {
+  return {
+    content: '',
+    truncated: false,
+    mimeType,
+    dataUrl: `data:${mimeType};base64,${data.toString('base64')}`,
+  }
+}
+
 function isEntryDirectory(entry: fs.Dirent, fullPath: string): boolean {
   if (entry.isDirectory()) return true
   if (!entry.isSymbolicLink()) return false
@@ -126,8 +157,13 @@ export function listAllFiles(rootPath: string): SearchableFile[] {
   return results
 }
 
-export function readFileContent(filePath: string): { content: string; truncated: boolean } | null {
+export function readFileContent(filePath: string): FileContent | null {
   try {
+    const imageMimeType = imageMimeTypeForPath(filePath)
+    if (imageMimeType) {
+      return imageFileContent(fs.readFileSync(filePath), imageMimeType)
+    }
+
     const stats = fs.statSync(filePath)
     if (stats.size > MAX_FILE_SIZE) {
       // Return first 1MB for large files

@@ -6,6 +6,8 @@ import { useUiStore } from './ui'
 interface FileContent {
   content: string
   truncated: boolean
+  mimeType?: string
+  dataUrl?: string
 }
 
 interface DiffView {
@@ -175,7 +177,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       loadingContentByLocation: locationId ? { ...s.loadingContentByLocation, [locationId]: true } : s.loadingContentByLocation,
     }))
     try {
-      const result = await window.api.invoke('files:read', filePath) as { content: string; truncated: boolean } | null
+      const result = await window.api.invoke('files:read', filePath)
       if (get().selectedFilePathByLocation[locationId ?? ''] === filePath || get().selectedFilePath === filePath) {
         set((s) => ({
           fileContent: result,
