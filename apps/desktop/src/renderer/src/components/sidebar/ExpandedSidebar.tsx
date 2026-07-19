@@ -3,6 +3,7 @@ import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelLeft, Pencil, 
 import { LocationPool, Project, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import LocationSection from './LocationSection'
 import ThreadRow from './ThreadRow'
+import ProjectFavicon from '../ProjectFavicon'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -250,6 +251,7 @@ export default function ExpandedSidebar({
                     ? <ChevronDown size={12} className="mr-1.5 flex-shrink-0 opacity-50" />
                     : <ChevronRight size={12} className="mr-1.5 flex-shrink-0 opacity-50" />
                   }
+                  <ProjectFavicon projectId={project.id} className="mr-1.5 h-3.5 w-3.5" />
                   <span className="truncate">{project.name}</span>
                   {unreadCount > 0 && (
                     <span
@@ -618,6 +620,7 @@ export default function ExpandedSidebar({
                   style={{ color: 'var(--color-text)' }}
                 >
                   <span className="mr-1.5 flex-shrink-0 opacity-50" style={{ width: '12px' }} />
+                  <ProjectFavicon projectId={project.id} className="mr-1.5 h-3.5 w-3.5" />
                   <span className="truncate">{project.name}</span>
                 </div>
                 <div

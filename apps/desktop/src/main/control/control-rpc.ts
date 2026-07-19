@@ -157,10 +157,12 @@ import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLo
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
+import { projectFaviconDataUrl } from '../project-favicon'
 
 export const CONTROL_RPC_CHANNELS = new Set([
   'projects:list',
   'projects:listArchived',
+  'projects:favicon',
   'projects:create',
   'projects:createFull',
   'projects:update',
@@ -554,6 +556,10 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return listProjects()
     case 'projects:listArchived':
       return listArchivedProjects()
+    case 'projects:favicon': {
+      const location = listLocations(args[0] as string).find((item) => item.connection_type === 'local')
+      return location ? projectFaviconDataUrl(location.path) : null
+    }
     case 'projects:create': {
       const [name, gitUrl, allowMainBranchCommits] = args as [string, string | null | undefined, boolean | undefined]
       return createProject(name, gitUrl, allowMainBranchCommits ?? true)

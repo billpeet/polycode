@@ -7,6 +7,7 @@ export { ANTHROPIC_MODELS, OPENAI_MODELS, CURSOR_MODELS, PROVIDERS, getModelsFor
 export interface WindowApi {
   invoke(channel: 'projects:list'): Promise<Project[]>
   invoke(channel: 'projects:listArchived'): Promise<Project[]>
+  invoke(channel: 'projects:favicon', projectId: string): Promise<string | null>
   invoke(channel: 'projects:create', name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean): Promise<Project>
   invoke(channel: 'projects:createFull', spec: NewProjectSpec): Promise<NewProjectResult>
   invoke(channel: 'projects:update', id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean): Promise<void>

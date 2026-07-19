@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { PanelLeft, Plus, Settings } from 'lucide-react'
 import { Project, Thread, ThreadStatus } from '../../types/ipc'
 import { Tooltip } from '../ui/tooltip'
+import ProjectFavicon from '../ProjectFavicon'
 
 interface CollapsedSidebarProps {
   projects: Project[]
@@ -55,7 +56,6 @@ export default function CollapsedSidebar({
         {projects.map((project) => {
           const isActive = selectedProjectId === project.id
           const hasRunning = runningProjects.includes(project)
-          const initial = project.name.charAt(0).toUpperCase()
 
           return (
             <Tooltip key={project.id} content={project.name}>
@@ -67,7 +67,7 @@ export default function CollapsedSidebar({
                   color: isActive ? 'var(--color-text)' : 'var(--color-text-muted)',
                 }}
               >
-                <span className="text-xs font-semibold">{initial}</span>
+                <ProjectFavicon projectId={project.id} className="h-4 w-4" />
                 {hasRunning && (
                   <span
                     className="absolute right-2.5 top-1.5 h-1.5 w-1.5 rounded-full"

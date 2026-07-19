@@ -78,6 +78,7 @@ import {
   setSetting,
 } from '../db/queries'
 import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue, NewProjectSpec } from '../../shared/types'
+import { projectFaviconDataUrl } from '../project-favicon'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -354,6 +355,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   proxyable('projects:listArchived', () => {
     return listArchivedProjects()
+  })
+
+  proxyable('projects:favicon', (projectId: string) => {
+    const location = listLocations(projectId).find((item) => item.connection_type === 'local')
+    return location ? projectFaviconDataUrl(location.path) : null
   })
 
   proxyable('projects:archive', (id: string) => {
