@@ -2,12 +2,12 @@ import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { CHANNEL_REGISTRY, REMOTE_CHANNELS } from '@polycode/shared'
 
 const mainDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const handlersSource = readFileSync(join(mainDir, 'ipc', 'handlers.ts'), 'utf8')
 const rpcSource = readFileSync(join(mainDir, 'control', 'control-rpc.ts'), 'utf8')
 const remoteServerSource = readFileSync(join(mainDir, 'remote', 'server.ts'), 'utf8')
-const mobileRpcSource = readFileSync(join(mainDir, '..', '..', '..', 'mobile', 'src', 'api', 'rpc.ts'), 'utf8')
 
 function literalChannels(source: string, pattern: RegExp): Set<string> {
   return new Set([...source.matchAll(pattern)].map((match) => match[1]))
@@ -15,14 +15,18 @@ function literalChannels(source: string, pattern: RegExp): Set<string> {
 
 describe('remote control RPC channel contract', () => {
   const proxyableChannels = literalChannels(handlersSource, /\bproxyable\(\s*['"]([^'"]+)['"]/g)
-  const allowlistBody = rpcSource.match(/CONTROL_RPC_CHANNELS\s*=\s*new Set\(\[([\s\S]*?)\]\)/)?.[1] ?? ''
-  const allowedChannels = literalChannels(allowlistBody, /['"]([^'"]+)['"]/g)
+  const directlyProxiedChannels = literalChannels(
+    handlersSource,
+    /\bipcMain\.handle\(\s*['"]([^'"]+)['"][\s\S]{0,250}?remoteClient\.invokeIfActive\(\s*['"]\1['"]/g,
+  )
+  const allowedChannels = new Set<string>(REMOTE_CHANNELS)
   const dispatchedChannels = literalChannels(rpcSource, /\bcase\s+['"]([^'"]+)['"]\s*:/g)
-  const mobileChannels = literalChannels(mobileRpcSource, /^\s*['"]([^'"]+)['"]\s*:/gm)
 
-  test('every desktop proxyable channel is accepted by the server', () => {
-    const missing = [...proxyableChannels].filter((channel) => !allowedChannels.has(channel))
-    expect(missing).toEqual([])
+  test('desktop proxyable registrations equal local and remote registry entries', () => {
+    const expected = Object.entries(CHANNEL_REGISTRY)
+      .filter(([, capabilities]) => capabilities.local && capabilities.remote)
+      .map(([channel]) => channel)
+    expect([...new Set([...proxyableChannels, ...directlyProxiedChannels])].sort()).toEqual(expected.sort())
   })
 
   test('server-supported project and location mutations are not local-only', () => {
@@ -34,33 +38,20 @@ describe('remote control RPC channel contract', () => {
     expect(incorrectlyLocal).toEqual([])
   })
 
-  test('every allowlisted channel has a dispatcher case', () => {
+  test('every remote registry channel has a dispatcher case', () => {
     const missing = [...allowedChannels].filter((channel) => !dispatchedChannels.has(channel))
     expect(missing).toEqual([])
   })
 
-  test('host-domain operations are wired through every desktop RPC layer', () => {
-    const required = [
-      'projects:create', 'projects:createFull', 'projects:update', 'projects:delete',
-      'projects:archive', 'projects:unarchive',
-      'locations:create', 'locations:update', 'locations:delete',
-      'locations:createWorktree', 'locations:removeWorktree',
-      'locations:suggestPath', 'locations:clone',
-      'location-pools:create', 'location-pools:update', 'location-pools:delete',
-      'ssh:test', 'wsl:test', 'wsl:list-distros',
-      'threads:updateCursorThinking', 'threads:updateCursorContext',
-      'git:watchStart', 'git:watchStop',
-      'claude-history:listProjects', 'claude-history:listSessions',
-      'claude-history:importedIds', 'claude-history:import',
-      'youtrack:servers:list', 'youtrack:servers:create', 'youtrack:servers:update',
-      'youtrack:servers:delete', 'youtrack:test', 'youtrack:search',
-    ]
-    for (const channel of required) {
-      expect(proxyableChannels.has(channel), `${channel} is not proxyable`).toBe(true)
-      expect(allowedChannels.has(channel), `${channel} is not allowlisted`).toBe(true)
-      expect(dispatchedChannels.has(channel), `${channel} is not dispatched`).toBe(true)
-      expect(mobileChannels.has(channel), `${channel} is missing from the mobile RPC map`).toBe(true)
-    }
+  test('remote-only channels are explicit', () => {
+    const remoteOnly = Object.entries(CHANNEL_REGISTRY)
+      .filter(([, capabilities]) => !capabilities.local && capabilities.remote)
+      .map(([channel]) => channel)
+    expect(remoteOnly).toEqual(['attachments:readDataUrl', 'plans:getForThread'])
+  })
+
+  test('origin-specific behavior is explicit', () => {
+    expect(CHANNEL_REGISTRY['threads:send']).toMatchObject({ originAware: true })
   })
 
   test('obsolete plan file handlers are not retained as local-only IPC', () => {
