@@ -2,11 +2,16 @@ import { spawn, ChildProcess } from 'child_process'
 import { writeFileSync, unlinkSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { Runner, SpawnCommand } from './types'
+import { Runner, RunCommand, RunResult, SpawnCommand } from './types'
 import { winQuote, augmentWindowsPath } from './utils'
+import { collectProcess } from './collect'
 
 export class LocalRunner implements Runner {
   readonly type = 'local' as const
+
+  run(cmd: RunCommand): Promise<RunResult> {
+    return collectProcess(this.spawn(cmd), cmd)
+  }
 
   spawn(cmd: SpawnCommand): ChildProcess {
     const { binary, args, workDir, stdinContent, keepStdinOpen } = cmd

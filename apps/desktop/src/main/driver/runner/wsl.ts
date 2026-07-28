@@ -1,12 +1,17 @@
 import { spawn, ChildProcess } from 'child_process'
 import { WslConfig } from '../../../shared/types'
-import { Runner, SpawnCommand } from './types'
+import { Runner, RunCommand, RunResult, SpawnCommand } from './types'
 import { shellEscape, cdTarget } from './utils'
+import { collectProcess } from './collect'
 
 export class WslRunner implements Runner {
   readonly type = 'wsl' as const
 
   constructor(private readonly wsl: WslConfig) {}
+
+  run(cmd: RunCommand): Promise<RunResult> {
+    return collectProcess(this.spawn(cmd), cmd)
+  }
 
   spawn(cmd: SpawnCommand): ChildProcess {
     const { binary, args, workDir, preamble, stdinContent, keepStdinOpen } = cmd

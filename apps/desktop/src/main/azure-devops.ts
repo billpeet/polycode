@@ -1,278 +1,48 @@
-import { spawn, execFile } from 'child_process'
-import { promisify } from 'util'
 import { existsSync } from 'fs'
 import * as path from 'path'
 import { AzureDevOpsPullRequest, SshConfig, WslConfig } from '../shared/types'
-import { augmentWindowsPath, winQuote } from './driver/runner'
-import { sshExec } from './ssh'
-import { wslExec } from './wsl'
+import { createRunner } from './driver/runner'
+import { runGit } from './git-runner'
+import {
+  buildAzurePullRequestsUrl as buildPullRequestsWebUrl,
+  buildAzureRepoUrl as buildRepoWebUrl,
+  mapAzurePr as mapPr,
+  normalizeAzureBranchName as normalizeBranchName,
+  parseAzureRemote,
+} from './forge-parsers'
 
-const execFileAsync = promisify(execFile)
-
-interface AzureRepoContext {
-  remoteName: string
-  project: string | null
-  repo: string
-  remoteUrl: string
-}
-
-interface AzDevOpsPr {
-  pullRequestId?: number
-  title?: string
-  status?: string
-  sourceRefName?: string
-  targetRefName?: string
-  createdBy?: { displayName?: string }
-  url?: string
-  creationDate?: string
-}
-
-interface SpawnResult {
-  stdout: string
-  stderr: string
-  code: number | null
-}
+import type { AzureRepoContext, AzurePrInput as AzDevOpsPr } from './forge-parsers'
 
 interface LocalCommand {
   cmd: string
   args: string[]
-  shell: boolean
 }
 
-function shortRef(ref: string | undefined): string {
-  if (!ref) return ''
-  return ref.replace(/^refs\/heads\//, '')
-}
-
-function normalizeBranchName(branch: string, remoteName: string): string {
-  const trimmed = branch.trim()
-  if (!trimmed) return ''
-
-  return trimmed
-    .replace(/^refs\/heads\//, '')
-    .replace(/^refs\/remotes\//, '')
-    .replace(/^remotes\//, '')
-    .replace(new RegExp(`^${remoteName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), '')
-}
-
-function buildWebUrl(remoteUrl: string, prId: number): string {
-  const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
-
-  // SSH: git@ssh.dev.azure.com:v3/org/project/repo
-  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (sshMatch) return `https://dev.azure.com/${sshMatch[1]}/${sshMatch[2]}/_git/${sshMatch[3]}/pullrequest/${prId}`
-
-  // SSH: ssh://git@ssh.dev.azure.com/v3/org/project/repo
-  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (sshUrlMatch) return `https://dev.azure.com/${sshUrlMatch[1]}/${sshUrlMatch[2]}/_git/${sshUrlMatch[3]}/pullrequest/${prId}`
-
-  // SSH: git@vs-ssh.visualstudio.com:v3/org/project/repo
-  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (vsSshMatch) return `https://${vsSshMatch[1]}.visualstudio.com/${vsSshMatch[2]}/_git/${vsSshMatch[3]}/pullrequest/${prId}`
-
-  // HTTPS: just append /pullrequest/<id> to the repo URL
-  return `${normalized}/pullrequest/${prId}`
-}
-
-function buildPullRequestsWebUrl(remoteUrl: string): string {
-  const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
-
-  // SSH: git@ssh.dev.azure.com:v3/org/project/repo
-  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (sshMatch) return `https://dev.azure.com/${sshMatch[1]}/${sshMatch[2]}/_git/${sshMatch[3]}/pullrequests`
-
-  // SSH: ssh://git@ssh.dev.azure.com/v3/org/project/repo
-  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (sshUrlMatch) return `https://dev.azure.com/${sshUrlMatch[1]}/${sshUrlMatch[2]}/_git/${sshUrlMatch[3]}/pullrequests`
-
-  // SSH: git@vs-ssh.visualstudio.com:v3/org/project/repo
-  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (vsSshMatch) return `https://${vsSshMatch[1]}.visualstudio.com/${vsSshMatch[2]}/_git/${vsSshMatch[3]}/pullrequests`
-
-  // HTTPS: just append /pullrequests to the repo URL
-  return `${normalized}/pullrequests`
-}
-
-function buildRepoWebUrl(remoteUrl: string): string {
-  const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
-
-  // SSH: git@ssh.dev.azure.com:v3/org/project/repo
-  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (sshMatch) return `https://dev.azure.com/${sshMatch[1]}/${sshMatch[2]}/_git/${sshMatch[3]}`
-
-  // SSH: ssh://git@ssh.dev.azure.com/v3/org/project/repo
-  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (sshUrlMatch) return `https://dev.azure.com/${sshUrlMatch[1]}/${sshUrlMatch[2]}/_git/${sshUrlMatch[3]}`
-
-  // SSH: git@vs-ssh.visualstudio.com:v3/org/project/repo
-  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/]+)$/i)
-  if (vsSshMatch) return `https://${vsSshMatch[1]}.visualstudio.com/${vsSshMatch[2]}/_git/${vsSshMatch[3]}`
-
-  return normalized
-}
-
-function mapPr(pr: AzDevOpsPr, remoteUrl?: string): AzureDevOpsPullRequest {
-  const id = pr.pullRequestId ?? 0
-  const url = remoteUrl && id ? buildWebUrl(remoteUrl, id) : (pr.url ?? '')
-  return {
-    id,
-    title: pr.title ?? '(untitled)',
-    status: pr.status ?? 'unknown',
-    sourceBranch: shortRef(pr.sourceRefName),
-    targetBranch: shortRef(pr.targetRefName),
-    authorName: pr.createdBy?.displayName ?? 'Unknown',
-    url,
-    creationDate: pr.creationDate ?? '',
-  }
-}
-
-function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
-  const normalized = remoteUrl.replace(/\.git$/i, '')
-
-  // https://dev.azure.com/org/project/_git/repo
-  // https://org@dev.azure.com/org/project/_git/repo
-  const httpsMatch = normalized.match(/^https:\/\/(?:[^@/]+@)?dev\.azure\.com\/([^/]+)\/([^/]+)\/_git\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (httpsMatch) {
-    return {
-      remoteName: 'origin',
-      project: decodeURIComponent(httpsMatch[2] ?? ''),
-      repo: decodeURIComponent(httpsMatch[3] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // https://dev.azure.com/org/_git/repo (project implied by azdevops default config)
-  const httpsNoProjectMatch = normalized.match(/^https:\/\/(?:[^@/]+@)?dev\.azure\.com\/([^/]+)\/_git\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (httpsNoProjectMatch) {
-    return {
-      remoteName: 'origin',
-      project: null,
-      repo: decodeURIComponent(httpsNoProjectMatch[2] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // https://org.visualstudio.com/project/_git/repo
-  // https://org.visualstudio.com/DefaultCollection/project/_git/repo
-  const visualStudioMatch = normalized.match(/^https:\/\/([^.]+)\.visualstudio\.com\/(?:(?:DefaultCollection)\/)?([^/]+)\/_git\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (visualStudioMatch) {
-    return {
-      remoteName: 'origin',
-      project: decodeURIComponent(visualStudioMatch[2] ?? ''),
-      repo: decodeURIComponent(visualStudioMatch[3] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // https://org.visualstudio.com/_git/repo (project implied by azdevops default config)
-  const visualStudioNoProjectMatch = normalized.match(/^https:\/\/([^.]+)\.visualstudio\.com\/_git\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (visualStudioNoProjectMatch) {
-    return {
-      remoteName: 'origin',
-      project: null,
-      repo: decodeURIComponent(visualStudioNoProjectMatch[2] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // git@ssh.dev.azure.com:v3/org/project/repo
-  const sshMatch = normalized.match(/^git@ssh\.dev\.azure\.com:v3\/([^/]+)\/([^/]+)\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (sshMatch) {
-    return {
-      remoteName: 'origin',
-      project: decodeURIComponent(sshMatch[2] ?? ''),
-      repo: decodeURIComponent(sshMatch[3] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // ssh://git@ssh.dev.azure.com/v3/org/project/repo
-  const sshUrlMatch = normalized.match(/^ssh:\/\/git@ssh\.dev\.azure\.com\/v3\/([^/]+)\/([^/]+)\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (sshUrlMatch) {
-    return {
-      remoteName: 'origin',
-      project: decodeURIComponent(sshUrlMatch[2] ?? ''),
-      repo: decodeURIComponent(sshUrlMatch[3] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // git@vs-ssh.visualstudio.com:v3/org/project/repo
-  const vsSshMatch = normalized.match(/^git@vs-ssh\.visualstudio\.com:v3\/([^/]+)\/([^/]+)\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (vsSshMatch) {
-    return {
-      remoteName: 'origin',
-      project: decodeURIComponent(vsSshMatch[2] ?? ''),
-      repo: decodeURIComponent(vsSshMatch[3] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  // ssh://git@vs-ssh.visualstudio.com:22/DefaultCollection/project/_ssh/repo
-  const vsOldSshMatch = normalized.match(/^ssh:\/\/git@vs-ssh\.visualstudio\.com(?::\d+)?\/DefaultCollection\/([^/]+)\/_ssh\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (vsOldSshMatch) {
-    return {
-      remoteName: 'origin',
-      project: decodeURIComponent(vsOldSshMatch[1] ?? ''),
-      repo: decodeURIComponent(vsOldSshMatch[2] ?? ''),
-      remoteUrl,
-    }
-  }
-
-  return null
-}
-
-async function runLocal(cmd: string, args: string[], cwd: string): Promise<SpawnResult> {
+async function runLocal(cmd: string, args: string[], cwd: string) {
   const command = await resolveLocalCommand(cmd, args)
-
-  return new Promise((resolve) => {
-    const isWindows = process.platform === 'win32'
-    const proc = isWindows && command.shell
-      ? spawn([command.cmd, ...command.args.map(winQuote)].join(' '), [], {
-        cwd,
-        // On Windows, global CLIs are often .cmd shims and need shell resolution.
-        shell: true,
-        env: augmentWindowsPath(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      : spawn(command.cmd, command.args, {
-        cwd,
-        shell: false,
-        env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-
-    let stdout = ''
-    let stderr = ''
-
-    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8') })
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
-
-    proc.on('close', (code) => {
-      resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code })
-    })
-
-    proc.on('error', (err) => {
-      resolve({ stdout: '', stderr: err.message, code: null })
-    })
-  })
+  return createRunner({}).run({ binary: command.cmd, args: command.args, workDir: cwd })
 }
 
 async function resolveLocalCommand(cmd: string, args: string[]): Promise<LocalCommand> {
-  if (process.platform !== 'win32') return { cmd, args, shell: false }
+  if (process.platform !== 'win32') return { cmd, args }
 
-  if (cmd !== 'azdevops') return { cmd, args, shell: true }
+  if (cmd !== 'azdevops') return { cmd, args }
 
   const direct = await resolveWindowsAzDevOpsNodeCommand(args)
   if (direct) return direct
 
-  return { cmd, args, shell: true }
+  return { cmd, args }
 }
 
 async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalCommand | null> {
   try {
-    const { stdout } = await execFileAsync('where.exe', ['azdevops.cmd'], { env: augmentWindowsPath() })
-    const cmdPath = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
+    const result = await createRunner({}).run({
+      binary: 'where.exe',
+      args: ['azdevops.cmd'],
+      workDir: process.cwd(),
+    })
+    if (result.exitCode !== 0) return null
+    const cmdPath = result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
     if (!cmdPath) return null
 
     const baseDir = path.dirname(cmdPath)
@@ -283,7 +53,6 @@ async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalC
     return {
       cmd: existsSync(adjacentNode) ? adjacentNode : 'node',
       args: [scriptPath, ...args],
-      shell: false,
     }
   } catch {
     return null
@@ -291,29 +60,18 @@ async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalC
 }
 
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
-  if (ssh) return sshExec(ssh, repoPath, gitCmd)
-  if (wsl) return wslExec(wsl, repoPath, gitCmd)
-  const { stdout } = await execFileAsync('git', args, { cwd: repoPath, maxBuffer: 4 * 1024 * 1024 })
-  return stdout.trimEnd()
+  return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)
 }
 
 async function runAzDevOps(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  const quoted = args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ')
-
-  if (ssh) {
-    const output = await sshExec(ssh, repoPath, `azdevops ${quoted}`)
-    return output.trim()
-  }
-
-  if (wsl) {
-    const output = await wslExec(wsl, repoPath, `azdevops ${quoted}`)
-    return output.trim()
-  }
-
-  const cmd = 'azdevops'
-  const result = await runLocal(cmd, args, repoPath)
-  if (result.code !== 0) {
+  const result = ssh || wsl
+    ? await createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }).run({
+      binary: 'azdevops',
+      args,
+      workDir: repoPath,
+    })
+    : await runLocal('azdevops', args, repoPath)
+  if (result.exitCode !== 0) {
     if (/ENOENT|EINVAL|not found|is not recognized/i.test(result.stderr)) {
       throw new Error('azdevops CLI not found. Install and configure it first: azdevops setup --org <org> --token <pat> --project <project>')
     }
@@ -322,7 +80,7 @@ async function runAzDevOps(repoPath: string, args: string[], ssh?: SshConfig | n
     }
     throw new Error(result.stderr || 'Failed to execute azdevops CLI')
   }
-  return result.stdout
+  return result.stdout.trim()
 }
 
 async function resolveRepoContext(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<AzureRepoContext> {

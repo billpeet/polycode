@@ -16,7 +16,22 @@ export interface SpawnCommand {
   keepStdinOpen?: boolean
 }
 
+export interface RunCommand extends SpawnCommand {
+  /** Kill the process and return a timed-out result after this duration. */
+  timeoutMs?: number
+  /** Stop collecting and kill the process if stdout + stderr exceed this size. */
+  maxOutputBytes?: number
+}
+
+export interface RunResult {
+  stdout: string
+  stderr: string
+  exitCode: number | null
+  timedOut: boolean
+}
+
 export interface Runner {
   readonly type: 'local' | 'wsl' | 'ssh'
   spawn(cmd: SpawnCommand): ChildProcess
+  run(cmd: RunCommand): Promise<RunResult>
 }

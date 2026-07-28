@@ -1,12 +1,17 @@
 import { spawn, ChildProcess } from 'child_process'
 import { SshConfig } from '../../../shared/types'
-import { Runner, SpawnCommand } from './types'
+import { Runner, RunCommand, RunResult, SpawnCommand } from './types'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from './utils'
+import { collectProcess } from './collect'
 
 export class SshRunner implements Runner {
   readonly type = 'ssh' as const
 
   constructor(private readonly ssh: SshConfig) {}
+
+  run(cmd: RunCommand): Promise<RunResult> {
+    return collectProcess(this.spawn(cmd), cmd)
+  }
 
   spawn(cmd: SpawnCommand): ChildProcess {
     const { binary, args, workDir, preamble, stdinContent, keepStdinOpen } = cmd

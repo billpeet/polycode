@@ -2,7 +2,6 @@
  * Project and location provisioning logic shared by the local IPC handlers
  * and the remote-control RPC surface (extracted from ipc/handlers.ts).
  */
-import { spawn } from 'child_process'
 import { existsSync, mkdirSync, rmSync } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join } from 'path'
@@ -19,6 +18,8 @@ import {
   listCommands,
 } from './db/queries'
 import { gitInit, getRemoteUrl } from './git'
+import { createRunner } from './driver/runner'
+import { runGit as executeGit } from './git-runner'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
@@ -44,31 +45,10 @@ export function suggestUniquePath(baseDir: string, name: string): string {
 }
 
 /** Run `git clone <gitUrl> <clonePath>`, creating the parent directory first. */
-export function cloneRepo(gitUrl: string, clonePath: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    try {
-      mkdirSync(join(clonePath, '..'), { recursive: true })
-    } catch {
-      // parent may already exist
-    }
-
-    const proc = spawn('git', ['clone', gitUrl, clonePath], {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stderr = ''
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-
-    proc.on('close', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(stderr.trim() || `git clone exited with code ${code}`))
-    })
-
-    proc.on('error', (err) => {
-      reject(new Error(`Failed to run git: ${err.message}`))
-    })
-  })
+export async function cloneRepo(gitUrl: string, clonePath: string): Promise<void> {
+  const parentDir = join(clonePath, '..')
+  mkdirSync(parentDir, { recursive: true })
+  await executeGit(createRunner({}), parentDir, ['clone', gitUrl, clonePath])
 }
 
 function sanitizeWorktreeSegment(value: string): string {
@@ -77,25 +57,7 @@ function sanitizeWorktreeSegment(value: string): string {
 }
 
 function runGit(args: string[], cwd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const proc = spawn('git', args, {
-      cwd,
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let stdout = ''
-    let stderr = ''
-    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-    proc.on('close', (code) => {
-      if (code === 0) {
-        resolve(stdout)
-        return
-      }
-      reject(new Error(stderr.trim() || `git exited with code ${code}`))
-    })
-    proc.on('error', (err) => reject(new Error(`Failed to run git: ${err.message}`)))
-  })
+  return executeGit(createRunner({}), cwd, args)
 }
 
 async function resolveWorktreeBaseRef(repoPath: string): Promise<string> {

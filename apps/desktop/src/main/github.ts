@@ -1,15 +1,12 @@
-import { execFile, spawn } from 'child_process'
-import { promisify } from 'util'
 import { promises as fsPromises } from 'fs'
 import { tmpdir } from 'os'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
 import { GitHubPullRequest, SshConfig, WslConfig } from '../shared/types'
-import { augmentWindowsPath, winQuote } from './driver/runner'
-import { sshExec } from './ssh'
-import { wslExec } from './wsl'
-
-const execFileAsync = promisify(execFile)
+import { createRunner } from './driver/runner'
+import { runGit } from './git-runner'
+import { mapGitHubPr as mapPr, parseGitHubRemote } from './forge-parsers'
+import type { GitHubPrInput as GhPullRequest } from './forge-parsers'
 
 interface GitHubRepoContext {
   remoteName: string
@@ -17,121 +14,20 @@ interface GitHubRepoContext {
   repo: string
 }
 
-interface GhAuthor {
-  login?: string
-  name?: string
-}
-
-interface GhPullRequest {
-  number?: number
-  title?: string
-  state?: string
-  headRefName?: string
-  baseRefName?: string
-  author?: GhAuthor
-  url?: string
-  createdAt?: string
-}
-
-interface SpawnResult {
-  stdout: string
-  stderr: string
-  code: number | null
-}
-
-function mapPr(pr: GhPullRequest): GitHubPullRequest {
-  const statusRaw = pr.state ?? 'UNKNOWN'
-  return {
-    id: pr.number ?? 0,
-    title: pr.title ?? '(untitled)',
-    status: statusRaw.toLowerCase(),
-    sourceBranch: pr.headRefName ?? '',
-    targetBranch: pr.baseRefName ?? '',
-    authorName: pr.author?.name ?? pr.author?.login ?? 'Unknown',
-    url: pr.url ?? '',
-    creationDate: pr.createdAt ?? '',
-  }
-}
-
-function parseGitHubRemote(remoteUrl: string): Omit<GitHubRepoContext, 'remoteName'> | null {
-  const normalized = remoteUrl.replace(/\.git$/i, '')
-
-  const https = normalized.match(/^https:\/\/(?:[^@/]+@)?github\.com\/([^/]+)\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (https) {
-    return {
-      owner: decodeURIComponent(https[1] ?? ''),
-      repo: decodeURIComponent(https[2] ?? ''),
-    }
-  }
-
-  const ssh = normalized.match(/^git@github\.com:([^/]+)\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (ssh) {
-    return {
-      owner: decodeURIComponent(ssh[1] ?? ''),
-      repo: decodeURIComponent(ssh[2] ?? ''),
-    }
-  }
-
-  const sshUrl = normalized.match(/^ssh:\/\/git@github\.com\/([^/]+)\/([^/?#]+)(?:[/?#].*)?$/i)
-  if (sshUrl) {
-    return {
-      owner: decodeURIComponent(sshUrl[1] ?? ''),
-      repo: decodeURIComponent(sshUrl[2] ?? ''),
-    }
-  }
-
-  return null
-}
-
-async function runLocal(cmd: string, args: string[], cwd: string): Promise<SpawnResult> {
-  return new Promise((resolve) => {
-    const isWindows = process.platform === 'win32'
-    const proc = isWindows
-      ? spawn([cmd, ...args.map(winQuote)].join(' '), [], {
-        cwd,
-        shell: true,
-        env: augmentWindowsPath(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-      : spawn(cmd, args, {
-        cwd,
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-
-    let stdout = ''
-    let stderr = ''
-
-    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf8') })
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString('utf8') })
-
-    proc.on('close', (code) => resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code }))
-    proc.on('error', (err) => resolve({ stdout: '', stderr: err.message, code: null }))
-  })
-}
-
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
-  if (ssh) return sshExec(ssh, repoPath, gitCmd)
-  if (wsl) return wslExec(wsl, repoPath, gitCmd)
-  const { stdout } = await execFileAsync('git', args, { cwd: repoPath, maxBuffer: 4 * 1024 * 1024 })
-  return stdout.trimEnd()
+  return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)
 }
 
 async function runGh(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  const quoted = args.map((a) => `'${a.replace(/'/g, "'\\''")}'`).join(' ')
-
-  if (ssh) return (await sshExec(ssh, repoPath, `gh ${quoted}`)).trim()
-  if (wsl) return (await wslExec(wsl, repoPath, `gh ${quoted}`)).trim()
-
-  const result = await runLocal('gh', args, repoPath)
-  if (result.code !== 0) {
+  const runner = createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined })
+  const result = await runner.run({ binary: 'gh', args, workDir: repoPath })
+  if (result.exitCode !== 0) {
     if (/ENOENT|EINVAL|not found|is not recognized/i.test(result.stderr)) {
       throw new Error('gh CLI not found. Install and authenticate it first (gh auth login).')
     }
     throw new Error(result.stderr || 'Failed to execute gh CLI')
   }
-  return result.stdout
+  return result.stdout.trim()
 }
 
 async function resolveRepoContext(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitHubRepoContext> {
