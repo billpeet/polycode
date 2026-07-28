@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Alert,
   Animated,
@@ -88,8 +88,11 @@ function ArchivedThreadsModal(props: { projectId: string | null; onClose: () => 
   }, [projectId, listArchived])
 
   useEffect(() => {
-    setArchived([])
-    reload()
+    const timeoutId = setTimeout(() => {
+      setArchived([])
+      reload()
+    }, 0)
+    return () => clearTimeout(timeoutId)
   }, [reload])
 
   return (
@@ -281,14 +284,17 @@ export function Sidebar() {
   const [projectAction, setProjectAction] = useState<Project | null>(null)
   const [worktreeTarget, setWorktreeTarget] = useState<{ projectId: string; parentLocationId: string } | null>(null)
 
-  const translateX = useRef(new Animated.Value(-SIDEBAR_WIDTH)).current
+  const [translateX] = useState(() => new Animated.Value(-SIDEBAR_WIDTH))
   const [rendered, setRendered] = useState(open)
 
   useEffect(() => {
     if (open) {
-      setRendered(true)
-      void fetchProjects()
-      Animated.timing(translateX, { toValue: 0, duration: 200, useNativeDriver: true }).start()
+      const timeoutId = setTimeout(() => {
+        setRendered(true)
+        void fetchProjects()
+        Animated.timing(translateX, { toValue: 0, duration: 200, useNativeDriver: true }).start()
+      }, 0)
+      return () => clearTimeout(timeoutId)
     } else {
       Animated.timing(translateX, { toValue: -SIDEBAR_WIDTH, duration: 180, useNativeDriver: true }).start(
         ({ finished }) => {

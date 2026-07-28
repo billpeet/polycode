@@ -88,7 +88,9 @@ export function GitPanel(props: { repoPath: string | null; visible: boolean; onC
   }, [repoPath])
 
   useEffect(() => {
-    if (visible) void refresh()
+    if (!visible) return
+    const timeoutId = setTimeout(() => void refresh(), 0)
+    return () => clearTimeout(timeoutId)
   }, [visible, refresh])
 
   const run = useCallback(

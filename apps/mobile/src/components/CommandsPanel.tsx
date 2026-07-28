@@ -2,7 +2,7 @@
  * Project commands panel: per-location start/stop/restart with live status
  * dots, detected ports, and a live-streaming log viewer (SSE command:log).
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   Alert,
@@ -101,12 +101,14 @@ export function CommandsPanel(props: { projectId: string | null; onClose: () => 
   // Load commands + locations when opened.
   useEffect(() => {
     if (!projectId) return
-    setViewingLogs(null)
-    setStatusByCommand({})
-    setPortsByCommand({})
     const conn = useHostsStore.getState().activeConnection()
     if (!conn) return
-    setLoading(true)
+    queueMicrotask(() => {
+      setViewingLogs(null)
+      setStatusByCommand({})
+      setPortsByCommand({})
+      setLoading(true)
+    })
     Promise.all([rpc(conn, 'commands:list', projectId), fetchLocations(projectId)])
       .then(([list, locs]) => {
         setCommands(list)

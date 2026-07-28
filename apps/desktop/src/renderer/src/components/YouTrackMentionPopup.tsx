@@ -31,12 +31,14 @@ export default function YouTrackMentionPopup({ servers, query, onSelect, onClose
     if (searchTimer.current) clearTimeout(searchTimer.current)
 
     if (!query) {
-      setResults([])
-      setLoading(false)
+      queueMicrotask(() => {
+        setResults([])
+        setLoading(false)
+      })
       return
     }
 
-    setLoading(true)
+    queueMicrotask(() => setLoading(true))
 
     searchTimer.current = setTimeout(async () => {
       try {
@@ -62,16 +64,13 @@ export default function YouTrackMentionPopup({ servers, query, onSelect, onClose
     }
   }, [query, servers])
 
-  // Reset selection when results change
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [results])
+  const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(results.length - 1, 0))
 
   // Scroll selected item into view
   useEffect(() => {
-    const el = itemRefs.current.get(selectedIndex)
+    const el = itemRefs.current.get(effectiveSelectedIndex)
     if (el) el.scrollIntoView({ block: 'nearest' })
-  }, [selectedIndex])
+  }, [effectiveSelectedIndex])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.key === 'ArrowDown') {
@@ -85,15 +84,15 @@ export default function YouTrackMentionPopup({ servers, query, onSelect, onClose
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault()
       e.stopPropagation()
-      if (results[selectedIndex]) {
-        onSelect(results[selectedIndex].idReadable)
+      if (results[effectiveSelectedIndex]) {
+        onSelect(results[effectiveSelectedIndex].idReadable)
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       onClose()
     }
-  }, [results, selectedIndex, onSelect, onClose])
+  }, [results, effectiveSelectedIndex, onSelect, onClose])
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown, true)
@@ -146,7 +145,7 @@ export default function YouTrackMentionPopup({ servers, query, onSelect, onClose
         </div>
       ) : (
         results.map((issue, index) => {
-          const isSelected = index === selectedIndex
+          const isSelected = index === effectiveSelectedIndex
           return (
             <div
               key={issue.id}

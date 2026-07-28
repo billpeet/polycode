@@ -31,7 +31,7 @@ interface InteractionsState {
   clear: (threadId: string) => void
 }
 
-export const useInteractionsStore = create<InteractionsState>((set, get) => ({
+export const useInteractionsStore = create<InteractionsState>((set) => ({
   permissionsByThread: {},
   questionsByThread: {},
 

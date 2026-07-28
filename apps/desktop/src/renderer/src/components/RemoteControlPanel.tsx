@@ -64,10 +64,7 @@ function PairingQrSection({
   }, [show, isLoopback])
 
   useEffect(() => {
-    if (!show || isLoopback || !pairingIp || !server.token) {
-      setQrDataUrl(null)
-      return
-    }
+    if (!show || isLoopback || !pairingIp || !server.token) return
     const params = new URLSearchParams()
     params.set('v', '1')
     params.set('url', `http://${pairingIp}:${server.port}`)
@@ -84,6 +81,7 @@ function PairingQrSection({
       cancelled = true
     }
   }, [show, isLoopback, pairingIp, server.port, server.token, info?.hostname])
+  const visibleQrDataUrl = show && !isLoopback && pairingIp && server.token ? qrDataUrl : null
 
   if (!server.enabled || !server.token) return null
 
@@ -133,9 +131,9 @@ function PairingQrSection({
               ))}
             </div>
           )}
-          {qrDataUrl && pairingIp ? (
+          {visibleQrDataUrl && pairingIp ? (
             <>
-              <img src={qrDataUrl} alt="PolyCode pairing QR code" className="rounded" width={220} height={220} />
+              <img src={visibleQrDataUrl} alt="PolyCode pairing QR code" className="rounded" width={220} height={220} />
               <p className="text-xs font-mono" style={{ color: 'var(--color-text-muted)' }}>
                 http://{pairingIp}:{server.port}
               </p>

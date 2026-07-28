@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   DEFAULT_CONTEXT_LIMIT,
   MODEL_CONTEXT_LIMITS,
-  PROVIDERS,
   getModelsForProvider,
   type Message,
   type OutputEvent,
@@ -58,10 +57,6 @@ function formatTokens(count: number): string {
 function modelLabel(provider: string, model: string): string {
   const options = getModelsForProvider(provider as Provider)
   return options.find((option) => option.id === model)?.label ?? model
-}
-
-function providerLabel(provider: string): string {
-  return PROVIDERS.find((p) => p.id === provider)?.label ?? provider
 }
 
 export function ChatView(props: { threadId: string; projectId: string; onOpenSidebar: () => void }) {

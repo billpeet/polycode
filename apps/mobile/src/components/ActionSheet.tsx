@@ -2,7 +2,7 @@
  * Bottom-sheet action menu. Android's Alert.alert silently renders at most
  * three buttons, so any menu with more options must use this instead.
  */
-import { Modal, Pressable, StyleSheet, Text, View } from 'react-native'
+import { Modal, Pressable, StyleSheet, Text } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { colors } from '@/theme/colors'
 

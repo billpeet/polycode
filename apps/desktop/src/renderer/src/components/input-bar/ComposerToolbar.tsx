@@ -88,7 +88,6 @@ export default function ComposerToolbar({
     if (currentProvider !== 'claude-code') return
 
     let cancelled = false
-    setLiveClaudeModels([])
     window.api.invoke('models:claudeAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveClaudeModels(models)
@@ -104,7 +103,6 @@ export default function ComposerToolbar({
     if (currentProvider !== 'codex') return
 
     let cancelled = false
-    setLiveCodexModels([])
     window.api.invoke('models:codexAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveCodexModels(models)
@@ -120,7 +118,6 @@ export default function ComposerToolbar({
     if (currentProvider !== 'opencode') return
 
     let cancelled = false
-    setLiveOpenCodeModels([])
     window.api.invoke('models:opencodeAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveOpenCodeModels(models)
@@ -136,7 +133,6 @@ export default function ComposerToolbar({
     if (currentProvider !== 'pi') return
 
     let cancelled = false
-    setLivePiModels([])
     window.api.invoke('models:piAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLivePiModels(models)
@@ -152,7 +148,6 @@ export default function ComposerToolbar({
     if (currentProvider !== 'cursor') return
 
     let cancelled = false
-    setLiveCursorModels([])
     window.api.invoke('models:cursorAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveCursorModels(models)

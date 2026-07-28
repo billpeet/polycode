@@ -20,7 +20,6 @@ function langFromPath(filePath: string | undefined): string | undefined {
   return ext || undefined
 }
 
-const EMPTY_FILE: FileContents = { name: '', contents: '' }
 
 export default function EditDiffView({ oldString, newString, filePath, toolName }: Props) {
   const lang = langFromPath(filePath)

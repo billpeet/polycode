@@ -49,7 +49,7 @@ function isProvider(value: string): value is Provider {
   return PROVIDERS.some((p) => p.id === value)
 }
 
-export function ThreadSettingsSheet(props: {
+function ThreadSettingsSheetContent(props: {
   thread: Thread
   visible: boolean
   onClose: () => void
@@ -60,24 +60,23 @@ export function ThreadSettingsSheet(props: {
   const { thread, visible, onClose } = props
   const insets = useSafeAreaInsets()
   const [provider, setProvider] = useState<Provider>(isProvider(thread.provider) ? thread.provider : 'claude-code')
-  const [models, setModels] = useState<ModelOption[]>([])
+  const [liveModels, setLiveModels] = useState<{ provider: Provider; models: ModelOption[] } | null>(null)
+  const models: ModelOption[] =
+    liveModels?.provider === provider ? liveModels.models : [...getModelsForProvider(provider)]
   const favourites = useFavouritesStore((s) => s.favourites)
   const addFavourite = useFavouritesStore((s) => s.add)
   const removeFavourite = useFavouritesStore((s) => s.removeAt)
 
   useEffect(() => {
-    if (visible) setProvider(isProvider(thread.provider) ? thread.provider : 'claude-code')
-  }, [visible, thread.provider])
-
-  useEffect(() => {
     if (!visible) return
-    setModels([...getModelsForProvider(provider)])
     const connection = useHostsStore.getState().activeConnection()
     if (!connection) return
     let cancelled = false
     rpc(connection, MODEL_CHANNEL_BY_PROVIDER[provider], thread.id)
       .then((available) => {
-        if (!cancelled && Array.isArray(available) && available.length > 0) setModels(available)
+        if (!cancelled && Array.isArray(available) && available.length > 0) {
+          setLiveModels({ provider, models: available })
+        }
       })
       .catch(() => undefined)
     return () => {
@@ -201,6 +200,15 @@ export function ThreadSettingsSheet(props: {
         </Pressable>
       </Pressable>
     </Modal>
+  )
+}
+
+export function ThreadSettingsSheet(props: Parameters<typeof ThreadSettingsSheetContent>[0]) {
+  return (
+    <ThreadSettingsSheetContent
+      key={`${props.thread.id}:${props.visible ? 'open' : 'closed'}`}
+      {...props}
+    />
   )
 }
 

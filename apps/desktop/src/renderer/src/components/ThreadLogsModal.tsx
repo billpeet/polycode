@@ -140,7 +140,10 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => void load(), 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [load])
 
   const filtered = filter.trim()
     ? entries.filter((e) => {

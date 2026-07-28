@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Alert, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { RemoteConnectionStatus } from '@polycode/shared'
 import { testConnection, normalizeBaseUrl } from '@/api/client'
@@ -12,19 +12,12 @@ export default function NewHostScreen() {
   const params = useLocalSearchParams<{ url?: string; token?: string; name?: string }>()
   const addHost = useHostsStore((s) => s.addHost)
 
-  const [label, setLabel] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [token, setToken] = useState('')
+  const [label, setLabel] = useState(() => params.name ?? '')
+  const [baseUrl, setBaseUrl] = useState(() => params.url ?? '')
+  const [token, setToken] = useState(() => params.token ?? '')
   const [testing, setTesting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [testResult, setTestResult] = useState<RemoteConnectionStatus | null>(null)
-
-  // Prefill from QR scan / deep link params.
-  useEffect(() => {
-    if (params.url) setBaseUrl(params.url)
-    if (params.token) setToken(params.token)
-    if (params.name) setLabel(params.name)
-  }, [params.url, params.token, params.name])
 
   const runTest = async () => {
     setTesting(true)

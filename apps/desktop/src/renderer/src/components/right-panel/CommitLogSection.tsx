@@ -104,9 +104,12 @@ export function CommitLogSection({
   // Initial fetch on first expand, plus re-fetch when the section is already open and refreshKey changes.
   useEffect(() => {
     if (collapsed) return
-    void fetchCommits()
-    // Collapse any open commit so stale file lists don't leak across refreshes.
-    setExpandedSha(null)
+    const timeoutId = window.setTimeout(() => {
+      void fetchCommits()
+      // Collapse any open commit so stale file lists don't leak across refreshes.
+      setExpandedSha(null)
+    }, 0)
+    return () => window.clearTimeout(timeoutId)
   }, [collapsed, refreshKey, fetchCommits])
 
   const toggleCommit = useCallback(async (sha: string) => {

@@ -55,14 +55,6 @@ function normalizeBranchName(branch: string, remoteName: string): string {
     .replace(new RegExp(`^${remoteName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/`), '')
 }
 
-function toHeadRef(branch: string, remoteName: string): string {
-  const normalized = normalizeBranchName(branch, remoteName)
-  if (!normalized) {
-    throw new Error('Branch name is empty')
-  }
-  return `refs/heads/${normalized}`
-}
-
 function buildWebUrl(remoteUrl: string, prId: number): string {
   const normalized = remoteUrl.replace(/\.git$/i, '').replace(/\/+$/, '')
 

@@ -21,9 +21,12 @@ export default function BackgroundTerminals({ threadId }: { threadId: string }) 
 
   useEffect(() => {
     if (!open) return
-    void refresh()
+    const initialTimer = window.setTimeout(() => void refresh(), 0)
     const timer = window.setInterval(() => void refresh(), 5000)
-    return () => window.clearInterval(timer)
+    return () => {
+      window.clearTimeout(initialTimer)
+      window.clearInterval(timer)
+    }
   }, [open, refresh])
 
   async function terminate(processId: string): Promise<void> {

@@ -34,16 +34,14 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
     return fuse.search(query).slice(0, 12)
   }, [fuse, commands, query])
 
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [results])
+  const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(results.length - 1, 0))
 
   useEffect(() => {
-    const el = itemRefs.current.get(selectedIndex)
+    const el = itemRefs.current.get(effectiveSelectedIndex)
     if (el) {
       el.scrollIntoView({ block: 'nearest' })
     }
-  }, [selectedIndex])
+  }, [effectiveSelectedIndex])
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     // With no results the popup is invisible — don't swallow keys (e.g. Enter
@@ -60,15 +58,15 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault()
       e.stopPropagation()
-      if (results[selectedIndex]) {
-        onSelect(results[selectedIndex].item)
+      if (results[effectiveSelectedIndex]) {
+        onSelect(results[effectiveSelectedIndex].item)
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       onClose()
     }
-  }, [results, selectedIndex, onSelect, onClose])
+  }, [results, effectiveSelectedIndex, onSelect, onClose])
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown, true)
@@ -107,7 +105,7 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
       </div>
       {results.map((result, index) => {
         const cmd = result.item
-        const isSelected = index === selectedIndex
+        const isSelected = index === effectiveSelectedIndex
         const isGlobal = cmd.project_id === null
         const isSkill = cmd.kind === 'skill'
 

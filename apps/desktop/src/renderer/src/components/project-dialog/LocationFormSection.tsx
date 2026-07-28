@@ -36,11 +36,11 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
 
   useEffect(() => {
     if (!cloneMode || !gitUrl) {
-      setSuggestedPath('')
+      queueMicrotask(() => setSuggestedPath(''))
       return
     }
     const repoName = gitUrl.replace(/\.git$/, '').split('/').filter(Boolean).pop() ?? 'repo'
-    if (!cloneLabel) setCloneLabel(repoName)
+    if (!cloneLabel) queueMicrotask(() => setCloneLabel(repoName))
     window.api.invoke('locations:suggestPath', baseDir, repoName).then(setSuggestedPath).catch(() => {})
   }, [cloneMode, baseDir, gitUrl, cloneLabel])
 

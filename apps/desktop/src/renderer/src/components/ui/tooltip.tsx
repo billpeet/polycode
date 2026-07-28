@@ -1,4 +1,4 @@
-import { useState, useRef, useMemo, type ReactNode } from 'react'
+import { useState, useRef, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 
 interface TooltipProps {
@@ -10,10 +10,37 @@ interface TooltipProps {
 
 export function Tooltip({ content, side = 'right', contentClassName, children }: TooltipProps) {
   const [show, setShow] = useState(false)
+  const [tooltipStyle, setTooltipStyle] = useState<CSSProperties>()
   const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const anchorRef = useRef<HTMLDivElement | null>(null)
 
   function onEnter() {
+    const rect = anchorRef.current?.getBoundingClientRect()
+    if (!rect) return
+
+    if (side === 'right') {
+      setTooltipStyle({
+        position: 'fixed',
+        left: rect.right + 8,
+        top: rect.top + rect.height / 2,
+        transform: 'translateY(-50%)',
+      })
+    } else if (side === 'bottom') {
+      setTooltipStyle({
+        position: 'fixed',
+        left: rect.left + rect.width / 2,
+        top: rect.bottom + 8,
+        transform: 'translateX(-50%)',
+      })
+    } else {
+      setTooltipStyle({
+        position: 'fixed',
+        left: rect.left + rect.width / 2,
+        top: rect.top - 8,
+        transform: 'translate(-50%, -100%)',
+      })
+    }
+
     timeoutRef.current = setTimeout(() => setShow(true), 400)
   }
 
@@ -23,36 +50,6 @@ export function Tooltip({ content, side = 'right', contentClassName, children }:
     }
     setShow(false)
   }
-
-  const tooltipStyle = useMemo(() => {
-    const rect = anchorRef.current?.getBoundingClientRect()
-    if (!rect) return undefined
-
-    if (side === 'right') {
-      return {
-        position: 'fixed' as const,
-        left: rect.right + 8,
-        top: rect.top + rect.height / 2,
-        transform: 'translateY(-50%)',
-      }
-    }
-
-    if (side === 'bottom') {
-      return {
-        position: 'fixed' as const,
-        left: rect.left + rect.width / 2,
-        top: rect.bottom + 8,
-        transform: 'translateX(-50%)',
-      }
-    }
-
-    return {
-      position: 'fixed' as const,
-      left: rect.left + rect.width / 2,
-      top: rect.top - 8,
-      transform: 'translate(-50%, -100%)',
-    }
-  }, [side])
 
   return (
     <div ref={anchorRef} className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>

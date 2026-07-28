@@ -367,7 +367,11 @@ function shareContent(content: string): void {
 
 /** Bouncing-dots indicator shown while the agent is working (desktop parity). */
 const WorkingIndicator = memo(function WorkingIndicator() {
-  const dots = useRef([new Animated.Value(0), new Animated.Value(0), new Animated.Value(0)]).current
+  const [dots] = useState(() => [
+    new Animated.Value(0),
+    new Animated.Value(0),
+    new Animated.Value(0),
+  ])
 
   useEffect(() => {
     const animations = dots.map((dot, index) =>

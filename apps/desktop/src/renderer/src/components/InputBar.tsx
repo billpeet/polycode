@@ -49,7 +49,7 @@ interface PopupState extends ComposerTrigger {
   position: { top: number; left: number }
 }
 
-export default function InputBar({ threadId }: Props) {
+function InputBarContent({ threadId }: Props) {
   const [isFocused, setIsFocused] = useState(false)
   const [editor, setEditor] = useState<Editor | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -99,15 +99,11 @@ export default function InputBar({ threadId }: Props) {
 
   const [locationPathMissing, setLocationPathMissing] = useState(false)
 
-  useEffect(() => {
-    setSelectedSkills([])
-  }, [threadId])
-
   // Check if the thread's local location path exists
   useEffect(() => {
     if (isPendingThread) return
     if (!location || location.connection_type !== 'local') {
-      setLocationPathMissing(false)
+      queueMicrotask(() => setLocationPathMissing(false))
       return
     }
     window.api.invoke('locations:pathExists', location.path).then((exists) => {
@@ -190,11 +186,13 @@ export default function InputBar({ threadId }: Props) {
   // Elapsed timer while processing
   useEffect(() => {
     if (!isProcessing || !runStartedAt) {
-      setElapsedSeconds(0)
+      queueMicrotask(() => setElapsedSeconds(0))
       return
     }
     const nextElapsed = Math.floor((Date.now() - runStartedAt) / 1000)
-    setElapsedSeconds((prev) => (prev === nextElapsed ? prev : nextElapsed))
+    queueMicrotask(() => {
+      setElapsedSeconds((prev) => (prev === nextElapsed ? prev : nextElapsed))
+    })
     const id = setInterval(() => {
       const elapsed = Math.floor((Date.now() - runStartedAt) / 1000)
       setElapsedSeconds((prev) => (prev === elapsed ? prev : elapsed))
@@ -212,10 +210,12 @@ export default function InputBar({ threadId }: Props) {
         setGeneralComment('')
       })
     } else {
-      setQuestions([])
-      setSelectedAnswers({})
-      setQuestionComments({})
-      setGeneralComment('')
+      queueMicrotask(() => {
+        setQuestions([])
+        setSelectedAnswers({})
+        setQuestionComments({})
+        setGeneralComment('')
+      })
     }
   }, [isQuestionPending, threadId, getQuestions])
 
@@ -224,7 +224,7 @@ export default function InputBar({ threadId }: Props) {
     if (isPermissionPending) {
       getPermissions(threadId).then(setPermissions)
     } else {
-      setPermissions([])
+      queueMicrotask(() => setPermissions([]))
     }
   }, [isPermissionPending, threadId, getPermissions])
 
@@ -939,4 +939,8 @@ export default function InputBar({ threadId }: Props) {
       )}
     </div>
   )
+}
+
+export default function InputBar(props: Props) {
+  return <InputBarContent key={props.threadId} {...props} />
 }

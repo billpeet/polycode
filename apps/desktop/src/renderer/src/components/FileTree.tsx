@@ -81,7 +81,6 @@ function FileTreeItem({
   locationId: string | null
 }) {
   const expandedPaths = useFilesStore((s) => s.expandedPaths)
-  const loadingPaths = useFilesStore((s) => s.loadingPaths)
   const entriesByPath = useFilesStore((s) => s.entriesByPath)
   const toggleExpanded = useFilesStore((s) => s.toggleExpanded)
   const selectFile = useFilesStore((s) => s.selectFile)
@@ -91,7 +90,6 @@ function FileTreeItem({
   const [isHovered, setIsHovered] = useState(false)
 
   const isExpanded = expandedPaths.has(entry.path)
-  const isLoading = loadingPaths.has(entry.path)
   const isSelected = selectedFilePath === entry.path
   const children = entriesByPath[entry.path] ?? EMPTY_ENTRIES
 

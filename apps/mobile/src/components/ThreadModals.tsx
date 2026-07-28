@@ -1,25 +1,21 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Alert, Modal, Pressable, StyleSheet, Text, View } from 'react-native'
 import type { Thread } from '@polycode/shared'
 import { useThreadsStore } from '@/stores/threads'
 import { colors } from '@/theme/colors'
 import { Button, Field } from './ui'
 
-export function RenameThreadModal(props: {
-  target: { projectId: string; thread: Thread } | null
+function RenameThreadModalContent(props: {
+  target: { projectId: string; thread: Thread }
   onClose: () => void
 }) {
   const { target, onClose } = props
   const rename = useThreadsStore((s) => s.rename)
-  const [name, setName] = useState('')
+  const [name, setName] = useState(target.thread.name)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => {
-    if (target) setName(target.thread.name)
-  }, [target])
-
   const submit = async () => {
-    if (!target || !name.trim()) return
+    if (!name.trim()) return
     setSaving(true)
     try {
       await rename(target.projectId, target.thread.id, name.trim())
@@ -32,7 +28,7 @@ export function RenameThreadModal(props: {
   }
 
   return (
-    <Modal visible={target !== null} transparent animationType="fade" onRequestClose={onClose}>
+    <Modal visible transparent animationType="fade" onRequestClose={onClose}>
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={styles.card} onPress={() => undefined}>
           <Text style={styles.title}>Rename Thread</Text>
@@ -44,6 +40,20 @@ export function RenameThreadModal(props: {
         </Pressable>
       </Pressable>
     </Modal>
+  )
+}
+
+export function RenameThreadModal(props: {
+  target: { projectId: string; thread: Thread } | null
+  onClose: () => void
+}) {
+  if (!props.target) return null
+  return (
+    <RenameThreadModalContent
+      key={`${props.target.projectId}:${props.target.thread.id}`}
+      target={props.target}
+      onClose={props.onClose}
+    />
   )
 }
 
