@@ -1389,13 +1389,14 @@ function sanitizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 export function buildCodexEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
   const nextEnv = process.platform === 'win32' ? augmentWindowsPath(env) : { ...env }
   const homeDir = nextEnv.HOME ?? nextEnv.USERPROFILE ?? homedir()
+  const homePath = nextEnv.USERPROFILE && homeDir === nextEnv.USERPROFILE ? path.win32 : path
 
   if (!nextEnv.HOME && homeDir) nextEnv.HOME = homeDir
   if (process.platform === 'win32' && !nextEnv.USERPROFILE && homeDir) {
     nextEnv.USERPROFILE = homeDir
   }
   if (!nextEnv.CODEX_HOME && homeDir) {
-    nextEnv.CODEX_HOME = path.join(homeDir, '.codex')
+    nextEnv.CODEX_HOME = homePath.join(homeDir, '.codex')
   }
 
   return sanitizeEnv(nextEnv)
