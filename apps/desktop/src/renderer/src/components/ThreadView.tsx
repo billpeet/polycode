@@ -13,6 +13,7 @@ import AgentTabs from './AgentTabs'
 import MessageStream from './MessageStream'
 import InputBar from './InputBar'
 import { formatErrorDetails } from '../lib/errorDetails'
+import UiErrorBoundary from './UiErrorBoundary'
 
 interface Props {
   threadId: string
@@ -276,23 +277,29 @@ function ThreadViewContent({ threadId }: Props) {
 
   return (
     <div className="relative flex flex-1 flex-col h-full overflow-hidden">
-      <ThreadHeader threadId={threadId} />
-      {!isPendingThread && <SessionTabs threadId={threadId} />}
-      {!isPendingThread && (
-        <AgentTabs
+      <UiErrorBoundary context="Thread controls" resetKeys={[threadId, activeSessionId]}>
+        <ThreadHeader threadId={threadId} />
+        {!isPendingThread && <SessionTabs threadId={threadId} />}
+        {!isPendingThread && (
+          <AgentTabs
+            threadId={threadId}
+            sessionId={activeSessionId}
+            isolatedAgentKey={isolatedAgentKey}
+            onSelect={setIsolatedAgentKey}
+          />
+        )}
+      </UiErrorBoundary>
+      <UiErrorBoundary context="Transcript" resetKeys={[threadId, activeSessionId]}>
+        <MessageStream
           threadId={threadId}
           sessionId={activeSessionId}
-          isolatedAgentKey={isolatedAgentKey}
-          onSelect={setIsolatedAgentKey}
+          agentFilter={isolatedAgentKey}
+          onIsolateAgent={setIsolatedAgentKey}
         />
-      )}
-      <MessageStream
-        threadId={threadId}
-        sessionId={activeSessionId}
-        agentFilter={isolatedAgentKey}
-        onIsolateAgent={setIsolatedAgentKey}
-      />
-      <InputBar threadId={threadId} />
+      </UiErrorBoundary>
+      <UiErrorBoundary context="Message composer" resetKeys={[threadId, activeSessionId]}>
+        <InputBar threadId={threadId} />
+      </UiErrorBoundary>
     </div>
   )
 }
