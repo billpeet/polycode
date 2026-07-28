@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow } from './models'
+import { foldMessages } from '@polycode/shared'
 import { CodexPersonality, CodexReasoningSummary, Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -839,113 +840,11 @@ export function getOrCreateActiveSession(threadId: string): Session {
 
 // ── Messages ──────────────────────────────────────────────────────────────────
 
-function parseMessageMetadata(metadata: string | null): Record<string, unknown> | null {
-  if (!metadata) return null
-  try {
-    return JSON.parse(metadata) as Record<string, unknown>
-  } catch {
-    return null
-  }
-}
-
-const LEGACY_CODEX_REASONING_SUMMARY_MARKER = 'Reasoning summary updated.'
-
-function isCodexReasoningSummary(metadata: Record<string, unknown> | null): boolean {
-  return metadata?.source === 'codex_reasoning_summary'
-}
-
-function isSameCodexReasoningSummaryPart(
-  previous: Record<string, unknown> | null,
-  current: Record<string, unknown> | null,
-): boolean {
-  return previous?.item_id === current?.item_id && previous?.summary_index === current?.summary_index
-}
-
-export function compactStreamingMessages(messages: MessageRow[]): Message[] {
-  const compacted: MessageRow[] = []
-
-  for (const message of messages) {
-    const currentMetadata = parseMessageMetadata(message.metadata)
-    // Clean up structural markers persisted by older Polycode versions.
-    if (
-      message.content === LEGACY_CODEX_REASONING_SUMMARY_MARKER &&
-      isCodexReasoningSummary(currentMetadata)
-    ) {
-      continue
-    }
-
-    const previous = compacted[compacted.length - 1]
-    if (!previous || previous.role !== message.role) {
-      compacted.push({ ...message })
-      continue
-    }
-
-    const previousMetadata = parseMessageMetadata(previous.metadata)
-    const previousType = previousMetadata?.type
-    const currentType = currentMetadata?.type
-
-    if (!previousType && !currentType && message.role === 'assistant') {
-      previous.content += message.content
-      previous.created_at = message.created_at
-      continue
-    }
-
-    if (previousType === 'thinking' && currentType === 'thinking' && message.role === 'assistant') {
-      const isCodexSummaryPair =
-        isCodexReasoningSummary(previousMetadata) && isCodexReasoningSummary(currentMetadata)
-      const separator =
-        isCodexSummaryPair && !isSameCodexReasoningSummaryPart(previousMetadata, currentMetadata)
-          ? '\n\n'
-          : ''
-      previous.content += separator + message.content
-      if (isCodexSummaryPair) previous.metadata = message.metadata
-      previous.created_at = message.created_at
-      continue
-    }
-
-    if (previousType === 'tool_result' && currentType === 'tool_result') {
-      const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
-      const currentToolUseId = typeof currentMetadata?.tool_use_id === 'string' ? currentMetadata.tool_use_id : null
-      if (previousToolUseId && previousToolUseId === currentToolUseId) {
-        if (currentMetadata?.authoritative === true) {
-          previous.content = message.content
-          previous.metadata = message.metadata
-          previous.created_at = message.created_at
-          continue
-        }
-        previous.content = message.content.startsWith(previous.content)
-          ? message.content
-          : previous.content + message.content
-        previous.metadata = message.metadata
-        previous.created_at = message.created_at
-        continue
-      }
-    }
-
-    compacted.push({ ...message })
-  }
-
-  return compacted as Message[]
-}
-
-function shouldCompactMessagesForThread(threadId: string): boolean {
-  const provider = getThreadProvider(threadId)
-  return provider === 'codex' || provider === 'pi' || provider === 'cursor'
-}
-
-function shouldCompactMessagesForSession(sessionId: string): boolean {
-  const row = getDb()
-    .prepare('SELECT t.provider FROM sessions s JOIN threads t ON t.id = s.thread_id WHERE s.id = ?')
-    .get(sessionId) as { provider: string | null } | undefined
-  const provider = row?.provider ?? 'claude-code'
-  return provider === 'codex' || provider === 'pi' || provider === 'cursor'
-}
-
 export function listMessages(threadId: string): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC')
     .all(threadId) as MessageRow[]
-  return shouldCompactMessagesForThread(threadId) ? compactStreamingMessages(rows) : rows as Message[]
+  return foldMessages(rows as Message[])
 }
 
 export function insertMessage(
@@ -978,7 +877,7 @@ export function listMessagesBySession(sessionId: string): Message[] {
   const rows = getDb()
     .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC')
     .all(sessionId) as MessageRow[]
-  return shouldCompactMessagesForSession(sessionId) ? compactStreamingMessages(rows) : rows as Message[]
+  return foldMessages(rows as Message[])
 }
 
 /**

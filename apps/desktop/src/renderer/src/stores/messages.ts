@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { appendOrMergeMessage, eventRole } from '@polycode/shared'
+import { eventRole, foldMessages } from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
 
 interface MessageStore {
@@ -50,7 +50,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
     set((s) => ({
       messagesByThread: {
         ...s.messagesByThread,
-        [threadId]: appendOrMergeMessage(s.messagesByThread[threadId] ?? [], msg, event)
+        [threadId]: foldMessages([...(s.messagesByThread[threadId] ?? []), msg])
       }
     }))
   },
@@ -71,7 +71,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
     set((s) => ({
       messagesBySession: {
         ...s.messagesBySession,
-        [sessionId]: appendOrMergeMessage(s.messagesBySession[sessionId] ?? [], msg, event)
+        [sessionId]: foldMessages([...(s.messagesBySession[sessionId] ?? []), msg])
       }
     }))
   },
