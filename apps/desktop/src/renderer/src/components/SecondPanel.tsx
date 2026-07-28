@@ -275,15 +275,21 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
           height: currentTab === 'terminal' ? 'auto' : 0,
         }}
       >
-        {hasTerminal && currentLocationId && <TerminalContent threadId={threadId} locationId={currentLocationId} />}
+        {hasTerminal && currentLocationId && (
+          <PanelErrorBoundary context={`Terminal (${currentLocationId})`}>
+            <TerminalContent threadId={threadId} locationId={currentLocationId} />
+          </PanelErrorBoundary>
+        )}
       </div>
 
       {/* Command logs panel */}
       {currentTab === 'commands' && hasCommands && (
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <Assassin threadId={threadId} />
-          <CommandLogsContent />
-        </div>
+        <PanelErrorBoundary context={`Command logs (${currentLocationId ?? threadId})`}>
+          <div className="flex flex-col flex-1 overflow-hidden">
+            <Assassin threadId={threadId} />
+            <CommandLogsContent />
+          </div>
+        </PanelErrorBoundary>
       )}
     </div>
   )

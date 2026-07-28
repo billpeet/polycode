@@ -1,5 +1,4 @@
 import { Profiler, useEffect } from 'react'
-import { ErrorBoundary } from '@sentry/react'
 import Sidebar from './components/Sidebar'
 import ThreadView from './components/ThreadView'
 import RightPanel from './components/RightPanel'
@@ -23,6 +22,7 @@ import { useToastStore } from './stores/toast'
 import './stores/plans' // Initialize plan file watcher listener
 import { reportReactCommit } from './lib/perf'
 import { getCurrentLocationId } from './lib/currentLocation'
+import UiErrorBoundary from './components/UiErrorBoundary'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
@@ -316,38 +316,44 @@ export default function App() {
   }, [byProject, expandProject, fetchLocations, fetchPools, selectedProjectId, selectedThreadId, selectProject])
 
   return (
-    <ErrorBoundary
-      onError={(error, componentStack) => {
-        console.error('[renderer] Unhandled React error reached app boundary', error, componentStack)
-      }}
-      fallback={
-        <div className="flex h-full w-full items-center justify-center" style={{ color: 'var(--color-text-muted)' }}>
-          Something went wrong. Please restart PolyCode.
-        </div>
-      }
+    <UiErrorBoundary
+      context="PolyCode"
+      variant="root"
+      resetKeys={[selectedThreadId]}
+      onEscape={() => useThreadStore.getState().select(null)}
     >
       <SidebarProvider>
       <div className="flex h-full w-full flex-col overflow-hidden" style={{ background: 'var(--color-bg)' }}>
-        <TitleBar />
-        <UpdateBanner />
+        <UiErrorBoundary context="Application header">
+          <TitleBar />
+          <UpdateBanner />
+        </UiErrorBoundary>
         <div className="flex flex-1 overflow-hidden">
           <Profiler id="Sidebar" onRender={reportReactCommit}>
-            <Sidebar />
+            <UiErrorBoundary context="Sidebar" resetKeys={[selectedProjectId]}>
+              <Sidebar />
+            </UiErrorBoundary>
           </Profiler>
           <main className="flex flex-1 overflow-hidden">
             {selectedThreadId ? (
               <>
                 <div className="flex flex-1 flex-col overflow-hidden">
                   <Profiler id="ThreadView" onRender={reportReactCommit}>
-                    <ThreadView threadId={selectedThreadId} />
+                    <UiErrorBoundary context="Thread workspace" resetKeys={[selectedThreadId]}>
+                      <ThreadView threadId={selectedThreadId} />
+                    </UiErrorBoundary>
                   </Profiler>
                 </div>
                 <Profiler id="SecondPanel" onRender={reportReactCommit}>
-                  <SecondPanel threadId={selectedThreadId} />
+                  <UiErrorBoundary context="Auxiliary panel" resetKeys={[selectedThreadId]}>
+                    <SecondPanel threadId={selectedThreadId} />
+                  </UiErrorBoundary>
                 </Profiler>
                 {isTodoPanelOpen && (
                   <Profiler id="RightPanel" onRender={reportReactCommit}>
-                    <RightPanel threadId={selectedThreadId} />
+                    <UiErrorBoundary context="Right panel" resetKeys={[selectedThreadId]}>
+                      <RightPanel threadId={selectedThreadId} />
+                    </UiErrorBoundary>
                   </Profiler>
                 )}
               </>
@@ -366,8 +372,10 @@ export default function App() {
           </main>
         </div>
       </div>
-      <ToastStack />
+      <UiErrorBoundary context="Notifications">
+        <ToastStack />
+      </UiErrorBoundary>
       </SidebarProvider>
-    </ErrorBoundary>
+    </UiErrorBoundary>
   )
 }
