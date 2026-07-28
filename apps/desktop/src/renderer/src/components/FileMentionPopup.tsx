@@ -51,7 +51,9 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
   // Load all files on mount
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    queueMicrotask(() => {
+      if (!cancelled) setLoading(true)
+    })
 
     window.api.invoke('files:searchList', projectPath).then((result) => {
       if (!cancelled) {
@@ -90,18 +92,15 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
     return fuse.search(query).slice(0, 10)
   }, [fuse, files, query])
 
-  // Reset selection when results change
-  useEffect(() => {
-    setSelectedIndex(0)
-  }, [results])
+  const effectiveSelectedIndex = Math.min(selectedIndex, Math.max(results.length - 1, 0))
 
   // Scroll selected item into view
   useEffect(() => {
-    const el = itemRefs.current.get(selectedIndex)
+    const el = itemRefs.current.get(effectiveSelectedIndex)
     if (el) {
       el.scrollIntoView({ block: 'nearest' })
     }
-  }, [selectedIndex])
+  }, [effectiveSelectedIndex])
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
@@ -116,15 +115,15 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
     } else if (e.key === 'Enter' || e.key === 'Tab') {
       e.preventDefault()
       e.stopPropagation()
-      if (results[selectedIndex]) {
-        onSelect(results[selectedIndex].item)
+      if (results[effectiveSelectedIndex]) {
+        onSelect(results[effectiveSelectedIndex].item)
       }
     } else if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
       onClose()
     }
-  }, [results, selectedIndex, onSelect, onClose])
+  }, [results, effectiveSelectedIndex, onSelect, onClose])
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown, true)
@@ -166,7 +165,7 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
       ) : (
         results.map((result, index) => {
           const file = result.item
-          const isSelected = index === selectedIndex
+          const isSelected = index === effectiveSelectedIndex
 
           return (
             <div

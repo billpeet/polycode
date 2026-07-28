@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import type { PermissionRequest, Question, QuestionAnswerValue } from '@polycode/shared'
 import { Button, Chip } from './ui'
@@ -63,7 +63,7 @@ export function PlanBanner(props: {
 
 // ── Questions (AskUserQuestion) ──────────────────────────────────────────────
 
-export function QuestionBanner(props: {
+function QuestionBannerContent(props: {
   questions: Question[]
   onSubmit: (
     answers: Record<string, QuestionAnswerValue>,
@@ -74,15 +74,6 @@ export function QuestionBanner(props: {
   const [answers, setAnswers] = useState<Record<string, QuestionAnswerValue>>({})
   const [comments, setComments] = useState<Record<string, string>>({})
   const [generalComment, setGeneralComment] = useState('')
-
-  // Reset local state when a new question batch arrives.
-  useEffect(() => {
-    setAnswers({})
-    setComments({})
-    setGeneralComment('')
-  }, [props.questions])
-
-  if (props.questions.length === 0) return null
 
   const toggleOption = (question: Question, label: string) => {
     const key = question.id ?? question.question
@@ -145,6 +136,19 @@ export function QuestionBanner(props: {
       <Button small title="Submit Answers" onPress={() => props.onSubmit(answers, comments, generalComment)} />
     </View>
   )
+}
+
+export function QuestionBanner(props: {
+  questions: Question[]
+  onSubmit: (
+    answers: Record<string, QuestionAnswerValue>,
+    questionComments: Record<string, string>,
+    generalComment: string,
+  ) => void
+}) {
+  if (props.questions.length === 0) return null
+  const batchKey = props.questions.map((question) => question.id ?? question.question).join('\u0000')
+  return <QuestionBannerContent key={batchKey} {...props} />
 }
 
 const styles = StyleSheet.create({

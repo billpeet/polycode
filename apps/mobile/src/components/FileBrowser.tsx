@@ -67,8 +67,11 @@ export function FileBrowser(props: { rootPath: string | null; visible: boolean; 
 
   useEffect(() => {
     if (visible && rootPath) {
-      setViewing(null)
-      void load(rootPath)
+      const timeoutId = setTimeout(() => {
+        setViewing(null)
+        void load(rootPath)
+      }, 0)
+      return () => clearTimeout(timeoutId)
     }
   }, [visible, rootPath, load])
 

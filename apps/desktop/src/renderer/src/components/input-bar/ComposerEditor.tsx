@@ -193,12 +193,14 @@ export default function ComposerEditor({
   placeholder,
   disabled,
 }: Props) {
-  // Keep all callbacks in refs so the editor (created once) always sees the
-  // latest closures without being recreated.
+  // TipTap creates the editor once, so its option callbacks must read the latest
+  // props without recreating the editor. Update that callback bridge after commit.
   const callbacksRef = useRef({ onChange, onSend, onTriggerChange, onPasteImages, onFocusChange, getKnownCommands })
-  callbacksRef.current = { onChange, onSend, onTriggerChange, onPasteImages, onFocusChange, getKnownCommands }
   const placeholderRef = useRef(placeholder)
-  placeholderRef.current = placeholder
+  useEffect(() => {
+    callbacksRef.current = { onChange, onSend, onTriggerChange, onPasteImages, onFocusChange, getKnownCommands }
+    placeholderRef.current = placeholder
+  })
   const editorRef = useRef<Editor | null>(null)
   const lastTriggerRef = useRef<string>('null')
 
@@ -223,6 +225,9 @@ export default function ComposerEditor({
       TableKit.configure({
         table: { resizable: false },
       }),
+      // These extension callbacks run from TipTap after render and intentionally
+      // read the latest committed props through refs.
+      // eslint-disable-next-line react-hooks/refs
       Placeholder.configure({
         placeholder: () => placeholderRef.current,
       }),
@@ -234,6 +239,7 @@ export default function ComposerEditor({
         breaks: true,
         transformPastedText: true,
       }),
+      // eslint-disable-next-line react-hooks/refs
       ComposerHighlight.configure({
         getKnownCommands: () => callbacksRef.current.getKnownCommands(),
       }),

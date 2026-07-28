@@ -99,7 +99,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
   const fetchGit = useGitStore((s) => s.fetch)
 
   const [target, setTarget] = useState(defaultTarget)
-  const [title, setTitle] = useState('')
+  const [title, setTitle] = useState(`Merge ${sourceBranch} into ${defaultTarget}`)
   const [titleEdited, setTitleEdited] = useState(false)
   const [description, setDescription] = useState('')
   const [newBranchName, setNewBranchName] = useState('')
@@ -144,7 +144,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
 
   // Default title tracks "Merge <source> into <target>" until the user edits it.
   useEffect(() => {
-    if (!titleEdited) setTitle(`Merge ${effectiveSource} into ${target}`)
+    if (!titleEdited) queueMicrotask(() => setTitle(`Merge ${effectiveSource} into ${target}`))
   }, [effectiveSource, target, titleEdited])
 
   // Load the branch list for the target dropdown.
@@ -174,7 +174,8 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
   }, [projectPath, target])
 
   useEffect(() => {
-    void loadDiff()
+    const timeoutId = window.setTimeout(() => void loadDiff(), 0)
+    return () => window.clearTimeout(timeoutId)
   }, [loadDiff])
 
   // Close on Escape.
@@ -192,8 +193,10 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
 
   // Reset scroll position/selection when the comparison reloads (e.g. target changed).
   useEffect(() => {
-    setActiveFile(0)
-    setCollapsedFiles(new Set())
+    queueMicrotask(() => {
+      setActiveFile(0)
+      setCollapsedFiles(new Set())
+    })
     if (diffScrollRef.current) diffScrollRef.current.scrollTop = 0
   }, [diff])
 
@@ -233,7 +236,9 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
   useEffect(() => {
     if (branchOptions.length === 0) return
     if (!branchOptions.includes(target)) {
-      setTarget(branchOptions.includes(defaultTarget) ? defaultTarget : branchOptions[0])
+      queueMicrotask(() => {
+        setTarget(branchOptions.includes(defaultTarget) ? defaultTarget : branchOptions[0])
+      })
     }
   }, [branchOptions, target, defaultTarget])
 

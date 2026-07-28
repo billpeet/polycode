@@ -78,34 +78,19 @@ function CodePreview({ content, language }: { content: string; language: string 
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
   useEffect(() => onReady(() => setShikiReady(true)), [])
 
-  const highlighted = useMemo(() => {
-    const startedAt = performance.now()
+  const tokenLines = useMemo(() => {
     const hl = getHighlighter()
-    if (!hl || !shikiReady) {
-      return { tokenLines: null as ThemedToken[][] | null, durationMs: performance.now() - startedAt }
-    }
+    if (!hl || !shikiReady) return null
     const loaded = hl.getLoadedLanguages()
     const lang: BundledLanguage | SpecialLanguage = loaded.includes(language as BundledLanguage)
       ? language as BundledLanguage
       : 'text'
     const { tokens } = hl.codeToTokens(content, { lang, theme: 'github-dark' })
-    return { tokenLines: tokens, durationMs: performance.now() - startedAt }
+    return tokens
   }, [content, language, shikiReady])
 
-  useEffect(() => {
-    reportPerf(
-      'file-preview:code-to-tokens',
-      highlighted.durationMs,
-      {
-        contentLength: content.length,
-        language,
-      },
-      { thresholdMs: 12, minIntervalMs: 1000 }
-    )
-  }, [content.length, highlighted.durationMs, language])
-
   const plainLines = useMemo(() => content.split('\n'), [content])
-  const lineCount = highlighted.tokenLines ? highlighted.tokenLines.length : plainLines.length
+  const lineCount = tokenLines ? tokenLines.length : plainLines.length
   const lineNumberWidth = String(lineCount).length
 
   return (
@@ -119,12 +104,12 @@ function CodePreview({ content, language }: { content: string; language: string 
     >
       <table style={{ borderCollapse: 'collapse', width: '100%' }}>
         <tbody>
-          {(highlighted.tokenLines ?? plainLines).map((line, i) => (
+          {(tokenLines ?? plainLines).map((line, i) => (
             <LineRow
               key={i}
               lineNumber={i + 1}
-              tokens={highlighted.tokenLines ? (line as ThemedToken[]) : null}
-              plainText={highlighted.tokenLines ? null : (line as string)}
+              tokens={tokenLines ? (line as ThemedToken[]) : null}
+              plainText={tokenLines ? null : (line as string)}
               lineNumberWidth={lineNumberWidth}
             />
           ))}
@@ -478,14 +463,10 @@ function PlainDiffPreview({
   )
 }
 
-function DiffPreview({ diff, filePath }: { diff: string; filePath?: string }) {
+function DiffPreviewContent({ diff, filePath }: { diff: string; filePath?: string }) {
   const [renderFullDiff, setRenderFullDiff] = useState(false)
   const lineCount = useMemo(() => diff.split('\n').length, [diff])
   const isLargeDiff = lineCount > LARGE_DIFF_LINE_THRESHOLD || diff.length > LARGE_DIFF_CHAR_THRESHOLD
-
-  useEffect(() => {
-    setRenderFullDiff(false)
-  }, [diff])
 
   useEffect(() => {
     reportPerf(
@@ -530,6 +511,10 @@ function DiffPreview({ diff, filePath }: { diff: string; filePath?: string }) {
       </WorkerPoolContextProvider>
     </div>
   )
+}
+
+function DiffPreview(props: { diff: string; filePath?: string }) {
+  return <DiffPreviewContent key={props.diff} {...props} />
 }
 
 // ─── DiffPane (inner content, no outer wrapper) ───────────────────────────────

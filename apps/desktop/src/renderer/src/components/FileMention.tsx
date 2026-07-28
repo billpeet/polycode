@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect } from 'react'
+import { ReactNode, useMemo, useState } from 'react'
 import { useFilesStore } from '../stores/files'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
@@ -123,29 +123,19 @@ export function FolderMention({ path, variant = 'message-assistant' }: FileMenti
  * Attachment mention - shows image previews or icons for other files
  */
 export function AttachmentMention({ path, variant = 'message-assistant' }: FileMentionProps) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null)
   const [isExpanded, setIsExpanded] = useState(false)
   const [imageError, setImageError] = useState(false)
   const ext = getExtension(path)
   const isImage = isImageExtension(ext)
   const isPdf = ext === 'pdf'
 
-  // For images, construct attachment:// URL
-  // Path format: .../polycode-attachments/threadId/filename
-  useEffect(() => {
-    if (!isImage) return
-
-    // Extract threadId and filename from path
+  const imageUrl = useMemo(() => {
+    if (!isImage) return null
     const normalizedPath = path.replace(/\\/g, '/')
     const match = normalizedPath.match(/polycode-attachments\/([^/]+)\/([^/]+)$/)
-    if (match) {
-      const [, threadId, filename] = match
-      setImageUrl(`attachment://${threadId}/${filename}`)
-    } else {
-      // Fallback: try the full path as filename (shouldn't happen)
-      setImageUrl(null)
-    }
-    setImageError(false)
+    if (!match) return null
+    const [, threadId, filename] = match
+    return `attachment://${threadId}/${filename}`
   }, [path, isImage])
 
   const badgeStyles: React.CSSProperties = {

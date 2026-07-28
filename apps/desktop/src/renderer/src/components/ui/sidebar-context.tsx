@@ -4,8 +4,6 @@ const SIDEBAR_WIDTH = '240px'
 const SIDEBAR_WIDTH_COLLAPSED = '48px'
 const COLLAPSE_BREAKPOINT = 900
 
-const RIGHT_SIDEBAR_WIDTH = '256px'
-const RIGHT_SIDEBAR_WIDTH_COLLAPSED = '40px'
 
 type SidebarState = 'expanded' | 'collapsed'
 

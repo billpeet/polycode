@@ -36,7 +36,7 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
   const [existingPath, setExistingPath] = useState('')
   const [gitUrl, setGitUrl] = useState('')
   const [detectedRemote, setDetectedRemote] = useState<string | null>(null)
-  const [label, setLabel] = useState('')
+  const [label] = useState('')
   const [newPath, setNewPath] = useState('')
   const [newPathDirty, setNewPathDirty] = useState(false)
   const [suggestedPath, setSuggestedPath] = useState('')
@@ -57,13 +57,10 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
 
   // Clone mode: read-only preview of where the repo will land (folder name comes from the URL).
   useEffect(() => {
-    if (sourceKind !== 'clone') {
-      setSuggestedPath('')
-      return
-    }
+    if (sourceKind !== 'clone') return
     const folder = repoNameFromUrl(gitUrl.trim())
     if (!baseDir.trim() || !folder) {
-      setSuggestedPath('')
+      queueMicrotask(() => setSuggestedPath(''))
       return
     }
     let cancelled = false
@@ -78,7 +75,7 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
     if (sourceKind !== 'new' || newPathDirty) return
     const folder = slugify(name)
     if (!baseDir.trim() || !folder) {
-      setNewPath('')
+      queueMicrotask(() => setNewPath(''))
       return
     }
     let cancelled = false

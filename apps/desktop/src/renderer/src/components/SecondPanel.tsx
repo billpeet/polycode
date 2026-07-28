@@ -180,7 +180,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       : requestedTab === 'terminal' ? hasTerminal
       : requestedTab === 'commands' ? hasCommands
       : false
-    if (isAvailable) setActiveTab(requestedTab)
+    if (isAvailable) queueMicrotask(() => setActiveTab(requestedTab))
   }, [requestedAuxTab, requestedAuxTabVersion, hasDiff, hasFile, hasTerminal, hasCommands, showPlan])
 
   const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))

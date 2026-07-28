@@ -1,8 +1,7 @@
 import { spawn, exec, execFile } from 'child_process'
-import { existsSync, mkdirSync, rmSync, readFileSync } from 'fs'
-import { basename, dirname, join } from 'path'
+import { existsSync, readFileSync } from 'fs'
+import { basename } from 'path'
 import { pathToFileURL } from 'url'
-import { homedir } from 'os'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import {
@@ -19,17 +18,14 @@ import {
   updateLocationPool,
   deleteLocationPool,
   createLocation,
-  createWorktreeLocation,
   updateLocation,
   deleteLocation,
-  getLocationById,
   checkoutLocation,
   returnLocationToPool,
   getLocationForThread,
   getLocationByPath,
   getProjectById,
   listThreads,
-  listActiveThreadsForLocation,
   listArchivedThreads,
   archivedThreadCount,
   createThread,
@@ -57,7 +53,6 @@ import {
   getImportedSessionIds,
   listSessions,
   getActiveSession,
-  setActiveSession,
   getThreadModifiedFiles,
   getThreadWsl,
   updateThreadWsl,

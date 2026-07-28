@@ -3,7 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import '@xterm/xterm/css/xterm.css'
-import { useCommandStore, EMPTY_LOGS, parseInstKey } from '../stores/commands'
+import { useCommandStore, parseInstKey } from '../stores/commands'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
@@ -310,18 +310,17 @@ function CommandLogPanel({
     }
   }, [])
 
-  const [pid, setPid] = useState<number | null>(null)
+  const [loadedPid, setLoadedPid] = useState<number | null>(null)
 
   useEffect(() => {
     if (status === 'running' || status === 'stopping') {
-      window.api.invoke('commands:getPid', commandId, locationId).then((p) => setPid(p))
+      window.api.invoke('commands:getPid', commandId, locationId).then((p) => setLoadedPid(p))
       void fetchPorts(commandId, locationId)
-    } else {
-      setPid(null)
     }
   }, [commandId, locationId, status, fetchPorts])
 
   const isActive = status === 'running' || status === 'stopping'
+  const pid = isActive ? loadedPid : null
   const isStopping = status === 'stopping'
   const hasRun = isActive || status === 'stopped' || status === 'error'
 

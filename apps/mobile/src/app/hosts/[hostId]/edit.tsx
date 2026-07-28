@@ -1,35 +1,27 @@
 import { useLocalSearchParams, useRouter } from 'expo-router'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Alert, ScrollView, StyleSheet, View } from 'react-native'
 import { Button, Field } from '@/components/ui'
 import { useHostsStore } from '@/stores/hosts'
 import { colors } from '@/theme/colors'
 
-export default function EditHostScreen() {
+function EditHostForm({
+  hostId,
+  host,
+  storedToken,
+}: {
+  hostId: string
+  host: NonNullable<ReturnType<typeof useHostsStore.getState>['hosts'][number]>
+  storedToken?: string
+}) {
   const router = useRouter()
-  const { hostId } = useLocalSearchParams<{ hostId: string }>()
-  const host = useHostsStore((s) => s.hosts.find((h) => h.id === hostId))
-  const storedToken = useHostsStore((s) => (hostId ? s.tokens[hostId] : undefined))
   const updateHost = useHostsStore((s) => s.updateHost)
   const removeHost = useHostsStore((s) => s.removeHost)
 
-  const [label, setLabel] = useState('')
-  const [baseUrl, setBaseUrl] = useState('')
-  const [token, setToken] = useState('')
+  const [label, setLabel] = useState(host.label)
+  const [baseUrl, setBaseUrl] = useState(host.baseUrl)
+  const [token, setToken] = useState(storedToken ?? '')
   const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    if (host) {
-      setLabel(host.label)
-      setBaseUrl(host.baseUrl)
-    }
-  }, [host])
-
-  useEffect(() => {
-    if (storedToken) setToken(storedToken)
-  }, [storedToken])
-
-  if (!host || !hostId) return <View style={styles.screen} />
 
   const save = async () => {
     setSaving(true)
@@ -65,6 +57,14 @@ export default function EditHostScreen() {
       <Button title="Delete Host" variant="danger" onPress={confirmDelete} />
     </ScrollView>
   )
+}
+
+export default function EditHostScreen() {
+  const { hostId } = useLocalSearchParams<{ hostId: string }>()
+  const host = useHostsStore((s) => s.hosts.find((candidate) => candidate.id === hostId))
+  const storedToken = useHostsStore((s) => (hostId ? s.tokens[hostId] : undefined))
+  if (!host || !hostId) return <View style={styles.screen} />
+  return <EditHostForm key={`${hostId}:${storedToken ?? ''}`} hostId={hostId} host={host} storedToken={storedToken} />
 }
 
 const styles = StyleSheet.create({

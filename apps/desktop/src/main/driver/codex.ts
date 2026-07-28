@@ -1,9 +1,7 @@
 import type {
-  Codex as CodexSdk,
   CodexOptions as CodexSdkOptions,
   ThreadEvent,
   ThreadItem,
-  ThreadOptions as CodexThreadOptions,
 } from '@openai/codex-sdk'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
@@ -1363,15 +1361,6 @@ function codexCollaborationMode(
       reasoning_effort: null,
       developer_instructions: null,
     },
-  }
-}
-
-function buildSdkThreadOptions(options: DriverOptions, permissionMode: PermissionMode): CodexThreadOptions {
-  return {
-    model: options.model,
-    workingDirectory: options.workingDir,
-    approvalPolicy: codexApprovalPolicy(permissionMode),
-    sandboxMode: codexSdkSandboxMode(permissionMode),
   }
 }
 

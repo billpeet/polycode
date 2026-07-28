@@ -487,6 +487,9 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     return () => ro.disconnect()
   }, [])
 
+  // TanStack Virtual intentionally returns non-memoizable functions; React Compiler
+  // safely skips this component, and replacing the virtualizer would regress long threads.
+  // eslint-disable-next-line react-hooks/incompatible-library
   const rowVirtualizer = useVirtualizer({
     count: virtualizedRowCount,
     getScrollElement: () => containerRef.current,

@@ -11,7 +11,7 @@ const describeWsl = process.env.POLYCODE_RUN_WSL_TESTS === '1' ? describe : desc
 // nvm init alone takes ~5 s; codex exec is a network call — use generous timeouts.
 const NVM_TIMEOUT = 15_000
 const CODEX_TIMEOUT = 60_000
-import { execFileSync, spawnSync } from 'child_process'
+import { spawnSync } from 'child_process'
 
 const DISTRO = 'Ubuntu'
 
@@ -50,7 +50,7 @@ describeWsl('bash -lc PATH diagnostics (no .bashrc)', () => {
   })
 
   it('which codex — login shell only', () => {
-    const { stdout, exitCode } = wslBash('which codex 2>&1 || echo NOT_FOUND')
+    const { stdout } = wslBash('which codex 2>&1 || echo NOT_FOUND')
     console.log('which codex (login shell):', stdout)
     // Just log — don't assert pass/fail so the test always completes
     expect(typeof stdout).toBe('string')
@@ -77,7 +77,7 @@ describeWsl('bash -lc PATH diagnostics (with source ~/.bashrc)', () => {
   })
 
   it('codex --version — after sourcing .bashrc', () => {
-    const { stdout, stderr, exitCode } = wslBash('source ~/.bashrc 2>/dev/null; codex --version 2>&1 || echo FAILED')
+    const { stdout, stderr } = wslBash('source ~/.bashrc 2>/dev/null; codex --version 2>&1 || echo FAILED')
     console.log('codex --version:', stdout || stderr)
     expect(typeof stdout).toBe('string')
   })

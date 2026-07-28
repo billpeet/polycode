@@ -34,30 +34,29 @@ function isProvider(value: string): value is Provider {
 }
 
 /** Bottom-sheet style picker for provider + model. */
-export function ModelPickerSheet(props: {
+function ModelPickerSheetContent(props: {
   thread: Thread
   visible: boolean
   onClose: () => void
   onSelect: (provider: string, model: string) => void
 }) {
   const { thread, visible, onClose, onSelect } = props
-  const [provider, setProvider] = useState<Provider>(isProvider(thread.provider) ? thread.provider : 'claude-code')
-  const [models, setModels] = useState<ModelOption[]>([])
-
-  useEffect(() => {
-    if (visible) setProvider(isProvider(thread.provider) ? thread.provider : 'claude-code')
-  }, [visible, thread.provider])
+  const initialProvider = isProvider(thread.provider) ? thread.provider : 'claude-code'
+  const [provider, setProvider] = useState<Provider>(initialProvider)
+  const [liveModels, setLiveModels] = useState<{ provider: Provider; models: ModelOption[] } | null>(null)
+  const models: ModelOption[] =
+    liveModels?.provider === provider ? liveModels.models : [...getModelsForProvider(provider)]
 
   useEffect(() => {
     if (!visible) return
-    // Static fallback immediately; live host-side availability when it answers.
-    setModels([...getModelsForProvider(provider)])
     const connection = useHostsStore.getState().activeConnection()
     if (!connection) return
     let cancelled = false
     rpc(connection, MODEL_CHANNEL_BY_PROVIDER[provider], thread.id)
       .then((available) => {
-        if (!cancelled && Array.isArray(available) && available.length > 0) setModels(available)
+        if (!cancelled && Array.isArray(available) && available.length > 0) {
+          setLiveModels({ provider, models: available })
+        }
       })
       .catch(() => {
         // Keep the static fallback.
@@ -101,6 +100,10 @@ export function ModelPickerSheet(props: {
       </Pressable>
     </Modal>
   )
+}
+
+export function ModelPickerSheet(props: Parameters<typeof ModelPickerSheetContent>[0]) {
+  return <ModelPickerSheetContent key={`${props.thread.id}:${props.visible ? 'open' : 'closed'}`} {...props} />
 }
 
 const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']

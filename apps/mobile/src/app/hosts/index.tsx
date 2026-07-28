@@ -76,7 +76,9 @@ export default function HostsScreen() {
   }, [checkHealth])
 
   useEffect(() => {
-    if (hydrated) void refreshHealth()
+    if (!hydrated) return
+    const timeoutId = setTimeout(() => void refreshHealth(), 0)
+    return () => clearTimeout(timeoutId)
   }, [hydrated, refreshHealth])
 
   return (

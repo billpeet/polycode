@@ -311,19 +311,17 @@ function BranchControls({
   }, [projectPath, repoLinkCacheByPath])
 
   function toggleOpen() {
-    if (!open) fetchBranches(projectPath)
+    if (!open) {
+      fetchBranches(projectPath)
+      if (branches && !baseBranch) {
+        setBaseBranch(branches.local.find((b) => b === 'master' || b === 'main') ?? branches.local[0] ?? '')
+      }
+    }
     setOpen((value) => !value)
     setSelectedBranch(null)
     setMergeFromMaster(false)
     setBranchSearch('')
   }
-
-  useEffect(() => {
-    if (branches && !baseBranch) {
-      const defaultBase = branches.local.find((b) => b === 'master' || b === 'main') ?? branches.local[0] ?? ''
-      setBaseBranch(defaultBase)
-    }
-  }, [branches, baseBranch])
 
   const allBranches = branches ? [...branches.local, ...branches.remote] : []
   const isRemoteSelected = selectedBranch?.startsWith('origin/') ?? false

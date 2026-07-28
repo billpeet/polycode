@@ -28,7 +28,7 @@ function formatThreadEventErrorDetails(event: OutputEvent, threadId: string): st
   })
 }
 
-export default function ThreadView({ threadId }: Props) {
+function ThreadViewContent({ threadId }: Props) {
   const fetchMessages = useMessageStore((s) => s.fetch)
   const fetchMessagesBySession = useMessageStore((s) => s.fetchBySession)
   const appendEvent = useMessageStore((s) => s.appendEvent)
@@ -46,10 +46,6 @@ export default function ThreadView({ threadId }: Props) {
   // reachable; AgentTabs keeps a Main tab visible whenever an agent is isolated.
   const [isolatedAgentKey, setIsolatedAgentKey] = useState<string | null>(null)
 
-  // Reset isolation only when the thread/session changes.
-  useEffect(() => {
-    setIsolatedAgentKey(null)
-  }, [threadId, activeSessionId])
   const isPendingThread = useThreadStore((s) =>
     Object.values(s.byProject).some((threads) => (threads ?? []).some((thread) => thread.id === threadId && thread.is_pending))
   )
@@ -299,4 +295,9 @@ export default function ThreadView({ threadId }: Props) {
       <InputBar threadId={threadId} />
     </div>
   )
+}
+
+export default function ThreadView(props: Props) {
+  const activeSessionId = useSessionStore((s) => s.activeSessionByThread[props.threadId])
+  return <ThreadViewContent key={`${props.threadId}:${activeSessionId ?? ''}`} {...props} />
 }
