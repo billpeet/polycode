@@ -1,5 +1,3 @@
-import { execFile } from 'child_process'
-import { promisify } from 'util'
 import { promises as fsPromises, Dirent } from 'fs'
 import * as path from 'path'
 import {
@@ -15,10 +13,13 @@ import {
   generatePullRequestText as generatePullRequestTextFromModel,
 } from './git-text-model'
 import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry } from '../shared/types'
+import { createRunner } from './driver/runner'
+import { runGit } from './git-runner'
+import { parseCommitLog, parseNameStatus, parsePorcelainStatus } from './git-parsers'
 import { sshExec } from './ssh'
 import { wslExec } from './wsl'
 
-const execFileAsync = promisify(execFile)
+export { GitLockedError } from './git-runner'
 
 type CachePolicy = {
   ttlMs: number
@@ -132,102 +133,12 @@ export interface GitStatus {
 
 export type GitHostingProvider = 'azure' | 'github'
 
-function parseNameStatus(output: string): GitFileChange[] {
-  if (!output) return []
-  const files: GitFileChange[] = []
-  const lines = output.split(/\r?\n/).filter(Boolean)
-  for (const line of lines) {
-    const parts = line.split('\t')
-    const rawStatus = parts[0] ?? ''
-    const status = rawStatus[0]
-    if (!status || !['M', 'A', 'D', 'R', 'U', '?'].includes(status)) continue
-    if (status === 'R') {
-      const oldPath = parts[1]
-      const newPath = parts[2]
-      if (!newPath) continue
-      files.push({ status: 'R', path: newPath, oldPath, staged: false })
-      continue
-    }
-    const path = parts[1]
-    if (!path) continue
-    files.push({ status: status as GitFileChange['status'], path, staged: false })
-  }
-  return files
-}
-
-/**
- * Error thrown when git repeatedly fails because another process holds the repo lock.
- * The `lockPath` (when known) points at the offending `.git/*.lock` file so the UI can
- * offer a "Force Unlock" action. Inspired by VS Code's `RepositoryIsLocked` error code.
- */
-export class GitLockedError extends Error {
-  code = 'GIT_LOCKED' as const
-  lockPath: string | null
-  constructor(message: string, lockPath: string | null = null) {
-    super(message)
-    this.name = 'GitLockedError'
-    this.lockPath = lockPath
-  }
-}
-
-/**
- * Pattern-match git stderr for lock-contention errors. Covers the three common flavours:
- *  - `fatal: Unable to create '<repo>/.git/index.lock': File exists.`
- *  - `Another git process seems to be running in this repository, e.g. an editor …`
- *  - `fatal: cannot lock ref 'refs/heads/foo': Unable to create '<…>/foo.lock': File exists.`
- */
-function extractLockPathFromStderr(stderr: string): string | null {
-  if (!stderr) return null
-  if (!/index\.lock|Another git process seems to be running|cannot lock ref|Unable to create .*\.lock/i.test(stderr)) {
-    return null
-  }
-  // Prefer the exact lock path when git names it (quoted form is most reliable).
-  const quoted = stderr.match(/Unable to create\s+'([^']+\.lock)'/i) || stderr.match(/'([^']+\.lock)'/i)
-  if (quoted) return quoted[1]
-  if (/Another git process seems to be running/i.test(stderr)) return 'index.lock'
-  const bare = stderr.match(/([^\s'"`]+\.lock)\b/i)
-  return bare ? bare[1] : null
-}
-
-/** True if the error thrown by one of the transport-specific git execs looks like a lock-contention failure. */
-function isLockError(err: unknown): { locked: true; lockPath: string | null } | null {
-  const stderr = (err as { stderr?: string } | null)?.stderr ?? ''
-  const message = (err instanceof Error ? err.message : String(err ?? '')) ?? ''
-  const lockPath = extractLockPathFromStderr(stderr) ?? extractLockPathFromStderr(message)
-  return lockPath !== null ? { locked: true, lockPath } : null
-}
-
-const GIT_LOCK_MAX_ATTEMPTS = 10
 const GENERATED_TEXT_CACHE_TTL_MS = 5 * 60_000
 const UNTRACKED_FILE_PREVIEW_BYTES = 16_000
 const UNTRACKED_PATCH_MAX_CHARS = 30_000
 
 async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  const gitCmd = `git ${args.map(a => "'" + a.replace(/'/g, "'\\''") + "'").join(' ')}`
-
-  // Retry on lock contention with VS Code-style quadratic backoff: 50ms, 200ms, 450ms, …, ~5s.
-  // This transparently rides out races between concurrent Claude sessions, the user's editor,
-  // and other tooling all touching the same repo at once.
-  let lastLockPath: string | null = null
-  for (let attempt = 1; attempt <= GIT_LOCK_MAX_ATTEMPTS; attempt++) {
-    try {
-      if (ssh) return await sshExec(ssh, cwd, gitCmd)
-      if (wsl) return await wslExec(wsl, cwd, gitCmd)
-      const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: 4 * 1024 * 1024 })
-      return stdout.trimEnd()
-    } catch (err) {
-      const lock = isLockError(err)
-      if (!lock) throw err
-      lastLockPath = lock.lockPath
-      if (attempt === GIT_LOCK_MAX_ATTEMPTS) break
-      const delayMs = Math.pow(attempt, 2) * 50
-      await new Promise((resolve) => setTimeout(resolve, delayMs))
-    }
-  }
-  throw new GitLockedError(
-    `Git repository is locked${lastLockPath ? ` (${lastLockPath})` : ''}. Another git process may be running, or a previous one crashed and left a stale lock.`,
-    lastLockPath,
-  )
+  return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), cwd, args)
 }
 
 /**
@@ -271,7 +182,7 @@ export async function forceUnlockRepo(
   }
 
   // Local: resolve `.git` via git itself (works with worktrees and submodules), then unlink files directly.
-  const gitDirRel = (await execFileAsync('git', ['rev-parse', '--git-dir'], { cwd: repoPath, maxBuffer: 1024 * 1024 })).stdout.trim()
+  const gitDirRel = (await git(repoPath, ['rev-parse', '--git-dir'])).trim()
   const gitDir = path.isAbsolute(gitDirRel) ? gitDirRel : path.join(repoPath, gitDirRel)
   const removed: string[] = []
 
@@ -410,40 +321,7 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
       console.error(`[git:status] porcelain failed (${via}) for ${repoPath}:`, err)
     }
 
-    const files: GitFileChange[] = []
-    if (porcelain) {
-      const lines = porcelain.split(/\r?\n/).filter(Boolean)
-      for (const line of lines) {
-        if (line.length < 4) continue
-        const stagedCode = line[0]!
-        const unstagedCode = line[1]!
-        const rest = line.slice(3).trimEnd() // skip "XY ", strip Windows CR
-
-        const isRename = stagedCode === 'R' || unstagedCode === 'R'
-
-        if (isRename) {
-          // Format: "R  ORIG_PATH -> NEW_PATH"
-          const arrowIdx = rest.indexOf(' -> ')
-          const newPath = arrowIdx !== -1 ? rest.slice(arrowIdx + 4) : rest
-          const oldPath = arrowIdx !== -1 ? rest.slice(0, arrowIdx) : ''
-          files.push({ status: 'R', path: newPath, oldPath, staged: stagedCode === 'R' })
-        } else {
-          const filePath = rest
-          // Staged change
-          if (stagedCode !== ' ' && stagedCode !== '?') {
-            files.push({ status: stagedCode as GitFileChange['status'], path: filePath, staged: true })
-          }
-          // Unstaged change
-          if (unstagedCode !== ' ' && unstagedCode !== '?') {
-            files.push({ status: unstagedCode as GitFileChange['status'], path: filePath, staged: false })
-          }
-          // Untracked
-          if (stagedCode === '?' && unstagedCode === '?') {
-            files.push({ status: '?', path: filePath, staged: false })
-          }
-        }
-      }
-    }
+    const files = parsePorcelainStatus(porcelain)
 
     // Diff stats (staged + unstaged combined)
     let additions = 0
@@ -1078,22 +956,6 @@ export async function getFileDiff(repoPath: string, filePath: string, staged: bo
  *   %ae author email     %aI ISO date      %P  parents (space-separated)
  *   %s  subject (single line — git never emits newlines in %s)
  */
-function parseCommitLog(output: string): CommitLogEntry[] {
-  if (!output) return []
-  const entries: CommitLogEntry[] = []
-  for (const line of output.split(/\r?\n/)) {
-    if (!line) continue
-    // Split with limit so any stray TABs in subject don't break the record (they shouldn't exist, but belt-and-braces).
-    const parts = line.split('\t')
-    if (parts.length < 7) continue
-    const [sha, shortSha, authorName, authorEmail, authorDate, parentsRaw, ...subjectRest] = parts
-    const subject = subjectRest.join('\t')
-    const parents = parentsRaw ? parentsRaw.split(/\s+/).filter(Boolean) : []
-    entries.push({ sha, shortSha, authorName, authorEmail, authorDate, parents, subject })
-  }
-  return entries
-}
-
 /**
  * List commits reachable from `opts.range` (default `HEAD`) in chronological (newest-first) order.
  * Pass a range like `"origin/main..HEAD"` to limit to commits on the current branch not yet on base.
@@ -1644,7 +1506,7 @@ export async function mergeBranch(repoPath: string, source: string, ssh?: SshCon
     await git(repoPath, ['merge', source], ssh, wsl)
     return { conflicts: [] }
   } catch (err: unknown) {
-    // execFileAsync (local) attaches stdout to the error; SSH/WSL errors carry it in the message
+    // Runner errors retain stderr separately so callers can distinguish an invalid range.
     const output: string = (err as { stdout?: string; message?: string }).stdout ?? (err instanceof Error ? err.message : '') ?? ''
     if (output.includes('CONFLICT') || output.includes('Automatic merge failed')) {
       const conflicts: string[] = []
