@@ -3,6 +3,13 @@ import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import { getHighlighter, onReady } from '../lib/shiki'
 import { reportPerf } from '../lib/perf'
+import {
+  filePathFromMarkdownCopyTarget,
+  handleMarkdownFileLinkClick,
+  markdownFilePathFromHref,
+} from '../lib/markdownFileLinks'
+import { useFilesStore } from '../stores/files'
+import { useUiStore } from '../stores/ui'
 
 // Configure marked with syntax highlighting and copy-button chrome
 marked.setOptions({
@@ -24,6 +31,17 @@ function escapeHtml(str: string): string {
 }
 
 const renderer = new marked.Renderer()
+const defaultLinkRenderer = renderer.link.bind(renderer)
+renderer.link = function (token) {
+  const filePath = markdownFilePathFromHref(token.href)
+  if (!filePath) return defaultLinkRenderer(token)
+
+  const text = this.parser.parseInline(token.tokens)
+  const title = token.title ? ` title="${escapeAttr(token.title)}"` : ''
+  const encodedPath = escapeAttr(encodeURIComponent(filePath))
+  return `<span class="file-link-with-copy"><a href="#" data-file-path="${encodedPath}"${title}>${text}</a><button type="button" class="file-path-copy-btn" data-file-path="${encodedPath}" title="Copy file path" aria-label="Copy file path"><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="5.5" y="5.5" width="7" height="7" rx="1"></rect><path d="M10.5 5.5V4a1 1 0 0 0-1-1H4a1 1 0 0 0-1 1v5.5a1 1 0 0 0 1 1h1.5"></path></svg></button></span>`
+}
+
 renderer.code = function ({ text, lang }) {
   const hl = getHighlighter()
   let codeHtml: string
@@ -68,6 +86,8 @@ interface Props {
 export default function MarkdownContent({ content, className = '' }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
+  const selectFile = useFilesStore((state) => state.selectFile)
+  const setRightPanelTab = useUiStore((state) => state.setRightPanelTab)
 
   useEffect(() => onReady(() => setShikiReady(true)), [])
 
@@ -76,7 +96,7 @@ export default function MarkdownContent({ content, className = '' }: Props) {
     const startedAt = performance.now()
     const raw = marked.parse(content) as string
     const clean = DOMPurify.sanitize(raw, {
-      ADD_ATTR: ['data-code', 'style', 'tabindex'],
+      ADD_ATTR: ['data-code', 'data-file-path', 'style', 'tabindex'],
       ADD_TAGS: ['button']
     })
     ref.current.innerHTML = clean
@@ -92,6 +112,26 @@ export default function MarkdownContent({ content, className = '' }: Props) {
 
     const container = ref.current
     const handleClick = (e: MouseEvent) => {
+      const copyPath = filePathFromMarkdownCopyTarget(e.target)
+      if (copyPath) {
+        e.preventDefault()
+        e.stopPropagation()
+        const btn = (e.target as HTMLElement).closest('.file-path-copy-btn') as HTMLElement
+        void navigator.clipboard.writeText(copyPath).then(() => {
+          btn.classList.add('copied')
+          btn.setAttribute('title', 'Copied')
+          btn.setAttribute('aria-label', 'Copied')
+          setTimeout(() => {
+            btn.classList.remove('copied')
+            btn.setAttribute('title', 'Copy file path')
+            btn.setAttribute('aria-label', 'Copy file path')
+          }, 1800)
+        })
+        return
+      }
+
+      if (handleMarkdownFileLinkClick(e, { selectFile, setRightPanelTab })) return
+
       const target = e.target as HTMLElement
       const btn = target.closest('.code-copy-btn') as HTMLElement | null
       if (!btn) return
@@ -112,7 +152,7 @@ export default function MarkdownContent({ content, className = '' }: Props) {
 
     container.addEventListener('click', handleClick)
     return () => container.removeEventListener('click', handleClick)
-  }, [content, shikiReady])
+  }, [content, selectFile, setRightPanelTab, shikiReady])
 
   return (
     <div

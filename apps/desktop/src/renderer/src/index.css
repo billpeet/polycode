@@ -340,6 +340,56 @@ body,
   color: inherit;
 }
 
+.prose-content .file-link-with-copy {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.prose-content .file-path-copy-btn {
+  position: absolute;
+  top: 50%;
+  right: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  padding: 0.15rem;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 0.12s, color 0.12s, background 0.12s;
+}
+
+.prose-content .file-link-with-copy:hover .file-path-copy-btn,
+.prose-content .file-path-copy-btn:focus-visible {
+  opacity: 1;
+  background: var(--color-surface-2);
+}
+
+.prose-content .file-path-copy-btn:hover,
+.prose-content .file-path-copy-btn:focus-visible {
+  color: var(--color-text);
+  background: var(--color-surface-2);
+}
+
+.prose-content .file-path-copy-btn.copied {
+  color: #4ade80;
+}
+
+.prose-content .file-path-copy-btn svg {
+  width: 100%;
+  height: 100%;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+}
+
 /* ── Thinking markdown: basic formatting without large headings ───────────── */
 
 .prose-content.thinking-markdown {

@@ -1,20 +1,13 @@
 import { useState } from 'react'
-import { marked } from 'marked'
 import MarkdownContent from './MarkdownContent'
 import ToolCallBlock from './ToolCallBlock'
 import ThinkingBlock from './ThinkingBlock'
 import { MessageEntry } from './MessageStream'
 import { parseFileMentions } from './FileMention'
+import { markdownToPlainText } from '../lib/markdownToPlainText'
 
 interface Props {
   entry: MessageEntry
-}
-
-function toPlainText(content: string): string {
-  const html = marked.parse(content) as string
-  const tmp = document.createElement('div')
-  tmp.innerHTML = html
-  return (tmp.textContent ?? content).trim()
 }
 
 export default function MessageBubble({ entry }: Props) {
@@ -23,13 +16,13 @@ export default function MessageBubble({ entry }: Props) {
   const isToolCall = metadata?.type === 'tool_call' || metadata?.type === 'tool_use'
   const isToolResult = metadata?.type === 'tool_result'
 
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'text' | 'markdown' | null>(null)
 
-  const handleCopy = () => {
-    const text = toPlainText(message.content)
-    navigator.clipboard.writeText(text).then(() => {
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1800)
+  const handleCopy = (format: 'text' | 'markdown') => {
+    const content = format === 'markdown' ? message.content : markdownToPlainText(message.content)
+    navigator.clipboard.writeText(content).then(() => {
+      setCopied(format)
+      setTimeout(() => setCopied(null), 1800)
     })
   }
 
@@ -90,16 +83,55 @@ export default function MessageBubble({ entry }: Props) {
         ) : (
           <MarkdownContent content={message.content} />
         )}
-        <button
-          onClick={handleCopy}
-          className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-1.5 py-0.5 rounded"
-          style={{
-            background: isUser ? 'rgba(0,0,0,0.25)' : 'var(--color-border)',
-            color: isUser ? '#fff' : 'var(--color-text-muted, var(--color-text))'
-          }}
-        >
-          {copied ? 'copied!' : 'copy'}
-        </button>
+        <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <button
+            onClick={() => handleCopy('text')}
+            className="flex h-5 w-5 items-center justify-center rounded p-0"
+            style={{
+              background: isUser ? 'rgba(0,0,0,0.25)' : 'var(--color-border)',
+              color: copied === 'text' ? '#4ade80' : (isUser ? '#fff' : 'var(--color-text-muted, var(--color-text))')
+            }}
+            title={copied === 'text' ? 'Copied text' : 'Copy text'}
+            aria-label={copied === 'text' ? 'Copied text' : 'Copy text'}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              aria-hidden="true"
+            >
+              <path d="M3 4h10M3 8h8M3 12h6" />
+            </svg>
+          </button>
+          <button
+            onClick={() => handleCopy('markdown')}
+            className="flex h-5 w-5 items-center justify-center rounded p-0"
+            style={{
+              background: isUser ? 'rgba(0,0,0,0.25)' : 'var(--color-border)',
+              color: copied === 'markdown' ? '#4ade80' : (isUser ? '#fff' : 'var(--color-text-muted, var(--color-text))')
+            }}
+            title={copied === 'markdown' ? 'Copied Markdown' : 'Copy Markdown'}
+            aria-label={copied === 'markdown' ? 'Copied Markdown' : 'Copy Markdown'}
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="13"
+              height="13"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M5.5 4 2 8l3.5 4M10.5 4 14 8l-3.5 4" />
+            </svg>
+          </button>
+        </div>
       </div>
     </div>
   )
