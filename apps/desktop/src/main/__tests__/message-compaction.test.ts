@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { compactStreamingMessages } from '../db/queries'
-import type { MessageRow } from '../db/models'
+import { foldMessages, type Message } from '@polycode/shared'
 
-function thinkingRow(id: string, content: string, itemId: string, summaryIndex: number): MessageRow {
+function thinkingMessage(id: string, content: string, itemId: string, summaryIndex: number): Message {
   return {
     id,
     thread_id: 'thread-1',
@@ -21,13 +20,63 @@ function thinkingRow(id: string, content: string, itemId: string, summaryIndex: 
 }
 
 describe('message compaction', () => {
+  it('keeps consecutive assistant messages from different agent scopes separate', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'Main agent',
+        metadata: null,
+        created_at: '2026-07-13T00:00:01.000Z',
+      },
+      {
+        id: '2',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'Sub-agent',
+        metadata: JSON.stringify({ agent_task_id: 'task-1' }),
+        created_at: '2026-07-13T00:00:02.000Z',
+      },
+    ]
+
+    expect(foldMessages(messages)).toEqual(messages)
+  })
+
+  it('keeps claude task lifecycle messages separate', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'Subagent started',
+        metadata: JSON.stringify({ type: 'thinking', source: 'claude_task', status: 'running' }),
+        created_at: '2026-07-13T00:00:01.000Z',
+      },
+      {
+        id: '2',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'Subagent completed',
+        metadata: JSON.stringify({ type: 'thinking', source: 'claude_task', status: 'completed' }),
+        created_at: '2026-07-13T00:00:02.000Z',
+      },
+    ]
+
+    expect(foldMessages(messages)).toEqual(messages)
+  })
+
   it('cleans persisted Codex summary markers and separates distinct summary parts', () => {
-    const compacted = compactStreamingMessages([
-      thinkingRow('1', 'Reasoning summary updated.', 'reason-1', 0),
-      thinkingRow('2', '**Planning the change**', 'reason-1', 0),
-      thinkingRow('3', ' safely', 'reason-1', 0),
-      thinkingRow('4', '**Running verification**', 'reason-1', 1),
-      thinkingRow('5', '**Reporting results**', 'reason-2', 0),
+    const compacted = foldMessages([
+      thinkingMessage('1', 'Reasoning summary updated.', 'reason-1', 0),
+      thinkingMessage('2', '**Planning the change**', 'reason-1', 0),
+      thinkingMessage('3', ' safely', 'reason-1', 0),
+      thinkingMessage('4', '**Running verification**', 'reason-1', 1),
+      thinkingMessage('5', '**Reporting results**', 'reason-2', 0),
     ])
 
     expect(compacted).toHaveLength(1)

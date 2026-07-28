@@ -52,14 +52,17 @@ export function eventRole(event: OutputEvent): Message['role'] {
  * previous bubble. This encodes the streaming display rules shared by the
  * desktop renderer and the mobile app.
  */
-export function appendOrMergeMessage(messages: Message[], incoming: Message, event: OutputEvent): Message[] {
+function appendOrMergeMessage(messages: Message[], incoming: Message): Message[] {
+  const nextMetadata = parseMetadata(incoming.metadata)
+  const incomingType = nextMetadata?.type
+
   // Older Polycode versions turned Codex's structural summaryPartAdded
   // notification into this visible sentence. Ignore it when replayed by an
   // older remote or encountered in an in-flight stream during an upgrade.
   if (
-    event.type === 'thinking' &&
-    event.content === LEGACY_CODEX_REASONING_SUMMARY_MARKER &&
-    isCodexReasoningSummary(event.metadata ?? null)
+    incomingType === 'thinking' &&
+    incoming.content === LEGACY_CODEX_REASONING_SUMMARY_MARKER &&
+    isCodexReasoningSummary(nextMetadata)
   ) {
     return messages
   }
@@ -70,13 +73,12 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
   }
 
   const previousMetadata = parseMetadata(previous.metadata)
-  const nextMetadata = event.metadata ?? null
 
   // Never merge across agent scopes: main-scope assistant text followed by
   // sub-agent assistant text (both role 'assistant') must stay separate bubbles.
   const sameScope = agentKey(previousMetadata) === agentKey(nextMetadata)
 
-  if (event.type === 'text') {
+  if (!incomingType || incomingType === 'text') {
     // User-role events (question answers, remote-client sends) are discrete
     // messages, never streaming chunks — don't merge them into the previous
     // bubble or fuse consecutive user messages together.
@@ -97,7 +99,7 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
     return [...messages, incoming]
   }
 
-  if (event.type === 'thinking') {
+  if (incomingType === 'thinking') {
     const previousType = previousMetadata?.type
     // Never merge sub-agent task lifecycle bubbles (started/progress/notification): each
     // carries unique per-event metadata (status, usage) that deriveAgentMeta relies on.
@@ -127,7 +129,7 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
     return [...messages, incoming]
   }
 
-  if (event.type === 'tool_result') {
+  if (incomingType === 'tool_result') {
     // Only merge into a *previous tool_result* streaming chunk for the same tool_use_id.
     // Guard on the previous type: task lifecycle bubbles (e.g. a "Subagent completed"
     // notification) carry the spawning Task/Agent tool_use_id in their metadata, so
@@ -165,4 +167,12 @@ export function appendOrMergeMessage(messages: Message[], incoming: Message, eve
   }
 
   return [...messages, incoming]
+}
+
+/**
+ * Fold persisted or streamed messages into their display form using the same
+ * merge rules in every caller.
+ */
+export function foldMessages(messages: Message[]): Message[] {
+  return messages.reduce<Message[]>(appendOrMergeMessage, [])
 }

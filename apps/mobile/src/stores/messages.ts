@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import {
-  appendOrMergeMessage,
   eventRole,
+  foldMessages,
   type Message,
   type OutputEvent,
   type RateLimitInfo,
@@ -81,7 +81,7 @@ export const useMessagesStore = create<MessagesState>((set) => ({
     set((s) => ({
       messagesByThread: {
         ...s.messagesByThread,
-        [threadId]: appendOrMergeMessage(s.messagesByThread[threadId] ?? [], msg, event),
+        [threadId]: foldMessages([...(s.messagesByThread[threadId] ?? []), msg]),
       },
     }))
   },
