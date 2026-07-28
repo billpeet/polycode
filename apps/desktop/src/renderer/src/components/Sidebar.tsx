@@ -171,15 +171,17 @@ export default function Sidebar() {
   }, [byProject, setName, setStatus, setUnread, touchProject])
 
   useEffect(() => {
+    const threadSubscriptions = subsRef.current
+    const commandSubscriptions = commandSubsRef.current
     return () => {
-      for (const unsubs of subsRef.current.values()) {
+      for (const unsubs of threadSubscriptions.values()) {
         unsubs.forEach((unsubscribe) => unsubscribe())
       }
-      subsRef.current.clear()
-      for (const unsubscribe of commandSubsRef.current.values()) {
+      threadSubscriptions.clear()
+      for (const unsubscribe of commandSubscriptions.values()) {
         unsubscribe()
       }
-      commandSubsRef.current.clear()
+      commandSubscriptions.clear()
     }
   }, [])
 

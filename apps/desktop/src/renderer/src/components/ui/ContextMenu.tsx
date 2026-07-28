@@ -32,7 +32,7 @@ interface ContextMenuProps {
  * Closes on outside click, Escape, scroll, or window blur.
  * Automatically flips to stay inside the viewport.
  */
-export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): JSX.Element {
+export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): ReactNode {
   const ref = useRef<HTMLDivElement | null>(null)
   const [pos, setPos] = useState({ x, y })
 

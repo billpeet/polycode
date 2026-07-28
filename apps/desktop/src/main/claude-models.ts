@@ -117,10 +117,7 @@ async function queryClaudeAvailableModels(cwd: string): Promise<ClaudeAvailableM
     return normalizeModels(models)
   } finally {
     if (timer) clearTimeout(timer)
-    const closeResult = query.close()
-    if (closeResult && typeof (closeResult as Promise<void>).catch === 'function') {
-      await closeResult.catch(() => undefined)
-    }
+    query.close()
   }
 }
 

@@ -1,6 +1,6 @@
 import { execFile } from 'child_process'
 import { promisify } from 'util'
-import { promises as fsPromises } from 'fs'
+import { promises as fsPromises, Dirent } from 'fs'
 import * as path from 'path'
 import {
   getCommitMessageContextHash,
@@ -127,6 +127,7 @@ export interface GitStatus {
   additions: number
   deletions: number
   files: GitFileChange[]
+  hasUpstream: boolean
 }
 
 export type GitHostingProvider = 'azure' | 'github'
@@ -149,7 +150,7 @@ function parseNameStatus(output: string): GitFileChange[] {
     }
     const path = parts[1]
     if (!path) continue
-    files.push({ status, path, staged: false })
+    files.push({ status: status as GitFileChange['status'], path, staged: false })
   }
   return files
 }
@@ -288,7 +289,7 @@ export async function forceUnlockRepo(
   // Walk `.git/refs/` for any `*.lock` files left behind by a crashed `update-ref`.
   const refsDir = path.join(gitDir, 'refs')
   async function walkAndUnlock(dir: string): Promise<void> {
-    let entries: Awaited<ReturnType<typeof fsPromises.readdir>>
+    let entries: Dirent<string>[]
     try {
       entries = await fsPromises.readdir(dir, { withFileTypes: true })
     } catch (err) {

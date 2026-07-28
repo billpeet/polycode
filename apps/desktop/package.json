@@ -10,7 +10,8 @@
     "preview": "electron-vite preview",
     "start": "electron .",
     "start:prod": "pnpm run build && cross-env NODE_ENV=production electron .",
-    "test": "vitest run src/main/__tests__ src/main/driver/__tests__",
+    "typecheck": "tsc --build --noEmit",
+    "test": "vitest run",
     "dist": "pnpm run build && electron-builder --win",
     "dist:publish": "pnpm run build && electron-builder --win --publish always"
   },

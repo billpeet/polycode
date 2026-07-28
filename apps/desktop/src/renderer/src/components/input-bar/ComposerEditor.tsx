@@ -321,7 +321,6 @@ export default function ComposerEditor({
       editor.commands.setContent(value, { emitUpdate: false })
       emitTrigger(editor)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editor, value])
 
   useEffect(() => {

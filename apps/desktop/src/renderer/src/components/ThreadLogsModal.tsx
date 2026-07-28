@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useCallback, useState, useEffect, useRef } from 'react'
 import { ThreadLogEntry } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 
@@ -123,7 +123,7 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
   const [copied, setCopied] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true)
     try {
       const data = await window.api.invoke('threads:getLogs', threadId)
@@ -131,7 +131,7 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
     } finally {
       setLoading(false)
     }
-  }
+  }, [threadId])
 
   async function copyToClipboard() {
     const text = filtered.map((e) => JSON.stringify(e)).join('\n')
@@ -140,7 +140,7 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
     setTimeout(() => setCopied(false), 2000)
   }
 
-  useEffect(() => { load() }, [threadId])
+  useEffect(() => { void load() }, [load])
 
   const filtered = filter.trim()
     ? entries.filter((e) => {

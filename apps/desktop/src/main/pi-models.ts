@@ -5,6 +5,8 @@ import { createRunner } from './driver/runner'
 export interface PiAvailableModelOption {
   id: string
   label: string
+  reasoning: boolean
+  reasoningLevels: ReasoningLevel[]
   contextWindow?: number
 }
 

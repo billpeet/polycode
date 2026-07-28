@@ -52,7 +52,7 @@ export function Tooltip({ content, side = 'right', contentClassName, children }:
       top: rect.top - 8,
       transform: 'translate(-50%, -100%)',
     }
-  }, [show, side])
+  }, [side])
 
   return (
     <div ref={anchorRef} className="relative" onMouseEnter={onEnter} onMouseLeave={onLeave}>

@@ -47,7 +47,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
         setAvailableDistros([])
       })
     }
-  }, [isWSL])
+  }, [isWSL, wslDistro])
 
   function buildSshConfig(): SshConfig | null {
     if (!isSSH) return null

@@ -198,7 +198,7 @@ function extractToc(content: string): TocEntry[] {
     if (inCodeBlock) continue
     const match = line.match(/^(#{1,6})\s+(.+)$/)
     if (match) {
-      const text = match[2].replace(/[*_`~\[\]]/g, '').trim()
+      const text = match[2].replace(/[*_`~[\]]/g, '').trim()
       const id = text.toLowerCase().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-')
       entries.push({ level: match[1].length, text, id })
     }
@@ -282,9 +282,8 @@ function TocNode({ node, depth, onNavigate }: { node: TocNode; depth: number; on
 
 function TocSection({ entries, onNavigate }: { entries: TocEntry[]; onNavigate: (id: string) => void }) {
   const [open, setOpen] = useState(false)
-  if (entries.length === 0) return null
-
   const tree = useMemo(() => buildTocTree(entries), [entries])
+  if (entries.length === 0) return null
 
   return (
     <div
@@ -591,7 +590,7 @@ export function DiffPane() {
       if (pollTimer) clearInterval(pollTimer)
       stopWatching?.()
     }
-  }, [diffView?.commitSha, diffView?.filePath, diffView?.kind, diffView?.repoPath, refreshDiff, watchedPath])
+  }, [diffView, refreshDiff, watchedPath])
 
   return (
     <>

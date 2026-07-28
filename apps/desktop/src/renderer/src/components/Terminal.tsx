@@ -120,7 +120,7 @@ export default function TerminalContent({ threadId, locationId }: Props) {
       xtermRef.current = null
       term.dispose()
     }
-  }, [ensure, locationId])
+  }, [ensure, locationId, threadId])
 
   useEffect(() => {
     if (!containerRef.current) return

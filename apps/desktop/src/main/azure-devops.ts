@@ -145,6 +145,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: decodeURIComponent(httpsMatch[2] ?? ''),
       repo: decodeURIComponent(httpsMatch[3] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -155,6 +156,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: null,
       repo: decodeURIComponent(httpsNoProjectMatch[2] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -166,6 +168,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: decodeURIComponent(visualStudioMatch[2] ?? ''),
       repo: decodeURIComponent(visualStudioMatch[3] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -176,6 +179,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: null,
       repo: decodeURIComponent(visualStudioNoProjectMatch[2] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -186,6 +190,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: decodeURIComponent(sshMatch[2] ?? ''),
       repo: decodeURIComponent(sshMatch[3] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -196,6 +201,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: decodeURIComponent(sshUrlMatch[2] ?? ''),
       repo: decodeURIComponent(sshUrlMatch[3] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -206,6 +212,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: decodeURIComponent(vsSshMatch[2] ?? ''),
       repo: decodeURIComponent(vsSshMatch[3] ?? ''),
+      remoteUrl,
     }
   }
 
@@ -216,6 +223,7 @@ function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
       remoteName: 'origin',
       project: decodeURIComponent(vsOldSshMatch[1] ?? ''),
       repo: decodeURIComponent(vsOldSshMatch[2] ?? ''),
+      remoteUrl,
     }
   }
 

@@ -21,10 +21,19 @@
     "preview": "pnpm --filter polycode-electron preview",
     "start": "pnpm --filter polycode-electron start",
     "start:prod": "pnpm --filter polycode-electron start:prod",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "pnpm --recursive --if-present typecheck",
     "test": "pnpm --filter polycode-electron test",
     "dist": "pnpm --filter polycode-electron dist",
     "dist:publish": "pnpm --filter polycode-electron dist:publish",
     "mobile": "pnpm --filter polycode-mobile start",
     "mobile:update": "pnpm --filter polycode-mobile update"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.39.5",
+    "eslint": "9.39.5",
+    "eslint-plugin-react-hooks": "7.1.1",
+    "globals": "17.8.0",
+    "typescript-eslint": "8.65.0"
   }
 }

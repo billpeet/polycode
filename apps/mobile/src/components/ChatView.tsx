@@ -269,7 +269,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       try {
         // Desktop parity: save attachments host-side, reference as @ mentions.
         let finalContent = content
-        let savedPaths: string[] = []
+        const savedPaths: string[] = []
         if (pending.length > 0) {
           const connection = useHostsStore.getState().activeConnection()
           if (!connection) throw new Error('No active host connection')

@@ -161,7 +161,7 @@ function parseModes(setup: Record<string, unknown>): ModeState | null {
         const id = typeof rec?.id === 'string' ? rec.id : ''
         const name = typeof rec?.name === 'string' ? rec.name : ''
         if (!id || !name) return []
-        return [{ id, name, ...(typeof rec.description === 'string' ? { description: rec.description } : {}) }]
+        return [{ id, name, ...(typeof rec?.description === 'string' ? { description: rec.description } : {}) }]
       })
     : []
   return currentModeId && availableModes.length > 0 ? { currentModeId, availableModes } : null
