@@ -5,15 +5,16 @@
   "main": "out/main/index.js",
   "author": "billpeet",
   "scripts": {
-    "dev": "electron-vite dev",
+    "electron-abi": "node scripts/postinstall.js",
+    "dev": "pnpm run electron-abi && electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "start": "electron .",
-    "start:prod": "pnpm run build && cross-env NODE_ENV=production electron .",
+    "start": "pnpm run electron-abi && electron .",
+    "start:prod": "pnpm run build && pnpm run electron-abi && cross-env NODE_ENV=production electron .",
     "typecheck": "tsc --build --noEmit",
     "test": "pnpm --dir ../../node_modules/better-sqlite3 exec prebuild-install && vitest run",
-    "dist": "pnpm run build && electron-builder --win",
-    "dist:publish": "pnpm run build && electron-builder --win --publish always"
+    "dist": "pnpm run build && pnpm run electron-abi && electron-builder --win",
+    "dist:publish": "pnpm run build && pnpm run electron-abi && electron-builder --win --publish always"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.173",

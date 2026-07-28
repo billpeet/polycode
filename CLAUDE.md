@@ -30,6 +30,23 @@ pnpm run mobile       # Expo dev server for apps/mobile
 
 `node apps/desktop/scripts/postinstall.js` runs on `pnpm install` (root postinstall) — it downloads the Electron binary and the Electron-ABI better-sqlite3 prebuilt. pnpm runs it with the project-managed Node 22 runtime. It resolves package dirs via `require.resolve`, so it works with root-hoisted node_modules.
 
+### better-sqlite3 ABI juggling
+
+`pnpm test` runs Vitest under plain Node, so it calls `prebuild-install` to put the
+**Node-ABI** binary in `node_modules/better-sqlite3/build/Release/`. Electron needs the
+**Electron-ABI** binary at that same path. The two overwrite each other, so running the
+tests leaves `dev`/`start`/`dist` with the wrong binary and Electron dies at startup on an
+ABI mismatch.
+
+Every Electron-running script therefore restores the right one first via
+`pnpm run electron-abi` (a thin wrapper over `postinstall.js`, which is idempotent and
+skips the download when the ABI-specific copy already exists). `test` re-installs the
+Node-ABI binary on its own, so both directions self-heal — don't "simplify" either by
+removing the guard.
+
+This matters most for `dist`: packaging straight after a test run would otherwise bake the
+Node-ABI binary into the installer and ship an app that crashes on launch.
+
 ## Desktop Architecture (`apps/desktop`)
 
 PolyCode is an Electron desktop app that provides a UI for orchestrating Claude Code CLI sessions. It has three layers:
