@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useCommandStore, instKey } from '../stores/commands'
 import { useLocationStore } from '../stores/locations'
-import { useProjectStore } from '../stores/projects'
+import { useProjectStore, sortProjects } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useToastStore } from '../stores/toast'
 import { useYouTrackStore } from '../stores/youtrack'
@@ -55,6 +55,10 @@ export default function Sidebar() {
   const removeProject = useProjectStore((s) => s.remove)
   const archiveProject = useProjectStore((s) => s.archive)
   const unarchiveProject = useProjectStore((s) => s.unarchive)
+  const sortMode = useProjectStore((s) => s.sortMode)
+  const setSortMode = useProjectStore((s) => s.setSortMode)
+  const loadSortMode = useProjectStore((s) => s.loadSortMode)
+  const touchProject = useProjectStore((s) => s.touch)
 
   const byProject = useThreadStore((s) => s.byProject)
   const archivedByProject = useThreadStore((s) => s.archivedByProject)
@@ -93,6 +97,21 @@ export default function Sidebar() {
   const fetchCommandStatuses = useCommandStore((s) => s.fetchStatuses)
   const setCommandStatus = useCommandStore((s) => s.setStatus)
 
+  const sortedProjects = useMemo(() => {
+    // Latest thread activity per project from already-loaded threads — keeps the
+    // order correct live, on top of the DB-computed last_activity_at.
+    const activityByProject: Record<string, number> = {}
+    for (const [projectId, threads] of Object.entries(byProject)) {
+      for (const thread of threads) {
+        const time = new Date(thread.updated_at).getTime()
+        if (!Number.isNaN(time) && time > (activityByProject[projectId] ?? 0)) {
+          activityByProject[projectId] = time
+        }
+      }
+    }
+    return sortProjects(projects, sortMode, activityByProject)
+  }, [projects, sortMode, byProject])
+
   const [searchQuery, setSearchQuery] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [projectDialog, setProjectDialog] = useState<SidebarProjectDialogState | null>(null)
@@ -108,20 +127,22 @@ export default function Sidebar() {
   const commandSubsRef = useRef<Map<string, () => void>>(new Map())
 
   useEffect(() => {
-    const allThreadIds = new Set<string>()
-    for (const threads of Object.values(byProject)) {
+    const projectByThread = new Map<string, string>()
+    for (const [projectId, threads] of Object.entries(byProject)) {
       for (const thread of threads) {
-        allThreadIds.add(thread.id)
+        projectByThread.set(thread.id, projectId)
       }
     }
 
-    for (const threadId of allThreadIds) {
+    for (const [threadId, projectId] of projectByThread) {
       if (!subsRef.current.has(threadId)) {
         const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
           setName(threadId, args[0] as string)
         })
         const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
-          setStatus(threadId, args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
+          const status = args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
+          setStatus(threadId, status)
+          if (status === 'running') touchProject(projectId)
         })
         const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
           const currentStatus = useThreadStore.getState().statusMap[threadId]
@@ -129,6 +150,7 @@ export default function Sidebar() {
           if (currentStatus === 'running' || currentStatus === 'stopping') {
             setStatus(threadId, completionStatus ?? 'idle')
           }
+          touchProject(projectId)
 
           const selectedId = useThreadStore.getState().selectedThreadId
           if (selectedId !== threadId) {
@@ -141,12 +163,12 @@ export default function Sidebar() {
     }
 
     for (const [threadId, unsubs] of subsRef.current) {
-      if (!allThreadIds.has(threadId)) {
+      if (!projectByThread.has(threadId)) {
         unsubs.forEach((unsubscribe) => unsubscribe())
         subsRef.current.delete(threadId)
       }
     }
-  }, [byProject, setName, setStatus, setUnread])
+  }, [byProject, setName, setStatus, setUnread, touchProject])
 
   useEffect(() => {
     return () => {
@@ -204,14 +226,19 @@ export default function Sidebar() {
     fetchYouTrackServers()
   }, [fetchYouTrackServers])
 
+  useEffect(() => {
+    void loadSortMode()
+  }, [loadSortMode])
+
   // Refresh thread list when a webhook creates a thread in this project
   useEffect(() => {
     const unsub = window.api.on('webhook:thread-created', (...args) => {
       const { projectId } = args[0] as { projectId: string; threadId: string }
       fetchThreads(projectId)
+      touchProject(projectId)
     })
     return unsub
-  }, [fetchThreads])
+  }, [fetchThreads, touchProject])
 
   useEffect(() => {
     let cancelled = false
@@ -292,6 +319,7 @@ export default function Sidebar() {
 
   async function handleNewThread(projectId: string, locationId: string): Promise<void> {
     await createThread(projectId, 'New thread', locationId)
+    touchProject(projectId)
     selectProject(projectId)
     window.dispatchEvent(new Event('focus-input'))
   }
@@ -452,7 +480,7 @@ export default function Sidebar() {
   if (isCollapsed) {
     return (
       <CollapsedSidebar
-      projects={projects}
+      projects={sortedProjects}
       byProject={byProject}
       statusMap={statusMap}
       selectedProjectId={selectedProjectId}
@@ -467,9 +495,11 @@ export default function Sidebar() {
 
   return (
     <ExpandedSidebar
-      projects={projects}
+      projects={sortedProjects}
       archivedProjects={archivedProjects}
       projectsLoading={projectsLoading}
+      sortMode={sortMode}
+      onToggleSortMode={() => setSortMode(sortMode === 'alphabetical' ? 'lastMessage' : 'alphabetical')}
       selectedThreadId={selectedThreadId}
       expandedProjectIds={expandedProjectIds}
       archivedSectionExpanded={archivedSectionExpanded}

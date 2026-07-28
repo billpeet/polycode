@@ -12,6 +12,8 @@ export interface ProjectRow {
   archived_at: string | null
   created_at: string
   updated_at: string
+  /** Computed column (max thread updated_at) — only present on list queries. */
+  last_activity_at?: string | null
 }
 
 export interface RepoLocationRow {

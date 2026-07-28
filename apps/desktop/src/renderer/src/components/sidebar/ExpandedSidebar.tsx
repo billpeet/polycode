@@ -1,6 +1,6 @@
 import { type ReactNode, useState, useEffect } from 'react'
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, PanelLeft, Pencil, Plus, Settings, X } from 'lucide-react'
-import { LocationPool, Project, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
+import { Archive, ArchiveRestore, ArrowDownAZ, ChevronDown, ChevronRight, History, PanelLeft, Pencil, Plus, Settings, X } from 'lucide-react'
+import { LocationPool, Project, ProjectSortMode, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import LocationSection from './LocationSection'
 import ThreadRow from './ThreadRow'
 import ProjectFavicon from '../ProjectFavicon'
@@ -12,6 +12,8 @@ interface ExpandedSidebarProps {
   projects: Project[]
   archivedProjects: Project[]
   projectsLoading: boolean
+  sortMode: ProjectSortMode
+  onToggleSortMode: () => void
   selectedThreadId: string | null
   expandedProjectIds: Set<string>
   archivedSectionExpanded: boolean
@@ -60,6 +62,8 @@ export default function ExpandedSidebar({
   projects,
   archivedProjects,
   projectsLoading,
+  sortMode,
+  onToggleSortMode,
   selectedThreadId,
   expandedProjectIds,
   archivedSectionExpanded,
@@ -138,6 +142,16 @@ export default function ExpandedSidebar({
           )}
         </div>
         <div className="flex items-center gap-0.5">
+          <button
+            onClick={onToggleSortMode}
+            className="flex items-center justify-center rounded p-1.5 opacity-60 transition-opacity hover:opacity-100"
+            style={{ color: 'var(--color-text-muted)' }}
+            title={sortMode === 'alphabetical'
+              ? 'Sorted alphabetically — click to sort by last message'
+              : 'Sorted by last message — click to sort alphabetically'}
+          >
+            {sortMode === 'alphabetical' ? <ArrowDownAZ size={14} /> : <History size={14} />}
+          </button>
           <button
             onClick={onOpenSettings}
             className="flex items-center justify-center rounded p-1.5 opacity-60 transition-opacity hover:opacity-100"

@@ -432,6 +432,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   const containerRef = useRef<HTMLDivElement>(null)
   const tailRef = useRef<HTMLDivElement>(null)
   const shouldFollowBottom = useRef(true)
+  const lastScrollTopRef = useRef(0)
   const [showLatestButton, setShowLatestButton] = useState(false)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
 
@@ -469,7 +470,10 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     return Math.min(turnStart, tailStart)
   }, [entries, isStreaming])
 
-  const nonVirtualizedEntries = entries.slice(virtualizedRowCount)
+  const nonVirtualizedEntries = useMemo(
+    () => entries.slice(virtualizedRowCount),
+    [entries, virtualizedRowCount]
+  )
 
   // Track container width for height estimation
   useEffect(() => {
@@ -527,6 +531,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   // Reset to "follow bottom" when thread changes
   useEffect(() => {
     shouldFollowBottom.current = true
+    lastScrollTopRef.current = 0
     setShowLatestButton(false)
   }, [threadId])
 
@@ -539,6 +544,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     const el = containerRef.current
     if (!el) return
     el.scrollTop = el.scrollHeight
+    lastScrollTopRef.current = el.scrollTop
   })
 
   // Keep non-virtualized tail heights current. Tail rows can change height after
@@ -550,9 +556,14 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
 
     const observer = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        const key = (entry.target as HTMLElement).dataset.entryKey
+        const node = entry.target as HTMLElement
+        const key = node.dataset.entryKey
         if (key) {
-          heightCache.set(key, entry.contentRect.height)
+          // Use the border-box height (includes the wrapper's pb-2 spacing).
+          // contentRect excludes padding, which left every row ~8px short once
+          // it moved into the virtualized zone — a systematic overlap source.
+          const height = entry.borderBoxSize?.[0]?.blockSize ?? node.getBoundingClientRect().height
+          if (height > 0) heightCache.set(key, height)
         }
       }
     })
@@ -569,13 +580,17 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     return () => observer.disconnect()
   }, [nonVirtualizedEntries])
 
-  // Force a fresh measurement pass after switching threads/sessions or loading a
-  // different message set. Some rows (notably long markdown/code blocks) can be
-  // mounted with estimates first; measuring on the next frame avoids stale starts.
-  useLayoutEffect(() => {
-    const frame = requestAnimationFrame(() => rowVirtualizer.measure())
-    return () => cancelAnimationFrame(frame)
-  }, [rowVirtualizer, threadId, sessionId, entries.length, virtualizedRowCount, agentFilter])
+  // NOTE: there used to be a requestAnimationFrame(rowVirtualizer.measure())
+  // pass here that re-ran whenever entries.length / virtualizedRowCount changed.
+  // That was the main overlap bug: measure() discards every real DOM
+  // measurement, and mounted rows are NOT re-measured afterwards (their
+  // ResizeObservers only fire on actual size changes, and measureElement refs
+  // only fire on mount). So on every new message, mounted rows silently fell
+  // back to heightCache estimates — an underestimated long row then overlapped
+  // the rows below it until it was scrolled out of overscan and remounted.
+  // Mount-time measureElement + TanStack's per-element ResizeObserver already
+  // cover fresh rows and later size changes; the only measure() we still need
+  // is the width-change one above.
 
   const measureVirtualRow = useCallback((node: HTMLDivElement | null) => {
     if (!node) return
@@ -598,16 +613,32 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   function handleScroll(): void {
     const el = containerRef.current
     if (!el) return
+    const prevScrollTop = lastScrollTopRef.current
+    lastScrollTopRef.current = el.scrollTop
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < AUTO_SCROLL_THRESHOLD_PX
-    shouldFollowBottom.current = atBottom
-    setShowLatestButton(!atBottom)
+    if (atBottom) {
+      shouldFollowBottom.current = true
+    } else if (el.scrollTop < prevScrollTop - 1) {
+      // Only an upward scroll can disengage follow-bottom. While following, the
+      // only things that move scrollTop are our own pin (always to the bottom),
+      // browser clamping (also always to the bottom), and the user scrolling
+      // up. Scroll events caused by layout jumps — row re-measurement, a tool
+      // group collapsing, a long message popping in — leave scrollTop in place
+      // while scrollHeight changes, so they can no longer kick the view out of
+      // follow mode; the follow-bottom layout effect re-pins on the next render.
+      shouldFollowBottom.current = false
+    }
+    setShowLatestButton(!atBottom && !shouldFollowBottom.current)
   }
 
   const scrollToBottom = useCallback(() => {
     shouldFollowBottom.current = true
     setShowLatestButton(false)
     const el = containerRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (el) {
+      el.scrollTop = el.scrollHeight
+      lastScrollTopRef.current = el.scrollTop
+    }
   }, [])
 
   const virtualRows = rowVirtualizer.getVirtualItems()
@@ -618,6 +649,10 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
         ref={containerRef}
         onScroll={handleScroll}
         className="h-full overflow-y-auto px-4 py-4"
+        // Scroll anchoring fights manual bottom-pinning and translateY-positioned
+        // virtual rows — the browser "helpfully" adjusts scrollTop on layout
+        // jumps, firing scroll events we didn't cause.
+        style={{ overflowAnchor: 'none' }}
       >
         {messages.length === 0 && (
           <p className="text-center text-xs pt-8" style={{ color: 'var(--color-text-muted)' }}>

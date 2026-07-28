@@ -44,7 +44,11 @@ export interface Project {
   archived_at: string | null
   created_at: string
   updated_at: string
+  /** Most recent thread activity (max thread updated_at), falling back to the project's own updated_at. */
+  last_activity_at?: string
 }
+
+export type ProjectSortMode = 'alphabetical' | 'lastMessage'
 
 /**
  * Describes how a brand-new project's first local location is provisioned.

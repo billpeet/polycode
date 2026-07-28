@@ -14,16 +14,25 @@ function rowToProject(row: ProjectRow): Project {
     archived_at: row.archived_at ?? null,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    last_activity_at: row.last_activity_at ?? row.updated_at,
   }
 }
 
+/** Most recent thread activity per project (max thread updated_at), used for "last message" sorting. */
+const PROJECT_LAST_ACTIVITY_SELECT =
+  'SELECT p.*, (SELECT MAX(t.updated_at) FROM threads t WHERE t.project_id = p.id) AS last_activity_at FROM projects p'
+
 export function listProjects(): Project[] {
-  const rows = getDb().prepare('SELECT * FROM projects WHERE archived_at IS NULL ORDER BY created_at DESC').all() as ProjectRow[]
+  const rows = getDb()
+    .prepare(`${PROJECT_LAST_ACTIVITY_SELECT} WHERE p.archived_at IS NULL ORDER BY p.created_at DESC`)
+    .all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
 export function listArchivedProjects(): Project[] {
-  const rows = getDb().prepare('SELECT * FROM projects WHERE archived_at IS NOT NULL ORDER BY archived_at DESC').all() as ProjectRow[]
+  const rows = getDb()
+    .prepare(`${PROJECT_LAST_ACTIVITY_SELECT} WHERE p.archived_at IS NOT NULL ORDER BY p.archived_at DESC`)
+    .all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
@@ -55,6 +64,7 @@ export function createProject(name: string, gitUrl?: string | null, allowMainBra
     archived_at: null,
     created_at: now,
     updated_at: now,
+    last_activity_at: now,
   }
 }
 
