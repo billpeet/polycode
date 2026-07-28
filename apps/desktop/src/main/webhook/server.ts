@@ -13,6 +13,7 @@ import {
 import { sessionManager } from '../session/manager'
 import { getModelsForProvider, getDefaultModelForProvider, Provider } from '../../shared/types'
 import { emitAppEvent } from '../app-events'
+import { isValidBearerToken } from '../http-auth'
 
 let server: http.Server | null = null
 
@@ -130,8 +131,7 @@ function createRequestHandler(config: WebhookConfig, window: BrowserWindow): htt
     }
 
     if (config.token) {
-      const authHeader = req.headers['authorization'] ?? ''
-      if (authHeader !== `Bearer ${config.token}`) {
+      if (!isValidBearerToken(req.headers.authorization, config.token)) {
         return sendJson(res, 401, { error: 'Unauthorized' })
       }
     }

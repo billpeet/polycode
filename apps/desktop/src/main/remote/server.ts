@@ -3,6 +3,7 @@ import { app, BrowserWindow } from 'electron'
 import { handleControlRpc, CONTROL_RPC_CHANNELS } from '../control/control-rpc'
 import { onAppEvent } from '../app-events'
 import { RemoteServerConfig } from '../../shared/types'
+import { isValidBearerToken } from '../http-auth'
 
 let server: http.Server | null = null
 
@@ -34,8 +35,7 @@ function readBody(req: http.IncomingMessage, maxBytes = 15 * 1024 * 1024): Promi
 }
 
 function isAuthorized(req: http.IncomingMessage, token: string): boolean {
-  const authHeader = req.headers.authorization ?? ''
-  return authHeader === `Bearer ${token}`
+  return isValidBearerToken(req.headers.authorization, token)
 }
 
 function shouldStreamEvent(channel: string): boolean {
