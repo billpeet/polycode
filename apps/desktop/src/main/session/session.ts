@@ -9,7 +9,7 @@ import { CursorDriver } from '../driver/cursor'
 import { CLIDriver } from '../driver/types'
 import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
-import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
+import { createRunner } from '../driver/runner'
 import {
   updateThreadStatus,
   updateThreadName,
@@ -490,46 +490,17 @@ export class Session {
     }
   }
 
+  /**
+   * Run a `!` shell-mode command at this thread's Project Location.
+   *
+   * The transport is chosen by createRunner, the same way this Session picks the
+   * transport for its drivers — so shell mode can no longer disagree with the
+   * agent it sits next to about which machine "here" means.
+   */
   private spawnShellCommand(command: string): ChildProcess {
-    const workDir = this.workingDir || '~'
-
-    if (this.wslConfig) {
-      const innerCmd = `cd ${cdTarget(workDir)} && ${command}`
-      return spawn('wsl', ['-d', this.wslConfig.distro, '--', 'bash', '-ilc', innerCmd], {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    }
-
-    if (this.sshConfig) {
-      const innerCmd = `${LOAD_NODE_MANAGERS}; cd ${cdTarget(workDir)} && ${command}`
-      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-      const sshArgs = [
-        ...buildSshBaseArgs(this.sshConfig),
-        `${this.sshConfig.user}@${this.sshConfig.host}`,
-        remoteCmd,
-      ]
-      return spawn('ssh', sshArgs, {
-        shell: false,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    }
-
-    if (process.platform === 'win32') {
-      const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-      const cmdExe = process.env.ComSpec ?? `${sysRoot}\\System32\\cmd.exe`
-      return spawn(cmdExe, ['/d', '/s', '/c', command], {
-        shell: false,
-        cwd: workDir,
-        env: augmentWindowsPath(),
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    }
-
-    return spawn('/bin/sh', ['-c', command], {
-      shell: false,
-      cwd: workDir,
-      stdio: ['ignore', 'pipe', 'pipe'],
+    return createRunner({ ssh: this.sshConfig, wsl: this.wslConfig }).spawnScript({
+      script: command,
+      workDir: this.workingDir || '~',
     })
   }
 

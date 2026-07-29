@@ -18,6 +18,7 @@ vi.mock('child_process', async (importOriginal) => {
   return { ...actual, spawn: (...args: unknown[]) => spawnMock(...args) }
 })
 
+const { createRunner } = await import('../runner')
 const { LocalRunner } = await import('../runner/local')
 const { WslRunner } = await import('../runner/wsl')
 const { SshRunner } = await import('../runner/ssh')
@@ -48,6 +49,22 @@ beforeEach(() => {
 
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true })
+})
+
+// ── createRunner ──────────────────────────────────────────────────────────────
+
+describe('createRunner', () => {
+  it('prefers ssh when a location somehow carries both configurations', () => {
+    // session.ts's `!` shell mode used to check wsl first and so could run a
+    // command on a different machine than the driver it sat next to. It now
+    // goes through createRunner, which makes that disagreement unrepresentable.
+    expect(createRunner({ ssh: SSH, wsl: { distro: 'Ubuntu' } }).type).toBe('ssh')
+  })
+
+  it('falls back to local when neither configuration is present', () => {
+    expect(createRunner({}).type).toBe('local')
+    expect(createRunner({ ssh: null, wsl: null }).type).toBe('local')
+  })
 })
 
 // ── LocalRunner ───────────────────────────────────────────────────────────────
