@@ -123,22 +123,7 @@ import {
   applyStash,
   getRemoteUrl,
 } from '../git'
-import {
-  checkoutPullRequestBranch,
-  createPullRequest,
-  getCurrentBranchPullRequest,
-  getPullRequestsWebUrl,
-  getRepoWebUrl,
-  listOpenPullRequests,
-} from '../azure-devops'
-import {
-  checkoutGitHubPullRequestBranch,
-  createGitHubPullRequest,
-  getCurrentBranchGitHubPullRequest,
-  getGitHubPullRequestsWebUrl,
-  getGitHubRepoWebUrl,
-  listOpenGitHubPullRequests,
-} from '../github'
+import { createForge } from '../forge'
 import { checkCliHealth, invalidateCliHealthCache, updateCli } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -1021,89 +1006,37 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return getCachedDefaultBranch(repoPath, ssh, wsl)
     }
 
-    case 'azdo:pr:list': {
+    case 'forge:pr:list': {
       const [repoPath] = args as [string]
-      try {
-        const { ssh, wsl } = getConfigForPath(repoPath)
-        return await listOpenPullRequests(repoPath, ssh, wsl)
-      } catch (error) {
-        if (error instanceof Error && /No Azure DevOps remote found/i.test(error.message)) return []
-        throw error
-      }
+      const { ssh, wsl } = getConfigForPath(repoPath)
+      return (await createForge(repoPath, ssh, wsl)).listPullRequests()
     }
-    case 'azdo:pr:current': {
+    case 'forge:pr:current': {
       const [repoPath, branch] = args as [string, string]
-      try {
-        const { ssh, wsl } = getConfigForPath(repoPath)
-        return await getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)
-      } catch (error) {
-        if (error instanceof Error && /No Azure DevOps remote found/i.test(error.message)) return null
-        throw error
-      }
+      const { ssh, wsl } = getConfigForPath(repoPath)
+      return (await createForge(repoPath, ssh, wsl)).getCurrentBranchPullRequest(branch)
     }
-    case 'azdo:pr:create': {
+    case 'forge:pr:create': {
       const [repoPath, payload] = args as [string, { target: string; title: string; description?: string }]
       const { ssh, wsl } = getConfigForPath(repoPath)
-      return createPullRequest(repoPath, payload, ssh, wsl)
+      return (await createForge(repoPath, ssh, wsl)).createPullRequest(payload)
     }
-    case 'azdo:pr:checkout': {
+    case 'forge:pr:checkout': {
       const [repoPath, prId] = args as [string, number]
       const { ssh, wsl } = getConfigForPath(repoPath)
-      const result = await checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
+      const result = await (await createForge(repoPath, ssh, wsl)).checkoutPullRequest(prId)
       invalidateRepoGitCache(repoPath)
       return result
     }
-    case 'azdo:pr:webUrl': {
+    case 'forge:pr:webUrl': {
       const [repoPath] = args as [string]
       const { ssh, wsl } = getConfigForPath(repoPath)
-      return getPullRequestsWebUrl(repoPath, ssh, wsl)
+      return (await createForge(repoPath, ssh, wsl)).getPullRequestsWebUrl()
     }
-    case 'azdo:repo:webUrl': {
+    case 'forge:repo:webUrl': {
       const [repoPath] = args as [string]
       const { ssh, wsl } = getConfigForPath(repoPath)
-      return getRepoWebUrl(repoPath, ssh, wsl)
-    }
-    case 'gh:pr:list': {
-      const [repoPath] = args as [string]
-      try {
-        const { ssh, wsl } = getConfigForPath(repoPath)
-        return await listOpenGitHubPullRequests(repoPath, ssh, wsl)
-      } catch (error) {
-        if (error instanceof Error && /No GitHub remote found/i.test(error.message)) return []
-        throw error
-      }
-    }
-    case 'gh:pr:current': {
-      const [repoPath, branch] = args as [string, string]
-      try {
-        const { ssh, wsl } = getConfigForPath(repoPath)
-        return await getCurrentBranchGitHubPullRequest(repoPath, branch, ssh, wsl)
-      } catch (error) {
-        if (error instanceof Error && /No GitHub remote found/i.test(error.message)) return null
-        throw error
-      }
-    }
-    case 'gh:pr:create': {
-      const [repoPath, payload] = args as [string, { target: string; title: string; description?: string }]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return createGitHubPullRequest(repoPath, payload, ssh, wsl)
-    }
-    case 'gh:pr:checkout': {
-      const [repoPath, prId] = args as [string, number]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      const result = await checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
-      invalidateRepoGitCache(repoPath)
-      return result
-    }
-    case 'gh:pr:webUrl': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getGitHubPullRequestsWebUrl(repoPath, ssh, wsl)
-    }
-    case 'gh:repo:webUrl': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getGitHubRepoWebUrl(repoPath, ssh, wsl)
+      return (await createForge(repoPath, ssh, wsl)).getRepoWebUrl()
     }
 
     case 'files:list': {

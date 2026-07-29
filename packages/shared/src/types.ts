@@ -451,7 +451,7 @@ export interface CommitLogEntry {
   parents: string[]
 }
 
-export interface AzureDevOpsPullRequest {
+export interface PullRequest {
   id: number
   title: string
   status: string
@@ -461,19 +461,6 @@ export interface AzureDevOpsPullRequest {
   url: string
   creationDate: string
 }
-
-export interface GitHubPullRequest {
-  id: number
-  title: string
-  status: string
-  sourceBranch: string
-  targetBranch: string
-  authorName: string
-  url: string
-  creationDate: string
-}
-
-export type PullRequest = AzureDevOpsPullRequest | GitHubPullRequest
 
 export type PublishStep = 'inspect' | 'branch' | 'stage' | 'commit' | 'push' | 'pull-request'
 

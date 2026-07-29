@@ -84,8 +84,7 @@ import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff, invalidateGitCache } from '../git'
-import { listOpenPullRequests, getCurrentBranchPullRequest, createPullRequest, checkoutPullRequestBranch, getPullRequestsWebUrl, getRepoWebUrl } from '../azure-devops'
-import { listOpenGitHubPullRequests, getCurrentBranchGitHubPullRequest, createGitHubPullRequest, checkoutGitHubPullRequestBranch, getGitHubPullRequestsWebUrl, getGitHubRepoWebUrl } from '../github'
+import { createForge } from '../forge'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
@@ -1015,92 +1014,38 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
-  // ── Azure DevOps Pull Requests ────────────────────────────────────────────
+  // ── Forge Pull Requests ───────────────────────────────────────────────────
 
-  proxyable('azdo:pr:list', async (repoPath: string) => {
-    try {
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return await listOpenPullRequests(repoPath, ssh, wsl)
-    } catch (err) {
-      if (err instanceof Error && /No Azure DevOps remote found/i.test(err.message)) return []
-      throw err
-    }
-  })
-
-  proxyable('azdo:pr:current', async (repoPath: string, branch: string) => {
-    try {
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return await getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)
-    } catch (err) {
-      if (err instanceof Error && /No Azure DevOps remote found/i.test(err.message)) return null
-      throw err
-    }
-  })
-
-  proxyable('azdo:pr:create', (repoPath: string, payload: { target: string; title: string; description?: string }) => {
+  proxyable('forge:pr:list', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return createPullRequest(repoPath, payload, ssh, wsl)
+    return (await createForge(repoPath, ssh, wsl)).listPullRequests()
   })
 
-  proxyable('azdo:pr:checkout', async (repoPath: string, prId: number) => {
+  proxyable('forge:pr:current', async (repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    const result = await checkoutPullRequestBranch(repoPath, prId, ssh, wsl)
+    return (await createForge(repoPath, ssh, wsl)).getCurrentBranchPullRequest(branch)
+  })
+
+  proxyable('forge:pr:create', async (repoPath: string, payload: { target: string; title: string; description?: string }) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).createPullRequest(payload)
+  })
+
+  proxyable('forge:pr:checkout', async (repoPath: string, prId: number) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    const result = await (await createForge(repoPath, ssh, wsl)).checkoutPullRequest(prId)
     invalidateRepoGitCache(repoPath)
     return result
   })
 
-  proxyable('azdo:pr:webUrl', (repoPath: string) => {
+  proxyable('forge:pr:webUrl', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getPullRequestsWebUrl(repoPath, ssh, wsl)
+    return (await createForge(repoPath, ssh, wsl)).getPullRequestsWebUrl()
   })
 
-  proxyable('azdo:repo:webUrl', (repoPath: string) => {
+  proxyable('forge:repo:webUrl', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    return getRepoWebUrl(repoPath, ssh, wsl)
-  })
-
-  // ── GitHub Pull Requests ──────────────────────────────────────────────────
-
-  proxyable('gh:pr:list', async (repoPath: string) => {
-    try {
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return await listOpenGitHubPullRequests(repoPath, ssh, wsl)
-    } catch (err) {
-      if (err instanceof Error && /No GitHub remote found/i.test(err.message)) return []
-      throw err
-    }
-  })
-
-  proxyable('gh:pr:current', async (repoPath: string, branch: string) => {
-    try {
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return await getCurrentBranchGitHubPullRequest(repoPath, branch, ssh, wsl)
-    } catch (err) {
-      if (err instanceof Error && /No GitHub remote found/i.test(err.message)) return null
-      throw err
-    }
-  })
-
-  proxyable('gh:pr:create', (repoPath: string, payload: { target: string; title: string; description?: string }) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return createGitHubPullRequest(repoPath, payload, ssh, wsl)
-  })
-
-  proxyable('gh:pr:checkout', async (repoPath: string, prId: number) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    const result = await checkoutGitHubPullRequestBranch(repoPath, prId, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
-    return result
-  })
-
-  proxyable('gh:pr:webUrl', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getGitHubPullRequestsWebUrl(repoPath, ssh, wsl)
-  })
-
-  proxyable('gh:repo:webUrl', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getGitHubRepoWebUrl(repoPath, ssh, wsl)
+    return (await createForge(repoPath, ssh, wsl)).getRepoWebUrl()
   })
 
   // ── Files ────────────────────────────────────────────────────────────────

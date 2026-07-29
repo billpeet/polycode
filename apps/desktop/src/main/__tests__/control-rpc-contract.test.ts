@@ -73,6 +73,19 @@ describe('remote control RPC channel contract', () => {
     expect(CHANNEL_REGISTRY['threads:send']).toMatchObject({ originAware: true })
   })
 
+  test('pull request operations use only the provider-neutral Forge channels', () => {
+    const forgeChannels = Object.keys(CHANNEL_REGISTRY).filter((channel) => channel.startsWith('forge:'))
+    expect(forgeChannels).toEqual([
+      'forge:pr:list',
+      'forge:pr:current',
+      'forge:pr:create',
+      'forge:pr:checkout',
+      'forge:pr:webUrl',
+      'forge:repo:webUrl',
+    ])
+    expect(Object.keys(CHANNEL_REGISTRY).filter((channel) => /^(?:azdo|gh):/.test(channel))).toEqual([])
+  })
+
   test('obsolete plan file handlers are not retained as local-only IPC', () => {
     expect(handlersSource).not.toMatch(/ipcMain\.handle\(\s*['"]plans:(?:list|read)['"]/)
   })

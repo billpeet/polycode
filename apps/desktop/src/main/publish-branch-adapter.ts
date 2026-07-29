@@ -15,7 +15,6 @@ export function createPublishBranchDependencies(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): PublishBranchDependencies {
-  const forge = createForge(ssh, wsl)
   return {
     async inspect(repoPath) {
       const status = await getGitStatus(repoPath, ssh, wsl)
@@ -33,7 +32,10 @@ export function createPublishBranchDependencies(
     async push(repoPath) {
       await gitPush(repoPath, ssh, wsl)
     },
-    createPullRequest: (repoPath, payload) => forge.createPullRequest(repoPath, payload),
+    async createPullRequest(repoPath, payload) {
+      const forge = await createForge(repoPath, ssh, wsl)
+      return forge.createPullRequest(payload)
+    },
   }
 }
 

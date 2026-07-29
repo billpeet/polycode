@@ -1,6 +1,6 @@
 import { existsSync } from 'fs'
 import * as path from 'path'
-import { AzureDevOpsPullRequest, SshConfig, WslConfig } from '../shared/types'
+import { PullRequest, SshConfig, WslConfig } from '../shared/types'
 import { createRunner } from './driver/runner'
 import { runGit } from './git-runner'
 import {
@@ -119,7 +119,7 @@ export async function listOpenPullRequests(
   repoPath: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<AzureDevOpsPullRequest[]> {
+): Promise<PullRequest[]> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const args = [
     'pr', 'list',
@@ -152,7 +152,7 @@ async function listPullRequestsByStatus(
   status: 'active' | 'completed',
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<AzureDevOpsPullRequest[]> {
+): Promise<PullRequest[]> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const args = [
     'pr', 'list',
@@ -203,7 +203,7 @@ export async function getCurrentBranchPullRequest(
   branch: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<AzureDevOpsPullRequest | null> {
+): Promise<PullRequest | null> {
   const openPrs = await listPullRequestsByStatus(repoPath, 'active', ssh, wsl)
   const openPr = openPrs.find((pr) => pr.sourceBranch === branch)
   if (openPr) return openPr
@@ -217,7 +217,7 @@ export async function createPullRequest(
   payload: { target: string; title: string; description?: string },
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<AzureDevOpsPullRequest> {
+): Promise<PullRequest> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const sourceBranch = (await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)).trim()
   if (!sourceBranch || sourceBranch === 'HEAD') {

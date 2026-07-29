@@ -293,9 +293,7 @@ function BranchControls({
           }
           return
         }
-        const pageUrl = provider === 'azure'
-          ? await window.api.invoke('azdo:repo:webUrl', projectPath)
-          : await window.api.invoke('gh:repo:webUrl', projectPath)
+        const pageUrl = await window.api.invoke('forge:repo:webUrl', projectPath)
         if (!cancelled) {
           setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider, pageUrl } }))
         }
@@ -792,28 +790,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
 
       setDefaultBranch(resolvedDefaultBranch)
 
-      if (provider === 'azure') {
-        const [prs, current, pageUrl] = await Promise.all([window.api.invoke('azdo:pr:list', projectPath), window.api.invoke('azdo:pr:current', projectPath, gitStatus.branch), window.api.invoke('azdo:pr:webUrl', projectPath)])
+      if (provider) {
+        const [prs, current, pageUrl] = await Promise.all([window.api.invoke('forge:pr:list', projectPath), window.api.invoke('forge:pr:current', projectPath, gitStatus.branch), window.api.invoke('forge:pr:webUrl', projectPath)])
         setPrCacheByPath((cache) => ({
           ...cache,
           [projectPath]: {
-            provider: 'azure',
-            pageUrl: pageUrl as string,
-            openPrs: prs as PullRequestItem[],
-            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current as PullRequestItem | null },
-            defaultBranch: resolvedDefaultBranch,
-            loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
-          },
-        }))
-        return
-      }
-
-      if (provider === 'github') {
-        const [prs, current, pageUrl] = await Promise.all([window.api.invoke('gh:pr:list', projectPath), window.api.invoke('gh:pr:current', projectPath, gitStatus.branch), window.api.invoke('gh:pr:webUrl', projectPath)])
-        setPrCacheByPath((cache) => ({
-          ...cache,
-          [projectPath]: {
-            provider: 'github',
+            provider,
             pageUrl: pageUrl as string,
             openPrs: prs as PullRequestItem[],
             currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current as PullRequestItem | null },
@@ -1177,7 +1159,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     if (!projectPath || !prProvider) return
     setCheckingOutPrId(prId)
     try {
-      const result = prProvider === 'azure' ? await window.api.invoke('azdo:pr:checkout', projectPath, prId) : await window.api.invoke('gh:pr:checkout', projectPath, prId)
+      const result = await window.api.invoke('forge:pr:checkout', projectPath, prId)
       await fetchGit(projectPath)
       await refreshPullRequests()
       addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)}`, duration: 3000 })
@@ -1187,7 +1169,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         type: 'error',
         title: 'Checkout PR Failed',
         message: err instanceof Error ? err.message : 'Failed to checkout PR branch',
-        details: formatErrorDetails({ action: prProvider === 'azure' ? 'azdo:pr:checkout' : 'gh:pr:checkout', projectPath, prId, provider: prProvider }, err),
+        details: formatErrorDetails({ action: 'forge:pr:checkout', projectPath, prId, provider: prProvider }, err),
         duration: 0,
       })
     } finally {
@@ -1209,9 +1191,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     let worktree: RepoLocation | null = null
     try {
       worktree = await createWorktree(parentLocation.id, threadProjectId, `PR #${pr.id}`)
-      const result = prProvider === 'azure'
-        ? await window.api.invoke('azdo:pr:checkout', worktree.path, pr.id)
-        : await window.api.invoke('gh:pr:checkout', worktree.path, pr.id)
+      const result = await window.api.invoke('forge:pr:checkout', worktree.path, pr.id)
       await createThread(threadProjectId, `PR #${pr.id}: ${pr.title}`, worktree.id)
       addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)} in a new worktree`, duration: 3000 })
       window.dispatchEvent(new Event('focus-input'))

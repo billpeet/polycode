@@ -2,7 +2,7 @@ import { promises as fsPromises } from 'fs'
 import { tmpdir } from 'os'
 import * as path from 'path'
 import { randomUUID } from 'crypto'
-import { GitHubPullRequest, SshConfig, WslConfig } from '../shared/types'
+import { PullRequest, SshConfig, WslConfig } from '../shared/types'
 import { createRunner } from './driver/runner'
 import { runGit } from './git-runner'
 import { mapGitHubPr as mapPr, parseGitHubRemote } from './forge-parsers'
@@ -74,7 +74,7 @@ export async function listOpenGitHubPullRequests(
   repoPath: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<GitHubPullRequest[]> {
+): Promise<PullRequest[]> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const repo = `${ctx.owner}/${ctx.repo}`
   const output = await runGh(repoPath, [
@@ -99,7 +99,7 @@ async function listGitHubPullRequestsForBranch(
   state: 'open' | 'merged',
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<GitHubPullRequest[]> {
+): Promise<PullRequest[]> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const repo = `${ctx.owner}/${ctx.repo}`
   const output = await runGh(repoPath, [
@@ -142,7 +142,7 @@ export async function getCurrentBranchGitHubPullRequest(
   branch: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<GitHubPullRequest | null> {
+): Promise<PullRequest | null> {
   const openPrs = await listGitHubPullRequestsForBranch(repoPath, branch, 'open', ssh, wsl)
   const openPr = openPrs[0]
   if (openPr) return openPr
@@ -156,7 +156,7 @@ export async function createGitHubPullRequest(
   payload: { target: string; title: string; description?: string },
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
-): Promise<GitHubPullRequest> {
+): Promise<PullRequest> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const repo = `${ctx.owner}/${ctx.repo}`
   const source = (await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)).trim()

@@ -1,4 +1,4 @@
-import type { AzureDevOpsPullRequest, GitHubPullRequest } from '../shared/types'
+import type { PullRequest } from '../shared/types'
 
 export interface GitHubRemote {
   owner: string
@@ -42,7 +42,7 @@ export function parseGitHubRemote(remoteUrl: string): GitHubRemote | null {
   return match ? { owner: decodeURIComponent(match[1] ?? ''), repo: decodeURIComponent(match[2] ?? '') } : null
 }
 
-export function mapGitHubPr(pr: GitHubPrInput): GitHubPullRequest {
+export function mapGitHubPr(pr: GitHubPrInput): PullRequest {
   return {
     id: pr.number ?? 0,
     title: pr.title ?? '(untitled)',
@@ -87,7 +87,7 @@ export function buildAzureRepoUrl(remoteUrl: string): string {
   return normalizedAzureRepoUrl(remoteUrl)
 }
 
-export function mapAzurePr(pr: AzurePrInput, remoteUrl?: string): AzureDevOpsPullRequest {
+export function mapAzurePr(pr: AzurePrInput, remoteUrl?: string): PullRequest {
   const id = pr.pullRequestId ?? 0
   return {
     id,

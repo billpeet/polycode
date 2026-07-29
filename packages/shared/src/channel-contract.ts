@@ -11,8 +11,7 @@ import type {
   StashEntry,
   PullResult,
   CommitLogEntry,
-  AzureDevOpsPullRequest,
-  GitHubPullRequest,
+  PullRequest,
   PublishBranchInput,
   PublishBranchResult,
   SendOptions,
@@ -180,18 +179,12 @@ export interface ChannelContract extends Record<Channel, ChannelContractEntry> {
   'git:getRemoteUrl': [[repoPath: string], string | null]
   'git:hostingProvider': [[repoPath: string], 'azure' | 'github' | null]
   'git:defaultBranch': [[repoPath: string], string]
-  'azdo:pr:list': [[repoPath: string], AzureDevOpsPullRequest[]]
-  'azdo:pr:current': [[repoPath: string, branch: string], AzureDevOpsPullRequest | null]
-  'azdo:pr:create': [[repoPath: string, payload: { target: string; title: string; description?: string }], AzureDevOpsPullRequest]
-  'azdo:pr:checkout': [[repoPath: string, prId: number], { branch: string }]
-  'azdo:pr:webUrl': [[repoPath: string], string]
-  'azdo:repo:webUrl': [[repoPath: string], string]
-  'gh:pr:list': [[repoPath: string], GitHubPullRequest[]]
-  'gh:pr:current': [[repoPath: string, branch: string], GitHubPullRequest | null]
-  'gh:pr:create': [[repoPath: string, payload: { target: string; title: string; description?: string }], GitHubPullRequest]
-  'gh:pr:checkout': [[repoPath: string, prId: number], { branch: string }]
-  'gh:pr:webUrl': [[repoPath: string], string]
-  'gh:repo:webUrl': [[repoPath: string], string]
+  'forge:pr:list': [[repoPath: string], PullRequest[]]
+  'forge:pr:current': [[repoPath: string, branch: string], PullRequest | null]
+  'forge:pr:create': [[repoPath: string, payload: { target: string; title: string; description?: string }], PullRequest]
+  'forge:pr:checkout': [[repoPath: string, prId: number], { branch: string }]
+  'forge:pr:webUrl': [[repoPath: string], string]
+  'forge:repo:webUrl': [[repoPath: string], string]
   'files:list': [[dirPath: string], FileEntry[]]
   'files:read': [[filePath: string], { content: string; truncated: boolean; mimeType?: string; dataUrl?: string } | null]
   'files:searchList': [[rootPath: string], SearchableFile[]]
