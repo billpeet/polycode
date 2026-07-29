@@ -236,3 +236,15 @@ const REMOTE_CHANNEL_SET: ReadonlySet<string> = new Set(REMOTE_CHANNELS)
 export function isRemoteChannel(channel: string): channel is RemoteChannel {
   return REMOTE_CHANNEL_SET.has(channel)
 }
+
+export const LOCAL_CHANNELS = Object.freeze(
+  (Object.keys(CHANNEL_REGISTRY) as Channel[]).filter(
+    (channel): channel is LocalChannel => CHANNEL_REGISTRY[channel].local,
+  ),
+)
+
+const LOCAL_CHANNEL_SET: ReadonlySet<string> = new Set(LOCAL_CHANNELS)
+
+export function isLocalChannel(channel: string): channel is LocalChannel {
+  return LOCAL_CHANNEL_SET.has(channel)
+}
