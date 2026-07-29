@@ -1,7 +1,7 @@
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { SshConfig, WslConfig, ConnectionType } from '../../shared/types'
-import { buildSshBaseArgs } from '../driver/runner/utils'
+import { buildSshBaseArgs } from '../driver/runner'
 import { emitAppEvent } from '../app-events'
 
 interface PtyInstance {
