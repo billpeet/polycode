@@ -18,7 +18,9 @@ export class FakeRunner implements Runner {
     this.results.push({
       stdout: result.stdout ?? '',
       stderr: result.stderr ?? '',
-      exitCode: result.exitCode ?? 0,
+      // `??` would be wrong here: null is a real exit code, meaning the process
+      // was killed or never started, and a test must be able to ask for it.
+      exitCode: result.exitCode === undefined ? 0 : result.exitCode,
       timedOut: result.timedOut ?? false,
     })
   }

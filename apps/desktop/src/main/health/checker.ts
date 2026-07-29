@@ -1,21 +1,54 @@
-import { spawn } from 'child_process'
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult } from '../../shared/types'
 import {
+  createRunner,
   shellEscape,
   LOAD_NODE_MANAGERS,
   FIX_HOME,
   RESOLVE_CODEX_BIN_SOFT,
-  buildSshBaseArgs,
   augmentWindowsPath,
   resolveClaudeCodeExecutable,
+  type Runner,
+  type RunResult,
 } from '../driver/runner'
 
 interface SpawnResult {
   output: string
   exitCode: number | null
+}
+
+/**
+ * Health checks have no Project Location of their own — they ask "is this CLI
+ * installed", not "run this in my repo". LocalRunner still needs a directory
+ * that exists, so probes borrow this process's.
+ */
+const PROBE_DIR = process.cwd()
+
+function runnerFor(connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Runner {
+  if (connectionType === 'ssh' && ssh) return createRunner({ ssh })
+  if (connectionType === 'wsl' && wsl) return createRunner({ wsl })
+  return createRunner({})
+}
+
+/**
+ * Health checks read one merged stream: every probe writes its diagnostics to
+ * stderr and its version to stdout, and `extractVersion` scans both.
+ */
+function merged(result: RunResult): SpawnResult {
+  return { output: result.stdout + result.stderr, exitCode: result.exitCode }
+}
+
+/**
+ * Claude Code ships a native installer that frequently lands outside PATH, so
+ * it is the one provider worth resolving to an absolute path before probing.
+ */
+function resolveLocalBinary(cmd: string): string {
+  if (process.platform === 'win32' && cmd === 'claude') {
+    return resolveClaudeCodeExecutable(augmentWindowsPath())
+  }
+  return cmd
 }
 
 type CacheEntry<T> = {
@@ -108,18 +141,6 @@ function hasUsableVersionCheck(result: SpawnResult): boolean {
   return result.exitCode === 0 || extractVersion(result.output) !== null
 }
 
-function resolveLocalExecutable(cmd: string, env: NodeJS.ProcessEnv): { cmd: string; argsPrefix: string[]; shell: boolean } {
-  if (process.platform !== 'win32') {
-    return { cmd, argsPrefix: [], shell: false }
-  }
-
-  if (cmd === 'claude') {
-    return { cmd: resolveClaudeCodeExecutable(env), argsPrefix: [], shell: false }
-  }
-
-  return { cmd, argsPrefix: [], shell: true }
-}
-
 function buildPosixVersionCheck(provider: Provider, cmd: string): string {
   const commonPreamble = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}`
 
@@ -155,41 +176,6 @@ export function invalidateCliHealthCache(
       cliInFlight.delete(key)
     }
   }
-}
-
-function runProcess(
-  cmd: string,
-  args: string[],
-  opts: { shell?: boolean; timeout?: number; env?: NodeJS.ProcessEnv } = {}
-): Promise<SpawnResult> {
-  return new Promise((resolve) => {
-    let output = ''
-    const timeout = opts.timeout ?? 15000
-
-    const proc = spawn(cmd, args, {
-      env: opts.env,
-      shell: opts.shell ?? false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    proc.stdout?.on('data', (chunk: Buffer) => { output += chunk.toString('utf8') })
-    proc.stderr?.on('data', (chunk: Buffer) => { output += chunk.toString('utf8') })
-
-    const timer = setTimeout(() => {
-      try { proc.kill('SIGTERM') } catch { /* ignore */ }
-      resolve({ output, exitCode: null })
-    }, timeout)
-
-    proc.on('close', (code) => {
-      clearTimeout(timer)
-      resolve({ output, exitCode: code })
-    })
-
-    proc.on('error', () => {
-      clearTimeout(timer)
-      resolve({ output, exitCode: null })
-    })
-  })
 }
 
 // Cursor's parameterized model picker (effort/fast/thinking/context) requires a
@@ -272,13 +258,6 @@ const PROVIDER_INFO: Record<Provider, {
   'cursor':      { cmd: 'cursor-agent',   package: '@cursor/agent',              updateCmd: ['cursor-agent', 'update'] },
 }
 
-function buildSshArgs(ssh: SshConfig): string[] {
-  const args = buildSshBaseArgs(ssh)
-  args.push('-o', 'BatchMode=yes')
-  args.push(`${ssh.user}@${ssh.host}`)
-  return args
-}
-
 async function runVersionCheckUncached(
   provider: Provider,
   connectionType: string,
@@ -286,26 +265,21 @@ async function runVersionCheckUncached(
   wsl?: WslConfig | null,
 ): Promise<SpawnResult> {
   const info = PROVIDER_INFO[provider]
+  const runner = runnerFor(connectionType, ssh, wsl)
 
-  if (connectionType === 'ssh' && ssh) {
-    const innerCmd = buildPosixVersionCheck(provider, info.cmd)
-    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-    return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 20000 })
+  if (runner.type !== 'local') {
+    return merged(await runner.runScript({
+      script: buildPosixVersionCheck(provider, info.cmd),
+      timeoutMs: 20000,
+    }))
   }
 
-  if (connectionType === 'wsl' && wsl) {
-    const innerCmd = buildPosixVersionCheck(provider, info.cmd)
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], { timeout: 20000 })
-  }
-
-  const env = process.platform === 'win32' ? augmentWindowsPath() : process.env
-  const resolved = resolveLocalExecutable(info.cmd, env)
-  const args = provider === 'cursor' ? ['about', '--format', 'json'] : ['--version']
-  return runProcess(resolved.cmd, [...resolved.argsPrefix, ...args], {
-    env,
-    shell: resolved.shell,
-    timeout: 10000,
-  })
+  return merged(await runner.run({
+    binary: resolveLocalBinary(info.cmd),
+    args: provider === 'cursor' ? ['about', '--format', 'json'] : ['--version'],
+    workDir: PROBE_DIR,
+    timeoutMs: 10000,
+  }))
 }
 
 async function runPresenceCheckUncached(
@@ -315,27 +289,24 @@ async function runPresenceCheckUncached(
   wsl?: WslConfig | null,
 ): Promise<SpawnResult> {
   const info = PROVIDER_INFO[provider]
+  const runner = runnerFor(connectionType, ssh, wsl)
 
-  if (connectionType === 'ssh' && ssh) {
-    const innerCmd = buildPosixPresenceCheck(info.cmd)
-    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-    return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 5000 })
+  if (runner.type !== 'local') {
+    return merged(await runner.runScript({
+      script: buildPosixPresenceCheck(info.cmd),
+      timeoutMs: 5000,
+    }))
   }
 
-  if (connectionType === 'wsl' && wsl) {
-    const innerCmd = buildPosixPresenceCheck(info.cmd)
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], { timeout: 5000 })
-  }
+  // `where` and `command -v` are the platforms' own binary-discovery tools, so
+  // this stays argv rather than becoming a script. On Windows LocalRunner
+  // supplies shell:true itself, which is what makes `where` resolve .cmd
+  // wrappers; `sh -lc` is a login shell so the user's profile PATH applies.
+  const [binary, args] = process.platform === 'win32'
+    ? ['where', [info.cmd]]
+    : ['sh', ['-lc', `command -v ${shellEscape(info.cmd)}`]]
 
-  const env = process.platform === 'win32' ? augmentWindowsPath() : process.env
-  if (process.platform === 'win32') {
-    return runProcess('where', [info.cmd], { env, shell: true, timeout: 5000 })
-  }
-
-  return runProcess('sh', ['-lc', `command -v ${shellEscape(info.cmd)}`], {
-    env,
-    timeout: 5000,
-  })
+  return merged(await runner.run({ binary, args, workDir: PROBE_DIR, timeoutMs: 5000 }))
 }
 
 async function runVersionCheck(
@@ -368,41 +339,22 @@ async function runUpdate(
   wsl?: WslConfig | null,
 ): Promise<SpawnResult> {
   const info = PROVIDER_INFO[provider]
+  const runner = runnerFor(connectionType, ssh, wsl)
+  const UPDATE_TIMEOUT_MS = 120000
 
-  // Build the shell command string for remote environments.
-  // claude-code uses its own `claude update`; others use npm.
-  function buildUpdateShellCmd(): string {
-    if (info.updateCmd) {
-      return `${info.updateCmd.join(' ')} 2>&1`
-    }
-    return `npm install -g ${info.updatePkg} 2>&1`
+  if (runner.type !== 'local') {
+    // claude-code uses its own `claude update`; others go through npm.
+    const update = info.updateCmd
+      ? `${info.updateCmd.join(' ')} 2>&1`
+      : `npm install -g ${info.updatePkg} 2>&1`
+    return merged(await runner.runScript({
+      script: `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${update}`,
+      timeoutMs: UPDATE_TIMEOUT_MS,
+    }))
   }
 
-  if (connectionType === 'ssh' && ssh) {
-    const innerCmd = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${buildUpdateShellCmd()}`
-    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-    return runProcess('ssh', [...buildSshArgs(ssh), remoteCmd], { timeout: 120000 })
-  }
-
-  if (connectionType === 'wsl' && wsl) {
-    const innerCmd = `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${buildUpdateShellCmd()}`
-    return runProcess('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], { timeout: 120000 })
-  }
-
-  // Local
-  if (info.updateCmd) {
-    const [cmd, ...args] = info.updateCmd
-    return runProcess(cmd, args, {
-      env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
-      shell: process.platform === 'win32',
-      timeout: 120000,
-    })
-  }
-  return runProcess('npm', ['install', '-g', info.updatePkg!], {
-    env: process.platform === 'win32' ? augmentWindowsPath() : process.env,
-    shell: process.platform === 'win32',
-    timeout: 120000,
-  })
+  const [binary, ...args] = info.updateCmd ?? ['npm', 'install', '-g', info.updatePkg!]
+  return merged(await runner.run({ binary, args, workDir: PROBE_DIR, timeoutMs: UPDATE_TIMEOUT_MS }))
 }
 
 export async function checkCliHealth(
