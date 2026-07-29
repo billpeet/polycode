@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { canonicalToolName } from '@polycode/shared'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
@@ -73,17 +74,6 @@ const TOOL_GROUP_KEY: Record<string, string> = {
   Grep: 'file-access',
   WebSearch: 'web-access',
   WebFetch: 'web-access',
-}
-
-function canonicalToolName(toolName: string, metadata?: Record<string, unknown> | null): string {
-  const lower = toolName.toLowerCase()
-  const kind = typeof metadata?.kind === 'string' ? metadata.kind.toLowerCase() : ''
-  if (lower === 'grep' || kind === 'search') return 'Grep'
-  if (lower === 'read file' || kind === 'read') return 'Read'
-  if (lower === 'edit file' || kind === 'edit') return 'Edit'
-  if (lower === 'bash') return 'Bash'
-  if (lower === 'terminal' || kind === 'execute') return 'Bash'
-  return toolName
 }
 
 function getToolGroupKey(toolName: string, metadata?: Record<string, unknown> | null): string {

@@ -1,5 +1,6 @@
 export * from './types'
 export * from './messages'
 export * from './todos'
+export * from './tools'
 export * from './channels'
 export * from './channel-contract'

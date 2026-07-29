@@ -11,7 +11,7 @@ import {
   type NativeScrollEvent,
   type NativeSyntheticEvent,
 } from 'react-native'
-import { parseMetadata, type Message } from '@polycode/shared'
+import { canonicalToolName, parseMetadata, type Message } from '@polycode/shared'
 import { colors } from '@/theme/colors'
 import { AgentGroupBlock, type AgentGroupMeta, type AgentStatus } from './AgentGroupBlock'
 import { AttachmentView, extractAttachments } from './AttachmentImage'
@@ -19,7 +19,6 @@ import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import {
   ToolCallBlock,
-  canonicalToolName,
   deriveToolStatus,
   type ToolCallProps,
   type ToolResultData,

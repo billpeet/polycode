@@ -1,3 +1,4 @@
+import { canonicalToolName } from '@polycode/shared'
 import { Message } from '../types/ipc'
 import { useState, useMemo, type CSSProperties } from 'react'
 import EditDiffView from './EditDiffView'
@@ -27,17 +28,6 @@ function prettyJson(value: unknown): string {
     return JSON.stringify(value, null, 2)
   }
   return String(value ?? '')
-}
-
-function canonicalToolName(toolName: string, metadata?: Record<string, unknown> | null): string {
-  const lower = toolName.toLowerCase()
-  const kind = typeof metadata?.kind === 'string' ? metadata.kind.toLowerCase() : ''
-  if (lower === 'grep' || kind === 'search') return 'Grep'
-  if (lower === 'read file' || kind === 'read') return 'Read'
-  if (lower === 'edit file' || kind === 'edit') return 'Edit'
-  if (lower === 'bash') return 'Bash'
-  if (lower === 'terminal' || kind === 'execute') return 'Bash'
-  return toolName
 }
 
 function getResultSummary(resultMetadata: Record<string, unknown> | null): string | null {

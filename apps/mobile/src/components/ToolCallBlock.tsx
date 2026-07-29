@@ -4,6 +4,7 @@
  * views, Bash command blocks, Read ranges, FileChange lists, result output
  * with stdout/stderr/exit-code extraction and result diff blocks.
  */
+import { canonicalToolName } from '@polycode/shared'
 import { memo, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { stripAnsi } from '@/lib/diff'
@@ -11,18 +12,7 @@ import { colors } from '@/theme/colors'
 import { EditDiffView } from './EditDiffView'
 import { Markdown } from './Markdown'
 
-// ── Shared helpers (mirror desktop logic) ────────────────────────────────────
-
-export function canonicalToolName(toolName: string, metadata?: Record<string, unknown> | null): string {
-  const lower = toolName.toLowerCase()
-  const kind = typeof metadata?.kind === 'string' ? metadata.kind.toLowerCase() : ''
-  if (lower === 'grep' || kind === 'search') return 'Grep'
-  if (lower === 'read file' || kind === 'read') return 'Read'
-  if (lower === 'edit file' || kind === 'edit') return 'Edit'
-  if (lower === 'bash') return 'Bash'
-  if (lower === 'terminal' || kind === 'execute') return 'Bash'
-  return toolName
-}
+// ── Shared helpers ───────────────────────────────────────────────────────────
 
 function prettyJson(value: unknown): string {
   try {
