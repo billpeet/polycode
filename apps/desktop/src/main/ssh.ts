@@ -1,50 +1,18 @@
-import { spawn } from 'child_process'
 import { SshConfig, FileEntry, SearchableFile } from '../shared/types'
-import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from './driver/runner'
+import { shellEscape, cdTarget, createRunner, expectSuccess } from './driver/runner'
 import { imageMimeTypeForPath, type FileContent } from './files'
 
 /**
  * Execute a command on a remote host via SSH.
  * Returns stdout on success, throws on non-zero exit.
  *
- * LOAD_NODE_MANAGERS adds common tool directories to PATH that .bashrc
- * would normally set up (but doesn't in non-interactive `bash -lc` shells
- * due to the `case $- in *i*)` guard).
+ * A thin reading of SshRunner.runScript, which owns the PATH bootstrap and the
+ * `bash -lc` wrapping. Retained as a named function because the remote file
+ * helpers below read better in terms of it than in terms of a Runner.
  */
-export function sshExec(ssh: SshConfig, cwd: string, cmd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const innerCmd = `${LOAD_NODE_MANAGERS}; cd ${cdTarget(cwd)} && ${cmd}`
-    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-
-    const sshArgs = buildSshBaseArgs(ssh)
-    sshArgs.push('-o', 'BatchMode=yes')
-    sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
-
-    const proc = spawn('ssh', sshArgs, {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        // Preserve leading whitespace (needed by parsers like git porcelain),
-        // while removing trailing newlines from command output.
-        resolve(stdout.trimEnd())
-      } else {
-        reject(new Error(stderr.trim() || `SSH command exited with code ${code}`))
-      }
-    })
-
-    proc.on('error', (err) => {
-      reject(err)
-    })
-  })
+export async function sshExec(ssh: SshConfig, cwd: string, cmd: string): Promise<string> {
+  const runner = createRunner({ ssh })
+  return expectSuccess(await runner.runScript({ script: cmd, workDir: cwd }), 'SSH command')
 }
 
 // ── Ignored directories (mirrors src/main/files.ts) ─────────────────────────

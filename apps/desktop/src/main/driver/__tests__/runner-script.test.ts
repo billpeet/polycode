@@ -24,6 +24,7 @@ const { WslRunner } = await import('../runner/wsl')
 const { SshRunner } = await import('../runner/ssh')
 const { FakeRunner } = await import('../runner/fake')
 const { LOAD_NODE_MANAGERS } = await import('../runner/utils')
+const { expectSuccess } = await import('../runner/collect')
 
 /** The argv of the single spawn the adapter performed. */
 function lastSpawn(): { exe: string; args: string[]; opts: Record<string, unknown> } {
@@ -209,6 +210,49 @@ describe('SshRunner.spawnScript', () => {
     void new SshRunner(SSH).runScript({ script: 'git status', workDir: '/srv/app' })
 
     expect(lastSpawn().args).toContain('BatchMode=yes')
+  })
+})
+
+// ── expectSuccess ─────────────────────────────────────────────────────────────
+
+describe('expectSuccess', () => {
+  it('keeps leading whitespace and drops the trailing newline', () => {
+    // git porcelain is column-sensitive: ' M file' and 'M  file' differ.
+    expect(expectSuccess({ stdout: ' M file\n', stderr: '', exitCode: 0, timedOut: false }, 'x'))
+      .toBe(' M file')
+  })
+
+  it('throws with stderr when the script fails', () => {
+    expect(() => expectSuccess(
+      { stdout: '', stderr: 'fatal: not a repository\n', exitCode: 128, timedOut: false },
+      'Shell command',
+    )).toThrow('fatal: not a repository')
+  })
+
+  it('names the caller when the script failed silently', () => {
+    expect(() => expectSuccess(
+      { stdout: '', stderr: '', exitCode: 127, timedOut: false },
+      'WSL command',
+    )).toThrow('WSL command exited with code 127')
+  })
+
+  it('treats a killed process as a failure rather than empty output', () => {
+    // exitCode null is what a timeout or a failed spawn reports. Returning ''
+    // here would read as "the command succeeded and printed nothing".
+    expect(() => expectSuccess(
+      { stdout: '', stderr: '', exitCode: null, timedOut: true },
+      'SSH command',
+    )).toThrow('SSH command exited with code null')
+  })
+
+  it('rejects rather than throwing synchronously, when awaited through a Runner', async () => {
+    // The defect this replaces: remote-shell.ts threw from a non-async function
+    // that returned a Promise, so `.catch(…)` could not see it.
+    const runner = new FakeRunner('ssh')
+    runner.queueResult({ exitCode: 1, stderr: 'boom' })
+    const failing = runner.runScript({ script: 'false' }).then((r) => expectSuccess(r, 'SSH command'))
+
+    await expect(failing).rejects.toThrow('boom')
   })
 })
 

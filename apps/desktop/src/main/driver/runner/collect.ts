@@ -3,6 +3,22 @@ import type { RunResult } from './types'
 
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
+/**
+ * Read a RunResult as "stdout, or throw".
+ *
+ * The counterpart to RunResult for callers that want an exception rather than an
+ * exit code. `what` names the thing that failed, for the message used when the
+ * process wrote nothing to stderr.
+ */
+export function expectSuccess(result: RunResult, what: string): string {
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr.trim() || `${what} exited with code ${result.exitCode}`)
+  }
+  // Preserve leading whitespace — parsers like git porcelain are column-sensitive —
+  // while dropping the trailing newline every shell adds.
+  return result.stdout.trimEnd()
+}
+
 /** The collection limits shared by RunCommand and RunScriptCommand. */
 interface CollectLimits {
   timeoutMs?: number

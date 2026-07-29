@@ -1,8 +1,11 @@
-import { spawn, execFileSync } from 'child_process'
+// getWslHome is synchronous by necessity: wslToUncPath feeds the synchronous fs
+// walks below, and Runner has no synchronous operation. Converting it means making
+// the whole remote file-listing surface async, which is a separate change.
+import { execFileSync } from 'child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WslConfig, FileEntry, SearchableFile } from '../shared/types'
-import { cdTarget } from './driver/runner'
+import { createRunner, expectSuccess } from './driver/runner'
 import { imageFileContent, imageMimeTypeForPath, type FileContent } from './files'
 
 // Cache resolved WSL home directories per distro
@@ -54,39 +57,11 @@ function wslToUncPath(wsl: WslConfig, linuxPath: string): string {
  * Execute a command inside a WSL distribution.
  * Returns stdout on success, throws on non-zero exit.
  *
- * Uses bash -ilc (interactive + login) so .bashrc runs in full, giving the
- * user's real PATH. Without -i, bash skips .bashrc and Windows tools on
- * /mnt/c/ shadow Linux ones.
+ * A thin reading of WslRunner.runScript, which owns the `bash -ilc` wrapping.
  */
-export function wslExec(wsl: WslConfig, cwd: string, cmd: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const innerCmd = `cd ${cdTarget(cwd)} && ${cmd}`
-
-    const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], {
-      shell: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-
-    let stdout = ''
-    let stderr = ''
-
-    proc.stdout?.on('data', (chunk: Buffer) => { stdout += chunk.toString() })
-    proc.stderr?.on('data', (chunk: Buffer) => { stderr += chunk.toString() })
-
-    proc.on('close', (code) => {
-      if (code === 0) {
-        // Preserve leading whitespace (needed by parsers like git porcelain),
-        // while removing trailing newlines from command output.
-        resolve(stdout.trimEnd())
-      } else {
-        reject(new Error(stderr.trim() || `WSL command exited with code ${code}`))
-      }
-    })
-
-    proc.on('error', (err) => {
-      reject(err)
-    })
-  })
+export async function wslExec(wsl: WslConfig, cwd: string, cmd: string): Promise<string> {
+  const runner = createRunner({ wsl })
+  return expectSuccess(await runner.runScript({ script: cmd, workDir: cwd }), 'WSL command')
 }
 
 // ── Ignored directories (mirrors src/main/files.ts) ─────────────────────────

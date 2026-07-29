@@ -13,12 +13,29 @@ import {
   generatePullRequestText as generatePullRequestTextFromModel,
 } from './git-text-model'
 import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry } from '../shared/types'
-import { createRunner } from './driver/runner'
+import { createRunner, expectSuccess } from './driver/runner'
 import { runGit } from './git-runner'
 import { parseCommitLog, parseNameStatus, parsePorcelainStatus } from './git-parsers'
-import { runRemoteShell } from './remote-shell'
 
 export { GitLockedError } from './git-runner'
+
+/**
+ * Run a shell script at a repository's Project Location.
+ *
+ * The three callers each sit inside an `if (ssh || wsl)` guard, and those guards
+ * stay: their local branches are deliberate fs fast-paths (byte-exact truncated
+ * reads, direct unlink) rather than a missing transport. LocalRunner would work
+ * here, it would just be slower and lose the binary handling.
+ */
+async function shell(
+  repoPath: string,
+  script: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  const runner = createRunner({ ssh, wsl })
+  return expectSuccess(await runner.runScript({ script, workDir: repoPath }), 'Shell command')
+}
 
 type CachePolicy = {
   ttlMs: number
@@ -173,7 +190,7 @@ export async function forceUnlockRepo(
       // Loose-ref locks under refs/
       'if [ -d refs ]; then find refs -type f -name "*.lock" -print -delete 2>/dev/null || true; fi',
     ].join(' && ')
-    const out = await runRemoteShell(repoPath, script, ssh, wsl)
+    const out = await shell(repoPath, script, ssh, wsl)
     const removed = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
     return { removed }
   }
@@ -657,7 +674,7 @@ async function readRepoFilePrefix(
   try {
     let buffer: Buffer
     if (ssh || wsl) {
-      const output = await runRemoteShell(repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`, ssh, wsl)
+      const output = await shell(repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`, ssh, wsl)
       buffer = Buffer.from(output, 'utf8')
     } else {
       const fullPath = path.join(repoPath, gitPath)
@@ -931,7 +948,7 @@ export async function getFileDiff(repoPath: string, filePath: string, staged: bo
       const content = await git(repoPath, ['show', `:${filePath}`], ssh, wsl).catch(async () => {
         // Not in index either, read from working tree
         if (ssh || wsl) {
-          return runRemoteShell(repoPath, `cat ${shellSingleQuote(filePath)}`, ssh, wsl)
+          return shell(repoPath, `cat ${shellSingleQuote(filePath)}`, ssh, wsl)
         }
         const fs = await import('fs/promises')
         const path = await import('path')
