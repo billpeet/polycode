@@ -1,4 +1,3 @@
-import { exec, execFile } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
@@ -23,11 +22,8 @@ import {
   deleteThread,
   getActiveSession,
   getLastUsedProviderAndModel,
-  getLocationByPath,
   getLocationForThread,
-  getProjectById,
   getThreadModifiedFiles,
-  getThreadWsl,
   getImportedSessionIds,
   importThread,
   listCommands,
@@ -135,7 +131,7 @@ import { emitAppEvent } from '../app-events'
 import { NewProjectSpec, Provider, QuestionAnswerValue, SendOptions, SshConfig, WslConfig } from '../../shared/types'
 import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
-import { wslExec, wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
+import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
 import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
 import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
@@ -145,192 +141,20 @@ import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { projectFaviconDataUrl } from '../project-favicon'
 import { REMOTE_CHANNELS } from '@polycode/shared'
+import { killByPid, killByPort } from '../process-control'
+import {
+  assertMainBranchCommitAllowed,
+  getConfigForPath,
+  getEffectiveWorkingDir,
+  getLocalPathError,
+  getSshConfigForThread,
+  getWorkingDirForThread,
+  getWslConfigForThread,
+  invalidateRepoGitCache,
+} from '../ipc/thread-context'
 
 export const CONTROL_RPC_CHANNELS: ReadonlySet<string> = new Set(REMOTE_CHANNELS)
 
-function getSshConfigForThread(threadId: string): SshConfig | null {
-  const location = getLocationForThread(threadId)
-  return location?.ssh ?? null
-}
-
-function getWslConfigForThread(threadId: string): WslConfig | null {
-  const location = getLocationForThread(threadId)
-  if (location && location.connection_type === 'local') {
-    const threadWsl = getThreadWsl(threadId)
-    if (threadWsl.use_wsl && threadWsl.wsl_distro) {
-      return { distro: threadWsl.wsl_distro }
-    }
-  }
-  return location?.wsl ?? null
-}
-
-function getWorkingDirForThread(threadId: string): string | null {
-  const location = getLocationForThread(threadId)
-  return location?.path ?? null
-}
-
-function windowsPathToWsl(winPath: string): string {
-  return winPath
-    .replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
-    .replace(/\\/g, '/')
-}
-
-function getEffectiveWorkingDir(threadId: string): string {
-  const location = getLocationForThread(threadId)
-  if (!location) return ''
-  if (location.connection_type === 'wsl' && /^[A-Za-z]:[/\\]/.test(location.path)) {
-    return windowsPathToWsl(location.path)
-  }
-  if (location.connection_type === 'local' && /^[A-Za-z]:[/\\]/.test(location.path)) {
-    const threadWsl = getThreadWsl(threadId)
-    if (threadWsl.use_wsl) {
-      return windowsPathToWsl(location.path)
-    }
-  }
-  return location.path
-}
-
-function getPowerShellExe(): string {
-  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-}
-
-function runExecFile(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      cmd,
-      args,
-      { encoding: 'utf8', windowsHide: true, maxBuffer: 1024 * 1024 },
-      (error, stdout) => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve(stdout)
-      },
-    )
-  })
-}
-
-function killByPid(pid: number, wsl?: WslConfig | null): Promise<void> {
-  if (pid === process.pid) return Promise.reject(new Error('Refusing to kill own process'))
-  if (!Number.isInteger(pid) || pid <= 0) return Promise.reject(new Error('Invalid PID'))
-  if (wsl) {
-    return wslExec(wsl, '/', `kill -9 ${pid}`)
-      .then(() => undefined)
-      .catch((error: unknown) => {
-        throw new Error(`kill failed: ${error instanceof Error ? error.message : String(error)}`)
-      })
-  }
-  return new Promise((resolve, reject) => {
-    if (process.platform === 'win32') {
-      exec(`taskkill /F /T /PID ${pid}`, (error) => {
-        if (error) reject(new Error(`taskkill failed: ${error.message}`))
-        else resolve()
-      })
-      return
-    }
-    try {
-      process.kill(pid, 'SIGKILL')
-      resolve()
-    } catch (error) {
-      reject(new Error(`kill failed: ${error instanceof Error ? error.message : String(error)}`))
-    }
-  })
-}
-
-function findPidsByPort(port: number, wsl?: WslConfig | null): Promise<number[]> {
-  return new Promise((resolve, reject) => {
-    if (wsl) {
-      const cmd = `if command -v lsof >/dev/null 2>&1; then lsof -ti:${port}; else ss -ltnp 'sport = :${port}' | sed -n 's/.*pid=\\([0-9]\\+\\).*/\\1/p'; fi`
-      wslExec(wsl, '/', cmd)
-        .then((stdout) => {
-          const pids = stdout.trim().split('\n').map((line) => Number.parseInt(line, 10)).filter((pid) => pid > 0)
-          resolve(Array.from(new Set(pids)))
-        })
-        .catch(() => resolve([]))
-      return
-    }
-
-    if (process.platform === 'win32') {
-      const script = `
-$port = ${port}
-$tcp = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
-$udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
-@($tcp + $udp) | Where-Object { $_ -gt 0 } | Sort-Object -Unique
-`.trim()
-      runExecFile(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
-        .then((stdout) => {
-          const pids = stdout
-            .split(/\r?\n/)
-            .map((line) => Number.parseInt(line.trim(), 10))
-            .filter((pid) => pid > 0)
-          resolve(Array.from(new Set(pids)))
-        })
-        .catch((error: unknown) => {
-          reject(new Error(`port lookup failed: ${error instanceof Error ? error.message : String(error)}`))
-        })
-      return
-    }
-
-    exec(`lsof -ti:${port}`, (error, stdout) => {
-      if (error) return resolve([])
-      const pids = stdout.trim().split('\n').map((line) => Number.parseInt(line, 10)).filter((pid) => pid > 0)
-      resolve(pids)
-    })
-  })
-}
-
-async function killByPort(port: number, wsl?: WslConfig | null): Promise<void> {
-  if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('Port must be between 1 and 65535')
-  }
-  const pids = await findPidsByPort(port, wsl)
-  if (pids.length === 0) throw new Error(`No process found on port ${port}`)
-  const errors: string[] = []
-  for (const pid of pids) {
-    try {
-      await killByPid(pid, wsl)
-    } catch (error) {
-      errors.push(error instanceof Error ? error.message : String(error))
-    }
-  }
-  if (errors.length > 0 && errors.length === pids.length) {
-    throw new Error(errors.join('; '))
-  }
-}
-
-function getLocalPathError(threadId: string): string | null {
-  const location = getLocationForThread(threadId)
-  if (!location) return null
-  if (location.connection_type !== 'local') return null
-  if (!existsSync(location.path)) {
-    return `Directory not found: "${location.path}". Update the location path or restore the directory.`
-  }
-  return null
-}
-
-function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: WslConfig | null } {
-  const location = getLocationByPath(path)
-  return { ssh: location?.ssh ?? null, wsl: location?.wsl ?? null }
-}
-
-function invalidateRepoGitCache(repoPath: string): void {
-  const { ssh, wsl } = getConfigForPath(repoPath)
-  invalidateGitCache(repoPath, ssh, wsl)
-}
-
-async function assertMainBranchCommitAllowed(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
-  const location = getLocationByPath(repoPath)
-  if (!location) return
-  const project = getProjectById(location.project_id)
-  if (!project || project.allow_main_branch_commits) return
-
-  const status = await getCachedGitStatus(repoPath, ssh, wsl)
-  if (status?.branch === 'main' || status?.branch === 'master') {
-    throw new Error(`Commits are disabled on ${status.branch} for this project`)
-  }
-}
 
 async function listAvailableModels(channel: string, threadId?: string | null): Promise<unknown> {
   const options = threadId && threadExists(threadId)

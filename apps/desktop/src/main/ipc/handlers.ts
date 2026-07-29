@@ -1,4 +1,4 @@
-import { spawn, exec, execFile } from 'child_process'
+import { spawn } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { basename } from 'path'
 import { pathToFileURL } from 'url'
@@ -23,8 +23,6 @@ import {
   checkoutLocation,
   returnLocationToPool,
   getLocationForThread,
-  getLocationByPath,
-  getProjectById,
   listThreads,
   listArchivedThreads,
   archivedThreadCount,
@@ -54,7 +52,6 @@ import {
   listSessions,
   getActiveSession,
   getThreadModifiedFiles,
-  getThreadWsl,
   updateThreadWsl,
   setThreadGitBranchIfUnset,
   listCommands,
@@ -83,12 +80,12 @@ import { listCursorAvailableModels } from '../cursor-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff, invalidateGitCache } from '../git'
+import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
 import { createForge } from '../forge'
 import { listDirectory, readFileContent, listAllFiles } from '../files'
 import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
-import { wslExec, wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
+import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import {
   saveAttachment,
@@ -106,30 +103,18 @@ import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
-
-const MAX_EXEC_OUTPUT = 1024 * 1024
-
-function runExecFile(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      cmd,
-      args,
-      { encoding: 'utf8', windowsHide: true, maxBuffer: MAX_EXEC_OUTPUT },
-      (error, stdout) => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve(stdout)
-      },
-    )
-  })
-}
-
-function getPowerShellExe(): string {
-  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-}
+import { killByPid, killByPort, runExecFile } from '../process-control'
+import {
+  assertMainBranchCommitAllowed,
+  getConfigForPath,
+  getEffectiveWorkingDir,
+  getLocalPathError,
+  getSshConfigForThread,
+  getWorkingDirForThread,
+  getWslConfigForThread,
+  invalidateRepoGitCache,
+  windowsPathToWsl,
+} from './thread-context'
 
 function mimeTypeForPath(filePath: string): string {
   const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
@@ -195,41 +180,6 @@ async function openFolderInVsCode(dirPath: string, ssh?: SshConfig | null, wsl?:
   await shell.openExternal(folderUri)
 }
 
-/** Get SSH config from the thread's linked repo location. */
-function getSshConfigForThread(threadId: string): SshConfig | null {
-  const location = getLocationForThread(threadId)
-  return location?.ssh ?? null
-}
-
-/** Get WSL config from the thread's linked repo location, or thread-level WSL override for local locations. */
-function getWslConfigForThread(threadId: string): WslConfig | null {
-  const location = getLocationForThread(threadId)
-  // If the location is local and the thread has use_wsl enabled, use thread-level WSL config
-  if (location && location.connection_type === 'local') {
-    const threadWsl = getThreadWsl(threadId)
-    if (threadWsl.use_wsl && threadWsl.wsl_distro) {
-      return { distro: threadWsl.wsl_distro }
-    }
-  }
-  return location?.wsl ?? null
-}
-
-/** Get the working directory from the thread's linked repo location. */
-function getWorkingDirForThread(threadId: string): string | null {
-  const location = getLocationForThread(threadId)
-  return location?.path ?? null
-}
-
-/**
- * Convert a Windows absolute path to its WSL /mnt/... equivalent.
- * e.g. C:\Users\foo\bar  →  /mnt/c/Users/foo/bar
- */
-function windowsPathToWsl(winPath: string): string {
-  return winPath
-    .replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
-    .replace(/\\/g, '/')
-}
-
 /**
  * Convert a WSL-native path to a Windows UNC path so Explorer can open it.
  * e.g. /home/foo/bar in distro "Ubuntu"  →  \\wsl$\Ubuntu\home\foo\bar
@@ -247,63 +197,6 @@ function wslPathToUnc(wslPath: string, distro: string): string {
   }
   const rel = wslPath.replace(/\//g, '\\').replace(/^\\+/, '')
   return `\\\\wsl$\\${distro}\\${rel}`
-}
-
-/**
- * Return the effective working directory for a thread.
- * For WSL locations with a Windows-style path, convert to /mnt/... format.
- */
-function getEffectiveWorkingDir(threadId: string): string {
-  const location = getLocationForThread(threadId)
-  if (!location) return ''
-  if (location.connection_type === 'wsl' && /^[A-Za-z]:[/\\]/.test(location.path)) {
-    return windowsPathToWsl(location.path)
-  }
-  // Thread-level WSL override for local locations: convert Windows path to /mnt/...
-  if (location.connection_type === 'local' && /^[A-Za-z]:[/\\]/.test(location.path)) {
-    const threadWsl = getThreadWsl(threadId)
-    if (threadWsl.use_wsl) {
-      return windowsPathToWsl(location.path)
-    }
-  }
-  return location.path
-}
-
-/**
- * Returns an error message if the thread's local working directory doesn't exist,
- * or null if it's fine (or is SSH/WSL where we can't check locally).
- */
-function getLocalPathError(threadId: string): string | null {
-  const location = getLocationForThread(threadId)
-  if (!location) return null
-  if (location.connection_type !== 'local') return null
-  if (!existsSync(location.path)) {
-    return `Directory not found: "${location.path}". Update the location path or restore the directory.`
-  }
-  return null
-}
-
-/** Look up SSH/WSL config for a given path by searching repo_locations. */
-function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: WslConfig | null } {
-  const location = getLocationByPath(path)
-  return { ssh: location?.ssh ?? null, wsl: location?.wsl ?? null }
-}
-
-function invalidateRepoGitCache(repoPath: string): void {
-  const { ssh, wsl } = getConfigForPath(repoPath)
-  invalidateGitCache(repoPath, ssh, wsl)
-}
-
-async function assertMainBranchCommitAllowed(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
-  const location = getLocationByPath(repoPath)
-  if (!location) return
-  const project = getProjectById(location.project_id)
-  if (!project || project.allow_main_branch_commits) return
-
-  const status = await getCachedGitStatus(repoPath, ssh, wsl)
-  if (status?.branch === 'main' || status?.branch === 'master') {
-    throw new Error(`Commits are disabled on ${status.branch} for this project`)
-  }
 }
 
 export function registerIpcHandlers(window: BrowserWindow): void {
@@ -1315,94 +1208,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       }
     }
   })
-
-  // ── Process Assassin ─────────────────────────────────────────────────────────
-
-  function killByPid(pid: number, wsl?: WslConfig | null): Promise<void> {
-    if (pid === process.pid) return Promise.reject(new Error('Refusing to kill own process'))
-    if (!Number.isInteger(pid) || pid <= 0) return Promise.reject(new Error('Invalid PID'))
-    if (wsl) {
-      return wslExec(wsl, '/', `kill -9 ${pid}`)
-        .then(() => undefined)
-        .catch((e: unknown) => {
-          throw new Error(`kill failed: ${e instanceof Error ? e.message : String(e)}`)
-        })
-    }
-    return new Promise((resolve, reject) => {
-      if (process.platform === 'win32') {
-        exec(`taskkill /F /T /PID ${pid}`, (err) => {
-          if (err) reject(new Error(`taskkill failed: ${err.message}`))
-          else resolve()
-        })
-      } else {
-        try {
-          process.kill(pid, 'SIGKILL')
-          resolve()
-        } catch (e: unknown) {
-          reject(new Error(`kill failed: ${e instanceof Error ? e.message : String(e)}`))
-        }
-      }
-    })
-  }
-
-  function findPidsByPort(port: number, wsl?: WslConfig | null): Promise<number[]> {
-    return new Promise((resolve, reject) => {
-      if (wsl) {
-        const cmd = `if command -v lsof >/dev/null 2>&1; then lsof -ti:${port}; else ss -ltnp 'sport = :${port}' | sed -n 's/.*pid=\\([0-9]\\+\\).*/\\1/p'; fi`
-        wslExec(wsl, '/', cmd)
-          .then((stdout) => {
-            const pids = stdout.trim().split('\n').map((s) => parseInt(s, 10)).filter((n) => n > 0)
-            resolve(Array.from(new Set(pids)))
-          })
-          .catch(() => resolve([]))
-        return
-      }
-      if (process.platform === 'win32') {
-        const script = `
-$port = ${port}
-$tcp = @(Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
-$udp = @(Get-NetUDPEndpoint -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess)
-@($tcp + $udp) | Where-Object { $_ -gt 0 } | Sort-Object -Unique
-`.trim()
-        runExecFile(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
-          .then((stdout) => {
-            const pids = stdout
-              .split(/\r?\n/)
-              .map((line) => parseInt(line.trim(), 10))
-              .filter((pid) => pid > 0)
-            resolve(Array.from(new Set(pids)))
-          })
-          .catch((err: unknown) => {
-            reject(new Error(`port lookup failed: ${err instanceof Error ? err.message : String(err)}`))
-          })
-      } else {
-        exec(`lsof -ti:${port}`, (err, stdout) => {
-          if (err) return resolve([]) // lsof returns error when no match
-          const pids = stdout.trim().split('\n').map((s) => parseInt(s, 10)).filter((n) => n > 0)
-          resolve(pids)
-        })
-      }
-    })
-  }
-
-  async function killByPort(port: number, wsl?: WslConfig | null): Promise<void> {
-    if (!Number.isInteger(port) || port < 1 || port > 65535) {
-      throw new Error('Port must be between 1 and 65535')
-    }
-    const pids = await findPidsByPort(port, wsl)
-    if (pids.length === 0) throw new Error(`No process found on port ${port}`)
-    const errors: string[] = []
-    for (const pid of pids) {
-      try {
-        await killByPid(pid, wsl)
-      } catch (e: unknown) {
-        errors.push(e instanceof Error ? e.message : String(e))
-      }
-    }
-    if (errors.length > 0 && errors.length === pids.length) {
-      throw new Error(errors.join('; '))
-    }
-  }
 
   proxyable('process:kill', async (target: string, type: 'pid' | 'port', threadId?: string) => {
     try {
