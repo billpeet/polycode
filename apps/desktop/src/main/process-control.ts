@@ -14,12 +14,16 @@ import type { WslConfig } from '../shared/types'
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
 
-export function runExecFile(cmd: string, args: string[]): Promise<string> {
+export function runExecFile(
+  cmd: string,
+  args: string[],
+  opts: { timeoutMs?: number } = {},
+): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       cmd,
       args,
-      { encoding: 'utf8', windowsHide: true, maxBuffer: MAX_EXEC_OUTPUT },
+      { encoding: 'utf8', windowsHide: true, maxBuffer: MAX_EXEC_OUTPUT, timeout: opts.timeoutMs },
       (error, stdout) => {
         if (error) {
           reject(error)

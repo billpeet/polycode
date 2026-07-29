@@ -1,10 +1,11 @@
-import { spawn, execFile, ChildProcess } from 'child_process'
+import { spawn, ChildProcess } from 'child_process'
 import { existsSync } from 'fs'
 import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand, ConnectionType } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
+import { runExecFile, getPowerShellExe } from '../process-control'
 import { emitAppEvent } from '../app-events'
 
 const LOG_RING_BUFFER_SIZE = 1000
@@ -13,7 +14,6 @@ const PORT_POLL_INTERVAL_MS = 2000
 const COMMAND_TIMEOUT_MS = 4000
 const STOP_GRACE_TIMEOUT_MS = 4000
 const STOP_FORCE_TIMEOUT_MS = 2000
-const MAX_EXEC_OUTPUT = 1024 * 1024
 
 interface RunningCommand {
   commandId: string
@@ -35,26 +35,9 @@ function instKey(commandId: string, locationId: string): string {
   return `${commandId}:${locationId}`
 }
 
-function runExecFile(cmd: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(
-      cmd,
-      args,
-      { encoding: 'utf8', timeout: COMMAND_TIMEOUT_MS, maxBuffer: MAX_EXEC_OUTPUT, windowsHide: true },
-      (error, stdout) => {
-        if (error) {
-          reject(error)
-          return
-        }
-        resolve(stdout)
-      }
-    )
-  })
-}
-
-function getPowerShellExe(): string {
-  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+/** Port discovery is best-effort status metadata — cap it so a wedged probe can't pile up. */
+function probe(cmd: string, args: string[]): Promise<string> {
+  return runExecFile(cmd, args, { timeoutMs: COMMAND_TIMEOUT_MS })
 }
 
 function parsePortFromAddress(addr: string): number | null {
@@ -519,7 +502,7 @@ class CommandManager {
     const result = new Set<number>([rootPid])
     if (process.platform === 'win32') {
       const script = 'Get-CimInstance Win32_Process | ForEach-Object { "$($_.ProcessId) $($_.ParentProcessId)" }'
-      const out = await runExecFile(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
+      const out = await probe(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
       const byParent = new Map<number, number[]>()
       for (const line of out.split(/\r?\n/)) {
         const trimmed = line.trim()
@@ -545,7 +528,7 @@ class CommandManager {
       return result
     }
 
-    const out = await runExecFile('ps', ['-eo', 'pid=,ppid='])
+    const out = await probe('ps', ['-eo', 'pid=,ppid='])
     const byParent = new Map<number, number[]>()
     for (const line of out.split(/\r?\n/)) {
       const trimmed = line.trim()
@@ -575,7 +558,7 @@ class CommandManager {
     const list = [...pids].filter((pid) => Number.isFinite(pid))
     if (list.length === 0) return []
     const script = `$targets = @(${list.join(',')}); Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | Where-Object { $targets -contains $_.OwningProcess } | Select-Object -ExpandProperty LocalPort -Unique | Sort-Object`
-    const out = await runExecFile(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
+    const out = await probe(getPowerShellExe(), ['-NoProfile', '-NonInteractive', '-Command', script])
     const ports = out
       .split(/\r?\n/)
       .map((line) => Number.parseInt(line.trim(), 10))
@@ -585,7 +568,7 @@ class CommandManager {
 
   private async getPosixListeningPorts(pids: Set<number>): Promise<number[]> {
     try {
-      const out = await runExecFile('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-FpPn'])
+      const out = await probe('lsof', ['-nP', '-iTCP', '-sTCP:LISTEN', '-FpPn'])
       const ports = new Set<number>()
       let currentPid: number | null = null
       for (const line of out.split(/\r?\n/)) {
@@ -602,7 +585,7 @@ class CommandManager {
       }
       return [...ports].sort((a, b) => a - b)
     } catch {
-      const out = await runExecFile('ss', ['-ltnpH'])
+      const out = await probe('ss', ['-ltnpH'])
       const ports = new Set<number>()
       for (const line of out.split(/\r?\n/)) {
         if (!line) continue
