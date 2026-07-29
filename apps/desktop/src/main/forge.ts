@@ -7,7 +7,7 @@ import {
   getRepoWebUrl as getAzureRepoWebUrl,
   listOpenPullRequests as listAzurePullRequests,
 } from './azure-devops'
-import { detectGitHostingProvider } from './git'
+import { detectGitHostingProviderCached } from './git'
 import {
   checkoutGitHubPullRequestBranch as checkoutGitHubPullRequest,
   createGitHubPullRequest,
@@ -67,13 +67,16 @@ interface ForgeAdapter {
 }
 
 export interface ForgeDependencies {
-  detectProvider: typeof detectGitHostingProvider
+  detectProvider: typeof detectGitHostingProviderCached
   azure: ForgeAdapter
   github: ForgeAdapter
 }
 
 const defaultDependencies: ForgeDependencies = {
-  detectProvider: detectGitHostingProvider,
+  // Cached: createForge runs per operation, and GitSection fires three forge
+  // calls at once. The uncached probe costs 2+ git subprocesses each time,
+  // over SSH for remote locations.
+  detectProvider: detectGitHostingProviderCached,
   azure: {
     listPullRequests: listAzurePullRequests,
     getCurrentBranchPullRequest: getCurrentAzurePullRequest,

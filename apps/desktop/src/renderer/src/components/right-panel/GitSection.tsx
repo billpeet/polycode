@@ -5,7 +5,7 @@ import { useLocationStore } from '../../stores/locations'
 import { useProjectStore } from '../../stores/projects'
 import { useThreadStore } from '../../stores/threads'
 import { useToastStore } from '../../stores/toast'
-import { GitCompareResult, GitFileChange, PullResult, RepoLocation } from '../../types/ipc'
+import { GitCompareResult, GitFileChange, PullRequest, PullResult, RepoLocation } from '../../types/ipc'
 import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu'
 import { SectionHeader, SparkleIcon } from './shared'
 import { StashSection } from './StashSection'
@@ -24,17 +24,6 @@ function joinRepoPath(repoPath: string, relPath: string): string {
   return `${trimmed}/${relPath}`
 }
 
-type PullRequestItem = {
-  id: number
-  title: string
-  status: string
-  sourceBranch: string
-  targetBranch: string
-  authorName: string
-  url: string
-  creationDate: string
-}
-
 type RepoLinkCacheEntry = {
   provider: 'azure' | 'github' | null
   pageUrl: string | null
@@ -43,8 +32,8 @@ type RepoLinkCacheEntry = {
 type PullRequestCacheEntry = {
   provider: 'azure' | 'github' | null
   pageUrl: string | null
-  openPrs: PullRequestItem[]
-  currentByBranch: Record<string, PullRequestItem | null>
+  openPrs: PullRequest[]
+  currentByBranch: Record<string, PullRequest | null>
   defaultBranch: string
   loadedBranches: Record<string, true>
 }
@@ -286,7 +275,7 @@ function BranchControls({
     let cancelled = false
     async function loadRepoLink() {
       try {
-        const provider = await window.api.invoke('git:hostingProvider', projectPath) as 'azure' | 'github' | null
+        const provider = await window.api.invoke('git:hostingProvider', projectPath)
         if (!provider) {
           if (!cancelled) {
             setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider: null, pageUrl: null } }))
@@ -733,7 +722,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [prError, setPrError] = useState<string | null>(null)
   const [checkingOutPrId, setCheckingOutPrId] = useState<number | null>(null)
   const [checkingOutPrWorktreeId, setCheckingOutPrWorktreeId] = useState<number | null>(null)
-  const [prCheckoutMenu, setPrCheckoutMenu] = useState<{ pr: PullRequestItem; x: number; y: number } | null>(null)
+  const [prCheckoutMenu, setPrCheckoutMenu] = useState<{ pr: PullRequest; x: number; y: number } | null>(null)
   const [showCreatePr, setShowCreatePr] = useState(false)
   const [returningToDefault, setReturningToDefault] = useState(false)
   const [deletingWorktree, setDeletingWorktree] = useState(false)
@@ -786,7 +775,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       const [provider, resolvedDefaultBranch] = await Promise.all([
         window.api.invoke('git:hostingProvider', projectPath),
         window.api.invoke('git:defaultBranch', projectPath),
-      ]) as ['azure' | 'github' | null, string]
+      ])
 
       setDefaultBranch(resolvedDefaultBranch)
 
@@ -796,9 +785,9 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           ...cache,
           [projectPath]: {
             provider,
-            pageUrl: pageUrl as string,
-            openPrs: prs as PullRequestItem[],
-            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current as PullRequestItem | null },
+            pageUrl,
+            openPrs: prs,
+            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current },
             defaultBranch: resolvedDefaultBranch,
             loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
           },
@@ -1162,7 +1151,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       const result = await window.api.invoke('forge:pr:checkout', projectPath, prId)
       await fetchGit(projectPath)
       await refreshPullRequests()
-      addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)}`, duration: 3000 })
+      addToast({ type: 'success', message: `Checked out ${result.branch}`, duration: 3000 })
       refreshCompareAfterGitOperation()
     } catch (err) {
       addToast({
@@ -1177,7 +1166,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     }
   }
 
-  async function handleCheckoutPrInWorktree(pr: PullRequestItem) {
+  async function handleCheckoutPrInWorktree(pr: PullRequest) {
     if (!prProvider || !threadProjectId) return
     const parentLocation = location?.is_worktree
       ? threadLocations.find((entry) => entry.id === location.parent_location_id)
@@ -1193,7 +1182,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       worktree = await createWorktree(parentLocation.id, threadProjectId, `PR #${pr.id}`)
       const result = await window.api.invoke('forge:pr:checkout', worktree.path, pr.id)
       await createThread(threadProjectId, `PR #${pr.id}: ${pr.title}`, worktree.id)
-      addToast({ type: 'success', message: `Checked out ${String((result as { branch: string }).branch)} in a new worktree`, duration: 3000 })
+      addToast({ type: 'success', message: `Checked out ${result.branch} in a new worktree`, duration: 3000 })
       window.dispatchEvent(new Event('focus-input'))
     } catch (err) {
       if (worktree) await removeWorktree(worktree.id, threadProjectId).catch(() => undefined)

@@ -56,8 +56,15 @@ import type { Channel } from './channels'
 
 export type ChannelContractEntry = readonly [args: readonly unknown[], result: unknown]
 
-/** Argument and result types for every request/response channel. */
-export interface ChannelContract extends Record<Channel, ChannelContractEntry> {
+/**
+ * Argument and result types for every request/response channel.
+ *
+ * Deliberately does NOT `extends Record<Channel, ChannelContractEntry>`: that
+ * pre-types every key, so a channel omitted here would silently degrade to
+ * `unknown[]` / `unknown` instead of failing the build. Exhaustiveness in both
+ * directions is asserted below instead.
+ */
+export interface ChannelContract {
   'projects:list': [[], Project[]]
   'projects:listArchived': [[], Project[]]
   'projects:favicon': [[projectId: string], string | null]
@@ -269,6 +276,21 @@ export interface ChannelContract extends Record<Channel, ChannelContractEntry> {
     { name: string; path: string | null; content: string | null } | null,
   ]
 }
+
+type Assert<T extends true> = T
+
+/** Fails the build if a channel in CHANNEL_REGISTRY has no contract entry. */
+export type _AssertNoChannelMissingFromContract = Assert<
+  [Exclude<Channel, keyof ChannelContract>] extends [never] ? true : false
+>
+/** Fails the build if the contract declares a channel not in CHANNEL_REGISTRY. */
+export type _AssertNoContractEntryWithoutChannel = Assert<
+  [Exclude<keyof ChannelContract, Channel>] extends [never] ? true : false
+>
+/** Fails the build if any entry is not an [args, result] pair. */
+export type _AssertEntryShapes = Assert<
+  ChannelContract extends Record<Channel, ChannelContractEntry> ? true : false
+>
 
 export type ChannelArgs<C extends keyof ChannelContract> = ChannelContract[C][0]
 export type ChannelResult<C extends keyof ChannelContract> = ChannelContract[C][1]
