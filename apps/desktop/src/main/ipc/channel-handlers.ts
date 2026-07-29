@@ -46,27 +46,49 @@ import { existsSync } from 'fs'
 import type { BrowserWindow } from 'electron'
 import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
 import {
+  archivedThreadCount,
   archiveProject,
+  archiveThread,
   checkoutLocation,
   createCommand,
   createLocation,
   createProject,
+  createThread,
   deleteCommand,
   deleteLocation,
   deleteProject,
+  deleteThread,
+  getLastUsedProviderAndModel,
   getLocationForThread,
+  getThreadModifiedFiles,
   listArchivedProjects,
+  listArchivedThreads,
   listCommands,
   listLocations,
   listProjects,
+  listThreads,
   returnLocationToPool,
   setThreadGitBranchIfUnset,
   threadExists,
+  threadHasMessages,
   unarchiveProject,
+  unarchiveThread,
   updateCommand,
   updateLocation,
   updateProject,
+  updateThreadCodexPersonality,
+  updateThreadCodexReasoningSummary,
+  updateThreadCursorContext,
+  updateThreadCursorThinking,
+  updateThreadModel,
+  updateThreadName,
+  updateThreadPermissionMode,
+  updateThreadProviderAndModel,
+  updateThreadReasoningLevel,
   updateThreadStatus,
+  updateThreadUnread,
+  updateThreadWsl,
+  updateThreadYoloMode,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
@@ -80,10 +102,12 @@ import {
 import { projectFaviconDataUrl } from '../project-favicon'
 import { emitAppEvent } from '../app-events'
 import { getCachedGitBranch } from '../git'
+import { getThreadLogs } from '../thread-logger'
 import {
   getEffectiveWorkingDir,
   getLocalPathError,
   getSshConfigForThread,
+  getWorkingDirForThread,
   getWslConfigForThread,
 } from './thread-context'
 
@@ -370,6 +394,139 @@ export const channelHandlers = {
 
   'threads:backgroundTerminals:clean': (_ctx, threadId) =>
     sessionManager.get(threadId)?.cleanBackgroundTerminals(),
+
+  // ── Thread CRUD, archiving and per-thread settings ────────────────────────
+  //
+  // Twelve of the channels below call `sessionManager.remove(id)` *before* the DB write.
+  // That ordering is a convention no type enforces and the reason it matters is one-way:
+  // a Session is constructed from the thread row, so a session that outlived the write
+  // would keep serving the next message with the old provider/model/reasoning/permission
+  // settings until something else happened to evict it. Removing first makes the next
+  // message rebuild from the row that was just written.
+  //
+  // Both pre-fold paths agreed on the whole set and on the ordering, `threads:setUnread`'s
+  // deliberate absence included.
+
+  'threads:list': (_ctx, projectId) => listThreads(projectId),
+
+  // The provider/model lookup is load-bearing, not decoration: `createThread` declares
+  // `provider = 'claude-code', model = 'claude-opus-4-8'` parameter defaults, so dropping
+  // it would still produce a valid-looking thread that had silently stopped inheriting
+  // what the project last used.
+  'threads:create': (_ctx, projectId, name, locationId) => {
+    const { provider, model } = getLastUsedProviderAndModel(projectId)
+    return createThread(projectId, name, locationId, provider, model)
+  },
+
+  'threads:delete': (_ctx, id) => {
+    sessionManager.remove(id)
+    return deleteThread(id)
+  },
+
+  'threads:archivedCount': (_ctx, projectId) => archivedThreadCount(projectId),
+
+  // `limit`/`offset` are passed through raw, and neither pre-fold path coalesced either.
+  // `listArchivedThreads` binds `limit ?? -1, offset ?? 0` *in its own body*, which
+  // absorbs `undefined` and `null` alike — the opposite of `commands:create`, where the
+  // downstream default is a *parameter* default that an explicit `null` sails past. So a
+  // call-site coalesce here would be pure duplication rather than defence in depth.
+  'threads:listArchived': (_ctx, projectId, limit, offset) =>
+    listArchivedThreads(projectId, limit, offset),
+
+  // The only channel in this batch with a real branch. An archive request for a thread
+  // that was never used deletes it outright, and the caller is told which happened so it
+  // can word its confirmation correctly. The `'archived' | 'deleted'` literal *is* the
+  // contract's result, so — unlike everything else here — neither branch passes its
+  // callee's value through; doing so would return a `void`.
+  'threads:archive': (_ctx, id) => {
+    sessionManager.remove(id)
+    if (threadHasMessages(id)) {
+      archiveThread(id)
+      return 'archived'
+    }
+    deleteThread(id)
+    return 'deleted'
+  },
+
+  'threads:unarchive': (_ctx, id) => unarchiveThread(id),
+
+  'threads:updateName': (_ctx, id, name) => updateThreadName(id, name),
+
+  'threads:updateModel': (_ctx, id, model) => {
+    sessionManager.remove(id)
+    return updateThreadModel(id, model)
+  },
+
+  'threads:updateProviderAndModel': (_ctx, id, provider, model) => {
+    sessionManager.remove(id)
+    return updateThreadProviderAndModel(id, provider, model)
+  },
+
+  'threads:updateReasoningLevel': (_ctx, id, reasoningLevel) => {
+    sessionManager.remove(id)
+    return updateThreadReasoningLevel(id, reasoningLevel)
+  },
+
+  'threads:updateCodexPersonality': (_ctx, id, personality) => {
+    sessionManager.remove(id)
+    return updateThreadCodexPersonality(id, personality)
+  },
+
+  'threads:updateCodexReasoningSummary': (_ctx, id, summary) => {
+    sessionManager.remove(id)
+    return updateThreadCodexReasoningSummary(id, summary)
+  },
+
+  // `thinking` is `boolean | null` and `context` is `string | null`: on both of these the
+  // null is a *value* ("no override"), not an absent argument, and `false` / `''` are
+  // likewise meaningful. Nothing may coalesce or truthiness-test them on the way to the
+  // column — they are passed through exactly as received.
+  'threads:updateCursorThinking': (_ctx, id, thinking) => {
+    sessionManager.remove(id)
+    return updateThreadCursorThinking(id, thinking)
+  },
+
+  'threads:updateCursorContext': (_ctx, id, context) => {
+    sessionManager.remove(id)
+    return updateThreadCursorContext(id, context)
+  },
+
+  // The odd one out among the setters: read/unread cannot change how the CLI is spawned,
+  // so the live session is deliberately left alone. Both pre-fold paths agreed.
+  'threads:setUnread': (_ctx, threadId, unread) => updateThreadUnread(threadId, unread),
+
+  'threads:setYolo': (_ctx, threadId, yoloMode) => {
+    sessionManager.remove(threadId)
+    return updateThreadYoloMode(threadId, yoloMode)
+  },
+
+  'threads:setPermissionMode': (_ctx, threadId, permissionMode) => {
+    sessionManager.remove(threadId)
+    return updateThreadPermissionMode(threadId, permissionMode)
+  },
+
+  // Note the ordering, which differs from every other remove-then-write channel above:
+  // the message lock is checked *first*, so a refused write does not cost the thread its
+  // live session as a side effect. `wslDistro` is written verbatim — a null means "no
+  // distro" and goes straight into the column.
+  //
+  // The two pre-fold paths differed here in form only: control-rpc.ts returned
+  // `updateThreadWsl`'s value and ipc/handlers.ts discarded it. The callee is `: void` and
+  // the contract's result is `void`, so nothing observable changes either way; the
+  // returning form is kept, per the rule above.
+  'threads:setWsl': (_ctx, threadId, useWsl, wslDistro) => {
+    if (threadHasMessages(threadId)) return // locked after the first message
+    sessionManager.remove(threadId)
+    return updateThreadWsl(threadId, useWsl, wslDistro)
+  },
+
+  // `?? ''` is load-bearing, and is the reason the lookup is not inlined into a template:
+  // getThreadModifiedFiles declares `workingDir: string` and joins it as a path, so the
+  // null a thread without a location yields must be normalised before it gets there.
+  'threads:getModifiedFiles': (_ctx, threadId) =>
+    getThreadModifiedFiles(threadId, getWorkingDirForThread(threadId) ?? ''),
+
+  'threads:getLogs': (_ctx, threadId) => getThreadLogs(threadId),
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers

@@ -2,44 +2,22 @@ import { readFileSync } from 'fs'
 import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
 import {
-  archivedThreadCount,
-  archiveThread,
   createLocationPool,
   deleteLocationPool,
   updateLocationPool,
   createSlashCommand,
-  createThread,
   deleteSlashCommand,
-  deleteThread,
   getActiveSession,
-  getLastUsedProviderAndModel,
   getLocationForThread,
-  getThreadModifiedFiles,
   getImportedSessionIds,
   importThread,
-  listArchivedThreads,
   listLocationPools,
   listMessages,
   listMessagesBySession,
   listSessions,
   listSlashCommands,
-  listThreads,
   threadExists,
-  threadHasMessages,
-  unarchiveThread,
   updateSlashCommand,
-  updateThreadModel,
-  updateThreadName,
-  updateThreadProviderAndModel,
-  updateThreadPermissionMode,
-  updateThreadReasoningLevel,
-  updateThreadCodexPersonality,
-  updateThreadCodexReasoningSummary,
-  updateThreadCursorThinking,
-  updateThreadCursorContext,
-  updateThreadUnread,
-  updateThreadWsl,
-  updateThreadYoloMode,
   listYouTrackServers,
   createYouTrackServer,
   updateYouTrackServer,
@@ -47,7 +25,6 @@ import {
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { ptyManager } from '../terminal/manager'
-import { getThreadLogs } from '../thread-logger'
 import {
   amendCommit,
   checkoutBranch,
@@ -190,102 +167,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
     }
     case 'wsl:list-distros':
       return listWslDistros()
-
-    case 'threads:list':
-      return listThreads(args[0] as string)
-    case 'threads:create': {
-      const [projectId, name, locationId] = args as [string, string, string]
-      const { provider, model } = getLastUsedProviderAndModel(projectId)
-      return createThread(projectId, name, locationId, provider, model)
-    }
-    case 'threads:delete': {
-      const [id] = args as [string]
-      sessionManager.remove(id)
-      return deleteThread(id)
-    }
-    case 'threads:archivedCount':
-      return archivedThreadCount(args[0] as string)
-    case 'threads:listArchived': {
-      const [projectId, limit, offset] = args as [string, number | undefined, number | undefined]
-      return listArchivedThreads(projectId, limit, offset)
-    }
-    case 'threads:archive': {
-      const [id] = args as [string]
-      sessionManager.remove(id)
-      if (threadHasMessages(id)) {
-        archiveThread(id)
-        return 'archived'
-      }
-      deleteThread(id)
-      return 'deleted'
-    }
-    case 'threads:unarchive':
-      return unarchiveThread(args[0] as string)
-    case 'threads:updateName': {
-      const [id, name] = args as [string, string]
-      return updateThreadName(id, name)
-    }
-    case 'threads:updateModel': {
-      const [id, model] = args as [string, string]
-      sessionManager.remove(id)
-      return updateThreadModel(id, model)
-    }
-    case 'threads:updateProviderAndModel': {
-      const [id, provider, model] = args as [string, string, string]
-      sessionManager.remove(id)
-      return updateThreadProviderAndModel(id, provider, model)
-    }
-    case 'threads:updateReasoningLevel': {
-      const [id, reasoningLevel] = args as [string, string]
-      sessionManager.remove(id)
-      return updateThreadReasoningLevel(id, reasoningLevel)
-    }
-    case 'threads:updateCodexPersonality': {
-      const [id, personality] = args as [string, string]
-      sessionManager.remove(id)
-      return updateThreadCodexPersonality(id, personality)
-    }
-    case 'threads:updateCodexReasoningSummary': {
-      const [id, summary] = args as [string, string]
-      sessionManager.remove(id)
-      return updateThreadCodexReasoningSummary(id, summary)
-    }
-    case 'threads:updateCursorThinking': {
-      const [id, thinking] = args as [string, boolean | null]
-      sessionManager.remove(id)
-      return updateThreadCursorThinking(id, thinking)
-    }
-    case 'threads:updateCursorContext': {
-      const [id, context] = args as [string, string | null]
-      sessionManager.remove(id)
-      return updateThreadCursorContext(id, context)
-    }
-    case 'threads:setUnread': {
-      const [threadId, unread] = args as [string, boolean]
-      return updateThreadUnread(threadId, unread)
-    }
-    case 'threads:setYolo': {
-      const [threadId, yoloMode] = args as [string, boolean]
-      sessionManager.remove(threadId)
-      return updateThreadYoloMode(threadId, yoloMode)
-    }
-    case 'threads:setPermissionMode': {
-      const [threadId, permissionMode] = args as [string, string]
-      sessionManager.remove(threadId)
-      return updateThreadPermissionMode(threadId, permissionMode)
-    }
-    case 'threads:setWsl': {
-      const [threadId, useWsl, wslDistro] = args as [string, boolean, string | null]
-      if (threadHasMessages(threadId)) return undefined
-      sessionManager.remove(threadId)
-      return updateThreadWsl(threadId, useWsl, wslDistro)
-    }
-    case 'threads:getModifiedFiles': {
-      const [threadId] = args as [string]
-      return getThreadModifiedFiles(threadId, getWorkingDirForThread(threadId) ?? '')
-    }
-    case 'threads:getLogs':
-      return getThreadLogs(args[0] as string)
 
     case 'sessions:list':
       return listSessions(args[0] as string)

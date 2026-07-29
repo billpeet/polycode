@@ -10,35 +10,13 @@ import {
   updateLocationPool,
   deleteLocationPool,
   getLocationForThread,
-  listThreads,
-  listArchivedThreads,
-  archivedThreadCount,
-  createThread,
-  deleteThread,
-  updateThreadName,
-  updateThreadModel,
-  updateThreadProviderAndModel,
-  updateThreadReasoningLevel,
-  updateThreadCodexPersonality,
-  updateThreadCodexReasoningSummary,
-  updateThreadCursorThinking,
-  updateThreadCursorContext,
-  updateThreadPermissionMode,
-  updateThreadYoloMode,
-  updateThreadUnread,
   threadExists,
-  threadHasMessages,
-  archiveThread,
-  unarchiveThread,
   listMessages,
   listMessagesBySession,
   importThread,
-  getLastUsedProviderAndModel,
   getImportedSessionIds,
   listSessions,
   getActiveSession,
-  getThreadModifiedFiles,
-  updateThreadWsl,
   listYouTrackServers,
   createYouTrackServer,
   updateYouTrackServer,
@@ -73,7 +51,6 @@ import {
   cleanupThreadAttachments,
   getFileInfo,
 } from '../attachments'
-import { getThreadLogs } from '../thread-logger'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
@@ -233,114 +210,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   proxyable('wsl:list-distros', () => {
     return listWslDistros()
-  })
-
-  // ── Threads ───────────────────────────────────────────────────────────────
-
-  proxyable('threads:list', (projectId: string) => {
-    return listThreads(projectId)
-  })
-
-  proxyable('threads:create', (projectId: string, name: string, locationId: string) => {
-    const { provider, model } = getLastUsedProviderAndModel(projectId)
-    return createThread(projectId, name, locationId, provider, model)
-  })
-
-  proxyable('threads:delete', (id: string) => {
-    sessionManager.remove(id)
-    return deleteThread(id)
-  })
-
-  proxyable('threads:archivedCount', (projectId: string) => {
-    return archivedThreadCount(projectId)
-  })
-
-  proxyable('threads:listArchived', (projectId: string, limit?: number, offset?: number) => {
-    return listArchivedThreads(projectId, limit, offset)
-  })
-
-  proxyable('threads:archive', (id: string) => {
-    sessionManager.remove(id)
-    if (threadHasMessages(id)) {
-      archiveThread(id)
-      return 'archived'
-    } else {
-      deleteThread(id)
-      return 'deleted'
-    }
-  })
-
-  proxyable('threads:unarchive', (id: string) => {
-    return unarchiveThread(id)
-  })
-
-  proxyable('threads:updateName', (id: string, name: string) => {
-    return updateThreadName(id, name)
-  })
-
-  proxyable('threads:updateModel', (id: string, model: string) => {
-    // Drop any live session so next message picks up the new model
-    sessionManager.remove(id)
-    return updateThreadModel(id, model)
-  })
-
-  proxyable('threads:updateProviderAndModel', (id: string, provider: string, model: string) => {
-    sessionManager.remove(id)
-    return updateThreadProviderAndModel(id, provider, model)
-  })
-
-  proxyable('threads:updateReasoningLevel', (id: string, reasoningLevel: string) => {
-    sessionManager.remove(id)
-    return updateThreadReasoningLevel(id, reasoningLevel)
-  })
-
-  proxyable('threads:updateCodexPersonality', (id: string, personality: string) => {
-    sessionManager.remove(id)
-    return updateThreadCodexPersonality(id, personality)
-  })
-
-  proxyable('threads:updateCodexReasoningSummary', (id: string, summary: string) => {
-    sessionManager.remove(id)
-    return updateThreadCodexReasoningSummary(id, summary)
-  })
-
-  proxyable('threads:updateCursorThinking', (id: string, thinking: boolean | null) => {
-    sessionManager.remove(id)
-    return updateThreadCursorThinking(id, thinking)
-  })
-
-  proxyable('threads:updateCursorContext', (id: string, context: string | null) => {
-    sessionManager.remove(id)
-    return updateThreadCursorContext(id, context)
-  })
-
-  proxyable('threads:setUnread', (threadId: string, unread: boolean) => {
-    return updateThreadUnread(threadId, unread)
-  })
-
-  proxyable('threads:setYolo', (threadId: string, yoloMode: boolean) => {
-    sessionManager.remove(threadId)
-    return updateThreadYoloMode(threadId, yoloMode)
-  })
-
-  proxyable('threads:setPermissionMode', (threadId: string, permissionMode: string) => {
-    sessionManager.remove(threadId)
-    return updateThreadPermissionMode(threadId, permissionMode)
-  })
-
-  proxyable('threads:setWsl', (threadId: string, useWsl: boolean, wslDistro: string | null) => {
-    if (threadHasMessages(threadId)) return // locked after first message
-    sessionManager.remove(threadId) // drop existing session so it gets recreated
-    updateThreadWsl(threadId, useWsl, wslDistro)
-  })
-
-  proxyable('threads:getModifiedFiles', (threadId: string) => {
-    const workingDir = getWorkingDirForThread(threadId) ?? ''
-    return getThreadModifiedFiles(threadId, workingDir)
-  })
-
-  proxyable('threads:getLogs', (threadId: string) => {
-    return getThreadLogs(threadId)
   })
 
   // ── Sessions ────────────────────────────────────────────────────────────────

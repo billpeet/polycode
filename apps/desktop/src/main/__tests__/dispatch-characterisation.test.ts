@@ -28,6 +28,12 @@ const H = vi.hoisted(() => {
     project: { id: 'p1', allow_main_branch_commits: true } as Record<string, unknown> | null,
     gitStatus: { branch: 'feature/x' } as Record<string, unknown> | null,
     threadExists: true,
+    /**
+     * Whether the thread already has messages. Steers two branches that no other
+     * fixture field reaches: `threads:archive` (archive vs delete) and `threads:setWsl`
+     * (locked after the first message).
+     */
+    threadHasMessages: false,
     threadWsl: { use_wsl: false, wsl_distro: null },
     /** Whether `sessionManager.get` finds a live session for the thread. */
     hasSession: true,
@@ -126,8 +132,20 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   getProjectById: H.stub('db.getProjectById', () => H.state.project),
   getThreadWsl: H.stub('db.getThreadWsl', () => H.state.threadWsl),
   threadExists: H.stub('db.threadExists', () => H.state.threadExists),
-  getLastUsedProviderAndModel: () => ({ provider: 'claude', model: 'opus' }),
+  threadHasMessages: H.stub('db.threadHasMessages', () => H.state.threadHasMessages),
+  // Recorded, not a bare function: `threads:create` derives provider/model through it and
+  // the derivation itself — that it happens, and before createThread — is the behaviour.
+  getLastUsedProviderAndModel: H.stub('db.getLastUsedProviderAndModel', {
+    provider: 'claude',
+    model: 'opus',
+  }),
   listLocations: H.stub('db.listLocations', () => (H.state.location ? [H.state.location] : [])),
+  listThreads: H.stub('db.listThreads', [{ id: 't1', name: 'Thread one' }]),
+  listArchivedThreads: H.stub('db.listArchivedThreads', [{ id: 't-old', name: 'Old thread' }]),
+  archivedThreadCount: H.stub('db.archivedThreadCount', 7),
+  createThread: H.stub('db.createThread', { id: 't-new', name: 'New thread' }),
+  getThreadModifiedFiles: H.stub('db.getThreadModifiedFiles', ['src/a.ts']),
+  archiveThread: H.stub('db.archiveThread', 'RET_archiveThread'),
   // Sentinel returns for functions currently declared `: void`. Real code ignores these,
   // but they let us assert that a handler passes its callee's result through rather than
   // discarding it — see "handlers pass the callee's result through" below.
@@ -138,6 +156,32 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   archiveProject: H.stub('db.archiveProject', 'RET_archiveProject'),
   unarchiveProject: H.stub('db.unarchiveProject', 'RET_unarchiveProject'),
   deleteProject: H.stub('db.deleteProject', 'RET_deleteProject'),
+  deleteThread: H.stub('db.deleteThread', 'RET_deleteThread'),
+  unarchiveThread: H.stub('db.unarchiveThread', 'RET_unarchiveThread'),
+  updateThreadName: H.stub('db.updateThreadName', 'RET_updateThreadName'),
+  updateThreadModel: H.stub('db.updateThreadModel', 'RET_updateThreadModel'),
+  updateThreadProviderAndModel: H.stub(
+    'db.updateThreadProviderAndModel', 'RET_updateThreadProviderAndModel',
+  ),
+  updateThreadReasoningLevel: H.stub(
+    'db.updateThreadReasoningLevel', 'RET_updateThreadReasoningLevel',
+  ),
+  updateThreadCodexPersonality: H.stub(
+    'db.updateThreadCodexPersonality', 'RET_updateThreadCodexPersonality',
+  ),
+  updateThreadCodexReasoningSummary: H.stub(
+    'db.updateThreadCodexReasoningSummary', 'RET_updateThreadCodexReasoningSummary',
+  ),
+  updateThreadCursorThinking: H.stub(
+    'db.updateThreadCursorThinking', 'RET_updateThreadCursorThinking',
+  ),
+  updateThreadCursorContext: H.stub('db.updateThreadCursorContext', 'RET_updateThreadCursorContext'),
+  updateThreadUnread: H.stub('db.updateThreadUnread', 'RET_updateThreadUnread'),
+  updateThreadWsl: H.stub('db.updateThreadWsl', 'RET_updateThreadWsl'),
+  updateThreadYoloMode: H.stub('db.updateThreadYoloMode', 'RET_updateThreadYoloMode'),
+  updateThreadPermissionMode: H.stub(
+    'db.updateThreadPermissionMode', 'RET_updateThreadPermissionMode',
+  ),
   listCommands: H.stub('db.listCommands', () => [{ id: 'cmd1', name: 'dev' }]),
   createCommand: H.stub('db.createCommand', 'RET_createCommand'),
   updateCommand: H.stub('db.updateCommand', 'RET_updateCommand'),
@@ -172,6 +216,13 @@ vi.mock('../commands/manager', () => ({
   }),
 }))
 vi.mock('../terminal/manager', () => ({ ptyManager: H.autoModule('ptyManager') }))
+
+// Mocked so `threads:getLogs` records a call and returns something distinguishable. The
+// real module reads `%userData%/logs/<id>.log` and swallows every failure into `[]`, which
+// would make "handler deleted" and "handler working" look identical here.
+vi.mock('../thread-logger', () => H.autoModule('threadLogger', {
+  getThreadLogs: H.stub('threadLogger.getThreadLogs', [{ type: 'start', at: '2026-01-01' }]),
+}))
 
 // The remote-forwarding hop belongs to the ipcMain adapter only. Inactive here, so the
 // local implementation runs — which is exactly the path we want to compare.
@@ -255,6 +306,7 @@ beforeEach(() => {
   H.state.project = { id: 'p1', allow_main_branch_commits: true }
   H.state.gitStatus = { branch: 'feature/x' }
   H.state.threadExists = true
+  H.state.threadHasMessages = false
   H.state.hasSession = true
   H.state.sessionRunning = false
   H.state.pathExists = true
@@ -647,6 +699,25 @@ describe("handlers pass the callee's result through", () => {
     ['projects:delete', ['p1'], 'RET_deleteProject'],
     ['commands:update', ['cmd1', 'dev', 'pnpm dev'], 'RET_updateCommand'],
     ['commands:delete', ['cmd1'], 'RET_deleteCommand'],
+    ['threads:delete', ['t1'], 'RET_deleteThread'],
+    ['threads:unarchive', ['t1'], 'RET_unarchiveThread'],
+    ['threads:updateName', ['t1', 'Renamed'], 'RET_updateThreadName'],
+    ['threads:updateModel', ['t1', 'sonnet'], 'RET_updateThreadModel'],
+    [
+      'threads:updateProviderAndModel', ['t1', 'codex', 'gpt-5'],
+      'RET_updateThreadProviderAndModel',
+    ],
+    ['threads:updateReasoningLevel', ['t1', 'high'], 'RET_updateThreadReasoningLevel'],
+    ['threads:updateCodexPersonality', ['t1', 'concise'], 'RET_updateThreadCodexPersonality'],
+    [
+      'threads:updateCodexReasoningSummary', ['t1', 'detailed'],
+      'RET_updateThreadCodexReasoningSummary',
+    ],
+    ['threads:updateCursorThinking', ['t1', true], 'RET_updateThreadCursorThinking'],
+    ['threads:updateCursorContext', ['t1', 'ctx'], 'RET_updateThreadCursorContext'],
+    ['threads:setUnread', ['t1', true], 'RET_updateThreadUnread'],
+    ['threads:setYolo', ['t1', true], 'RET_updateThreadYoloMode'],
+    ['threads:setPermissionMode', ['t1', 'acceptEdits'], 'RET_updateThreadPermissionMode'],
   ]
 
   for (const [channel, args, expected] of cases) {
@@ -655,6 +726,16 @@ describe("handlers pass the callee's result through", () => {
       expect(await resultViaControlRpc(channel, args)).toBe(expected)
     })
   }
+
+  it('threads:setWsl returns its callee\'s value — the one place the two paths differed', async () => {
+    // Recorded because it is the only form-level disagreement found in this fold: pre-fold,
+    // control-rpc.ts wrote `return updateThreadWsl(...)` and ipc/handlers.ts called it as a
+    // statement. Nothing observable turned on it — the callee is `: void` and so is the
+    // contract's result — so the fold adopts the returning form, and this pins it.
+    const args = ['t1', true, 'Ubuntu']
+    expect(await resultViaIpc('threads:setWsl', args)).toBe('RET_updateThreadWsl')
+    expect(await resultViaControlRpc('threads:setWsl', args)).toBe('RET_updateThreadWsl')
+  })
 })
 
 describe('threads:* session lifecycle and interaction — both transports agree', () => {
@@ -1050,6 +1131,304 @@ describe('threads:send — the one deliberate divergence', () => {
     // Fire-and-forget, so only the kick-off is deterministic in the recorded log.
     expect(ipc).toContain('git.getCachedGitBranch(["C:/repo",null,null])')
     expect(rpc).toContain('git.getCachedGitBranch(["C:/repo",null,null])')
+  })
+})
+
+describe('threads:* CRUD and settings — both transports agree', () => {
+  it('threads:list', async () => {
+    const ipc = await viaIpc('threads:list', ['p1'])
+    const rpc = await viaControlRpc('threads:list', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.listThreads(["p1"])'])
+    expect(await resultViaIpc('threads:list', ['p1'])).toEqual([{ id: 't1', name: 'Thread one' }])
+    expect(await resultViaControlRpc('threads:list', ['p1'])).toEqual([
+      { id: 't1', name: 'Thread one' },
+    ])
+  })
+
+  it('threads:create derives provider/model from the project before inserting', async () => {
+    const args = ['p1', 'New thread', 'loc1']
+    const ipc = await viaIpc('threads:create', args)
+    const rpc = await viaControlRpc('threads:create', args)
+
+    expect(rpc).toEqual(ipc)
+    // The derivation is the behaviour: createThread's own `provider = 'claude-code'` /
+    // `model = 'claude-opus-4-8'` parameter defaults would otherwise silently take over,
+    // so dropping the lookup would still produce a valid-looking thread.
+    expect(ipc).toEqual([
+      'db.getLastUsedProviderAndModel(["p1"])',
+      'db.createThread(["p1","New thread","loc1","claude","opus"])',
+    ])
+
+    expect(await resultViaIpc('threads:create', args)).toEqual({ id: 't-new', name: 'New thread' })
+    expect(await resultViaControlRpc('threads:create', args)).toEqual({
+      id: 't-new', name: 'New thread',
+    })
+  })
+
+  it('threads:archivedCount', async () => {
+    const ipc = await viaIpc('threads:archivedCount', ['p1'])
+    const rpc = await viaControlRpc('threads:archivedCount', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.archivedThreadCount(["p1"])'])
+    expect(await resultViaIpc('threads:archivedCount', ['p1'])).toBe(7)
+    expect(await resultViaControlRpc('threads:archivedCount', ['p1'])).toBe(7)
+  })
+
+  it('threads:listArchived forwards limit/offset raw — omitted and explicitly null alike', async () => {
+    const paged = ['p1', 25, 50]
+    expect(await viaControlRpc('threads:listArchived', paged)).toEqual(
+      await viaIpc('threads:listArchived', paged),
+    )
+    expect(await viaIpc('threads:listArchived', paged)).toEqual([
+      'db.listArchivedThreads(["p1",25,50])',
+    ])
+
+    // Neither path coalesces, and neither needs to. listArchivedThreads binds
+    // `limit ?? -1, offset ?? 0` *in its own body*, which absorbs `undefined` and `null`
+    // identically — the first of the three optional-argument shapes seen in this fold, not
+    // the `commands:create` parameter-default shape that `null` sails past.
+    expect(await viaIpc('threads:listArchived', ['p1'])).toEqual([
+      'db.listArchivedThreads(["p1",undefined,undefined])',
+    ])
+    expect(await viaControlRpc('threads:listArchived', ['p1'])).toEqual([
+      'db.listArchivedThreads(["p1",undefined,undefined])',
+    ])
+    expect(await viaIpc('threads:listArchived', ['p1', null, null])).toEqual([
+      'db.listArchivedThreads(["p1",null,null])',
+    ])
+    expect(await viaControlRpc('threads:listArchived', ['p1', null, null])).toEqual([
+      'db.listArchivedThreads(["p1",null,null])',
+    ])
+
+    expect(await resultViaIpc('threads:listArchived', ['p1'])).toEqual([
+      { id: 't-old', name: 'Old thread' },
+    ])
+    expect(await resultViaControlRpc('threads:listArchived', ['p1'])).toEqual([
+      { id: 't-old', name: 'Old thread' },
+    ])
+  })
+
+  it('threads:unarchive', async () => {
+    const ipc = await viaIpc('threads:unarchive', ['t1'])
+    const rpc = await viaControlRpc('threads:unarchive', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.unarchiveThread(["t1"])'])
+  })
+
+  it('threads:getModifiedFiles resolves the working dir first', async () => {
+    const ipc = await viaIpc('threads:getModifiedFiles', ['t1'])
+    const rpc = await viaControlRpc('threads:getModifiedFiles', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.getLocationForThread(["t1"])',
+      'db.getThreadModifiedFiles(["t1","C:/repo"])',
+    ])
+    expect(await resultViaIpc('threads:getModifiedFiles', ['t1'])).toEqual(['src/a.ts'])
+    expect(await resultViaControlRpc('threads:getModifiedFiles', ['t1'])).toEqual(['src/a.ts'])
+  })
+
+  it('threads:getModifiedFiles passes an empty working dir when the thread has no location', async () => {
+    H.state.location = null
+
+    const ipc = await viaIpc('threads:getModifiedFiles', ['t1'])
+    const rpc = await viaControlRpc('threads:getModifiedFiles', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    // `getWorkingDirForThread(...) ?? ''` — the coalesce is load-bearing: the callee's
+    // parameter is `workingDir: string`, so a null would reach a `path` API as null.
+    expect(ipc).toEqual([
+      'db.getLocationForThread(["t1"])',
+      'db.getThreadModifiedFiles(["t1",""])',
+    ])
+  })
+
+  it('threads:getLogs', async () => {
+    const ipc = await viaIpc('threads:getLogs', ['t1'])
+    const rpc = await viaControlRpc('threads:getLogs', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['threadLogger.getThreadLogs(["t1"])'])
+    expect(await resultViaIpc('threads:getLogs', ['t1'])).toEqual([
+      { type: 'start', at: '2026-01-01' },
+    ])
+    expect(await resultViaControlRpc('threads:getLogs', ['t1'])).toEqual([
+      { type: 'start', at: '2026-01-01' },
+    ])
+  })
+
+  it('threads:updateCursorThinking/Context keep an explicit null intact', async () => {
+    // `null` is a meaningful value on these two — "inherit the default" rather than
+    // "argument absent" — so anything that coalesced it away would change what is written.
+    expect(await viaIpc('threads:updateCursorThinking', ['t1', null])).toEqual([
+      'sessionManager.remove(["t1"])', 'db.updateThreadCursorThinking(["t1",null])',
+    ])
+    expect(await viaControlRpc('threads:updateCursorThinking', ['t1', null])).toEqual([
+      'sessionManager.remove(["t1"])', 'db.updateThreadCursorThinking(["t1",null])',
+    ])
+    // false must survive too — a `|| null` in place of a pass-through would eat it.
+    expect(await viaIpc('threads:updateCursorThinking', ['t1', false])).toEqual([
+      'sessionManager.remove(["t1"])', 'db.updateThreadCursorThinking(["t1",false])',
+    ])
+    expect(await viaIpc('threads:updateCursorContext', ['t1', null])).toEqual([
+      'sessionManager.remove(["t1"])', 'db.updateThreadCursorContext(["t1",null])',
+    ])
+    expect(await viaControlRpc('threads:updateCursorContext', ['t1', null])).toEqual([
+      'sessionManager.remove(["t1"])', 'db.updateThreadCursorContext(["t1",null])',
+    ])
+    // The empty string is the other value a truthiness-based rewrite would destroy.
+    expect(await viaIpc('threads:updateCursorContext', ['t1', ''])).toEqual([
+      'sessionManager.remove(["t1"])', 'db.updateThreadCursorContext(["t1",""])',
+    ])
+  })
+})
+
+/**
+ * The convention no type enforces: drop the live session *before* the DB write, so the
+ * next message is served by a session created from the changed row.
+ *
+ * Asserting the whole sequence with `toEqual` rather than two `toContain`s is the point —
+ * a handler that writes first and removes after would satisfy "both happened".
+ */
+describe('threads:* — sessionManager.remove runs before the write', () => {
+  const cases: Array<[channel: string, args: unknown[], write: string]> = [
+    ['threads:delete', ['t1'], 'db.deleteThread(["t1"])'],
+    ['threads:updateModel', ['t1', 'sonnet'], 'db.updateThreadModel(["t1","sonnet"])'],
+    [
+      'threads:updateProviderAndModel', ['t1', 'codex', 'gpt-5'],
+      'db.updateThreadProviderAndModel(["t1","codex","gpt-5"])',
+    ],
+    [
+      'threads:updateReasoningLevel', ['t1', 'high'],
+      'db.updateThreadReasoningLevel(["t1","high"])',
+    ],
+    [
+      'threads:updateCodexPersonality', ['t1', 'concise'],
+      'db.updateThreadCodexPersonality(["t1","concise"])',
+    ],
+    [
+      'threads:updateCodexReasoningSummary', ['t1', 'detailed'],
+      'db.updateThreadCodexReasoningSummary(["t1","detailed"])',
+    ],
+    [
+      'threads:updateCursorThinking', ['t1', true],
+      'db.updateThreadCursorThinking(["t1",true])',
+    ],
+    [
+      'threads:updateCursorContext', ['t1', 'extra context'],
+      'db.updateThreadCursorContext(["t1","extra context"])',
+    ],
+    ['threads:setYolo', ['t1', true], 'db.updateThreadYoloMode(["t1",true])'],
+    [
+      'threads:setPermissionMode', ['t1', 'acceptEdits'],
+      'db.updateThreadPermissionMode(["t1","acceptEdits"])',
+    ],
+  ]
+
+  for (const [channel, args, write] of cases) {
+    it(`${channel} removes the session, then writes`, async () => {
+      const expected = ['sessionManager.remove(["t1"])', write]
+      const ipc = await viaIpc(channel, args)
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual(expected)
+    })
+  }
+
+  it('threads:setUnread deliberately does NOT drop the session', async () => {
+    // The odd one out among the setters: marking a thread read/unread cannot change how
+    // the CLI is spawned, so the session survives. Pinned so the fold does not "helpfully"
+    // make it uniform with its neighbours.
+    const args = ['t1', true]
+    const ipc = await viaIpc('threads:setUnread', args)
+    const rpc = await viaControlRpc('threads:setUnread', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.updateThreadUnread(["t1",true])'])
+  })
+
+  it('threads:setWsl checks the message lock first, then removes, then writes', async () => {
+    const args = ['t1', true, 'Ubuntu']
+    const ipc = await viaIpc('threads:setWsl', args)
+    const rpc = await viaControlRpc('threads:setWsl', args)
+
+    expect(rpc).toEqual(ipc)
+    // Note the ordering differs from its neighbours: the guard runs before the remove, so
+    // a locked thread does not lose its session as a side effect of a refused write.
+    expect(ipc).toEqual([
+      'db.threadHasMessages(["t1"])',
+      'sessionManager.remove(["t1"])',
+      'db.updateThreadWsl(["t1",true,"Ubuntu"])',
+    ])
+  })
+
+  it('threads:setWsl is locked once the thread has messages', async () => {
+    H.state.threadHasMessages = true
+
+    const ipc = await viaIpc('threads:setWsl', ['t1', true, 'Ubuntu'])
+    const rpc = await viaControlRpc('threads:setWsl', ['t1', true, 'Ubuntu'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.threadHasMessages(["t1"])'])
+    expect(await resultViaIpc('threads:setWsl', ['t1', true, 'Ubuntu'])).toBeUndefined()
+    expect(await resultViaControlRpc('threads:setWsl', ['t1', true, 'Ubuntu'])).toBeUndefined()
+  })
+
+  it('threads:setWsl writes a null distro verbatim, in argument order', async () => {
+    // Turning WSL off carries a null distro, and it must be written rather than coalesced:
+    // updateThreadWsl binds it straight into the column. The two booleans/strings also pin
+    // the (threadId, useWsl, wslDistro) order, which nothing else in this file does.
+    const ipc = await viaIpc('threads:setWsl', ['t1', false, null])
+    const rpc = await viaControlRpc('threads:setWsl', ['t1', false, null])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.threadHasMessages(["t1"])',
+      'sessionManager.remove(["t1"])',
+      'db.updateThreadWsl(["t1",false,null])',
+    ])
+  })
+
+  it('threads:archive removes the session, then archives a thread that has messages', async () => {
+    H.state.threadHasMessages = true
+
+    const ipc = await viaIpc('threads:archive', ['t1'])
+    const rpc = await viaControlRpc('threads:archive', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.remove(["t1"])',
+      'db.threadHasMessages(["t1"])',
+      'db.archiveThread(["t1"])',
+    ])
+    expect(await resultViaIpc('threads:archive', ['t1'])).toBe('archived')
+    expect(await resultViaControlRpc('threads:archive', ['t1'])).toBe('archived')
+  })
+
+  it('threads:archive deletes an empty thread outright instead of archiving it', async () => {
+    // The other branch: an untouched thread is not worth keeping, so archive means delete.
+    // Both the call made and the discriminated result differ, and both are pinned — the
+    // literal is what the renderer branches on to decide which toast to show.
+    const ipc = await viaIpc('threads:archive', ['t1'])
+    const rpc = await viaControlRpc('threads:archive', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.remove(["t1"])',
+      'db.threadHasMessages(["t1"])',
+      'db.deleteThread(["t1"])',
+    ])
+    expect(await resultViaIpc('threads:archive', ['t1'])).toBe('deleted')
+    expect(await resultViaControlRpc('threads:archive', ['t1'])).toBe('deleted')
+
+    // Neither branch returns the callee's value — the literal is the contract's result
+    // type, so `archiveThread`/`deleteThread`'s sentinel must NOT leak through.
+    expect(await resultViaIpc('threads:archive', ['t1'])).not.toBe('RET_deleteThread')
   })
 })
 
