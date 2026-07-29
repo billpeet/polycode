@@ -16,8 +16,7 @@ import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResu
 import { createRunner } from './driver/runner'
 import { runGit } from './git-runner'
 import { parseCommitLog, parseNameStatus, parsePorcelainStatus } from './git-parsers'
-import { sshExec } from './ssh'
-import { wslExec } from './wsl'
+import { runRemoteShell } from './remote-shell'
 
 export { GitLockedError } from './git-runner'
 
@@ -174,9 +173,7 @@ export async function forceUnlockRepo(
       // Loose-ref locks under refs/
       'if [ -d refs ]; then find refs -type f -name "*.lock" -print -delete 2>/dev/null || true; fi',
     ].join(' && ')
-    const out = ssh
-      ? await sshExec(ssh, repoPath, script)
-      : await wslExec(wsl!, repoPath, script)
+    const out = await runRemoteShell(repoPath, script, ssh, wsl)
     const removed = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
     return { removed }
   }
@@ -659,11 +656,8 @@ async function readRepoFilePrefix(
 ): Promise<{ text: string; truncated: boolean; binary: boolean } | null> {
   try {
     let buffer: Buffer
-    if (ssh) {
-      const output = await sshExec(ssh, repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`)
-      buffer = Buffer.from(output, 'utf8')
-    } else if (wsl) {
-      const output = await wslExec(wsl, repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`)
+    if (ssh || wsl) {
+      const output = await runRemoteShell(repoPath, `if [ -f ${shellSingleQuote(gitPath)} ]; then head -c ${maxBytes + 1} ${shellSingleQuote(gitPath)}; fi`, ssh, wsl)
       buffer = Buffer.from(output, 'utf8')
     } else {
       const fullPath = path.join(repoPath, gitPath)
@@ -936,11 +930,8 @@ export async function getFileDiff(repoPath: string, filePath: string, staged: bo
       // File is untracked — build a pseudo-diff
       const content = await git(repoPath, ['show', `:${filePath}`], ssh, wsl).catch(async () => {
         // Not in index either, read from working tree
-        if (ssh) {
-          return sshExec(ssh, repoPath, `cat '${filePath.replace(/'/g, "'\\''")}'`)
-        }
-        if (wsl) {
-          return wslExec(wsl, repoPath, `cat '${filePath.replace(/'/g, "'\\''")}'`)
+        if (ssh || wsl) {
+          return runRemoteShell(repoPath, `cat ${shellSingleQuote(filePath)}`, ssh, wsl)
         }
         const fs = await import('fs/promises')
         const path = await import('path')
