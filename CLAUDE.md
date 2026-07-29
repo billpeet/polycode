@@ -44,6 +44,11 @@ skips the download when the ABI-specific copy already exists). `test` re-install
 Node-ABI binary on its own, so both directions self-heal — don't "simplify" either by
 removing the guard.
 
+`electron-abi` is defined in `apps/desktop/package.json`; the root script of the same
+name is a passthrough, so `pnpm run electron-abi` works from either directory. Run it by
+hand after `pnpm test` if you then want to start Electron without going through
+`dev`/`start`/`dist`.
+
 This matters most for `dist`: packaging straight after a test run would otherwise bake the
 Node-ABI binary into the installer and ship an app that crashes on launch.
 

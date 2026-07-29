@@ -8,6 +8,21 @@
  *
  * This module is the one implementation. Both transports become thin adapters over it.
  *
+ * ## What the registry does and does not cover
+ *
+ * `CHANNEL_REGISTRY` is an inventory of **request/response** channels, not of the whole
+ * IPC surface. Fire-and-forget and streaming channels sit outside it by design and have
+ * no enumeration anywhere:
+ *
+ * - `ipcMain.on` channels — `terminal:write`, `terminal:resize` (`ipc/handlers.ts`) and
+ *   `log:write` (`main/index.ts`), all invoked from the renderer via `window.api.send`.
+ * - Push channels the renderer subscribes to with `window.api.on` — `thread:output:${id}`,
+ *   `thread:status:${id}`, `command:*`. These are per-thread and per-command, so they are
+ *   not enumerable in a static registry.
+ *
+ * This is why the preload allowlist gates `invoke` only. Anyone reasoning about
+ * "everything the renderer can reach" needs the registry *and* those channels.
+ *
  * ## Why this lives in the desktop app and not in `packages/shared`
  *
  * `packages/shared` is dependency-free raw TS with no build step. Handler

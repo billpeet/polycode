@@ -24,6 +24,7 @@
     "lint": "eslint . --max-warnings 0",
     "typecheck": "pnpm --recursive --if-present typecheck",
     "test": "pnpm --filter polycode-electron test",
+    "electron-abi": "pnpm --filter polycode-electron run electron-abi",
     "dist": "pnpm --filter polycode-electron dist",
     "dist:publish": "pnpm --filter polycode-electron dist:publish",
     "mobile": "pnpm --filter polycode-mobile start",
