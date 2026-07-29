@@ -42,21 +42,33 @@
  * `channel-handler-migration.test.ts` enforces the other half: a channel handled here
  * must have no legacy registration left, so a third dispatch site cannot exist.
  */
+import { existsSync } from 'fs'
 import type { BrowserWindow } from 'electron'
 import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
 import {
   archiveProject,
+  checkoutLocation,
+  createLocation,
   createProject,
+  deleteLocation,
   deleteProject,
   listArchivedProjects,
   listLocations,
   listProjects,
+  returnLocationToPool,
   unarchiveProject,
+  updateLocation,
   updateProject,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
-import { createFullProject } from '../project-admin'
+import {
+  cloneLocation,
+  createFullProject,
+  createLocalWorktree,
+  removeWorktreeLocation,
+  suggestUniquePath,
+} from '../project-admin'
 import { projectFaviconDataUrl } from '../project-favicon'
 
 /**
@@ -83,6 +95,13 @@ export type ChannelHandlerMap = { [C in Channel]: ChannelHandler<C> }
  *
  * Handlers that need neither context nor arguments simply declare fewer parameters —
  * a uniform `ctx` first parameter costs nothing at the call sites that ignore it.
+ *
+ * **Always pass the callee's result through** — expression body, or an explicit `return`
+ * in a braced one. Several of these call functions currently declared `: void`, so
+ * discarding the result looks harmless and the contract's `void` means neither
+ * `satisfies` nor `tsc` would object. But if such a callee later becomes `async`, a
+ * discarding body floats its promise: the transport replies before the work completes and
+ * rejections vanish. Returning it costs nothing today and removes that trap.
  */
 export const channelHandlers = {
   'projects:list': () => listProjects(),
@@ -102,23 +121,46 @@ export const channelHandlers = {
   // rows are written, so a failure never leaves an orphaned project behind.
   'projects:createFull': (_ctx, spec) => createFullProject(spec),
 
-  'projects:update': (_ctx, id, name, gitUrl, allowMainBranchCommits) => {
-    updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
-  },
+  'projects:update': (_ctx, id, name, gitUrl, allowMainBranchCommits) =>
+    updateProject(id, name, gitUrl, allowMainBranchCommits ?? true),
 
   'projects:delete': (_ctx, id) => {
     sessionManager.stopAll()
     commandManager.stopAll()
-    deleteProject(id)
+    return deleteProject(id)
   },
 
-  'projects:archive': (_ctx, id) => {
-    archiveProject(id)
-  },
+  'projects:archive': (_ctx, id) => archiveProject(id),
 
-  'projects:unarchive': (_ctx, id) => {
-    unarchiveProject(id)
-  },
+  'projects:unarchive': (_ctx, id) => unarchiveProject(id),
+
+  'locations:list': (_ctx, projectId) => listLocations(projectId),
+
+  'locations:pathExists': (_ctx, path) => existsSync(path),
+
+  // The optional pool/ssh/wsl arguments are passed through raw: db/queries.ts coalesces
+  // every one of them before binding, so a `?? null` here would only be duplication.
+  'locations:create': (_ctx, projectId, label, connectionType, locationPath, poolId, ssh, wsl) =>
+    createLocation(projectId, label, connectionType, locationPath, poolId, ssh, wsl),
+
+  'locations:update': (_ctx, id, label, connectionType, locationPath, poolId, ssh, wsl) =>
+    updateLocation(id, label, connectionType, locationPath, poolId, ssh, wsl),
+
+  'locations:delete': (_ctx, id) => deleteLocation(id),
+
+  'locations:createWorktree': (_ctx, parentLocationId, label) =>
+    createLocalWorktree(parentLocationId, label),
+
+  'locations:removeWorktree': (_ctx, id) => removeWorktreeLocation(id),
+
+  'locations:clone': (_ctx, projectId, label, gitUrl, clonePath) =>
+    cloneLocation(projectId, label, gitUrl, clonePath),
+
+  'locations:suggestPath': (_ctx, baseDir, repoName) => suggestUniquePath(baseDir, repoName),
+
+  'locations:checkout': (_ctx, id) => checkoutLocation(id),
+
+  'locations:returnToPool': (_ctx, id) => returnLocationToPool(id),
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers

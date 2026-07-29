@@ -1,20 +1,14 @@
 import { spawn } from 'child_process'
-import { existsSync, readFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { basename } from 'path'
 import { pathToFileURL } from 'url'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import {
-  listLocations,
   listLocationPools,
   createLocationPool,
   updateLocationPool,
   deleteLocationPool,
-  createLocation,
-  updateLocation,
-  deleteLocation,
-  checkoutLocation,
-  returnLocationToPool,
   getLocationForThread,
   listThreads,
   listArchivedThreads,
@@ -62,7 +56,7 @@ import {
   getSetting,
   setSetting,
 } from '../db/queries'
-import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue } from '../../shared/types'
+import { SshConfig, WslConfig, Provider, QuestionAnswerValue } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -90,7 +84,6 @@ import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
 import { emitAppEvent } from '../app-events'
-import { cloneLocation, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
@@ -218,39 +211,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     )
   }
 
-  // ── Repo Locations ────────────────────────────────────────────────────────
-
-  proxyable('locations:list', (projectId: string) => {
-    return listLocations(projectId)
-  })
-
-  proxyable('locations:create', (projectId: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    return createLocation(projectId, label, connectionType, locationPath, poolId, ssh, wsl)
-  })
-
-  proxyable('locations:update', (id: string, label: string, connectionType: ConnectionType, locationPath: string, poolId?: string | null, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    return updateLocation(id, label, connectionType, locationPath, poolId, ssh, wsl)
-  })
-
-  proxyable('locations:delete', (id: string) => {
-    return deleteLocation(id)
-  })
-
-  proxyable('locations:createWorktree', (parentLocationId: string, label?: string | null) => {
-    return createLocalWorktree(parentLocationId, label)
-  })
-
-  proxyable('locations:removeWorktree', (id: string) => {
-    return removeWorktreeLocation(id)
-  })
-
-  proxyable('locations:checkout', (id: string) => {
-    return checkoutLocation(id)
-  })
-
-  proxyable('locations:returnToPool', (id: string) => {
-    return returnLocationToPool(id)
-  })
+  // ── Location Pools ────────────────────────────────────────────────────────
 
   proxyable('location-pools:list', (projectId: string) => {
     return listLocationPools(projectId)
@@ -266,18 +227,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   proxyable('location-pools:delete', (id: string) => {
     return deleteLocationPool(id)
-  })
-
-  proxyable('locations:pathExists', (path: string): boolean => {
-    return existsSync(path)
-  })
-
-  proxyable('locations:suggestPath', (baseDir: string, repoName: string): string => {
-    return suggestUniquePath(baseDir, repoName)
-  })
-
-  proxyable('locations:clone', (projectId: string, label: string, gitUrl: string, clonePath: string) => {
-    return cloneLocation(projectId, label, gitUrl, clonePath)
   })
 
   // ── SSH / WSL test ──────────────────────────────────────────────────────────

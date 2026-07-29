@@ -1,16 +1,12 @@
-import { existsSync, readFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
 import {
   archivedThreadCount,
   archiveThread,
-  createLocation,
   createLocationPool,
-  deleteLocation,
   deleteLocationPool,
-  updateLocation,
   updateLocationPool,
-  checkoutLocation,
   createSlashCommand,
   createThread,
   deleteSlashCommand,
@@ -24,13 +20,11 @@ import {
   listCommands,
   listArchivedThreads,
   listLocationPools,
-  listLocations,
   listMessages,
   listMessagesBySession,
   listSessions,
   listSlashCommands,
   listThreads,
-  returnLocationToPool,
   setThreadGitBranchIfUnset,
   threadExists,
   threadHasMessages,
@@ -127,7 +121,6 @@ import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
 import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
-import { cloneLocation, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
@@ -184,43 +177,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
 
   switch (channel) {
 
-    case 'locations:create': {
-      const [projectId, label, connectionType, locationPath, poolId, ssh, wsl] = args as [
-        string, string, 'local' | 'ssh' | 'wsl', string, string | null | undefined, SshConfig | null | undefined, WslConfig | null | undefined,
-      ]
-      return createLocation(projectId, label, connectionType, locationPath, poolId ?? null, ssh ?? null, wsl ?? null)
-    }
-    case 'locations:update': {
-      const [id, label, connectionType, locationPath, poolId, ssh, wsl] = args as [
-        string, string, 'local' | 'ssh' | 'wsl', string, string | null | undefined, SshConfig | null | undefined, WslConfig | null | undefined,
-      ]
-      return updateLocation(id, label, connectionType, locationPath, poolId ?? null, ssh ?? null, wsl ?? null)
-    }
-    case 'locations:delete':
-      return deleteLocation(args[0] as string)
-    case 'locations:createWorktree': {
-      const [parentLocationId, label] = args as [string, string | null | undefined]
-      return createLocalWorktree(parentLocationId, label ?? null)
-    }
-    case 'locations:removeWorktree':
-      return removeWorktreeLocation(args[0] as string)
-    case 'locations:clone': {
-      const [projectId, label, gitUrl, clonePath] = args as [string, string, string, string]
-      return cloneLocation(projectId, label, gitUrl, clonePath)
-    }
-    case 'locations:suggestPath': {
-      const [baseDir, repoName] = args as [string, string]
-      return suggestUniquePath(baseDir, repoName)
-    }
-
-    case 'locations:list':
-      return listLocations(args[0] as string)
-    case 'locations:pathExists':
-      return existsSync(args[0] as string)
-    case 'locations:checkout':
-      return checkoutLocation(args[0] as string)
-    case 'locations:returnToPool':
-      return returnLocationToPool(args[0] as string)
     case 'location-pools:list':
       return listLocationPools(args[0] as string)
     case 'location-pools:create': {
