@@ -45,6 +45,7 @@
 import { existsSync } from 'fs'
 import type { BrowserWindow } from 'electron'
 import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
+import type { SshConfig, WslConfig } from '../../shared/types'
 import {
   archivedThreadCount,
   archiveProject,
@@ -52,21 +53,32 @@ import {
   checkoutLocation,
   createCommand,
   createLocation,
+  createLocationPool,
   createProject,
+  createSlashCommand,
   createThread,
+  createYouTrackServer,
   deleteCommand,
   deleteLocation,
+  deleteLocationPool,
   deleteProject,
+  deleteSlashCommand,
   deleteThread,
+  deleteYouTrackServer,
+  getImportedSessionIds,
   getLastUsedProviderAndModel,
   getLocationForThread,
   getThreadModifiedFiles,
+  importThread,
   listArchivedProjects,
   listArchivedThreads,
   listCommands,
+  listLocationPools,
   listLocations,
   listProjects,
+  listSlashCommands,
   listThreads,
+  listYouTrackServers,
   returnLocationToPool,
   setThreadGitBranchIfUnset,
   threadExists,
@@ -75,7 +87,10 @@ import {
   unarchiveThread,
   updateCommand,
   updateLocation,
+  updateLocationPool,
   updateProject,
+  updateSlashCommand,
+  updateYouTrackServer,
   updateThreadCodexPersonality,
   updateThreadCodexReasoningSummary,
   updateThreadCursorContext,
@@ -103,13 +118,53 @@ import { projectFaviconDataUrl } from '../project-favicon'
 import { emitAppEvent } from '../app-events'
 import { getCachedGitBranch } from '../git'
 import { getThreadLogs } from '../thread-logger'
+import { createForge } from '../forge'
+import { listAllFiles, listDirectory, readFileContent } from '../files'
+import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
+import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
+import { startFileWatch, stopFileWatch } from '../file-watch'
+import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
+import { searchYouTrack, testYouTrackConnection } from '../youtrack'
+import { listClaudeAvailableModels } from '../claude-models'
+import { listCodexAvailableModels } from '../codex-models'
+import { listOpenCodeAvailableModels } from '../opencode-models'
+import { listPiAvailableModels } from '../pi-models'
+import { listCursorAvailableModels } from '../cursor-models'
 import {
+  getConfigForPath,
   getEffectiveWorkingDir,
   getLocalPathError,
   getSshConfigForThread,
   getWorkingDirForThread,
   getWslConfigForThread,
+  invalidateRepoGitCache,
 } from './thread-context'
+
+/**
+ * The host context the five `models:*` channels query a CLI in, or `undefined` for "ask
+ * the CLI about itself, wherever it happens to live".
+ *
+ * Shared rather than inlined five times because the three lookups are the whole risk
+ * surface of that family — a transposed ssh/wsl or a dropped fallback would still return a
+ * plausible model list.
+ *
+ * `||`, not `??`: `getEffectiveWorkingDir` returns the empty string (not null) for a thread
+ * whose location row has gone away, and an empty cwd must fall through to the location
+ * lookup rather than be spawned in. Both pre-fold paths had the `||`.
+ *
+ * The `threadId && threadExists(threadId)` test is truthiness on both pre-fold paths, so
+ * `undefined`, `null` and `''` all skip the DB round-trip alike.
+ */
+function modelQueryOptions(threadId?: string | null):
+  | { cwd: string | null; ssh: SshConfig | null; wsl: WslConfig | null }
+  | undefined {
+  if (!threadId || !threadExists(threadId)) return undefined
+  return {
+    cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
+    ssh: getSshConfigForThread(threadId),
+    wsl: getWslConfigForThread(threadId),
+  }
+}
 
 /**
  * What a handler is given besides its arguments.
@@ -527,6 +582,181 @@ export const channelHandlers = {
     getThreadModifiedFiles(threadId, getWorkingDirForThread(threadId) ?? ''),
 
   'threads:getLogs': (_ctx, threadId) => getThreadLogs(threadId),
+
+  // ── Location pools ────────────────────────────────────────────────────────
+
+  'location-pools:list': (_ctx, projectId) => listLocationPools(projectId),
+
+  'location-pools:create': (_ctx, projectId, name) => createLocationPool(projectId, name),
+
+  'location-pools:update': (_ctx, id, name) => updateLocationPool(id, name),
+
+  'location-pools:delete': (_ctx, id) => deleteLocationPool(id),
+
+  // ── Forge: provider-neutral pull requests ─────────────────────────────────
+  //
+  // All six resolve the repo's host config from repo_locations and hand it to
+  // `createForge`, which is what selects the GitHub or Azure DevOps adapter — so the
+  // lookup is not decoration, it is how a PR listed over SSH reaches the right API.
+
+  'forge:pr:list': async (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).listPullRequests()
+  },
+
+  'forge:pr:current': async (_ctx, repoPath, branch) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).getCurrentBranchPullRequest(branch)
+  },
+
+  'forge:pr:create': async (_ctx, repoPath, payload) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).createPullRequest(payload)
+  },
+
+  // The only one of the six that changes the working tree, so it is also the only one that
+  // invalidates the git cache — and the invalidation must follow the await, not race it.
+  'forge:pr:checkout': async (_ctx, repoPath, prId) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    const result = await (await createForge(repoPath, ssh, wsl)).checkoutPullRequest(prId)
+    invalidateRepoGitCache(repoPath)
+    return result
+  },
+
+  'forge:pr:webUrl': async (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).getPullRequestsWebUrl()
+  },
+
+  'forge:repo:webUrl': async (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).getRepoWebUrl()
+  },
+
+  // ── Files ─────────────────────────────────────────────────────────────────
+  //
+  // The only family here that branches on *where the path lives*. Each of the three read
+  // channels has a local, an SSH and a WSL backend, and `ssh` is tested first, so a
+  // location carrying both configs is served over SSH. Both pre-fold paths agreed on the
+  // order; picking the wrong backend returns a plausible-looking answer rather than an
+  // error, which is why all three branches are pinned in the characterisation tests.
+
+  'files:list': (_ctx, dirPath) => {
+    const { ssh, wsl } = getConfigForPath(dirPath)
+    if (ssh) return sshListDirectory(ssh, dirPath)
+    if (wsl) return wslListDirectory(wsl, dirPath)
+    return listDirectory(dirPath)
+  },
+
+  'files:read': (_ctx, filePath) => {
+    const { ssh, wsl } = getConfigForPath(filePath)
+    if (ssh) return sshReadFileContent(ssh, filePath)
+    if (wsl) return wslReadFileContent(wsl, filePath)
+    return readFileContent(filePath)
+  },
+
+  'files:searchList': (_ctx, rootPath) => {
+    const { ssh, wsl } = getConfigForPath(rootPath)
+    if (ssh) return sshListAllFiles(ssh, rootPath)
+    if (wsl) return wslListAllFiles(wsl, rootPath)
+    return listAllFiles(rootPath)
+  },
+
+  // fs.watch is local-only, so a remotely-hosted path reports "not watching" rather than
+  // failing — the renderer falls back to polling. `ctx.window` is the watcher's event
+  // target: the IPC path closed over the window, the control-RPC path took it as a
+  // parameter, and both resolved to the same one.
+  'files:watchStart': (ctx, filePath) => {
+    const { ssh, wsl } = getConfigForPath(filePath)
+    if (ssh || wsl) return false
+    return startFileWatch(ctx.window, filePath)
+  },
+
+  // Note the absence of a getConfigForPath call, unlike watchStart: stopping is keyed on
+  // the path alone, and a path that was never watched is a no-op downstream.
+  'files:watchStop': (_ctx, filePath) => stopFileWatch(filePath),
+
+  // ── Claude Code history import ────────────────────────────────────────────
+
+  'claude-history:listProjects': () => listClaudeProjects(),
+
+  'claude-history:listSessions': (_ctx, encodedPath) => listClaudeSessions(encodedPath),
+
+  'claude-history:importedIds': (_ctx, projectId) => getImportedSessionIds(projectId),
+
+  // Two things to keep straight, both of which the two pre-fold paths already agreed on:
+  // the parsed messages are reshaped (`timestamp` becomes `created_at`, everything else
+  // passes through), and the argument order is NOT the channel's — `importThread` takes
+  // (projectId, locationId, name, claudeSessionId, messages), so `name` and the file path
+  // are not in the slots their positions here suggest.
+  'claude-history:import': (_ctx, projectId, locationId, sessionFilePath, sessionId, name) => {
+    const importedMessages = parseSessionMessages(sessionFilePath).map((message) => ({
+      role: message.role,
+      content: message.content,
+      metadata: message.metadata,
+      created_at: message.timestamp,
+    }))
+    return importThread(projectId, locationId, name, sessionId, importedMessages)
+  },
+
+  // ── YouTrack ──────────────────────────────────────────────────────────────
+
+  // Deliberately serves the stored token, remote transport included: the settings UI needs
+  // it to populate the edit form and the mention UI needs it to issue authenticated
+  // searches, and both pre-fold paths said so explicitly. Redacting it here would break
+  // the mobile client silently.
+  'youtrack:servers:list': () => listYouTrackServers(),
+
+  'youtrack:servers:create': (_ctx, name, url, token) => createYouTrackServer(name, url, token),
+
+  'youtrack:servers:update': (_ctx, id, name, url, token) =>
+    updateYouTrackServer(id, name, url, token),
+
+  'youtrack:servers:delete': (_ctx, id) => deleteYouTrackServer(id),
+
+  'youtrack:test': (_ctx, url, token) => testYouTrackConnection(url, token),
+
+  'youtrack:search': (_ctx, url, token, query) => searchYouTrack(url, token, query),
+
+  // ── Slash commands ────────────────────────────────────────────────────────
+
+  // `kind: 'command'` is the whole transform: the renderer merges these with detected
+  // skills (`skills:list`, still unfolded) onto one palette and branches on the tag.
+  //
+  // `projectId` is passed through raw. listSlashCommands branches on `if (projectId)` —
+  // plain truthiness in its own body — so `undefined`, `null` and `''` are already
+  // equivalent there and a call-site coalesce would be pure noise.
+  'slash-commands:list': (_ctx, projectId) =>
+    listSlashCommands(projectId).map((command) => ({ ...command, kind: 'command' as const })),
+
+  'slash-commands:create': (_ctx, projectId, name, description, prompt) =>
+    createSlashCommand(projectId, name, description, prompt),
+
+  'slash-commands:update': (_ctx, id, name, description, prompt) =>
+    updateSlashCommand(id, name, description, prompt),
+
+  'slash-commands:delete': (_ctx, id) => deleteSlashCommand(id),
+
+  // ── Available models per provider ─────────────────────────────────────────
+  //
+  // Five channels over one options builder — see `modelQueryOptions` for why the `||` and
+  // the truthiness test are load-bearing. `undefined` is passed explicitly rather than the
+  // argument being omitted; the callees all declare `options … = {}`, a parameter default
+  // that fires identically either way. (ipc/handlers.ts wrote the zero-argument form and
+  // control-rpc.ts the explicit-`undefined` form; this is the one place the two pre-fold
+  // implementations were spelled differently.)
+
+  'models:claudeAvailable': (_ctx, threadId) => listClaudeAvailableModels(modelQueryOptions(threadId)),
+
+  'models:codexAvailable': (_ctx, threadId) => listCodexAvailableModels(modelQueryOptions(threadId)),
+
+  'models:opencodeAvailable': (_ctx, threadId) =>
+    listOpenCodeAvailableModels(modelQueryOptions(threadId)),
+
+  'models:piAvailable': (_ctx, threadId) => listPiAvailableModels(modelQueryOptions(threadId)),
+
+  'models:cursorAvailable': (_ctx, threadId) =>
+    listCursorAvailableModels(modelQueryOptions(threadId)),
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers

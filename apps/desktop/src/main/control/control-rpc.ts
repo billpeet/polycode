@@ -2,26 +2,12 @@ import { readFileSync } from 'fs'
 import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
 import {
-  createLocationPool,
-  deleteLocationPool,
-  updateLocationPool,
-  createSlashCommand,
-  deleteSlashCommand,
   getActiveSession,
   getLocationForThread,
-  getImportedSessionIds,
-  importThread,
-  listLocationPools,
   listMessages,
   listMessagesBySession,
   listSessions,
-  listSlashCommands,
   threadExists,
-  updateSlashCommand,
-  listYouTrackServers,
-  createYouTrackServer,
-  updateYouTrackServer,
-  deleteYouTrackServer,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { ptyManager } from '../terminal/manager'
@@ -76,23 +62,12 @@ import {
   applyStash,
   getRemoteUrl,
 } from '../git'
-import { createForge } from '../forge'
 import { checkCliHealth, invalidateCliHealthCache, updateCli } from '../health/checker'
-import { listClaudeAvailableModels } from '../claude-models'
-import { listCodexAvailableModels } from '../codex-models'
-import { listOpenCodeAvailableModels } from '../opencode-models'
-import { listPiAvailableModels } from '../pi-models'
-import { listCursorAvailableModels } from '../cursor-models'
 import { listDetectedSkills } from '../skills'
 import { Provider, SshConfig, WslConfig } from '../../shared/types'
-import { listAllFiles, listDirectory, readFileContent } from '../files'
-import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
-import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
-import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
+import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
 import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
-import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
-import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { REMOTE_CHANNELS, isRemoteChannel } from '@polycode/shared'
 import { invokeChannelHandler, isMigratedChannel } from '../ipc/channel-handlers'
@@ -102,37 +77,11 @@ import {
   getConfigForPath,
   getEffectiveWorkingDir,
   getSshConfigForThread,
-  getWorkingDirForThread,
   getWslConfigForThread,
   invalidateRepoGitCache,
 } from '../ipc/thread-context'
 
 export const CONTROL_RPC_CHANNELS: ReadonlySet<string> = new Set(REMOTE_CHANNELS)
-
-async function listAvailableModels(channel: string, threadId?: string | null): Promise<unknown> {
-  const options = threadId && threadExists(threadId)
-    ? {
-        cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
-        ssh: getSshConfigForThread(threadId),
-        wsl: getWslConfigForThread(threadId),
-      }
-    : undefined
-
-  switch (channel) {
-    case 'models:claudeAvailable':
-      return listClaudeAvailableModels(options)
-    case 'models:codexAvailable':
-      return listCodexAvailableModels(options)
-    case 'models:opencodeAvailable':
-      return listOpenCodeAvailableModels(options)
-    case 'models:piAvailable':
-      return listPiAvailableModels(options)
-    case 'models:cursorAvailable':
-      return listCursorAvailableModels(options)
-    default:
-      throw new Error(`Unsupported model channel: ${channel}`)
-  }
-}
 
 export async function handleControlRpc(window: BrowserWindow, channel: string, args: unknown[]): Promise<unknown> {
   // Channels folded into the typed handler map. The `isRemoteChannel` guard derives
@@ -145,18 +94,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
 
   switch (channel) {
 
-    case 'location-pools:list':
-      return listLocationPools(args[0] as string)
-    case 'location-pools:create': {
-      const [projectId, name] = args as [string, string]
-      return createLocationPool(projectId, name)
-    }
-    case 'location-pools:update': {
-      const [id, name] = args as [string, string]
-      return updateLocationPool(id, name)
-    }
-    case 'location-pools:delete':
-      return deleteLocationPool(args[0] as string)
     case 'ssh:test': {
       const [ssh, remotePath] = args as [SshConfig, string]
       return testSshConnection(ssh, remotePath)
@@ -506,110 +443,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return getCachedDefaultBranch(repoPath, ssh, wsl)
     }
 
-    case 'forge:pr:list': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return (await createForge(repoPath, ssh, wsl)).listPullRequests()
-    }
-    case 'forge:pr:current': {
-      const [repoPath, branch] = args as [string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return (await createForge(repoPath, ssh, wsl)).getCurrentBranchPullRequest(branch)
-    }
-    case 'forge:pr:create': {
-      const [repoPath, payload] = args as [string, { target: string; title: string; description?: string }]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return (await createForge(repoPath, ssh, wsl)).createPullRequest(payload)
-    }
-    case 'forge:pr:checkout': {
-      const [repoPath, prId] = args as [string, number]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      const result = await (await createForge(repoPath, ssh, wsl)).checkoutPullRequest(prId)
-      invalidateRepoGitCache(repoPath)
-      return result
-    }
-    case 'forge:pr:webUrl': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return (await createForge(repoPath, ssh, wsl)).getPullRequestsWebUrl()
-    }
-    case 'forge:repo:webUrl': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return (await createForge(repoPath, ssh, wsl)).getRepoWebUrl()
-    }
-
-    case 'files:list': {
-      const [dirPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(dirPath)
-      if (ssh) return sshListDirectory(ssh, dirPath)
-      if (wsl) return wslListDirectory(wsl, dirPath)
-      return listDirectory(dirPath)
-    }
-    case 'files:read': {
-      const [filePath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(filePath)
-      if (ssh) return sshReadFileContent(ssh, filePath)
-      if (wsl) return wslReadFileContent(wsl, filePath)
-      return readFileContent(filePath)
-    }
-    case 'files:searchList': {
-      const [rootPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(rootPath)
-      if (ssh) return sshListAllFiles(ssh, rootPath)
-      if (wsl) return wslListAllFiles(wsl, rootPath)
-      return listAllFiles(rootPath)
-    }
-    case 'files:watchStart': {
-      const [filePath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(filePath)
-      if (ssh || wsl) return false
-      return startFileWatch(window, filePath)
-    }
-    case 'files:watchStop':
-      stopFileWatch(args[0] as string)
-      return undefined
-
-    case 'claude-history:listProjects':
-      return listClaudeProjects()
-    case 'claude-history:listSessions':
-      return listClaudeSessions(args[0] as string)
-    case 'claude-history:importedIds':
-      return getImportedSessionIds(args[0] as string)
-    case 'claude-history:import': {
-      const [projectId, locationId, sessionFilePath, sessionId, name] = args as [string, string, string, string, string]
-      const importedMessages = parseSessionMessages(sessionFilePath).map((message) => ({
-        role: message.role,
-        content: message.content,
-        metadata: message.metadata,
-        created_at: message.timestamp,
-      }))
-      return importThread(projectId, locationId, name, sessionId, importedMessages)
-    }
-
-    // The desktop settings and mention UIs need the stored token to edit a
-    // server and issue authenticated searches, matching the existing local IPC.
-    case 'youtrack:servers:list':
-      return listYouTrackServers()
-    case 'youtrack:servers:create': {
-      const [name, url, token] = args as [string, string, string]
-      return createYouTrackServer(name, url, token)
-    }
-    case 'youtrack:servers:update': {
-      const [id, name, url, token] = args as [string, string, string, string]
-      return updateYouTrackServer(id, name, url, token)
-    }
-    case 'youtrack:servers:delete':
-      return deleteYouTrackServer(args[0] as string)
-    case 'youtrack:test': {
-      const [url, token] = args as [string, string]
-      return testYouTrackConnection(url, token)
-    }
-    case 'youtrack:search': {
-      const [url, token, query] = args as [string, string, string]
-      return searchYouTrack(url, token, query)
-    }
-
     case 'terminal:spawn': {
       const [threadId, cols, rows] = args as [string, number, number]
       const location = getLocationForThread(threadId)
@@ -697,15 +530,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return result
     }
 
-    case 'models:claudeAvailable':
-    case 'models:codexAvailable':
-    case 'models:opencodeAvailable':
-    case 'models:piAvailable':
-    case 'models:cursorAvailable':
-      return listAvailableModels(channel, args[0] as string | null | undefined)
-
-    case 'slash-commands:list':
-      return listSlashCommands(args[0] as string | null | undefined).map((command) => ({ ...command, kind: 'command' as const }))
     case 'skills:list':
       return listDetectedSkills(args[0] as Provider, (args[1] as string | null | undefined) ?? null).map((skill, index) => ({
         id: skill.id,
@@ -722,17 +546,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
         path: skill.path,
         invocation: skill.invocation,
       }))
-    case 'slash-commands:create': {
-      const [projectId, name, description, prompt] = args as [string | null, string, string | null, string]
-      return createSlashCommand(projectId, name, description, prompt)
-    }
-    case 'slash-commands:update': {
-      const [id, name, description, prompt] = args as [string, string, string | null, string]
-      return updateSlashCommand(id, name, description, prompt)
-    }
-    case 'slash-commands:delete':
-      return deleteSlashCommand(args[0] as string)
-
     default:
       throw new Error(`Unsupported remote control channel: ${channel}`)
   }

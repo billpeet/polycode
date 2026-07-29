@@ -5,46 +5,22 @@ import { pathToFileURL } from 'url'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import {
-  listLocationPools,
-  createLocationPool,
-  updateLocationPool,
-  deleteLocationPool,
   getLocationForThread,
   threadExists,
   listMessages,
   listMessagesBySession,
-  importThread,
-  getImportedSessionIds,
   listSessions,
   getActiveSession,
-  listYouTrackServers,
-  createYouTrackServer,
-  updateYouTrackServer,
-  deleteYouTrackServer,
-  listSlashCommands,
-  createSlashCommand,
-  updateSlashCommand,
-  deleteSlashCommand,
   getSetting,
   setSetting,
 } from '../db/queries'
 import { SshConfig, WslConfig, Provider } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
-import { listClaudeAvailableModels } from '../claude-models'
-import { listCodexAvailableModels } from '../codex-models'
-import { listPiAvailableModels } from '../pi-models'
-import { listOpenCodeAvailableModels } from '../opencode-models'
-import { listCursorAvailableModels } from '../cursor-models'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
-import { createForge } from '../forge'
-import { listDirectory, readFileContent, listAllFiles } from '../files'
-import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
-import { sshListDirectory, sshReadFileContent, sshListAllFiles } from '../ssh'
-import { wslListDirectory, wslReadFileContent, wslListAllFiles } from '../wsl'
-import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
+import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
 import {
   saveAttachment,
   copyAttachmentFromPath,
@@ -56,7 +32,6 @@ import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
-import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { killByPid, killByPort, runExecFile } from '../process-control'
 import { MIGRATED_CHANNELS, invokeChannelHandler } from './channel-handlers'
@@ -65,7 +40,6 @@ import {
   getConfigForPath,
   getEffectiveWorkingDir,
   getSshConfigForThread,
-  getWorkingDirForThread,
   getWslConfigForThread,
   invalidateRepoGitCache,
   windowsPathToWsl,
@@ -179,24 +153,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       invokeChannelHandler(channel, { window, origin: 'local' }, args),
     )
   }
-
-  // ── Location Pools ────────────────────────────────────────────────────────
-
-  proxyable('location-pools:list', (projectId: string) => {
-    return listLocationPools(projectId)
-  })
-
-  proxyable('location-pools:create', (projectId: string, name: string) => {
-    return createLocationPool(projectId, name)
-  })
-
-  proxyable('location-pools:update', (id: string, name: string) => {
-    return updateLocationPool(id, name)
-  })
-
-  proxyable('location-pools:delete', (id: string) => {
-    return deleteLocationPool(id)
-  })
 
   // ── SSH / WSL test ──────────────────────────────────────────────────────────
 
@@ -553,98 +509,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
-  // ── Forge Pull Requests ───────────────────────────────────────────────────
-
-  proxyable('forge:pr:list', async (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return (await createForge(repoPath, ssh, wsl)).listPullRequests()
-  })
-
-  proxyable('forge:pr:current', async (repoPath: string, branch: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return (await createForge(repoPath, ssh, wsl)).getCurrentBranchPullRequest(branch)
-  })
-
-  proxyable('forge:pr:create', async (repoPath: string, payload: { target: string; title: string; description?: string }) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return (await createForge(repoPath, ssh, wsl)).createPullRequest(payload)
-  })
-
-  proxyable('forge:pr:checkout', async (repoPath: string, prId: number) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    const result = await (await createForge(repoPath, ssh, wsl)).checkoutPullRequest(prId)
-    invalidateRepoGitCache(repoPath)
-    return result
-  })
-
-  proxyable('forge:pr:webUrl', async (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return (await createForge(repoPath, ssh, wsl)).getPullRequestsWebUrl()
-  })
-
-  proxyable('forge:repo:webUrl', async (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return (await createForge(repoPath, ssh, wsl)).getRepoWebUrl()
-  })
-
-  // ── Files ────────────────────────────────────────────────────────────────
-
-  proxyable('files:list', (dirPath: string) => {
-    const { ssh, wsl } = getConfigForPath(dirPath)
-    if (ssh) return sshListDirectory(ssh, dirPath)
-    if (wsl) return wslListDirectory(wsl, dirPath)
-    return listDirectory(dirPath)
-  })
-
-  proxyable('files:read', (filePath: string) => {
-    const { ssh, wsl } = getConfigForPath(filePath)
-    if (ssh) return sshReadFileContent(ssh, filePath)
-    if (wsl) return wslReadFileContent(wsl, filePath)
-    return readFileContent(filePath)
-  })
-
-  proxyable('files:searchList', (rootPath: string) => {
-    const { ssh, wsl } = getConfigForPath(rootPath)
-    if (ssh) return sshListAllFiles(ssh, rootPath)
-    if (wsl) return wslListAllFiles(wsl, rootPath)
-    return listAllFiles(rootPath)
-  })
-
-  proxyable('files:watchStart', (filePath: string) => {
-    const { ssh, wsl } = getConfigForPath(filePath)
-    if (ssh || wsl) return false
-    return startFileWatch(window, filePath)
-  })
-
-  proxyable('files:watchStop', (filePath: string) => {
-    stopFileWatch(filePath)
-  })
-
-  // ── Claude History ─────────────────────────────────────────────────────────
-
-  proxyable('claude-history:listProjects', () => {
-    return listClaudeProjects()
-  })
-
-  proxyable('claude-history:listSessions', (encodedPath: string) => {
-    return listClaudeSessions(encodedPath)
-  })
-
-  proxyable('claude-history:importedIds', (projectId: string) => {
-    return getImportedSessionIds(projectId)
-  })
-
-  proxyable('claude-history:import', (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => {
-    const messages = parseSessionMessages(sessionFilePath)
-    const importedMessages = messages.map(m => ({
-      role: m.role,
-      content: m.content,
-      metadata: m.metadata,
-      created_at: m.timestamp
-    }))
-    return importThread(projectId, locationId, name, sessionId, importedMessages)
-  })
-
   // ── Attachments ─────────────────────────────────────────────────────────────
 
   ipcMain.handle('attachments:save', (_event, dataUrl: string, filename: string, threadId: string) => {
@@ -690,35 +554,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return result.canceled ? [] : result.filePaths
   })
 
-  // ── YouTrack ───────────────────────────────────────────────────────────────
-
-  proxyable('youtrack:servers:list', () => listYouTrackServers())
-
-  proxyable('youtrack:servers:create', (name: string, url: string, token: string) => {
-    return createYouTrackServer(name, url, token)
-  })
-
-  proxyable('youtrack:servers:update', (id: string, name: string, url: string, token: string) => {
-    return updateYouTrackServer(id, name, url, token)
-  })
-
-  proxyable('youtrack:servers:delete', (id: string) => {
-    return deleteYouTrackServer(id)
-  })
-
-  proxyable('youtrack:test', (url: string, token: string) => {
-    return testYouTrackConnection(url, token)
-  })
-
-  proxyable('youtrack:search', (url: string, token: string, query: string) => {
-    return searchYouTrack(url, token, query)
-  })
-
   // ── Slash Commands ─────────────────────────────────────────────────────────
-
-  proxyable('slash-commands:list', (projectId?: string | null) => {
-    return listSlashCommands(projectId).map((c) => ({ ...c, kind: 'command' as const }))
-  })
 
   proxyable('skills:list', (provider: Provider, cwd?: string | null) => {
     return listDetectedSkills(provider, cwd ?? null).map((s, index) => ({
@@ -736,18 +572,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       path: s.path,
       invocation: s.invocation,
     }))
-  })
-
-  proxyable('slash-commands:create', (projectId: string | null, name: string, description: string | null, prompt: string) => {
-    return createSlashCommand(projectId, name, description, prompt)
-  })
-
-  proxyable('slash-commands:update', (id: string, name: string, description: string | null, prompt: string) => {
-    return updateSlashCommand(id, name, description, prompt)
-  })
-
-  proxyable('slash-commands:delete', (id: string) => {
-    return deleteSlashCommand(id)
   })
 
   // ── Settings ───────────────────────────────────────────────────────────────
@@ -884,66 +708,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const result = await updateCli(provider, connectionType, ssh, wsl)
     invalidateCliHealthCache(provider, connectionType, ssh, wsl)
     return result
-  })
-
-  proxyable('models:claudeAvailable', (threadId?: string | null) => {
-    if (!threadId || !threadExists(threadId)) {
-      return listClaudeAvailableModels()
-    }
-
-    return listClaudeAvailableModels({
-      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
-      ssh: getSshConfigForThread(threadId),
-      wsl: getWslConfigForThread(threadId),
-    })
-  })
-
-  proxyable('models:codexAvailable', (threadId?: string | null) => {
-    if (!threadId || !threadExists(threadId)) {
-      return listCodexAvailableModels()
-    }
-
-    return listCodexAvailableModels({
-      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
-      ssh: getSshConfigForThread(threadId),
-      wsl: getWslConfigForThread(threadId),
-    })
-  })
-
-  proxyable('models:opencodeAvailable', (threadId?: string | null) => {
-    if (!threadId || !threadExists(threadId)) {
-      return listOpenCodeAvailableModels()
-    }
-
-    return listOpenCodeAvailableModels({
-      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
-      ssh: getSshConfigForThread(threadId),
-      wsl: getWslConfigForThread(threadId),
-    })
-  })
-
-  proxyable('models:piAvailable', (threadId?: string | null) => {
-    if (!threadId || !threadExists(threadId)) {
-      return listPiAvailableModels()
-    }
-
-    return listPiAvailableModels({
-      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
-      ssh: getSshConfigForThread(threadId),
-      wsl: getWslConfigForThread(threadId),
-    })
-  })
-
-  proxyable('models:cursorAvailable', (threadId?: string | null) => {
-    if (!threadId || !threadExists(threadId)) {
-      return listCursorAvailableModels()
-    }
-
-    return listCursorAvailableModels({
-      cwd: getEffectiveWorkingDir(threadId) || getWorkingDirForThread(threadId),
-      ssh: getSshConfigForThread(threadId),
-      wsl: getWslConfigForThread(threadId),
-    })
   })
 
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────

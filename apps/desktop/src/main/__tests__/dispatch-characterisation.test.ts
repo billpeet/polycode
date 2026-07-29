@@ -118,7 +118,23 @@ const H = vi.hoisted(() => {
     cleanBackgroundTerminals: settlesLate('session.cleanBackgroundTerminals'),
   }
 
-  return { log, state, note, stub, autoModule, settlesLate, session }
+  /**
+   * The `Forge` instance `createForge` resolves to — the same shape trick as `session`.
+   *
+   * Every method is `settlesLate` because every one of them is `async` on the real
+   * interface: without that, `return (await createForge(...)).listPullRequests()` and a
+   * version that dropped the returned promise would record the same log.
+   */
+  const forge = {
+    listPullRequests: settlesLate('forge.listPullRequests', [{ id: 1, title: 'PR one' }]),
+    getCurrentBranchPullRequest: settlesLate('forge.getCurrentBranchPullRequest', { id: 2 }),
+    createPullRequest: settlesLate('forge.createPullRequest', { id: 3 }),
+    checkoutPullRequest: settlesLate('forge.checkoutPullRequest', { branch: 'pr-3' }),
+    getPullRequestsWebUrl: settlesLate('forge.getPullRequestsWebUrl', 'https://forge.test/prs'),
+    getRepoWebUrl: settlesLate('forge.getRepoWebUrl', 'https://forge.test/repo'),
+  }
+
+  return { log, state, note, stub, autoModule, settlesLate, session, forge }
 })
 
 vi.mock('fs', async (importOriginal) => {
@@ -186,6 +202,90 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   createCommand: H.stub('db.createCommand', 'RET_createCommand'),
   updateCommand: H.stub('db.updateCommand', 'RET_updateCommand'),
   deleteCommand: H.stub('db.deleteCommand', 'RET_deleteCommand'),
+  listLocationPools: H.stub('db.listLocationPools', [{ id: 'pool1', name: 'Pool one' }]),
+  createLocationPool: H.stub('db.createLocationPool', { id: 'pool-new', name: 'Pool new' }),
+  updateLocationPool: H.stub('db.updateLocationPool', 'RET_updateLocationPool'),
+  deleteLocationPool: H.stub('db.deleteLocationPool', 'RET_deleteLocationPool'),
+  // The token is part of the row on purpose — `youtrack:servers:list` deliberately serves
+  // it to both transports, and a handler that stripped it would still look plausible.
+  listYouTrackServers: H.stub('db.listYouTrackServers', [
+    { id: 'yt1', name: 'YT', url: 'https://yt.test', token: 'secret-token' },
+    // A second row so ORDER is observable: against a one-element fixture a handler that
+    // reversed or re-sorted the list would pass, and row order is visible in the settings UI.
+    { id: 'yt2', name: 'YT two', url: 'https://yt2.test', token: 'second-token' },
+  ]),
+  createYouTrackServer: H.stub('db.createYouTrackServer', { id: 'yt-new' }),
+  updateYouTrackServer: H.stub('db.updateYouTrackServer', 'RET_updateYouTrackServer'),
+  deleteYouTrackServer: H.stub('db.deleteYouTrackServer', 'RET_deleteYouTrackServer'),
+  listSlashCommands: H.stub('db.listSlashCommands', [
+    { id: 'sc1', project_id: null, name: 'review', description: null, prompt: 'Review it' },
+  ]),
+  createSlashCommand: H.stub('db.createSlashCommand', { id: 'sc-new' }),
+  updateSlashCommand: H.stub('db.updateSlashCommand', 'RET_updateSlashCommand'),
+  deleteSlashCommand: H.stub('db.deleteSlashCommand', 'RET_deleteSlashCommand'),
+  getImportedSessionIds: H.stub('db.getImportedSessionIds', ['sess-a', 'sess-b']),
+  importThread: H.stub('db.importThread', { id: 't-imported', name: 'Imported thread' }),
+}))
+
+vi.mock('../forge', () => ({ createForge: H.stub('forge.createForge', () => H.forge) }))
+
+// The three file backends are mocked separately, with values that differ per backend, so
+// "which implementation did the connection type select" is readable straight off the log.
+vi.mock('../files', () => H.autoModule('files', {
+  listDirectory: H.stub('files.listDirectory', [{ name: 'local.ts', isDirectory: false }]),
+  readFileContent: H.stub('files.readFileContent', { content: 'local', truncated: false }),
+  listAllFiles: H.stub('files.listAllFiles', [{ path: 'local.ts' }]),
+}))
+
+// settlesLate for the ssh trio only: those three are `async` on the real module, the local
+// and WSL ones are synchronous. Mirroring that keeps the log honest about what is awaited.
+vi.mock('../ssh', () => H.autoModule('ssh', {
+  sshListDirectory: H.settlesLate('ssh.sshListDirectory', [{ name: 'remote.ts', isDirectory: false }]),
+  sshReadFileContent: H.settlesLate('ssh.sshReadFileContent', { content: 'ssh', truncated: false }),
+  sshListAllFiles: H.settlesLate('ssh.sshListAllFiles', [{ path: 'remote.ts' }]),
+}))
+
+vi.mock('../wsl', () => H.autoModule('wsl', {
+  wslListDirectory: H.stub('wsl.wslListDirectory', [{ name: 'wsl.ts', isDirectory: false }]),
+  wslReadFileContent: H.stub('wsl.wslReadFileContent', { content: 'wsl', truncated: false }),
+  wslListAllFiles: H.stub('wsl.wslListAllFiles', [{ path: 'wsl.ts' }]),
+}))
+
+vi.mock('../file-watch', () => H.autoModule('fileWatch', {
+  startFileWatch: H.stub('fileWatch.startFileWatch', true),
+  // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
+  stopFileWatch: H.stub('fileWatch.stopFileWatch', 'RET_stopFileWatch'),
+}))
+
+vi.mock('../claude-history', () => H.autoModule('claudeHistory', {
+  listClaudeProjects: H.stub('claudeHistory.listClaudeProjects', [{ encodedPath: 'C--repo' }]),
+  listClaudeSessions: H.stub('claudeHistory.listClaudeSessions', [{ sessionId: 'sess-a' }]),
+  parseSessionMessages: H.stub('claudeHistory.parseSessionMessages', [
+    { role: 'user', content: 'hi', metadata: { tool: null }, timestamp: '2026-01-01T00:00:00.000Z' },
+  ]),
+}))
+
+vi.mock('../youtrack', () => ({
+  testYouTrackConnection: H.settlesLate('youtrack.testYouTrackConnection', { ok: true }),
+  searchYouTrack: H.settlesLate('youtrack.searchYouTrack', [{ id: 'YT-1' }]),
+}))
+
+// One label for all five model modules: the channel under test already names the provider,
+// and a single prefix keeps the per-channel table below readable.
+vi.mock('../claude-models', () => H.autoModule('claudeModels', {
+  listClaudeAvailableModels: H.settlesLate('models.listClaudeAvailableModels', [{ id: 'opus' }]),
+}))
+vi.mock('../codex-models', () => H.autoModule('codexModels', {
+  listCodexAvailableModels: H.settlesLate('models.listCodexAvailableModels', [{ id: 'gpt-5' }]),
+}))
+vi.mock('../opencode-models', () => H.autoModule('opencodeModels', {
+  listOpenCodeAvailableModels: H.settlesLate('models.listOpenCodeAvailableModels', [{ id: 'oc' }]),
+}))
+vi.mock('../pi-models', () => H.autoModule('piModels', {
+  listPiAvailableModels: H.settlesLate('models.listPiAvailableModels', [{ id: 'pi' }]),
+}))
+vi.mock('../cursor-models', () => H.autoModule('cursorModels', {
+  listCursorAvailableModels: H.settlesLate('models.listCursorAvailableModels', [{ id: 'cursor' }]),
 }))
 
 vi.mock('../project-admin', () => H.autoModule('projectAdmin'))
@@ -718,6 +818,12 @@ describe("handlers pass the callee's result through", () => {
     ['threads:setUnread', ['t1', true], 'RET_updateThreadUnread'],
     ['threads:setYolo', ['t1', true], 'RET_updateThreadYoloMode'],
     ['threads:setPermissionMode', ['t1', 'acceptEdits'], 'RET_updateThreadPermissionMode'],
+    ['location-pools:update', ['pool1', 'Renamed'], 'RET_updateLocationPool'],
+    ['location-pools:delete', ['pool1'], 'RET_deleteLocationPool'],
+    ['youtrack:servers:update', ['yt1', 'YT', 'https://yt.test', 'tok'], 'RET_updateYouTrackServer'],
+    ['youtrack:servers:delete', ['yt1'], 'RET_deleteYouTrackServer'],
+    ['slash-commands:update', ['sc1', 'review', null, 'p'], 'RET_updateSlashCommand'],
+    ['slash-commands:delete', ['sc1'], 'RET_deleteSlashCommand'],
   ]
 
   for (const [channel, args, expected] of cases) {
@@ -726,6 +832,20 @@ describe("handlers pass the callee's result through", () => {
       expect(await resultViaControlRpc(channel, args)).toBe(expected)
     })
   }
+
+  it('files:watchStop returns its callee\'s value — neither pre-fold path did', async () => {
+    // The one channel in this batch where BOTH legacy paths discarded a `: void` callee:
+    // ipc/handlers.ts called `stopFileWatch(filePath)` as a statement and control-rpc.ts
+    // followed it with `return undefined`. Nothing observable turned on it — `stopFileWatch`
+    // returns undefined and the contract's result is `void` — so the fold applies the
+    // standing rule and returns it, removing the floated-promise trap if it ever goes async.
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'local',
+      ssh: null, wsl: null,
+    }
+    expect(await resultViaIpc('files:watchStop', ['C:/repo/a.ts'])).toBe('RET_stopFileWatch')
+    expect(await resultViaControlRpc('files:watchStop', ['C:/repo/a.ts'])).toBe('RET_stopFileWatch')
+  })
 
   it('threads:setWsl returns its callee\'s value — the one place the two paths differed', async () => {
     // Recorded because it is the only form-level disagreement found in this fold: pre-fold,
@@ -1429,6 +1549,580 @@ describe('threads:* — sessionManager.remove runs before the write', () => {
     // Neither branch returns the callee's value — the literal is the contract's result
     // type, so `archiveThread`/`deleteThread`'s sentinel must NOT leak through.
     expect(await resultViaIpc('threads:archive', ['t1'])).not.toBe('RET_deleteThread')
+  })
+})
+
+describe('location-pools:* — both transports agree', () => {
+  const cases: Array<[channel: string, args: unknown[], expected: string]> = [
+    ['location-pools:list', ['p1'], 'db.listLocationPools(["p1"])'],
+    ['location-pools:create', ['p1', 'Pool one'], 'db.createLocationPool(["p1","Pool one"])'],
+    ['location-pools:update', ['pool1', 'Renamed'], 'db.updateLocationPool(["pool1","Renamed"])'],
+    ['location-pools:delete', ['pool1'], 'db.deleteLocationPool(["pool1"])'],
+  ]
+
+  for (const [channel, args, expected] of cases) {
+    it(channel, async () => {
+      const ipc = await viaIpc(channel, args)
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([expected])
+    })
+  }
+
+  it('location-pools:list returns the rows untouched', async () => {
+    const rows = [{ id: 'pool1', name: 'Pool one' }]
+    expect(await resultViaIpc('location-pools:list', ['p1'])).toEqual(rows)
+    expect(await resultViaControlRpc('location-pools:list', ['p1'])).toEqual(rows)
+  })
+})
+
+describe('forge:* — both transports agree', () => {
+  /**
+   * Every forge channel resolves the repo's host config first and hands it to
+   * `createForge`. Distinct ssh/wsl values, because `createForge(repoPath, ssh, wsl)`
+   * takes the two adjacent and the default fixture nulls both — a transposition would
+   * otherwise be invisible.
+   */
+  const hosted = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+      ssh: DISTINCT_SSH, wsl: DISTINCT_WSL,
+    }
+  }
+  const createEntry =
+    `forge.createForge(["C:/repo",${JSON.stringify(DISTINCT_SSH)},${JSON.stringify(DISTINCT_WSL)}])`
+
+  const cases: Array<[channel: string, args: unknown[], call: string]> = [
+    ['forge:pr:list', ['C:/repo'], 'forge.listPullRequests([])'],
+    ['forge:pr:current', ['C:/repo', 'feature/x'], 'forge.getCurrentBranchPullRequest(["feature/x"])'],
+    [
+      'forge:pr:create',
+      ['C:/repo', { target: 'main', title: 'T', description: 'D' }],
+      'forge.createPullRequest([{"target":"main","title":"T","description":"D"}])',
+    ],
+    ['forge:pr:webUrl', ['C:/repo'], 'forge.getPullRequestsWebUrl([])'],
+    ['forge:repo:webUrl', ['C:/repo'], 'forge.getRepoWebUrl([])'],
+  ]
+
+  for (const [channel, args, call] of cases) {
+    it(`${channel} builds the forge from the repo's host config, then awaits it`, async () => {
+      hosted()
+      const ipc = await viaIpc(channel, args)
+      hosted()
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      // The `:settled` entry is the point: these five return the forge call's promise
+      // rather than floating it.
+      expect(ipc).toEqual([
+        'db.getLocationByPath(["C:/repo"])',
+        createEntry,
+        call,
+        `${call.slice(0, call.indexOf('('))}:settled`,
+      ])
+    })
+  }
+
+  it('forge:pr:create leaves an omitted description omitted on the wire', async () => {
+    // With only the fully-populated payload in the table above, a handler materialising
+    // `description: payload.description ?? ''` would pass — an observable wire change for
+    // every caller that omits the field.
+    hosted()
+    const ipc = await viaIpc('forge:pr:create', ['C:/repo', { target: 'main', title: 'T' }])
+    hosted()
+    const rpc = await viaControlRpc('forge:pr:create', ['C:/repo', { target: 'main', title: 'T' }])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toContain('forge.createPullRequest([{"target":"main","title":"T"}])')
+  })
+
+  it('forge:pr:checkout invalidates the git cache AFTER the checkout settles', async () => {
+    hosted()
+    const ipc = await viaIpc('forge:pr:checkout', ['C:/repo', 42])
+    hosted()
+    const rpc = await viaControlRpc('forge:pr:checkout', ['C:/repo', 42])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.getLocationByPath(["C:/repo"])',
+      createEntry,
+      'forge.checkoutPullRequest([42])',
+      'forge.checkoutPullRequest:settled',
+      // invalidateRepoGitCache re-resolves the config, then clears the cache.
+      'db.getLocationByPath(["C:/repo"])',
+      `git.invalidateGitCache(["C:/repo",${JSON.stringify(DISTINCT_SSH)},${JSON.stringify(DISTINCT_WSL)}])`,
+    ])
+  })
+
+  it('the forge channels return the forge\'s answer', async () => {
+    expect(await resultViaIpc('forge:pr:list', ['C:/repo'])).toEqual([{ id: 1, title: 'PR one' }])
+    expect(await resultViaControlRpc('forge:pr:list', ['C:/repo'])).toEqual([
+      { id: 1, title: 'PR one' },
+    ])
+    expect(await resultViaIpc('forge:pr:checkout', ['C:/repo', 42])).toEqual({ branch: 'pr-3' })
+    expect(await resultViaControlRpc('forge:pr:checkout', ['C:/repo', 42])).toEqual({
+      branch: 'pr-3',
+    })
+    expect(await resultViaIpc('forge:repo:webUrl', ['C:/repo'])).toBe('https://forge.test/repo')
+    expect(await resultViaControlRpc('forge:repo:webUrl', ['C:/repo'])).toBe(
+      'https://forge.test/repo',
+    )
+  })
+})
+
+/**
+ * `files:*` is the one family in this batch that *branches on the connection type*, so the
+ * risk is not argument order but implementation selection: local, ssh and wsl each have
+ * their own backend and picking the wrong one still returns a plausible-looking answer.
+ *
+ * All three branches are covered for all three read channels, and the ssh case installs a
+ * WSL config too — `if (ssh) … if (wsl) …` means ssh must win, which no single-config
+ * fixture can prove.
+ */
+describe('files:* — both transports select the same backend', () => {
+  const local = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'local',
+      ssh: null, wsl: null,
+    }
+  }
+  const sshAndWsl = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+      ssh: DISTINCT_SSH, wsl: DISTINCT_WSL,
+    }
+  }
+  const wslOnly = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'wsl',
+      ssh: null, wsl: DISTINCT_WSL,
+    }
+  }
+  /**
+   * The ordinary ssh location — ssh set, wsl null.
+   *
+   * Load-bearing on its own: with only `sshAndWsl` in the file, every ssh assertion is
+   * also satisfied by `if (ssh && wsl)`, and a real ssh location would fall through to the
+   * *local* backend and read the Windows filesystem for a remote path. That is exactly the
+   * "wrong backend, plausible answer" failure these branches are pinned to prevent.
+   */
+  const sshOnly = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+      ssh: DISTINCT_SSH, wsl: null,
+    }
+  }
+
+  const cases: Array<[channel: string, target: string, local: string, ssh: string, wsl: string]> = [
+    ['files:list', 'C:/repo', 'files.listDirectory', 'ssh.sshListDirectory', 'wsl.wslListDirectory'],
+    [
+      'files:read', 'C:/repo/a.ts',
+      'files.readFileContent', 'ssh.sshReadFileContent', 'wsl.wslReadFileContent',
+    ],
+    ['files:searchList', 'C:/repo', 'files.listAllFiles', 'ssh.sshListAllFiles', 'wsl.wslListAllFiles'],
+  ]
+
+  for (const [channel, target, localFn, sshFn, wslFn] of cases) {
+    it(`${channel} uses the local backend for a local location`, async () => {
+      local()
+      const ipc = await viaIpc(channel, [target])
+      local()
+      const rpc = await viaControlRpc(channel, [target])
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        `db.getLocationByPath(["${target}"])`,
+        `${localFn}(["${target}"])`,
+      ])
+    })
+
+    it(`${channel} prefers the ssh backend when both configs are present`, async () => {
+      sshAndWsl()
+      const ipc = await viaIpc(channel, [target])
+      sshAndWsl()
+      const rpc = await viaControlRpc(channel, [target])
+
+      expect(rpc).toEqual(ipc)
+      // (config, path) argument order is pinned by the rendered call, and the `:settled`
+      // entry proves the async ssh backend's promise is returned rather than floated.
+      expect(ipc).toEqual([
+        `db.getLocationByPath(["${target}"])`,
+        `${sshFn}([${JSON.stringify(DISTINCT_SSH)},"${target}"])`,
+        `${sshFn}:settled`,
+      ])
+    })
+
+    it(`${channel} uses the ssh backend when only an ssh config is present`, async () => {
+      sshOnly()
+      const ipc = await viaIpc(channel, [target])
+      sshOnly()
+      const rpc = await viaControlRpc(channel, [target])
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        `db.getLocationByPath(["${target}"])`,
+        `${sshFn}([${JSON.stringify(DISTINCT_SSH)},"${target}"])`,
+        `${sshFn}:settled`,
+      ])
+    })
+
+    it(`${channel} uses the wsl backend when only a wsl config is present`, async () => {
+      wslOnly()
+      const ipc = await viaIpc(channel, [target])
+      wslOnly()
+      const rpc = await viaControlRpc(channel, [target])
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        `db.getLocationByPath(["${target}"])`,
+        `${wslFn}([${JSON.stringify(DISTINCT_WSL)},"${target}"])`,
+      ])
+    })
+  }
+
+  it('files:read returns whichever backend answered', async () => {
+    local()
+    expect(await resultViaIpc('files:read', ['C:/repo/a.ts'])).toEqual({
+      content: 'local', truncated: false,
+    })
+    sshAndWsl()
+    expect(await resultViaControlRpc('files:read', ['C:/repo/a.ts'])).toEqual({
+      content: 'ssh', truncated: false,
+    })
+    wslOnly()
+    expect(await resultViaIpc('files:read', ['C:/repo/a.ts'])).toEqual({
+      content: 'wsl', truncated: false,
+    })
+  })
+
+  it('files:watchStart watches only local paths, and hands the window to the watcher', async () => {
+    local()
+    const ipc = await viaIpc('files:watchStart', ['C:/repo/a.ts'])
+    local()
+    const rpc = await viaControlRpc('files:watchStart', ['C:/repo/a.ts'])
+
+    expect(rpc).toEqual(ipc)
+    // The window is the first argument — the closure on the IPC side, the parameter on the
+    // control-RPC side. Both must resolve to the same BrowserWindow.
+    expect(ipc).toEqual([
+      'db.getLocationByPath(["C:/repo/a.ts"])',
+      `fileWatch.startFileWatch([${JSON.stringify(window)},"C:/repo/a.ts"])`,
+    ])
+    local()
+    expect(await resultViaIpc('files:watchStart', ['C:/repo/a.ts'])).toBe(true)
+    local()
+    expect(await resultViaControlRpc('files:watchStart', ['C:/repo/a.ts'])).toBe(true)
+  })
+
+  it('files:watchStart refuses an ssh- or wsl-hosted path without starting a watcher', async () => {
+    for (const install of [sshOnly, wslOnly, sshAndWsl]) {
+      install()
+      const ipc = await viaIpc('files:watchStart', ['C:/repo/a.ts'])
+      install()
+      const rpc = await viaControlRpc('files:watchStart', ['C:/repo/a.ts'])
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual(['db.getLocationByPath(["C:/repo/a.ts"])'])
+
+      install()
+      expect(await resultViaIpc('files:watchStart', ['C:/repo/a.ts'])).toBe(false)
+      install()
+      expect(await resultViaControlRpc('files:watchStart', ['C:/repo/a.ts'])).toBe(false)
+    }
+  })
+
+  it('files:watchStop stops the watcher unconditionally — no connection-type branch', async () => {
+    sshAndWsl()
+    const ipc = await viaIpc('files:watchStop', ['C:/repo/a.ts'])
+    sshAndWsl()
+    const rpc = await viaControlRpc('files:watchStop', ['C:/repo/a.ts'])
+
+    expect(rpc).toEqual(ipc)
+    // Note the absence of a getLocationByPath call: unlike watchStart, this one never
+    // resolves the host config.
+    expect(ipc).toEqual(['fileWatch.stopFileWatch(["C:/repo/a.ts"])'])
+  })
+})
+
+describe('claude-history:* — both transports agree', () => {
+  it('claude-history:listProjects and listSessions', async () => {
+    expect(await viaControlRpc('claude-history:listProjects', [])).toEqual(
+      await viaIpc('claude-history:listProjects', []),
+    )
+    expect(await viaIpc('claude-history:listProjects', [])).toEqual([
+      'claudeHistory.listClaudeProjects([])',
+    ])
+
+    expect(await viaControlRpc('claude-history:listSessions', ['C--repo'])).toEqual(
+      await viaIpc('claude-history:listSessions', ['C--repo']),
+    )
+    expect(await viaIpc('claude-history:listSessions', ['C--repo'])).toEqual([
+      'claudeHistory.listClaudeSessions(["C--repo"])',
+    ])
+  })
+
+  it('claude-history:importedIds', async () => {
+    const ipc = await viaIpc('claude-history:importedIds', ['p1'])
+    const rpc = await viaControlRpc('claude-history:importedIds', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.getImportedSessionIds(["p1"])'])
+    expect(await resultViaIpc('claude-history:importedIds', ['p1'])).toEqual(['sess-a', 'sess-b'])
+    expect(await resultViaControlRpc('claude-history:importedIds', ['p1'])).toEqual([
+      'sess-a', 'sess-b',
+    ])
+  })
+
+  it('claude-history:import reshapes the parsed messages and reorders the arguments', async () => {
+    // The channel takes (projectId, locationId, sessionFilePath, sessionId, name) but
+    // importThread takes (projectId, locationId, name, claudeSessionId, messages) — slots
+    // 3 and 5 swap. Every value is distinct so a mis-ordering cannot hide.
+    const args = ['p1', 'loc1', 'C:/sessions/sess-a.jsonl', 'sess-a', 'Imported thread']
+    const ipc = await viaIpc('claude-history:import', args)
+    const rpc = await viaControlRpc('claude-history:import', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'claudeHistory.parseSessionMessages(["C:/sessions/sess-a.jsonl"])',
+      // `timestamp` is renamed to `created_at`; role/content/metadata pass through.
+      'db.importThread(["p1","loc1","Imported thread","sess-a",' +
+        '[{"role":"user","content":"hi","metadata":{"tool":null},' +
+        '"created_at":"2026-01-01T00:00:00.000Z"}]])',
+    ])
+    expect(await resultViaIpc('claude-history:import', args)).toEqual({
+      id: 't-imported', name: 'Imported thread',
+    })
+    expect(await resultViaControlRpc('claude-history:import', args)).toEqual({
+      id: 't-imported', name: 'Imported thread',
+    })
+  })
+})
+
+describe('youtrack:* — both transports agree', () => {
+  it('youtrack:servers:list serves the stored token to both transports', async () => {
+    const ipc = await viaIpc('youtrack:servers:list', [])
+    const rpc = await viaControlRpc('youtrack:servers:list', [])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.listYouTrackServers([])'])
+    // Deliberate: the settings and mention UIs need the token to edit a server and to issue
+    // authenticated searches, so neither path redacts it. Pinned so a later "sanitise the
+    // remote response" instinct has to be an explicit decision.
+    const expected = [
+      { id: 'yt1', name: 'YT', url: 'https://yt.test', token: 'secret-token' },
+      { id: 'yt2', name: 'YT two', url: 'https://yt2.test', token: 'second-token' },
+    ]
+    expect(await resultViaIpc('youtrack:servers:list', [])).toEqual(expected)
+    expect(await resultViaControlRpc('youtrack:servers:list', [])).toEqual(expected)
+  })
+
+  const cases: Array<[channel: string, args: unknown[], expected: string[]]> = [
+    [
+      'youtrack:servers:create', ['YT', 'https://yt.test', 'tok'],
+      ['db.createYouTrackServer(["YT","https://yt.test","tok"])'],
+    ],
+    [
+      'youtrack:servers:update', ['yt1', 'YT', 'https://yt.test', 'tok'],
+      ['db.updateYouTrackServer(["yt1","YT","https://yt.test","tok"])'],
+    ],
+    ['youtrack:servers:delete', ['yt1'], ['db.deleteYouTrackServer(["yt1"])']],
+    [
+      'youtrack:test', ['https://yt.test', 'tok'],
+      [
+        'youtrack.testYouTrackConnection(["https://yt.test","tok"])',
+        'youtrack.testYouTrackConnection:settled',
+      ],
+    ],
+    [
+      'youtrack:search', ['https://yt.test', 'tok', 'project: PC'],
+      [
+        'youtrack.searchYouTrack(["https://yt.test","tok","project: PC"])',
+        'youtrack.searchYouTrack:settled',
+      ],
+    ],
+  ]
+
+  for (const [channel, args, expected] of cases) {
+    it(channel, async () => {
+      const ipc = await viaIpc(channel, args)
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual(expected)
+    })
+  }
+})
+
+describe('slash-commands:* — both transports agree', () => {
+  it('slash-commands:list tags every row as a command', async () => {
+    const ipc = await viaIpc('slash-commands:list', ['p1'])
+    const rpc = await viaControlRpc('slash-commands:list', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.listSlashCommands(["p1"])'])
+
+    // The `kind: 'command'` tag is the whole transform, and the renderer branches on it to
+    // tell stored commands apart from detected skills on the same list.
+    const expected = [{
+      id: 'sc1', project_id: null, name: 'review', description: null, prompt: 'Review it',
+      kind: 'command',
+    }]
+    expect(await resultViaIpc('slash-commands:list', ['p1'])).toEqual(expected)
+    expect(await resultViaControlRpc('slash-commands:list', ['p1'])).toEqual(expected)
+  })
+
+  it('slash-commands:list passes an omitted or null projectId straight through', async () => {
+    // `listSlashCommands` branches on `if (projectId)` — plain truthiness — so `undefined`,
+    // `null` and `''` are already equivalent downstream and neither path coalesces.
+    expect(await viaIpc('slash-commands:list', [])).toEqual(['db.listSlashCommands([undefined])'])
+    expect(await viaControlRpc('slash-commands:list', [])).toEqual([
+      'db.listSlashCommands([undefined])',
+    ])
+    expect(await viaIpc('slash-commands:list', [null])).toEqual(['db.listSlashCommands([null])'])
+    expect(await viaControlRpc('slash-commands:list', [null])).toEqual([
+      'db.listSlashCommands([null])',
+    ])
+  })
+
+  const cases: Array<[channel: string, args: unknown[], expected: string]> = [
+    [
+      'slash-commands:create', [null, 'review', 'Review the diff', 'Do it'],
+      'db.createSlashCommand([null,"review","Review the diff","Do it"])',
+    ],
+    [
+      'slash-commands:create', ['p1', 'review', null, 'Do it'],
+      'db.createSlashCommand(["p1","review",null,"Do it"])',
+    ],
+    [
+      'slash-commands:update', ['sc1', 'review', 'Review the diff', 'Do it'],
+      'db.updateSlashCommand(["sc1","review","Review the diff","Do it"])',
+    ],
+    ['slash-commands:delete', ['sc1'], 'db.deleteSlashCommand(["sc1"])'],
+  ]
+
+  for (const [channel, args, expected] of cases) {
+    it(`${channel} forwards ${JSON.stringify(args)}`, async () => {
+      const ipc = await viaIpc(channel, args)
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([expected])
+    })
+  }
+})
+
+/**
+ * `models:*` is where a transposition would be hardest to see: the five channels each build
+ * one `{cwd, ssh, wsl}` options object from the thread, so ssh and wsl travel *together*
+ * rather than one-per-branch, and the default fixture nulls both.
+ */
+describe('models:* — both transports agree', () => {
+  const cases: Array<[channel: string, fn: string, result: unknown]> = [
+    ['models:claudeAvailable', 'models.listClaudeAvailableModels', [{ id: 'opus' }]],
+    ['models:codexAvailable', 'models.listCodexAvailableModels', [{ id: 'gpt-5' }]],
+    ['models:opencodeAvailable', 'models.listOpenCodeAvailableModels', [{ id: 'oc' }]],
+    ['models:piAvailable', 'models.listPiAvailableModels', [{ id: 'pi' }]],
+    ['models:cursorAvailable', 'models.listCursorAvailableModels', [{ id: 'cursor' }]],
+  ]
+
+  const hosted = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+      ssh: DISTINCT_SSH, wsl: DISTINCT_WSL,
+    }
+  }
+
+  for (const [channel, fn, result] of cases) {
+    it(`${channel} builds cwd/ssh/wsl from the thread, in that order`, async () => {
+      hosted()
+      const ipc = await viaIpc(channel, ['t1'])
+      hosted()
+      const rpc = await viaControlRpc(channel, ['t1'])
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        'db.threadExists(["t1"])',
+        // getEffectiveWorkingDir — truthy, so getWorkingDirForThread is never reached
+        'db.getLocationForThread(["t1"])',
+        // getSshConfigForThread
+        'db.getLocationForThread(["t1"])',
+        // getWslConfigForThread
+        'db.getLocationForThread(["t1"])',
+        `${fn}([{"cwd":"C:/repo","ssh":${JSON.stringify(DISTINCT_SSH)},` +
+          `"wsl":${JSON.stringify(DISTINCT_WSL)}}])`,
+        `${fn}:settled`,
+      ])
+
+      hosted()
+      expect(await resultViaIpc(channel, ['t1'])).toEqual(result)
+      hosted()
+      expect(await resultViaControlRpc(channel, ['t1'])).toEqual(result)
+    })
+
+    it(`${channel} falls through to getWorkingDirForThread on an empty effective cwd`, async () => {
+      // The `||` (not `??`) in `getEffectiveWorkingDir(id) || getWorkingDirForThread(id)`.
+      // A thread whose location row has gone away has an effective cwd of `''`, which is
+      // not nullish — under `??` the second lookup would never run and `cwd` would be `''`.
+      H.state.location = null
+
+      const ipc = await viaIpc(channel, ['t1'])
+      const rpc = await viaControlRpc(channel, ['t1'])
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        'db.threadExists(["t1"])',
+        'db.getLocationForThread(["t1"])', // getEffectiveWorkingDir → ''
+        'db.getLocationForThread(["t1"])', // getWorkingDirForThread → null (the || fired)
+        'db.getLocationForThread(["t1"])', // getSshConfigForThread
+        'db.getLocationForThread(["t1"])', // getWslConfigForThread
+        `${fn}([{"cwd":null,"ssh":null,"wsl":null}])`,
+        `${fn}:settled`,
+      ])
+    })
+
+    it(`${channel} skips the thread lookup entirely for a missing thread`, async () => {
+      H.state.threadExists = false
+
+      const ipc = await viaIpc(channel, ['t1'])
+      const rpc = await viaControlRpc(channel, ['t1'])
+
+      // THE ONE PRE-FOLD DIVERGENCE IN THIS BATCH, and it was spelling rather than
+      // behaviour. ipc/handlers.ts wrote `return listXAvailableModels()` — zero arguments
+      // — while control-rpc.ts built `options` as `… : undefined` and always wrote
+      // `listXAvailableModels(options)`. The recorder showed `[]` against `[undefined]`.
+      //
+      // Nothing downstream could tell them apart: the callee declares
+      // `options: {…} = {}`, a *parameter* default, which fires on a missing argument and
+      // on an explicitly-`undefined` one alike. (Contrast `commands:create`, where a
+      // parameter default made an explicit `null` behave differently from `undefined` —
+      // there is no `null` in play here, because the falsy test is on the way *in*.)
+      //
+      // The fold adopts the explicit-`undefined` form, so the two now agree exactly; this
+      // pins that, and the `[undefined]` slot is what records which form won.
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        'db.threadExists(["t1"])',
+        `${fn}([undefined])`,
+        `${fn}:settled`,
+      ])
+    })
+  }
+
+  it('an omitted or null threadId short-circuits before threadExists', async () => {
+    // `!threadId || !threadExists(threadId)` on one side and `threadId && threadExists(...)`
+    // on the other were the same truthiness test, so `undefined`, `null` and `''` all skip
+    // the existence check without reaching the DB.
+    for (const threadId of [[], [null], ['']] as unknown[][]) {
+      const ipc = await viaIpc('models:claudeAvailable', threadId)
+      const rpc = await viaControlRpc('models:claudeAvailable', threadId)
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc).toEqual([
+        'models.listClaudeAvailableModels([undefined])',
+        'models.listClaudeAvailableModels:settled',
+      ])
+    }
   })
 })
 
