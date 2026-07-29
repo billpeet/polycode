@@ -1,11 +1,11 @@
-import { spawn, ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { existsSync } from 'fs'
 import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand, ConnectionType } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
 import { createRunner, augmentWindowsPath } from '../driver/runner'
-import { runExecFile, getPowerShellExe } from '../process-control'
+import { runExecFile, getPowerShellExe, killWindowsProcessTree } from '../process-control'
 import { emitAppEvent } from '../app-events'
 
 const LOG_RING_BUFFER_SIZE = 1000
@@ -103,7 +103,7 @@ class CommandManager {
     if (process.platform === 'win32' && proc.pid != null) {
       // First request a graceful tree shutdown. If this fails to complete in time,
       // stopImpl escalates with /F.
-      spawn('taskkill', ['/pid', String(proc.pid), '/T'], { shell: false })
+      killWindowsProcessTree(proc.pid, { force: false })
       return
     }
     try {
@@ -115,7 +115,7 @@ class CommandManager {
 
   private forceKill(proc: ChildProcess): void {
     if (process.platform === 'win32' && proc.pid != null) {
-      spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { shell: false })
+      killWindowsProcessTree(proc.pid, { force: true })
       return
     }
     try {

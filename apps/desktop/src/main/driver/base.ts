@@ -1,4 +1,5 @@
-import { ChildProcess, spawn } from 'child_process'
+import type { ChildProcess } from 'child_process'
+import { killWindowsProcessTree } from '../process-control'
 import * as Sentry from '@sentry/electron/main'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent } from '../../shared/types'
@@ -163,7 +164,7 @@ export abstract class BaseDriver implements CLIDriver {
 function forceKillProcess(proc: ChildProcess): void {
   if (!shouldForceKillProcess(proc)) return
   if (process.platform === 'win32' && proc.pid != null) {
-    spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { shell: false })
+    killWindowsProcessTree(proc.pid, { force: true })
     return
   }
   try {

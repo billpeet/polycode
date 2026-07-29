@@ -1,5 +1,19 @@
+// Not yet behind Runner, for two reasons that are specific to connection testing:
+//
+// 1. wsl.exe reports its OWN failures (unknown distro, WSL not installed) in
+//    UTF-16LE, which is exactly the case these functions exist to report.
+//    decodeWslBuffer sniffs for it; collectProcess decodes utf8 unconditionally,
+//    so routing this through the seam would turn the useful error into mojibake.
+// 2. SshRunner.runScript prepends LOAD_NODE_MANAGERS, which sources nvm and
+//    friends on the remote host. A `test -d` probe should not pay for that —
+//    this runs while the user is typing a host into a form.
+//
+// The shell quoting IS shared: quoteShellPath was a fourth private copy of
+// cdTarget and is gone.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { spawn } from 'node:child_process'
 import type { SshConfig, WslConfig } from '../shared/types'
+import { cdTarget } from './driver/runner'
 
 export interface ConnectionTestResult {
   ok: boolean
@@ -7,12 +21,6 @@ export interface ConnectionTestResult {
 }
 
 let cachedWslDistros: { expiresAt: number; value: string[] } | null = null
-
-function quoteShellPath(value: string): string {
-  return value.startsWith('~')
-    ? '"$HOME"' + "'" + value.slice(1).replace(/'/g, "'\\''") + "'"
-    : "'" + value.replace(/'/g, "'\\''") + "'"
-}
 
 /** Decode either UTF-8 bash output or UTF-16LE output emitted by wsl.exe itself. */
 function decodeWslBuffer(buf: Buffer): string {
@@ -33,7 +41,7 @@ export function testSshConnection(ssh: SshConfig, remotePath: string): Promise<C
     ]
     if (ssh.port) sshArgs.push('-p', String(ssh.port))
     if (ssh.keyPath) sshArgs.push('-i', ssh.keyPath)
-    sshArgs.push(`${ssh.user}@${ssh.host}`, `test -d ${quoteShellPath(remotePath)} && echo __POLYCODE_OK__`)
+    sshArgs.push(`${ssh.user}@${ssh.host}`, `test -d ${cdTarget(remotePath)} && echo __POLYCODE_OK__`)
 
     const proc = spawn('ssh', sshArgs, {
       shell: false,
@@ -55,7 +63,7 @@ export function testSshConnection(ssh: SshConfig, remotePath: string): Promise<C
 
 export function testWslConnection(wsl: WslConfig, wslPath: string): Promise<ConnectionTestResult> {
   return new Promise((resolve) => {
-    const innerCmd = `test -d ${quoteShellPath(wslPath)} && echo __POLYCODE_OK__`
+    const innerCmd = `test -d ${cdTarget(wslPath)} && echo __POLYCODE_OK__`
     const proc = spawn('wsl', ['-d', wsl.distro, '--', 'bash', '-ilc', innerCmd], {
       shell: false,
       stdio: ['ignore', 'pipe', 'pipe'],

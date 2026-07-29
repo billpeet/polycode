@@ -3,7 +3,13 @@ import type {
   ThreadEvent,
   ThreadItem,
 } from '@openai/codex-sdk'
+// The Codex app-server is a long-lived local JSON-RPC peer, not a Project
+// Location command: it always runs on this machine. Putting it behind Runner
+// would make it transport-capable, which is a behaviour change rather than a
+// refactor, so it stays a direct spawn for now.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { killWindowsProcessTree } from '../process-control'
 import { DriverOptions, MessageOptions, CLIDriver } from './types'
 import { BackgroundTerminal, OutputEvent, PermissionMode, ReasoningLevel } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
@@ -2253,11 +2259,7 @@ class CodexAppServerDriver implements CLIDriver {
     if (this.child && !this.child.killed) {
       try {
         if (force && process.platform === 'win32' && this.child.pid != null) {
-          spawn('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], {
-            shell: false,
-            stdio: 'ignore',
-            windowsHide: true,
-          })
+          killWindowsProcessTree(this.child.pid, { force: true })
         } else {
           this.child.kill(force ? 'SIGKILL' : undefined)
         }

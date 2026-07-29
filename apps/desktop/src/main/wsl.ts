@@ -1,6 +1,7 @@
 // getWslHome is synchronous by necessity: wslToUncPath feeds the synchronous fs
 // walks below, and Runner has no synchronous operation. Converting it means making
 // the whole remote file-listing surface async, which is a separate change.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { execFileSync } from 'child_process'
 import * as fs from 'node:fs'
 import * as path from 'node:path'

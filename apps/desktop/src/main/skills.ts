@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
 import path from 'path'
 import { homedir } from 'os'
+// Same blocker as wsl.ts: this resolves a repo root from inside a synchronous
+// directory scan, and Runner has no synchronous operation. Always local.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { execFileSync } from 'child_process'
 import { Provider } from '../shared/types'
 

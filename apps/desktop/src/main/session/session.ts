@@ -1,5 +1,5 @@
 import { BrowserWindow } from 'electron'
-import { spawn, ChildProcess } from 'child_process'
+import type { ChildProcess } from 'child_process'
 import { randomUUID } from 'crypto'
 import { ClaudeDriver } from '../driver/claude'
 import { CodexDriver } from '../driver/codex'
@@ -10,6 +10,7 @@ import { CLIDriver } from '../driver/types'
 import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { createRunner } from '../driver/runner'
+import { killWindowsProcessTree } from '../process-control'
 import {
   updateThreadStatus,
   updateThreadName,
@@ -1041,7 +1042,7 @@ function parseShellMode(content: string): { enabled: boolean; command: string } 
 function killProcessTree(proc: ChildProcess): void {
   if (proc.exitCode != null || proc.signalCode != null) return
   if (process.platform === 'win32' && proc.pid != null) {
-    spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { shell: false })
+    killWindowsProcessTree(proc.pid, { force: true })
     return
   }
   try {

@@ -8,7 +8,7 @@
  * Windows is the primary platform: `getPowerShellExe` and the embedded port-scan
  * script are load-bearing, not incidental.
  */
-import { exec, execFile } from 'child_process'
+import { exec, execFile, spawn } from 'child_process'
 import { wslExec } from './wsl'
 import { getPowerShellExe } from './driver/runner'
 import type { WslConfig } from '../shared/types'
@@ -37,6 +37,28 @@ export function runExecFile(
       },
     )
   })
+}
+
+/**
+ * Kill a Windows process and everything it spawned, without waiting.
+ *
+ * A no-op off Windows, where callers signal the process group themselves — the
+ * POSIX half genuinely differs between callers (SIGTERM vs SIGKILL, and whether
+ * a signal is sent before or instead of this), so it stays with them. What is
+ * identical everywhere, and was duplicated six times, is this: Node's kill()
+ * only reaches the direct child, so a `npm run dev` that forked a server leaves
+ * the server holding its port.
+ */
+export function killWindowsProcessTree(pid: number, opts: { force: boolean }): void {
+  if (process.platform !== 'win32') return
+  const args = opts.force
+    ? ['/pid', String(pid), '/T', '/F']
+    : ['/pid', String(pid), '/T']
+  try {
+    spawn('taskkill', args, { shell: false, stdio: 'ignore', windowsHide: true })
+  } catch {
+    // Best-effort: the process may already be gone.
+  }
 }
 
 export function killByPid(pid: number, wsl?: WslConfig | null): Promise<void> {

@@ -1,4 +1,5 @@
-import { spawn, ChildProcessWithoutNullStreams } from 'child_process'
+import type { ChildProcessWithoutNullStreams } from 'child_process'
+import { killWindowsProcessTree } from '../process-control'
 import readline from 'readline'
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent, Question, ReasoningLevel } from '../../shared/types'
@@ -665,7 +666,7 @@ export class CursorDriver implements CLIDriver {
     if (this.child && !this.child.killed) {
       try { this.child.kill() } catch { /* ignore */ }
       if (process.platform === 'win32' && this.child.pid != null) {
-        try { spawn('taskkill', ['/pid', String(this.child.pid), '/T', '/F'], { shell: false }) } catch { /* ignore */ }
+        killWindowsProcessTree(this.child.pid, { force: true })
       }
     }
     this.child = null
