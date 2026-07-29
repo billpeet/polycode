@@ -3,18 +3,13 @@ import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
 import {
   archivedThreadCount,
-  archiveProject,
   archiveThread,
   createLocation,
   createLocationPool,
-  createProject,
   deleteLocation,
   deleteLocationPool,
-  deleteProject,
-  unarchiveProject,
   updateLocation,
   updateLocationPool,
-  updateProject,
   checkoutLocation,
   createSlashCommand,
   createThread,
@@ -27,13 +22,11 @@ import {
   getImportedSessionIds,
   importThread,
   listCommands,
-  listArchivedProjects,
   listArchivedThreads,
   listLocationPools,
   listLocations,
   listMessages,
   listMessagesBySession,
-  listProjects,
   listSessions,
   listSlashCommands,
   listThreads,
@@ -128,19 +121,19 @@ import { listPiAvailableModels } from '../pi-models'
 import { listCursorAvailableModels } from '../cursor-models'
 import { listDetectedSkills } from '../skills'
 import { emitAppEvent } from '../app-events'
-import { NewProjectSpec, Provider, QuestionAnswerValue, SendOptions, SshConfig, WslConfig } from '../../shared/types'
+import { Provider, QuestionAnswerValue, SendOptions, SshConfig, WslConfig } from '../../shared/types'
 import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
 import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
-import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
+import { cloneLocation, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
-import { projectFaviconDataUrl } from '../project-favicon'
-import { REMOTE_CHANNELS } from '@polycode/shared'
+import { REMOTE_CHANNELS, isRemoteChannel } from '@polycode/shared'
+import { invokeChannelHandler, isMigratedChannel } from '../ipc/channel-handlers'
 import { killByPid, killByPort } from '../process-control'
 import {
   assertMainBranchCommitAllowed,
@@ -154,7 +147,6 @@ import {
 } from '../ipc/thread-context'
 
 export const CONTROL_RPC_CHANNELS: ReadonlySet<string> = new Set(REMOTE_CHANNELS)
-
 
 async function listAvailableModels(channel: string, threadId?: string | null): Promise<unknown> {
   const options = threadId && threadExists(threadId)
@@ -182,33 +174,16 @@ async function listAvailableModels(channel: string, threadId?: string | null): P
 }
 
 export async function handleControlRpc(window: BrowserWindow, channel: string, args: unknown[]): Promise<unknown> {
+  // Channels folded into the typed handler map. The `isRemoteChannel` guard derives
+  // reachability from the registry rather than from which switch happens to have a
+  // case, so a local-only channel stays unreachable from this transport even once it
+  // is folded.
+  if (isMigratedChannel(channel) && isRemoteChannel(channel)) {
+    return invokeChannelHandler(channel, { window, origin: 'remote' }, args)
+  }
+
   switch (channel) {
-    case 'projects:list':
-      return listProjects()
-    case 'projects:listArchived':
-      return listArchivedProjects()
-    case 'projects:favicon': {
-      const location = listLocations(args[0] as string).find((item) => item.connection_type === 'local')
-      return location ? projectFaviconDataUrl(location.path) : null
-    }
-    case 'projects:create': {
-      const [name, gitUrl, allowMainBranchCommits] = args as [string, string | null | undefined, boolean | undefined]
-      return createProject(name, gitUrl, allowMainBranchCommits ?? true)
-    }
-    case 'projects:createFull':
-      return createFullProject(args[0] as NewProjectSpec)
-    case 'projects:update': {
-      const [id, name, gitUrl, allowMainBranchCommits] = args as [string, string, string | null | undefined, boolean | undefined]
-      return updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
-    }
-    case 'projects:delete':
-      sessionManager.stopAll()
-      commandManager.stopAll()
-      return deleteProject(args[0] as string)
-    case 'projects:archive':
-      return archiveProject(args[0] as string)
-    case 'projects:unarchive':
-      return unarchiveProject(args[0] as string)
+
     case 'locations:create': {
       const [projectId, label, connectionType, locationPath, poolId, ssh, wsl] = args as [
         string, string, 'local' | 'ssh' | 'wsl', string, string | null | undefined, SshConfig | null | undefined, WslConfig | null | undefined,

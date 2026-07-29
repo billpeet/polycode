@@ -5,13 +5,6 @@ import { pathToFileURL } from 'url'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import {
-  listProjects,
-  listArchivedProjects,
-  createProject,
-  updateProject,
-  deleteProject,
-  archiveProject,
-  unarchiveProject,
   listLocations,
   listLocationPools,
   createLocationPool,
@@ -69,8 +62,7 @@ import {
   getSetting,
   setSetting,
 } from '../db/queries'
-import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue, NewProjectSpec } from '../../shared/types'
-import { projectFaviconDataUrl } from '../project-favicon'
+import { SshConfig, WslConfig, ConnectionType, Provider, QuestionAnswerValue } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -98,12 +90,13 @@ import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
 import { emitAppEvent } from '../app-events'
-import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
+import { cloneLocation, createLocalWorktree, removeWorktreeLocation, suggestUniquePath } from '../project-admin'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { killByPid, killByPort, runExecFile } from '../process-control'
+import { MIGRATED_CHANNELS, invokeChannelHandler } from './channel-handlers'
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
@@ -214,49 +207,16 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     })
   }
 
-  // ── Projects ──────────────────────────────────────────────────────────────
-
-  proxyable('projects:list', () => {
-    return listProjects()
-  })
-
-  proxyable('projects:create', (name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
-    return createProject(name, gitUrl, allowMainBranchCommits ?? true)
-  })
-
-  // Atomically provision a brand-new project *and* its first local location in one shot.
-  // All filesystem/git work (mkdir + init, clone, remote detection) happens BEFORE any DB
-  // rows are written, so a failure never leaves an orphaned project behind.
-  proxyable('projects:createFull', (spec: NewProjectSpec) => {
-    return createFullProject(spec)
-  })
-
-  proxyable('projects:update', (id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => {
-    return updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
-  })
-
-  proxyable('projects:delete', (id: string) => {
-    sessionManager.stopAll()
-    commandManager.stopAll()
-    return deleteProject(id)
-  })
-
-  proxyable('projects:listArchived', () => {
-    return listArchivedProjects()
-  })
-
-  proxyable('projects:favicon', (projectId: string) => {
-    const location = listLocations(projectId).find((item) => item.connection_type === 'local')
-    return location ? projectFaviconDataUrl(location.path) : null
-  })
-
-  proxyable('projects:archive', (id: string) => {
-    return archiveProject(id)
-  })
-
-  proxyable('projects:unarchive', (id: string) => {
-    return unarchiveProject(id)
-  })
+  // ── Folded handlers ───────────────────────────────────────────────────────
+  //
+  // Channels implemented once in `channel-handlers.ts` and typed against
+  // ChannelContract. This adapter's only remaining job for them is the ipcMain
+  // registration and the remote-forwarding hop that `proxyable` provides.
+  for (const channel of MIGRATED_CHANNELS) {
+    proxyable(channel, (...args: unknown[]) =>
+      invokeChannelHandler(channel, { window, origin: 'local' }, args),
+    )
+  }
 
   // ── Repo Locations ────────────────────────────────────────────────────────
 

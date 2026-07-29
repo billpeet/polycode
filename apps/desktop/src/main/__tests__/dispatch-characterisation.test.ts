@@ -70,6 +70,7 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   getThreadWsl: H.stub('db.getThreadWsl', () => H.state.threadWsl),
   threadExists: H.stub('db.threadExists', () => H.state.threadExists),
   getLastUsedProviderAndModel: () => ({ provider: 'claude', model: 'opus' }),
+  listLocations: H.stub('db.listLocations', () => (H.state.location ? [H.state.location] : [])),
 }))
 
 vi.mock('../git', () => H.autoModule('git', {
@@ -206,6 +207,36 @@ describe('both transports produce identical behaviour', () => {
 
     expect(rpc).toEqual(ipc)
     expect(ipc[0]).toBe('sessionManager.remove(["t1"])')
+  })
+})
+
+describe('projects:* — folded into the typed handler map', () => {
+  it('projects:delete stops sessions and commands before the row is removed', async () => {
+    const ipc = await viaIpc('projects:delete', ['p1'])
+    const rpc = await viaControlRpc('projects:delete', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.stopAll([])',
+      'commandManager.stopAll([])',
+      'db.deleteProject(["p1"])',
+    ])
+  })
+
+  it('projects:create defaults allowMainBranchCommits to true', async () => {
+    const ipc = await viaIpc('projects:create', ['My project', null, undefined])
+    const rpc = await viaControlRpc('projects:create', ['My project', null, undefined])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.createProject(["My project",null,true])'])
+  })
+
+  it('projects:favicon resolves through the first local location', async () => {
+    const ipc = await viaIpc('projects:favicon', ['p1'])
+    const rpc = await viaControlRpc('projects:favicon', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc[0]).toBe('db.listLocations(["p1"])')
   })
 })
 

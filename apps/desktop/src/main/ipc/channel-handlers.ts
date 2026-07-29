@@ -1,0 +1,133 @@
+/**
+ * The single implementation of every channel, typed against `ChannelContract`.
+ *
+ * The contract is the interface. Until now two implementations sat behind it —
+ * `ipc/handlers.ts` for Electron IPC and `control/control-rpc.ts` for remote control —
+ * and neither was checked against it: `proxyable` took `channel: string`, and
+ * `handleControlRpc` took `channel: string, args: unknown[]` and cast its way out.
+ *
+ * This module is the one implementation. Both transports become thin adapters over it.
+ *
+ * ## Why this lives in the desktop app and not in `packages/shared`
+ *
+ * `packages/shared` is dependency-free raw TS with no build step. Handler
+ * implementations touch better-sqlite3, Electron and `git.ts`, so they cannot live
+ * there. The *types* stay in shared; the map is desktop-only.
+ *
+ * ## Migration state
+ *
+ * `channelHandlers` is checked against `Partial<ChannelHandlerMap>`, so every entry
+ * present is fully type-checked — arguments and result — against the contract, while
+ * channels not yet moved keep their existing implementation.
+ *
+ * **The completion criterion is mechanical:** change `Partial<ChannelHandlerMap>` below
+ * to `ChannelHandlerMap`. The build then lists every channel still missing. When it
+ * compiles, the migration is done and the two legacy dispatch sites are empty.
+ *
+ * `channel-handler-migration.test.ts` enforces the other half: a channel handled here
+ * must have no legacy registration left, so a third dispatch site cannot exist.
+ */
+import type { BrowserWindow } from 'electron'
+import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
+import {
+  archiveProject,
+  createProject,
+  deleteProject,
+  listArchivedProjects,
+  listLocations,
+  listProjects,
+  unarchiveProject,
+  updateProject,
+} from '../db/queries'
+import { sessionManager } from '../session/manager'
+import { commandManager } from '../commands/manager'
+import { createFullProject } from '../project-admin'
+import { projectFaviconDataUrl } from '../project-favicon'
+
+/**
+ * What a handler is given besides its arguments.
+ *
+ * `origin` is the answer to the `originAware` registry flag, which until now was
+ * declared on `threads:send` and read by nobody. A handler that behaves differently
+ * per transport branches on this rather than existing twice.
+ */
+export interface HandlerContext {
+  window: BrowserWindow
+  origin: 'local' | 'remote'
+}
+
+export type ChannelHandler<C extends Channel> = (
+  ctx: HandlerContext,
+  ...args: ChannelArgs<C>
+) => ChannelResult<C> | Promise<ChannelResult<C>>
+
+export type ChannelHandlerMap = { [C in Channel]: ChannelHandler<C> }
+
+/**
+ * Handlers that have been folded out of the two legacy dispatch sites.
+ *
+ * Handlers that need neither context nor arguments simply declare fewer parameters —
+ * a uniform `ctx` first parameter costs nothing at the call sites that ignore it.
+ */
+export const channelHandlers = {
+  'projects:list': () => listProjects(),
+
+  'projects:listArchived': () => listArchivedProjects(),
+
+  'projects:favicon': (_ctx, projectId) => {
+    const location = listLocations(projectId).find((item) => item.connection_type === 'local')
+    return location ? projectFaviconDataUrl(location.path) : null
+  },
+
+  'projects:create': (_ctx, name, gitUrl, allowMainBranchCommits) =>
+    createProject(name, gitUrl, allowMainBranchCommits ?? true),
+
+  // Atomically provision a brand-new project *and* its first local location in one shot.
+  // All filesystem/git work (mkdir + init, clone, remote detection) happens BEFORE any DB
+  // rows are written, so a failure never leaves an orphaned project behind.
+  'projects:createFull': (_ctx, spec) => createFullProject(spec),
+
+  'projects:update': (_ctx, id, name, gitUrl, allowMainBranchCommits) => {
+    updateProject(id, name, gitUrl, allowMainBranchCommits ?? true)
+  },
+
+  'projects:delete': (_ctx, id) => {
+    sessionManager.stopAll()
+    commandManager.stopAll()
+    deleteProject(id)
+  },
+
+  'projects:archive': (_ctx, id) => {
+    archiveProject(id)
+  },
+
+  'projects:unarchive': (_ctx, id) => {
+    unarchiveProject(id)
+  },
+} satisfies Partial<ChannelHandlerMap>
+
+export type MigratedChannel = keyof typeof channelHandlers
+
+export const MIGRATED_CHANNELS = Object.keys(channelHandlers) as MigratedChannel[]
+
+const MIGRATED_CHANNEL_SET: ReadonlySet<string> = new Set<string>(MIGRATED_CHANNELS)
+
+export function isMigratedChannel(channel: string): channel is MigratedChannel {
+  return MIGRATED_CHANNEL_SET.has(channel)
+}
+
+/**
+ * Transport-facing entry point. Both adapters funnel through here.
+ *
+ * The cast is contained to this one line: callers reach it having already narrowed
+ * `channel` with `isMigratedChannel`, and every entry in the map was type-checked
+ * against the contract at its definition.
+ */
+export function invokeChannelHandler(
+  channel: MigratedChannel,
+  ctx: HandlerContext,
+  args: unknown[],
+): Promise<unknown> {
+  const handler = channelHandlers[channel] as (ctx: HandlerContext, ...rest: unknown[]) => unknown
+  return Promise.resolve(handler(ctx, ...args))
+}

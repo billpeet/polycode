@@ -8,25 +8,40 @@ const mainDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const handlersSource = readFileSync(join(mainDir, 'ipc', 'handlers.ts'), 'utf8')
 const rpcSource = readFileSync(join(mainDir, 'control', 'control-rpc.ts'), 'utf8')
 const remoteServerSource = readFileSync(join(mainDir, 'remote', 'server.ts'), 'utf8')
+const handlerMapSource = readFileSync(join(mainDir, 'ipc', 'channel-handlers.ts'), 'utf8')
 
 function literalChannels(source: string, pattern: RegExp): Set<string> {
   return new Set([...source.matchAll(pattern)].map((match) => match[1]))
 }
 
+/**
+ * Channels folded into the typed handler map. Read from source rather than imported so
+ * this file stays free of the database and Electron, like the rest of its assertions.
+ */
+export const migratedChannels = literalChannels(handlerMapSource, /^ {2}'([^']+)':/gm)
+
 describe('remote control RPC channel contract', () => {
+  // A folded channel is registered by the `MIGRATED_CHANNELS` loop in handlers.ts and
+  // dispatched by the `isMigratedChannel` branch in control-rpc.ts, so it satisfies both
+  // sides without a literal `proxyable(...)` or `case '...':`. These sets shrink to the
+  // legacy sites only, and empty out entirely when the migration completes.
   const proxyableChannels = literalChannels(handlersSource, /\bproxyable\(\s*['"]([^'"]+)['"]/g)
   const directlyProxiedChannels = literalChannels(
     handlersSource,
     /\bipcMain\.handle\(\s*['"]([^'"]+)['"][\s\S]{0,250}?remoteClient\.invokeIfActive\(\s*['"]\1['"]/g,
   )
   const allowedChannels = new Set<string>(REMOTE_CHANNELS)
-  const dispatchedChannels = literalChannels(rpcSource, /\bcase\s+['"]([^'"]+)['"]\s*:/g)
+  const dispatchedChannels = new Set<string>([
+    ...literalChannels(rpcSource, /\bcase\s+['"]([^'"]+)['"]\s*:/g),
+    ...migratedChannels,
+  ])
 
   test('desktop proxyable registrations equal local and remote registry entries', () => {
     const expected = Object.entries(CHANNEL_REGISTRY)
       .filter(([, capabilities]) => capabilities.local && capabilities.remote)
       .map(([channel]) => channel)
-    expect([...new Set([...proxyableChannels, ...directlyProxiedChannels])].sort()).toEqual(expected.sort())
+    const registered = new Set([...proxyableChannels, ...directlyProxiedChannels, ...migratedChannels])
+    expect([...registered].sort()).toEqual(expected.sort())
   })
 
   test('server-supported project and location mutations are not local-only', () => {
