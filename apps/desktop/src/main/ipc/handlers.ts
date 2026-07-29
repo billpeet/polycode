@@ -41,10 +41,6 @@ import {
   getThreadModifiedFiles,
   updateThreadWsl,
   setThreadGitBranchIfUnset,
-  listCommands,
-  createCommand,
-  updateCommand,
-  deleteCommand,
   listYouTrackServers,
   createYouTrackServer,
   updateYouTrackServer,
@@ -951,52 +947,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       ],
     })
     return result.canceled ? [] : result.filePaths
-  })
-
-  // ── Commands ──────────────────────────────────────────────────────────────
-
-  proxyable('commands:list', (projectId: string) => {
-    return listCommands(projectId)
-  })
-
-  proxyable('commands:create', (projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
-    return createCommand(projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false)
-  })
-
-  proxyable('commands:update', (id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean) => {
-    return updateCommand(id, name, command, cwd, shell, runOnWorktreeCreate ?? false)
-  })
-
-  proxyable('commands:delete', (id: string) => {
-    commandManager.stopAllInstances(id)
-    return deleteCommand(id)
-  })
-
-  proxyable('commands:start', async (commandId: string, locationId: string) => {
-    await commandManager.start(commandId, locationId)
-  })
-
-  proxyable('commands:stop', async (commandId: string, locationId: string) => {
-    await commandManager.stop(commandId, locationId)
-  })
-
-  proxyable('commands:restart', async (commandId: string, locationId: string) => {
-    await commandManager.restart(commandId, locationId)
-  })
-
-  proxyable('commands:getStatus', (commandId: string, locationId: string) => {
-    return commandManager.getStatus(commandId, locationId)
-  })
-
-  proxyable('commands:getLogs', (commandId: string, locationId: string) => {
-    return commandManager.getLogs(commandId, locationId)
-  })
-
-  proxyable('commands:getPid', (commandId: string, locationId: string) => {
-    return commandManager.getPid(commandId, locationId)
-  })
-  proxyable('commands:getPorts', (commandId: string, locationId: string) => {
-    return commandManager.getPorts(commandId, locationId)
   })
 
   // ── YouTrack ───────────────────────────────────────────────────────────────

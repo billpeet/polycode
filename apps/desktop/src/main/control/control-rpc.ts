@@ -17,7 +17,6 @@ import {
   getThreadModifiedFiles,
   getImportedSessionIds,
   importThread,
-  listCommands,
   listArchivedThreads,
   listLocationPools,
   listMessages,
@@ -43,16 +42,12 @@ import {
   updateThreadUnread,
   updateThreadWsl,
   updateThreadYoloMode,
-  createCommand,
-  updateCommand,
-  deleteCommand,
   listYouTrackServers,
   createYouTrackServer,
   updateYouTrackServer,
   deleteYouTrackServer,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
-import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { getThreadLogs } from '../thread-logger'
 import {
@@ -840,51 +835,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
         created_at: message.timestamp,
       }))
       return importThread(projectId, locationId, name, sessionId, importedMessages)
-    }
-
-    case 'commands:list':
-      return listCommands(args[0] as string)
-    case 'commands:create': {
-      const [projectId, name, command, cwd, shell, runOnWorktreeCreate] = args as [string, string, string, string | null | undefined, string | null | undefined, boolean | undefined]
-      return createCommand(projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false)
-    }
-    case 'commands:update': {
-      const [id, name, command, cwd, shell, runOnWorktreeCreate] = args as [string, string, string, string | null | undefined, string | null | undefined, boolean | undefined]
-      return updateCommand(id, name, command, cwd, shell, runOnWorktreeCreate ?? false)
-    }
-    case 'commands:delete':
-      commandManager.stopAllInstances(args[0] as string)
-      return deleteCommand(args[0] as string)
-    case 'commands:start': {
-      const [commandId, locationId] = args as [string, string]
-      await commandManager.start(commandId, locationId)
-      return undefined
-    }
-    case 'commands:stop': {
-      const [commandId, locationId] = args as [string, string]
-      await commandManager.stop(commandId, locationId)
-      return undefined
-    }
-    case 'commands:restart': {
-      const [commandId, locationId] = args as [string, string]
-      await commandManager.restart(commandId, locationId)
-      return undefined
-    }
-    case 'commands:getStatus': {
-      const [commandId, locationId] = args as [string, string]
-      return commandManager.getStatus(commandId, locationId)
-    }
-    case 'commands:getLogs': {
-      const [commandId, locationId] = args as [string, string]
-      return commandManager.getLogs(commandId, locationId)
-    }
-    case 'commands:getPid': {
-      const [commandId, locationId] = args as [string, string]
-      return commandManager.getPid(commandId, locationId)
-    }
-    case 'commands:getPorts': {
-      const [commandId, locationId] = args as [string, string]
-      return commandManager.getPorts(commandId, locationId)
     }
 
     // The desktop settings and mention UIs need the stored token to edit a

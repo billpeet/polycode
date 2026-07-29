@@ -55,7 +55,17 @@ const H = vi.hoisted(() => {
       has: () => true,
     })
 
-  return { log, state, note, stub, autoModule }
+  /**
+   * A stub whose promise settles on a *macrotask*, not a microtask. Awaiting the handler's
+   * own result therefore cannot accidentally drain it: the `:settled` entry appears in the
+   * call log only if the handler genuinely awaited (or returned) the callee's promise.
+   */
+  const settlesLate = (label: string) =>
+    stub(label, () => new Promise((resolve) => {
+      setTimeout(() => { note(`${label}:settled`); resolve(undefined) }, 0)
+    }))
+
+  return { log, state, note, stub, autoModule, settlesLate }
 })
 
 vi.mock('fs', async (importOriginal) => {
@@ -81,6 +91,10 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   archiveProject: H.stub('db.archiveProject', 'RET_archiveProject'),
   unarchiveProject: H.stub('db.unarchiveProject', 'RET_unarchiveProject'),
   deleteProject: H.stub('db.deleteProject', 'RET_deleteProject'),
+  listCommands: H.stub('db.listCommands', () => [{ id: 'cmd1', name: 'dev' }]),
+  createCommand: H.stub('db.createCommand', 'RET_createCommand'),
+  updateCommand: H.stub('db.updateCommand', 'RET_updateCommand'),
+  deleteCommand: H.stub('db.deleteCommand', 'RET_deleteCommand'),
 }))
 
 vi.mock('../project-admin', () => H.autoModule('projectAdmin'))
@@ -98,7 +112,17 @@ vi.mock('../session/manager', () => ({
   }),
 }))
 
-vi.mock('../commands/manager', () => ({ commandManager: H.autoModule('commandManager') }))
+vi.mock('../commands/manager', () => ({
+  commandManager: H.autoModule('commandManager', {
+    start: H.settlesLate('commandManager.start'),
+    stop: H.settlesLate('commandManager.stop'),
+    restart: H.settlesLate('commandManager.restart'),
+    getStatus: H.stub('commandManager.getStatus', 'running'),
+    getLogs: H.stub('commandManager.getLogs', [{ line: 'listening on 3000', stream: 'stdout' }]),
+    getPid: H.stub('commandManager.getPid', 4242),
+    getPorts: H.stub('commandManager.getPorts', [3000, 3001]),
+  }),
+}))
 vi.mock('../terminal/manager', () => ({ ptyManager: H.autoModule('ptyManager') }))
 
 // The remote-forwarding hop belongs to the ipcMain adapter only. Inactive here, so the
@@ -395,6 +419,136 @@ describe('locations:* — both transports agree', () => {
   })
 })
 
+describe('commands:* — both transports agree', () => {
+  it('commands:list', async () => {
+    const ipc = await viaIpc('commands:list', ['p1'])
+    const rpc = await viaControlRpc('commands:list', ['p1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.listCommands(["p1"])'])
+    expect(await resultViaIpc('commands:list', ['p1'])).toEqual([{ id: 'cmd1', name: 'dev' }])
+    expect(await resultViaControlRpc('commands:list', ['p1'])).toEqual([{ id: 'cmd1', name: 'dev' }])
+  })
+
+  it('commands:create forwards every argument in order', async () => {
+    const args = ['p1', 'dev', 'pnpm dev', 'C:/repo/app', 'pwsh', true]
+    const ipc = await viaIpc('commands:create', args)
+    const rpc = await viaControlRpc('commands:create', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.createCommand(["p1","dev","pnpm dev","C:/repo/app","pwsh",true])'])
+  })
+
+  it('commands:create defaults an omitted runOnWorktreeCreate to false', async () => {
+    const args = ['p1', 'dev', 'pnpm dev']
+    const ipc = await viaIpc('commands:create', args)
+    const rpc = await viaControlRpc('commands:create', args)
+
+    expect(rpc).toEqual(ipc)
+    // NOTE: `cwd`/`shell` render as `null` only because the recorder uses JSON.stringify,
+    // which maps `undefined` to `null`; the real values are `undefined`. That is harmless
+    // here — db/queries.ts coalesces both with `?? null` before binding *and* in the
+    // returned object.
+    //
+    // The sixth slot shows `false` rather than `null`, so this assertion does pin the
+    // coalesce — but for an *omitted* argument the coalesce is behaviourally redundant:
+    // createCommand's `runOnWorktreeCreate = false` parameter default would fire anyway.
+    // The next test is the one that pins behaviour rather than spelling.
+    expect(ipc).toEqual(['db.createCommand(["p1","dev","pnpm dev",null,null,false])'])
+  })
+
+  it('commands:create coalesces an explicit null runOnWorktreeCreate to false', async () => {
+    // This is the case a remote client actually produces: remote/client.ts sends
+    // `JSON.stringify({ channel, args })`, so an omitted trailing argument arrives as
+    // `null`, not `undefined`. `null` would *not* trigger createCommand's `= false`
+    // parameter default, which fires on `undefined` only — so the coalesce is what keeps
+    // the returned ProjectCommand's `run_on_worktree_create` a boolean.
+    const args = ['p1', 'dev', 'pnpm dev', null, null, null]
+    const ipc = await viaIpc('commands:create', args)
+    const rpc = await viaControlRpc('commands:create', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.createCommand(["p1","dev","pnpm dev",null,null,false])'])
+  })
+
+  it('commands:update forwards every argument in order', async () => {
+    const args = ['cmd1', 'dev', 'pnpm dev', null, null, true]
+    const ipc = await viaIpc('commands:update', args)
+    const rpc = await viaControlRpc('commands:update', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.updateCommand(["cmd1","dev","pnpm dev",null,null,true])'])
+  })
+
+  it('commands:update coalesces an omitted or null runOnWorktreeCreate to false', async () => {
+    expect(await viaIpc('commands:update', ['cmd1', 'dev', 'pnpm dev'])).toEqual([
+      'db.updateCommand(["cmd1","dev","pnpm dev",null,null,false])',
+    ])
+    expect(await viaControlRpc('commands:update', ['cmd1', 'dev', 'pnpm dev'])).toEqual([
+      'db.updateCommand(["cmd1","dev","pnpm dev",null,null,false])',
+    ])
+    expect(await viaIpc('commands:update', ['cmd1', 'dev', 'pnpm dev', null, null, null])).toEqual([
+      'db.updateCommand(["cmd1","dev","pnpm dev",null,null,false])',
+    ])
+  })
+
+  it('commands:delete stops every running instance before the row is removed', async () => {
+    const ipc = await viaIpc('commands:delete', ['cmd1'])
+    const rpc = await viaControlRpc('commands:delete', ['cmd1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'commandManager.stopAllInstances(["cmd1"])',
+      'db.deleteCommand(["cmd1"])',
+    ])
+  })
+
+  it('commands:start awaits the manager rather than floating its promise', async () => {
+    const args = ['cmd1', 'loc1']
+    const ipc = await viaIpc('commands:start', args)
+    const rpc = await viaControlRpc('commands:start', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['commandManager.start(["cmd1","loc1"])', 'commandManager.start:settled'])
+  })
+
+  it('commands:stop and commands:restart also await the manager', async () => {
+    const args = ['cmd1', 'loc1']
+
+    expect(await viaControlRpc('commands:stop', args)).toEqual(await viaIpc('commands:stop', args))
+    expect(await viaIpc('commands:stop', args)).toEqual([
+      'commandManager.stop(["cmd1","loc1"])', 'commandManager.stop:settled',
+    ])
+
+    expect(await viaControlRpc('commands:restart', args)).toEqual(
+      await viaIpc('commands:restart', args),
+    )
+    expect(await viaIpc('commands:restart', args)).toEqual([
+      'commandManager.restart(["cmd1","loc1"])', 'commandManager.restart:settled',
+    ])
+  })
+
+  it('the four read channels return the manager\'s answer untouched', async () => {
+    const args = ['cmd1', 'loc1']
+    const cases: Array<[channel: string, expected: unknown]> = [
+      ['commands:getStatus', 'running'],
+      ['commands:getLogs', [{ line: 'listening on 3000', stream: 'stdout' }]],
+      ['commands:getPid', 4242],
+      ['commands:getPorts', [3000, 3001]],
+    ]
+
+    for (const [channel, expected] of cases) {
+      expect(await resultViaIpc(channel, args)).toEqual(expected)
+      expect(await resultViaControlRpc(channel, args)).toEqual(expected)
+
+      const method = channel.slice('commands:'.length)
+      const ipc = await viaIpc(channel, args)
+      expect(await viaControlRpc(channel, args)).toEqual(ipc)
+      expect(ipc).toEqual([`commandManager.${method}(["cmd1","loc1"])`])
+    }
+  })
+})
+
 /**
  * Guards a regression the type system cannot see.
  *
@@ -415,6 +569,8 @@ describe("handlers pass the callee's result through", () => {
     ['projects:archive', ['p1'], 'RET_archiveProject'],
     ['projects:unarchive', ['p1'], 'RET_unarchiveProject'],
     ['projects:delete', ['p1'], 'RET_deleteProject'],
+    ['commands:update', ['cmd1', 'dev', 'pnpm dev'], 'RET_updateCommand'],
+    ['commands:delete', ['cmd1'], 'RET_deleteCommand'],
   ]
 
   for (const [channel, args, expected] of cases) {

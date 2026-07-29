@@ -48,15 +48,19 @@ import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
 import {
   archiveProject,
   checkoutLocation,
+  createCommand,
   createLocation,
   createProject,
+  deleteCommand,
   deleteLocation,
   deleteProject,
   listArchivedProjects,
+  listCommands,
   listLocations,
   listProjects,
   returnLocationToPool,
   unarchiveProject,
+  updateCommand,
   updateLocation,
   updateProject,
 } from '../db/queries'
@@ -161,6 +165,46 @@ export const channelHandlers = {
   'locations:checkout': (_ctx, id) => checkoutLocation(id),
 
   'locations:returnToPool': (_ctx, id) => returnLocationToPool(id),
+
+  'commands:list': (_ctx, projectId) => listCommands(projectId),
+
+  // `cwd`/`shell` are passed through raw — db/queries.ts coalesces both with `?? null`
+  // before binding and again in the returned object, so a `?? null` here would duplicate.
+  //
+  // `runOnWorktreeCreate ?? false` is NOT the same kind of redundancy and must stay.
+  // Downstream the default is a *parameter default* (`runOnWorktreeCreate = false`), which
+  // fires on `undefined` only. A remote client's args arrive as JSON, where an omitted
+  // trailing argument serialises to `null` — and `null` skips the parameter default, so it
+  // would land in the returned ProjectCommand's `run_on_worktree_create` verbatim, handing
+  // the caller a `null` in a field typed `boolean`.
+  'commands:create': (_ctx, projectId, name, command, cwd, shell, runOnWorktreeCreate) =>
+    createCommand(projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false),
+
+  'commands:update': (_ctx, id, name, command, cwd, shell, runOnWorktreeCreate) =>
+    updateCommand(id, name, command, cwd, shell, runOnWorktreeCreate ?? false),
+
+  'commands:delete': (_ctx, id) => {
+    commandManager.stopAllInstances(id)
+    return deleteCommand(id)
+  },
+
+  'commands:start': (_ctx, commandId, locationId) => commandManager.start(commandId, locationId),
+
+  'commands:stop': (_ctx, commandId, locationId) => commandManager.stop(commandId, locationId),
+
+  'commands:restart': (_ctx, commandId, locationId) =>
+    commandManager.restart(commandId, locationId),
+
+  'commands:getStatus': (_ctx, commandId, locationId) =>
+    commandManager.getStatus(commandId, locationId),
+
+  'commands:getLogs': (_ctx, commandId, locationId) =>
+    commandManager.getLogs(commandId, locationId),
+
+  'commands:getPid': (_ctx, commandId, locationId) => commandManager.getPid(commandId, locationId),
+
+  'commands:getPorts': (_ctx, commandId, locationId) =>
+    commandManager.getPorts(commandId, locationId),
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers
