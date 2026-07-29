@@ -12,6 +12,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { basename, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { CHANNEL_REGISTRY, isRemoteChannel } from '@polycode/shared'
 
 const H = vi.hoisted(() => {
@@ -65,6 +66,30 @@ const H = vi.hoisted(() => {
     remoteProxy: null as { handled: boolean; value?: unknown } | null,
     /** How many times the stubbed readFileSync served `fileBytes`. */
     fileReads: 0,
+    /** How many times the adapter asked the remote client for the active host. */
+    proxyChecks: 0,
+    /** How many times the adapter took the remote-forwarding hop. */
+    proxyInvokes: 0,
+    /**
+     * What the `window` test double reports from `isMaximized()`. The only fixture that
+     * steers `window:maximize`, whose whole body is
+     * `isMaximized() ? unmaximize() : maximize()`.
+     */
+    isMaximized: false,
+    /**
+     * What `dialog.showOpenDialog` resolves to. `canceled: true` is the branch both
+     * `dialog:*` channels normalise away — to `null` and to `[]` respectively, which are
+     * different shapes and so cannot share an implementation.
+     */
+    dialogResult: { canceled: false, filePaths: ['C:/picked'] } as {
+      canceled: boolean
+      filePaths: string[]
+    },
+    /**
+     * Whether the stubbed `runExecFile` rejects. `commandExists` is a try/catch around it,
+     * so this is the only way to reach `shell:openInVsCode`'s openExternal fallback.
+     */
+    execFileFails: false,
   }
 
   const note = (entry: string): void => { log.push(entry) }
@@ -423,6 +448,9 @@ vi.mock('../host-connection-tests', () => H.autoModule('hostTests', {
 }))
 
 vi.mock('../process-control', () => H.autoModule('processControl', {
+  // The probe behind `commandExists`, which is a try/catch: resolving means "on PATH".
+  runExecFile: H.stub('processControl.runExecFile', () =>
+    H.state.execFileFails ? Promise.reject(new Error('not found')) : Promise.resolve()),
   // Hand-rolled rather than `settlesLate` because `process:kill`'s whole shape is its
   // rejection branch: it converts a thrown error into `{ ok: false, error }`.
   killByPid: H.stub('processControl.killByPid', () => new Promise((resolve, reject) => {
@@ -448,6 +476,49 @@ vi.mock('../thread-logger', () => H.autoModule('threadLogger', {
   getThreadLogs: H.stub('threadLogger.getThreadLogs', [{ type: 'start', at: '2026-01-01' }]),
 }))
 
+vi.mock('../updater', () => H.autoModule('updater', {
+  // Sentinel on a `: void` callee, so "called and discarded" stays distinguishable from
+  // "called and returned" — `update:check` must return getUpdateState()'s value, not this.
+  checkForUpdates: H.stub('updater.checkForUpdates', 'RET_checkForUpdates'),
+  applyUpdate: H.stub('updater.applyUpdate', true),
+  getUpdateState: H.stub('updater.getUpdateState', { status: 'downloaded', version: '1.2.3' }),
+}))
+
+vi.mock('../webhook/server', () => H.autoModule('webhook', {
+  // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
+  restartWebhookServer: H.stub('webhook.restartWebhookServer', 'RET_restartWebhookServer'),
+}))
+
+vi.mock('../app-logger', () => H.autoModule('appLogger', {
+  getLogsDirPath: H.stub('appLogger.getLogsDirPath', 'C:/tmp/polycode-logs'),
+}))
+
+// `remote:getServerConfig` and `remote:getPairingInfo` are the two channels of the
+// `remote:*` family that reach module-level functions rather than the RemoteControlClient
+// instance — see the fold note in channel-handlers.ts for why the other nine stay put.
+vi.mock('../remote/config', () => H.autoModule('remoteConfig', {
+  readRemoteServerConfig: H.stub('remoteConfig.readRemoteServerConfig', {
+    enabled: false, host: '127.0.0.1', port: 3285, token: 'server-token',
+  }),
+}))
+
+vi.mock('../remote/lan', () => H.autoModule('remoteLan', {
+  getPairingInfo: H.stub('remoteLan.getPairingInfo', {
+    addresses: ['192.168.1.10'], hostname: 'desktop-test',
+  }),
+}))
+
+// `shell:openInVsCode` and `shell:openInTerminal` are *entirely* defined by the process
+// they launch — argv, detachment and the candidate order. `unref()` is recorded too: a
+// spawned terminal that is never unref'd keeps the Electron process alive.
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>()
+  return {
+    ...actual,
+    spawn: H.stub('proc.spawn', () => ({ unref: H.stub('proc.unref') })),
+  }
+})
+
 // The remote-forwarding hop belongs to the ipcMain adapter only. Inactive by default, so
 // the local implementation runs — which is exactly the path we want to compare.
 //
@@ -459,9 +530,16 @@ vi.mock('../remote/client', () => ({
   registerRemoteControlIpcHandlers: () => ({
     // `invokeIfActive` returns handled:true exactly when both of these hold, so the
     // adapter hoists them to decide whether the source file is worth encoding at all.
-    getActiveHost: () => (H.state.remoteProxy ? { id: 'host1' } : null),
+    getActiveHost: () => {
+      // Counted, not logged: logging would add an entry to every pinned IPC sequence in
+      // the file. The count is what the local-only-channels test below asserts.
+      H.state.proxyChecks += 1
+      return H.state.remoteProxy ? { id: 'host1' } : null
+    },
     shouldProxy: () => true,
     invokeIfActive: async (channel: string, args: unknown[]) => {
+      // Counted, not logged: logging would add an entry to every pinned IPC sequence.
+      H.state.proxyInvokes += 1
       if (!H.state.remoteProxy) return { handled: false, value: undefined }
       H.note(`remoteClient.invokeIfActive(["${channel}",${H.renderArgs(args)}])`)
       return H.state.remoteProxy
@@ -482,20 +560,39 @@ vi.mock('electron', () => ({
       ipcListeners.set(channel, listener)
     },
   },
-  app: { getPath: () => 'C:/tmp', getVersion: () => '0.0.0', isPackaged: false },
-  dialog: {},
-  shell: {},
-  clipboard: {},
+  // `dialog`, `shell` and `clipboard` were bare `{}` until the shell:*, dialog:*, app:* and
+  // window:* families were folded — nothing under test reached them. They are recording
+  // stubs now because for those channels the Electron call *is* the behaviour: most return
+  // nothing, so an implementation that called `openPath` where it should have called
+  // `showItemInFolder` would satisfy every assertion about its return value.
+  app: {
+    getPath: () => 'C:/tmp',
+    getVersion: H.stub('app.getVersion', '0.0.0'),
+    isPackaged: false,
+  },
+  dialog: {
+    showOpenDialog: H.stub('dialog.showOpenDialog', () => H.state.dialogResult),
+  },
+  shell: {
+    openPath: H.stub('shell.openPath', 'RET_openPath'),
+    showItemInFolder: H.stub('shell.showItemInFolder', 'RET_showItemInFolder'),
+    openExternal: H.stub('shell.openExternal', 'RET_openExternal'),
+  },
+  clipboard: {
+    writeText: H.stub('clipboard.writeText', 'RET_writeText'),
+  },
   BrowserWindow: class {},
 }))
 
 const window = {
+  // Registration-time only (`window.on('maximize', …)` pushes `window:maximized-changed`
+  // to the renderer); deliberately not recorded, so it stays out of every call log.
   on: () => {},
-  minimize: () => {},
-  maximize: () => {},
-  unmaximize: () => {},
-  close: () => {},
-  isMaximized: () => false,
+  minimize: H.stub('window.minimize'),
+  maximize: H.stub('window.maximize'),
+  unmaximize: H.stub('window.unmaximize'),
+  close: H.stub('window.close'),
+  isMaximized: H.stub('window.isMaximized', () => H.state.isMaximized),
   webContents: {
     isDestroyed: () => false,
     send: H.stub('window.send'),
@@ -552,6 +649,11 @@ beforeEach(() => {
   H.state.killError = null
   H.state.remoteProxy = null
   H.state.fileReads = 0
+  H.state.proxyChecks = 0
+  H.state.proxyInvokes = 0
+  H.state.isMaximized = false
+  H.state.dialogResult = { canceled: false, filePaths: ['C:/picked'] }
+  H.state.execFileFails = false
 })
 
 /**
@@ -2893,6 +2995,30 @@ describe('attachments:* — all three reachability shapes', () => {
   })
 })
 
+describe('the ipcMain adapter only pays for the remote hop where it can pay off', () => {
+  it('a local-only folded channel never consults the remote client', async () => {
+    // `proxyable` calls `invokeIfActive`, which reads the active host from settings — a
+    // SQLite read — before consulting `shouldProxy`. For a `remote: false` channel that
+    // read can only ever lead to "not handled", and pre-fold these were bare
+    // `ipcMain.handle` with no hop at all. `window:is-maximized` fires on every titlebar
+    // interaction, so the difference is not academic.
+    for (const channel of ['window:is-maximized', 'settings:get', 'app:getVersion']) {
+      expect(CHANNEL_REGISTRY[channel as keyof typeof CHANNEL_REGISTRY]).toMatchObject({
+        local: true, remote: false,
+      })
+      H.state.proxyInvokes = 0
+      await viaIpc(channel, channel === 'settings:get' ? ['k'] : [])
+      expect(H.state.proxyInvokes).toBe(0)
+    }
+  })
+
+  it('a dual-path folded channel still takes the hop', async () => {
+    H.state.proxyInvokes = 0
+    await viaIpc('projects:list', [])
+    expect(H.state.proxyInvokes).toBe(1)
+  })
+})
+
 describe('plans:getForThread — remote-only', () => {
   it('has no ipcMain registration and is served over control RPC only', async () => {
     expect(CHANNEL_REGISTRY['plans:getForThread']).toMatchObject({ local: false, remote: true })
@@ -2910,6 +3036,416 @@ describe('plans:getForThread — remote-only', () => {
     // would be dropped by JSON.stringify on the way out to the mobile client.
     H.state.hasSession = false
     expect(await resultViaControlRpc('plans:getForThread', ['t1'])).toBe(null)
+  })
+})
+
+/**
+ * The families that only ever had ONE implementation.
+ *
+ * Every channel below is `{ local: true, remote: false }` and has no `case` in
+ * control-rpc.ts, so there is no second implementation to diff against and the
+ * `viaIpc`/`viaControlRpc` comparison the rest of this file is built on says nothing. What
+ * these pin instead is the triple each one has to keep across the fold:
+ *
+ *  1. the single implementation's call sequence and return value,
+ *  2. that the control-RPC transport still REFUSES the channel — folding must not widen
+ *     reachability, and
+ *  3. that it IS registered on ipcMain — folding must not narrow it either.
+ *
+ * (2) is also asserted en masse further below, over every local-only channel at once. It
+ * is repeated per channel here because these are the ones being moved, and an en-masse
+ * assertion is the one that gets relaxed when it turns red.
+ *
+ * Most of these channels return nothing. Their behaviour is *which* Electron or Node API
+ * they call, with which arguments — hence the recording `shell`/`clipboard`/`dialog` stubs
+ * and the recording `window` double, without which a handler that called `openPath` where
+ * it should have called `showItemInFolder` would pass every assertion.
+ */
+
+/** Refused by the control-RPC dispatcher, and registered on ipcMain. Points (2) and (3). */
+async function expectLocalOnly(channel: string, args: unknown[] = []): Promise<void> {
+  expect(CHANNEL_REGISTRY[channel as keyof typeof CHANNEL_REGISTRY])
+    .toMatchObject({ local: true, remote: false })
+  expect(isRemoteChannel(channel)).toBe(false)
+  expect(ipcHandlers.has(channel)).toBe(true)
+  await expect(handleControlRpc(window, channel, args)).rejects.toThrow(
+    `Unsupported remote control channel: ${channel}`,
+  )
+}
+
+const IS_WIN = process.platform === 'win32'
+
+/**
+ * `commandExists` as the recorder renders it. Windows is the primary platform and takes a
+ * different probe (`where.exe`, resolved through `%SystemRoot%`) from every other, so the
+ * expectation is derived rather than hard-coded — otherwise this file would pin one
+ * platform's branch and silently skip the other's.
+ */
+const probeEntry = (cmd: string): string =>
+  IS_WIN
+    ? `processControl.runExecFile([${JSON.stringify(`${process.env.SystemRoot ?? 'C:\\Windows'}\\System32\\where.exe`)},["${cmd}"]])`
+    : `processControl.runExecFile(["which",["${cmd}"]])`
+
+/** First VS Code launcher tried. On Windows `code.cmd` precedes `code`; elsewhere only `code`. */
+const VSCODE_CANDIDATE = IS_WIN ? 'code.cmd' : 'code'
+
+const spawnEntry = (cmd: string, argv: unknown[], options: unknown): string =>
+  `proc.spawn([${JSON.stringify(cmd)},${JSON.stringify(argv)},${JSON.stringify(options)}])`
+
+describe('shell:* — local-only, and defined entirely by the side effect', () => {
+  it('shell:copyPath writes the path to the clipboard', async () => {
+    await expectLocalOnly('shell:copyPath', ['C:/repo'])
+    expect(await viaIpc('shell:copyPath', ['C:/repo'])).toEqual(['clipboard.writeText(["C:/repo"])'])
+  })
+
+  it('shell:openInExplorer opens the path and does not wait for it', async () => {
+    await expectLocalOnly('shell:openInExplorer', ['C:/repo'])
+    expect(await viaIpc('shell:openInExplorer', ['C:/repo'])).toEqual(['shell.openPath(["C:/repo"])'])
+    // `shell.openPath` resolves to an error string rather than rejecting, and the handler
+    // has never surfaced it: the invoke replies immediately and the promise is floated.
+    // Pinned because "returns the callee's value" is the rule everywhere else in the map.
+    expect(await resultViaIpc('shell:openInExplorer', ['C:/repo'])).toBeUndefined()
+  })
+
+  it('shell:revealInExplorer reveals a local path verbatim', async () => {
+    await expectLocalOnly('shell:revealInExplorer', ['C:/repo/a.ts'])
+    expect(await viaIpc('shell:revealInExplorer', ['C:/repo/a.ts'])).toEqual([
+      'db.getLocationByPath(["C:/repo/a.ts"])',
+      'shell.showItemInFolder(["C:/repo/a.ts"])',
+    ])
+  })
+
+  it('shell:revealInExplorer translates a WSL-native path to a UNC path', async () => {
+    H.state.location = { ...H.state.location, wsl: DISTINCT_WSL }
+    const ipc = await viaIpc('shell:revealInExplorer', ['/home/me/a.ts'])
+    // Explorer cannot open a WSL path, so it goes through the \\wsl$ share.
+    expect(ipc).toContain(`shell.showItemInFolder([${JSON.stringify('\\\\wsl$\\Ubuntu\\home\\me\\a.ts')}])`)
+  })
+
+  it('shell:revealInExplorer maps /mnt/<drive> back to the native Windows path', async () => {
+    H.state.location = { ...H.state.location, wsl: DISTINCT_WSL }
+    // Going through \\wsl$ for a mounted Windows drive would work but is far slower, and
+    // Explorer shows it under a network location rather than the real drive.
+    expect(await viaIpc('shell:revealInExplorer', ['/mnt/c/repo/a.ts'])).toContain(
+      `shell.showItemInFolder([${JSON.stringify('C:\\repo\\a.ts')}])`,
+    )
+    // A bare drive root keeps its trailing separator rather than collapsing to "C:".
+    expect(await viaIpc('shell:revealInExplorer', ['/mnt/d'])).toContain(
+      `shell.showItemInFolder([${JSON.stringify('D:\\')}])`,
+    )
+  })
+
+  it('shell:revealInExplorer leaves an already-Windows path alone even under WSL', async () => {
+    H.state.location = { ...H.state.location, wsl: DISTINCT_WSL }
+    expect(await viaIpc('shell:revealInExplorer', ['C:/repo/a.ts'])).toContain(
+      'shell.showItemInFolder(["C:/repo/a.ts"])',
+    )
+  })
+
+  it('shell:revealInExplorer refuses an SSH-hosted path', async () => {
+    H.state.location = { ...H.state.location, ssh: DISTINCT_SSH }
+    await expect(viaIpc('shell:revealInExplorer', ['/srv/repo/a.ts'])).rejects.toThrow(
+      'Cannot reveal files hosted on a remote SSH location.',
+    )
+  })
+
+  it('shell:openInVsCode launches the first available candidate with a file URI', async () => {
+    await expectLocalOnly('shell:openInVsCode', ['C:/repo'])
+    const folderUri = pathToFileURL('C:/repo').toString()
+    expect(await viaIpc('shell:openInVsCode', ['C:/repo'])).toEqual([
+      probeEntry(VSCODE_CANDIDATE),
+      spawnEntry(VSCODE_CANDIDATE, ['--folder-uri', folderUri], {
+        detached: true, stdio: 'ignore', shell: IS_WIN,
+      }),
+      'proc.unref([])',
+    ])
+  })
+
+  it('shell:openInVsCode builds a vscode-remote URI for WSL and for SSH', async () => {
+    // ssh/wsl arrive as arguments here rather than from getConfigForPath, so no location
+    // fixture is involved — the caller decides which remote authority is addressed.
+    const wsl = await viaIpc('shell:openInVsCode', ['C:/repo', null, DISTINCT_WSL])
+    expect(wsl[1]).toContain('vscode-remote://wsl+Ubuntu/mnt/c/repo')
+
+    const ssh = await viaIpc('shell:openInVsCode', ['/home/me/repo', DISTINCT_SSH, null])
+    expect(ssh[1]).toContain('vscode-remote://ssh-remote+ssh.example.test/home/me/repo')
+
+    // wsl wins when both are supplied — the same precedence the files:* channels use.
+    const both = await viaIpc('shell:openInVsCode', ['C:/repo', DISTINCT_SSH, DISTINCT_WSL])
+    expect(both[1]).toContain('vscode-remote://wsl+Ubuntu')
+  })
+
+  it('shell:openInVsCode falls back to openExternal when no launcher is on PATH', async () => {
+    // `commandExists` is a probe, not a guess: with `code` absent the folder URI is handed
+    // to the OS, which is what makes the channel work on a machine that has only the
+    // VS Code protocol handler registered.
+    H.state.execFileFails = true
+    const ipc = await viaIpc('shell:openInVsCode', ['C:/repo'])
+    expect(ipc.filter((entry) => entry.startsWith('proc.spawn'))).toEqual([])
+    expect(ipc.at(-1)).toBe(
+      `shell.openExternal([${JSON.stringify(pathToFileURL('C:/repo').toString())}])`,
+    )
+    // Every candidate is probed before giving up — on Windows that is code.cmd then code.
+    expect(ipc.filter((entry) => entry.startsWith('processControl.runExecFile'))).toHaveLength(
+      IS_WIN ? 2 : 1,
+    )
+  })
+
+  it('shell:openInTerminal opens a WSL terminal in the distro, cd-ed to the WSL path', async () => {
+    await expectLocalOnly('shell:openInTerminal', ['C:/repo'])
+    // Platform-independent: this branch is chosen by the wsl argument, not by the host OS.
+    expect(await viaIpc('shell:openInTerminal', ['C:/repo', DISTINCT_WSL])).toEqual([
+      spawnEntry('wsl.exe', ['-d', 'Ubuntu', '--cd', '/mnt/c/repo'], {
+        detached: true, stdio: 'ignore',
+      }),
+      'proc.unref([])',
+    ])
+    // An already-WSL path is passed through rather than mangled by windowsPathToWsl.
+    expect(await viaIpc('shell:openInTerminal', ['/home/me/repo', DISTINCT_WSL])).toContain(
+      spawnEntry('wsl.exe', ['-d', 'Ubuntu', '--cd', '/home/me/repo'], {
+        detached: true, stdio: 'ignore',
+      }),
+    )
+  })
+
+  it('shell:openInTerminal picks the host platform’s terminal when no distro is given', async () => {
+    const expected = IS_WIN
+      ? spawnEntry('start', ['powershell.exe', '-NoExit', '-Command', "Set-Location 'C:/repo'"], {
+        cwd: 'C:/repo', detached: true, stdio: 'ignore', shell: true,
+      })
+      : process.platform === 'darwin'
+        ? spawnEntry('open', ['-a', 'Terminal', 'C:/repo'], { detached: true, stdio: 'ignore' })
+        // Linux tries gnome-terminal, konsole, xterm in that order and stops at the first
+        // that spawns; the stub never throws, so only the first is reached.
+        : spawnEntry('gnome-terminal', [], { cwd: 'C:/repo', detached: true, stdio: 'ignore' })
+
+    expect(await viaIpc('shell:openInTerminal', ['C:/repo'])).toEqual([expected, 'proc.unref([])'])
+  })
+
+  it.runIf(IS_WIN)('shell:openInTerminal doubles single quotes for the PowerShell literal', async () => {
+    // `Set-Location '…'` is a PowerShell single-quoted string, where the escape for a quote
+    // is doubling it. Without this a directory named `it's` breaks the command.
+    expect(await viaIpc('shell:openInTerminal', ["C:/it's/repo"])).toContain(
+      spawnEntry('start', ['powershell.exe', '-NoExit', '-Command', "Set-Location 'C:/it''s/repo'"], {
+        cwd: "C:/it's/repo", detached: true, stdio: 'ignore', shell: true,
+      }),
+    )
+  })
+})
+
+describe('window:* — local-only, driven straight off the BrowserWindow', () => {
+  it('window:minimize and window:close forward to the window', async () => {
+    await expectLocalOnly('window:minimize')
+    expect(await viaIpc('window:minimize', [])).toEqual(['window.minimize([])'])
+
+    await expectLocalOnly('window:close')
+    expect(await viaIpc('window:close', [])).toEqual(['window.close([])'])
+  })
+
+  it('window:maximize toggles, so it reads the state before acting', async () => {
+    await expectLocalOnly('window:maximize')
+
+    H.state.isMaximized = false
+    expect(await viaIpc('window:maximize', [])).toEqual([
+      'window.isMaximized([])', 'window.maximize([])',
+    ])
+
+    H.state.isMaximized = true
+    expect(await viaIpc('window:maximize', [])).toEqual([
+      'window.isMaximized([])', 'window.unmaximize([])',
+    ])
+  })
+
+  it('window:is-maximized reports the window state', async () => {
+    await expectLocalOnly('window:is-maximized')
+    expect(await resultViaIpc('window:is-maximized', [])).toBe(false)
+    H.state.isMaximized = true
+    expect(await resultViaIpc('window:is-maximized', [])).toBe(true)
+  })
+})
+
+describe('app:* and update:* — local-only', () => {
+  it('app:getVersion reports "Local Dev" for an unpackaged non-production run', async () => {
+    await expectLocalOnly('app:getVersion')
+    // getVersion() is read unconditionally, before the isDev branch — so the version is
+    // computed even on the path that throws it away.
+    expect(await viaIpc('app:getVersion', [])).toEqual(['app.getVersion([])'])
+    expect(await resultViaIpc('app:getVersion', [])).toBe('Local Dev')
+  })
+
+  it('app:getVersion prefixes the real version once NODE_ENV is production', async () => {
+    const previous = process.env.NODE_ENV
+    process.env.NODE_ENV = 'production'
+    try {
+      expect(await resultViaIpc('app:getVersion', [])).toBe('v0.0.0')
+    } finally {
+      process.env.NODE_ENV = previous
+    }
+  })
+
+  it('app:open-logs-folder resolves the directory then opens it', async () => {
+    await expectLocalOnly('app:open-logs-folder')
+    expect(await viaIpc('app:open-logs-folder', [])).toEqual([
+      'appLogger.getLogsDirPath([])',
+      'shell.openPath(["C:/tmp/polycode-logs"])',
+    ])
+    // Unlike shell:openInExplorer, this one returns openPath's promise — the renderer shows
+    // the error string it resolves to.
+    expect(await resultViaIpc('app:open-logs-folder', [])).toBe('RET_openPath')
+  })
+
+  it('update:check kicks off a check and answers with the state, not the check', async () => {
+    await expectLocalOnly('update:check')
+    expect(await viaIpc('update:check', [])).toEqual([
+      'updater.checkForUpdates([])',
+      'updater.getUpdateState([])',
+    ])
+    // checkForUpdates is fire-and-forget; the reply is the state as it stands right now.
+    expect(await resultViaIpc('update:check', [])).toEqual({ status: 'downloaded', version: '1.2.3' })
+  })
+
+  it('update:apply wraps the boolean in { success }', async () => {
+    await expectLocalOnly('update:apply')
+    expect(await viaIpc('update:apply', [])).toEqual(['updater.applyUpdate([])'])
+    expect(await resultViaIpc('update:apply', [])).toEqual({ success: true })
+  })
+
+  it('update:get-state reads the state without triggering a check', async () => {
+    await expectLocalOnly('update:get-state')
+    expect(await viaIpc('update:get-state', [])).toEqual(['updater.getUpdateState([])'])
+  })
+})
+
+describe('dialog:* — local-only, and the two cancelled shapes differ', () => {
+  it('dialog:open-directory returns the single picked path', async () => {
+    await expectLocalOnly('dialog:open-directory')
+    expect(await viaIpc('dialog:open-directory', [])).toEqual([
+      `dialog.showOpenDialog([${JSON.stringify(window)},{"properties":["openDirectory"]}])`,
+    ])
+    expect(await resultViaIpc('dialog:open-directory', [])).toBe('C:/picked')
+  })
+
+  it('dialog:open-directory answers null when cancelled or empty', async () => {
+    H.state.dialogResult = { canceled: true, filePaths: [] }
+    expect(await resultViaIpc('dialog:open-directory', [])).toBe(null)
+    // `?? null` on filePaths[0] as well: a non-cancelled dialog with no selection would
+    // otherwise resolve to undefined, which JSON.stringify drops on the way to the renderer.
+    H.state.dialogResult = { canceled: false, filePaths: [] }
+    expect(await resultViaIpc('dialog:open-directory', [])).toBe(null)
+  })
+
+  it('dialog:open-files offers the attachment filters and returns every path', async () => {
+    await expectLocalOnly('dialog:open-files')
+    H.state.dialogResult = { canceled: false, filePaths: ['C:/a.png', 'C:/b.pdf'] }
+    expect(await viaIpc('dialog:open-files', [])).toEqual([
+      `dialog.showOpenDialog([${JSON.stringify(window)},${JSON.stringify({
+        properties: ['openFile', 'multiSelections'],
+        filters: [
+          { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
+          { name: 'PDF', extensions: ['pdf'] },
+          { name: 'All Files', extensions: ['*'] },
+        ],
+      })}])`,
+    ])
+    expect(await resultViaIpc('dialog:open-files', [])).toEqual(['C:/a.png', 'C:/b.pdf'])
+  })
+
+  it('dialog:open-files answers an empty array when cancelled — not null', async () => {
+    H.state.dialogResult = { canceled: true, filePaths: [] }
+    expect(await resultViaIpc('dialog:open-files', [])).toEqual([])
+  })
+})
+
+describe('settings:* and webhook:* — local-only', () => {
+  it('settings:get and settings:set pass the key straight through', async () => {
+    await expectLocalOnly('settings:get', ['k'])
+    expect(await viaIpc('settings:get', ['theme'])).toEqual(['db.getSetting(["theme"])'])
+
+    await expectLocalOnly('settings:set', ['k', 'v'])
+    expect(await viaIpc('settings:set', ['theme', 'dark'])).toEqual([
+      'db.setSetting(["theme","dark"])',
+    ])
+  })
+
+  it('webhook:getConfig reads three rows and coerces each', async () => {
+    await expectLocalOnly('webhook:getConfig')
+    expect(await viaIpc('webhook:getConfig', [])).toEqual([
+      'db.getSetting(["webhook:enabled"])',
+      'db.getSetting(["webhook:port"])',
+      'db.getSetting(["webhook:token"])',
+    ])
+    // The stubbed getSetting answers undefined for every key, which is the never-configured
+    // state: disabled, the default port, and an empty token rather than undefined.
+    expect(await resultViaIpc('webhook:getConfig', [])).toEqual({
+      enabled: false, port: 3284, token: '',
+    })
+  })
+
+  it('webhook:setConfig persists all three rows BEFORE restarting the server', async () => {
+    await expectLocalOnly('webhook:setConfig', [{ enabled: false, port: 1, token: '' }])
+    const config = { enabled: true, port: 9999, token: 'tok' }
+    expect(await viaIpc('webhook:setConfig', [config])).toEqual([
+      'db.setSetting(["webhook:enabled","true"])',
+      'db.setSetting(["webhook:port","9999"])',
+      'db.setSetting(["webhook:token","tok"])',
+      // The restart is handed the incoming config, not a re-read of what was just written,
+      // and it comes last — a restart before the write would rebind the old port.
+      `webhook.restartWebhookServer([${JSON.stringify(config)},${JSON.stringify(window)}])`,
+    ])
+  })
+
+  it('webhook:setConfig writes "false" rather than omitting the disabled flag', async () => {
+    expect(await viaIpc('webhook:setConfig', [{ enabled: false, port: 3284, token: '' }])).toContain(
+      'db.setSetting(["webhook:enabled","false"])',
+    )
+  })
+})
+
+/**
+ * The two `remote:*` channels that left `remote/client.ts`.
+ *
+ * Unlike every other test in this file these could not be run before the fold: this file
+ * replaces `../remote/client` wholesale — the mock is what keeps the remote-forwarding hop
+ * inert for all the other tests — so the pre-fold `ipcMain.handle('remote:getServerConfig',
+ * …)` registrations inside `registerRemoteControlIpcHandlers` never existed here to
+ * characterise. Both pre-fold bodies were a single `return <fn>()` with no arguments and no
+ * surrounding logic, which is exactly what is asserted below.
+ */
+describe('remote:getServerConfig and remote:getPairingInfo — folded out of remote/client.ts', () => {
+  it('remote:getServerConfig reads the stored server config', async () => {
+    await expectLocalOnly('remote:getServerConfig')
+    expect(await viaIpc('remote:getServerConfig', [])).toEqual([
+      'remoteConfig.readRemoteServerConfig([])',
+    ])
+    // The token is served in full — the Remote Control settings panel renders it, and the
+    // QR pairing code embeds it.
+    expect(await resultViaIpc('remote:getServerConfig', [])).toEqual({
+      enabled: false, host: '127.0.0.1', port: 3285, token: 'server-token',
+    })
+  })
+
+  it('remote:getPairingInfo reports this machine’s LAN addresses', async () => {
+    await expectLocalOnly('remote:getPairingInfo')
+    expect(await viaIpc('remote:getPairingInfo', [])).toEqual(['remoteLan.getPairingInfo([])'])
+    expect(await resultViaIpc('remote:getPairingInfo', [])).toEqual({
+      addresses: ['192.168.1.10'], hostname: 'desktop-test',
+    })
+  })
+
+  it('the nine client-instance remote:* channels are NOT registered by the folded loop', async () => {
+    // They keep their registrations in remote/client.ts, which this file mocks away — so
+    // here they are absent entirely. The real invariant (exactly one registration, and not
+    // in the map) is asserted by source scan in channel-handler-migration.test.ts.
+    for (const channel of [
+      'remote:setServerConfig', 'remote:regenerateServerToken', 'remote:getHosts',
+      'remote:addHost', 'remote:updateHost', 'remote:removeHost', 'remote:setActiveHost',
+      'remote:getActiveHost', 'remote:testHost',
+    ]) {
+      expect(ipcHandlers.has(channel)).toBe(false)
+      await expect(handleControlRpc(window, channel, [])).rejects.toThrow(
+        `Unsupported remote control channel: ${channel}`,
+      )
+    }
   })
 })
 

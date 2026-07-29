@@ -66,7 +66,56 @@ describe('channel handler map migration', () => {
     // Folding a local-only channel is fine — control-rpc.ts's `isRemoteChannel` guard keeps
     // it off the network — but it must be a deliberate act, so record which ones are in
     // that state.
-    expect(localOnlyButFolded).toEqual(['attachments:getFileInfo', 'attachments:saveFromPath'])
+    expect(localOnlyButFolded).toEqual([
+      'attachments:getFileInfo',
+      'attachments:saveFromPath',
+      'shell:copyPath',
+      'shell:openInExplorer',
+      'shell:openInVsCode',
+      'shell:revealInExplorer',
+      'shell:openInTerminal',
+      'window:minimize',
+      'window:maximize',
+      'window:close',
+      'window:is-maximized',
+      'app:getVersion',
+      'app:open-logs-folder',
+      'update:check',
+      'update:apply',
+      'update:get-state',
+      'dialog:open-directory',
+      'dialog:open-files',
+      'settings:get',
+      'settings:set',
+      'webhook:getConfig',
+      'webhook:setConfig',
+      'remote:getServerConfig',
+      'remote:getPairingInfo',
+    ])
+  })
+
+  test('the nine unfolded remote:* channels still have exactly one registration', () => {
+    // `remote/client.ts` is a fifth registration site, and these nine stay there: each is a
+    // method on the RemoteControlClient instance that `registerRemoteControlIpcHandlers`
+    // constructs and closes over. Folding them would need either the module's `activeClient`
+    // global or an import of remote/client.ts from the map — and remote/client.ts imports
+    // control/control-rpc.ts, which imports the map. Recorded so the exception stays visible.
+    const clientSource = readFileSync(join(mainDir, 'remote', 'client.ts'), 'utf8')
+    const registeredThere = [...clientSource.matchAll(/\bipcMain\.handle\(\s*'([^']+)'/g)]
+      .map((match) => match[1])
+    expect(registeredThere).toEqual([
+      'remote:setServerConfig',
+      'remote:regenerateServerToken',
+      'remote:getHosts',
+      'remote:addHost',
+      'remote:updateHost',
+      'remote:removeHost',
+      'remote:setActiveHost',
+      'remote:getActiveHost',
+      'remote:testHost',
+    ])
+    // …and none of them is also in the map, which would be a double registration.
+    expect(registeredThere.filter((channel) => migratedChannels.includes(channel))).toEqual([])
   })
 
   test('no remote-only channel is reachable through the folded path', () => {

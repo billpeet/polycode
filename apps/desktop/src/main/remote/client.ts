@@ -3,7 +3,6 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { getSetting, setSetting } from '../db/queries'
 import { CONTROL_RPC_CHANNELS } from '../control/control-rpc'
 import { readRemoteServerConfig, saveRemoteServerConfig } from './config'
-import { getPairingInfo } from './lan'
 import { restartRemoteControlServer } from './server'
 import { emitAppEvent } from '../app-events'
 import {
@@ -331,9 +330,11 @@ export function registerRemoteControlIpcHandlers(window: BrowserWindow): RemoteC
   const client = new RemoteControlClient(window)
   activeClient = client
 
-  ipcMain.handle('remote:getServerConfig', () => {
-    return readRemoteServerConfig()
-  })
+  // `remote:getServerConfig` and `remote:getPairingInfo` used to be registered here too.
+  // They are the only two of the eleven that call module-level functions rather than a
+  // method on `client`, so they moved into the typed handler map in
+  // `ipc/channel-handlers.ts` and are registered by the MIGRATED_CHANNELS loop instead.
+  // The other nine stay because they close over this instance — see the fold note there.
 
   ipcMain.handle('remote:setServerConfig', (_event, config: RemoteServerConfig) => {
     const saved = saveRemoteServerConfig(config)
@@ -349,10 +350,6 @@ export function registerRemoteControlIpcHandlers(window: BrowserWindow): RemoteC
     })
     restartRemoteControlServer(saved, window)
     return saved
-  })
-
-  ipcMain.handle('remote:getPairingInfo', () => {
-    return getPairingInfo()
   })
 
   ipcMain.handle('remote:getHosts', () => {

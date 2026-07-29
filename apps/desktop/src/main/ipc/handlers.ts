@@ -1,93 +1,18 @@
-import { spawn } from 'child_process'
 import { basename } from 'path'
-import { pathToFileURL } from 'url'
-import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
-import { isLocalChannel } from '@polycode/shared'
-import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
-import { getSetting, setSetting } from '../db/queries'
-import { SshConfig, WslConfig } from '../../shared/types'
+import { ipcMain, BrowserWindow } from 'electron'
+import { isLocalChannel, isRemoteChannel } from '@polycode/shared'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
 import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
-import { restartWebhookServer, WebhookConfig } from '../webhook/server'
-import { getLogsDirPath } from '../app-logger'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
-import { runExecFile } from '../process-control'
 import { MIGRATED_CHANNELS, filePathToDataUrl, invokeChannelHandler } from './channel-handlers'
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
   invalidateRepoGitCache,
-  windowsPathToWsl,
 } from './thread-context'
-
-async function commandExists(cmd: string): Promise<boolean> {
-  try {
-    if (process.platform === 'win32') {
-      const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-      const whereExe = `${sysRoot}\\System32\\where.exe`
-      await runExecFile(whereExe, [cmd])
-      return true
-    }
-    await runExecFile('which', [cmd])
-    return true
-  } catch {
-    return false
-  }
-}
-
-function encodeUriPath(path: string): string {
-  return path
-    .split('/')
-    .map((segment, index) => (index === 0 && segment === '' ? '' : encodeURIComponent(segment)))
-    .join('/')
-}
-
-function getVsCodeFolderUri(dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): string {
-  if (wsl) {
-    const wslPath = /^[A-Za-z]:[/\\]/.test(dirPath) ? windowsPathToWsl(dirPath) : dirPath
-    return `vscode-remote://wsl+${encodeURIComponent(wsl.distro)}${encodeUriPath(wslPath)}`
-  }
-  if (ssh) {
-    const remotePath = dirPath.replace(/\\/g, '/')
-    return `vscode-remote://ssh-remote+${encodeURIComponent(ssh.host)}${encodeUriPath(remotePath.startsWith('/') ? remotePath : `/${remotePath}`)}`
-  }
-  return pathToFileURL(dirPath).toString()
-}
-
-async function openFolderInVsCode(dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
-  const folderUri = getVsCodeFolderUri(dirPath, ssh, wsl)
-  const candidates = process.platform === 'win32' ? ['code.cmd', 'code'] : ['code']
-
-  for (const candidate of candidates) {
-    if (!(await commandExists(candidate))) continue
-    spawn(candidate, ['--folder-uri', folderUri], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref()
-    return
-  }
-
-  await shell.openExternal(folderUri)
-}
-
-/**
- * Convert a WSL-native path to a Windows UNC path so Explorer can open it.
- * e.g. /home/foo/bar in distro "Ubuntu"  →  \\wsl$\Ubuntu\home\foo\bar
- *
- * Handles /mnt/c-style paths specially: /mnt/c/Users/foo → C:\Users\foo
- * so we use the real Windows path rather than going through the WSL filesystem.
- */
-function wslPathToUnc(wslPath: string, distro: string): string {
-  // /mnt/<drive>/... is a mounted Windows drive — convert back to a native Windows path.
-  const mntMatch = wslPath.match(/^\/mnt\/([A-Za-z])(\/.*)?$/)
-  if (mntMatch) {
-    const drive = mntMatch[1].toUpperCase()
-    const rest = (mntMatch[2] ?? '').replace(/\//g, '\\')
-    return `${drive}:${rest || '\\'}`
-  }
-  const rel = wslPath.replace(/\//g, '\\').replace(/^\\+/, '')
-  return `\\\\wsl$\\${distro}\\${rel}`
-}
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   commandManager.init(window)
@@ -150,17 +75,18 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       continue
     }
 
-    proxyable(channel, invokeLocally)
+    // The forwarding hop is only meaningful for a channel a remote host could serve.
+    // `proxyable` calls `invokeIfActive`, which reads the active host out of settings
+    // (a SQLite read) *before* consulting `shouldProxy` — and `shouldProxy` is
+    // `isRemoteChannel` underneath, so for a local-only channel that read can only ever
+    // lead to "not handled". Pre-fold these were bare `ipcMain.handle` with no hop at all;
+    // `window:is-maximized` fires on every titlebar interaction, so it is not free.
+    if (isRemoteChannel(channel)) {
+      proxyable(channel, invokeLocally)
+    } else {
+      ipcMain.handle(channel, (_event, ...args: unknown[]) => invokeLocally(...args))
+    }
   }
-
-  // ── Dialog ────────────────────────────────────────────────────────────────
-
-  ipcMain.handle('dialog:open-directory', async () => {
-    const result = await dialog.showOpenDialog(window, {
-      properties: ['openDirectory']
-    })
-    return result.canceled ? null : result.filePaths[0] ?? null
-  })
 
   // ── Git ───────────────────────────────────────────────────────────────────
 
@@ -465,115 +391,14 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
-  ipcMain.handle('dialog:open-files', async () => {
-    const result = await dialog.showOpenDialog(window, {
-      properties: ['openFile', 'multiSelections'],
-      filters: [
-        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
-        { name: 'PDF', extensions: ['pdf'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    })
-    return result.canceled ? [] : result.filePaths
-  })
-
-  // ── Settings ───────────────────────────────────────────────────────────────
-
-  ipcMain.handle('settings:get', (_event, key: string) => {
-    return getSetting(key)
-  })
-
-  ipcMain.handle('settings:set', (_event, key: string, value: string) => {
-    setSetting(key, value)
-  })
-
-  // ── Shell helpers ──────────────────────────────────────────────────────────
-
-  ipcMain.handle('shell:copyPath', (_event, dirPath: string) => {
-    clipboard.writeText(dirPath)
-  })
-
-  ipcMain.handle('shell:openInExplorer', (_event, dirPath: string) => {
-    shell.openPath(dirPath)
-  })
-
-  ipcMain.handle('shell:openInVsCode', async (_event, dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null) => {
-    await openFolderInVsCode(dirPath, ssh, wsl)
-  })
-
-  // Reveal a specific file in the native file manager (Explorer / Finder), highlighting it.
-  // For WSL-native paths, translates to a \\wsl$\<distro>\… UNC path so Explorer can open it.
-  // Throws for SSH-hosted paths (cannot reveal a remote file locally).
-  ipcMain.handle('shell:revealInExplorer', (_event, filePath: string) => {
-    const { ssh, wsl } = getConfigForPath(filePath)
-    if (ssh) {
-      throw new Error('Cannot reveal files hosted on a remote SSH location.')
-    }
-    let revealPath = filePath
-    if (wsl && !/^[A-Za-z]:[/\\]/.test(filePath)) {
-      revealPath = wslPathToUnc(filePath, wsl.distro)
-    }
-    shell.showItemInFolder(revealPath)
-  })
-
-  ipcMain.handle('shell:openInTerminal', (_event, dirPath: string, wsl?: WslConfig | null) => {
-    if (wsl) {
-      // Launch a WSL terminal in the given distro, cd-ing to the WSL path
-      const wslPath = /^[A-Za-z]:[/\\]/.test(dirPath) ? windowsPathToWsl(dirPath) : dirPath
-      spawn('wsl.exe', ['-d', wsl.distro, '--cd', wslPath], { detached: true, stdio: 'ignore' }).unref()
-    } else if (process.platform === 'win32') {
-      spawn('start', ['powershell.exe', '-NoExit', '-Command', `Set-Location '${dirPath.replace(/'/g, "''")}'`], { cwd: dirPath, detached: true, stdio: 'ignore', shell: true }).unref()
-    } else if (process.platform === 'darwin') {
-      spawn('open', ['-a', 'Terminal', dirPath], { detached: true, stdio: 'ignore' }).unref()
-    } else {
-      const terms = ['gnome-terminal', 'konsole', 'xterm']
-      for (const term of terms) {
-        try {
-          spawn(term, [], { cwd: dirPath, detached: true, stdio: 'ignore' }).unref()
-          break
-        } catch { /* try next */ }
-      }
-    }
-  })
-
-  // ── Window Controls ────────────────────────────────────────────────────────
-
-  ipcMain.handle('window:minimize',     () => window.minimize())
-  ipcMain.handle('window:maximize',     () => window.isMaximized() ? window.unmaximize() : window.maximize())
-  ipcMain.handle('window:close',        () => window.close())
-  ipcMain.handle('window:is-maximized', () => window.isMaximized())
+  // ── Window state push ──────────────────────────────────────────────────────
+  //
+  // Not a channel: `window:maximized-changed` is pushed to the renderer with
+  // `window.api.on`, which CHANNEL_REGISTRY does not inventory. The four `window:*`
+  // request/response channels this pairs with are folded.
 
   window.on('maximize',   () => window.webContents.send('window:maximized-changed', true))
   window.on('unmaximize', () => window.webContents.send('window:maximized-changed', false))
-
-  // ── App info ──────────────────────────────────────────────────────────────
-
-  ipcMain.handle('app:getVersion', () => {
-    const version = app.getVersion()
-    const packaged = app.isPackaged
-    const isDev = !packaged && process.env.NODE_ENV !== 'production'
-    if (isDev) return 'Local Dev'
-    return `v${version}`
-  })
-
-  ipcMain.handle('app:open-logs-folder', () => {
-    return shell.openPath(getLogsDirPath())
-  })
-
-  // ── Auto-updater ───────────────────────────────────────────────────────────
-
-  ipcMain.handle('update:check', () => {
-    checkForUpdates()
-    return getUpdateState()
-  })
-
-  ipcMain.handle('update:apply', () => {
-    return { success: applyUpdate() }
-  })
-
-  ipcMain.handle('update:get-state', () => {
-    return getUpdateState()
-  })
 
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────
   //
@@ -592,22 +417,5 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     void remoteClient.invokeIfActive('terminal:resize', [terminalId, cols, rows]).then((proxied) => {
       if (!proxied.handled) ptyManager.resize(terminalId, cols, rows)
     })
-  })
-
-  // ── Webhook ─────────────────────────────────────────────────────────────────
-
-  ipcMain.handle('webhook:getConfig', () => {
-    return {
-      enabled: getSetting('webhook:enabled') === 'true',
-      port: parseInt(getSetting('webhook:port') ?? '3284', 10),
-      token: getSetting('webhook:token') ?? '',
-    } satisfies WebhookConfig
-  })
-
-  ipcMain.handle('webhook:setConfig', (_event, config: WebhookConfig) => {
-    setSetting('webhook:enabled', config.enabled ? 'true' : 'false')
-    setSetting('webhook:port', String(config.port))
-    setSetting('webhook:token', config.token)
-    restartWebhookServer(config, window)
   })
 }

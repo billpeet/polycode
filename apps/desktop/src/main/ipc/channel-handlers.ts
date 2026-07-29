@@ -42,8 +42,18 @@
  * `channel-handler-migration.test.ts` enforces the other half: a channel handled here
  * must have no legacy registration left, so a third dispatch site cannot exist.
  */
+// Fire-and-forget GUI launching (VS Code, Explorer, Terminal) — the exception the
+// no-restricted-imports rule documents. It is genuinely not "run a command and collect
+// output": there is no output to collect and nothing to wait for, so the Runner seam has
+// nothing to offer. This exemption used to sit in eslint.config.mjs against
+// `ipc/handlers.ts`, which is where `shell:openInTerminal` and `shell:openInVsCode` lived
+// before they were folded into the map below; that entry is now stale.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { spawn } from 'child_process'
 import { existsSync, readFileSync } from 'fs'
 import { basename, join } from 'path'
+import { pathToFileURL } from 'url'
+import { app, clipboard, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
 import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
 import type { SshConfig, WslConfig } from '../../shared/types'
@@ -70,6 +80,7 @@ import {
   getImportedSessionIds,
   getLastUsedProviderAndModel,
   getLocationForThread,
+  getSetting,
   getThreadModifiedFiles,
   importThread,
   listArchivedProjects,
@@ -85,6 +96,7 @@ import {
   listThreads,
   listYouTrackServers,
   returnLocationToPool,
+  setSetting,
   setThreadGitBranchIfUnset,
   threadExists,
   threadHasMessages,
@@ -123,7 +135,13 @@ import {
 import { checkCliHealth, invalidateCliHealthCache, updateCli } from '../health/checker'
 import { listDetectedSkills } from '../skills'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
-import { killByPid, killByPort } from '../process-control'
+import { killByPid, killByPort, runExecFile } from '../process-control'
+import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
+import { getLogsDirPath } from '../app-logger'
+import { restartWebhookServer } from '../webhook/server'
+import type { WebhookConfig } from '../webhook/server'
+import { readRemoteServerConfig } from '../remote/config'
+import { getPairingInfo } from '../remote/lan'
 import {
   cloneLocation,
   createFullProject,
@@ -155,6 +173,7 @@ import {
   getWorkingDirForThread,
   getWslConfigForThread,
   invalidateRepoGitCache,
+  windowsPathToWsl,
 } from './thread-context'
 
 /**
@@ -206,6 +225,82 @@ export function filePathToDataUrl(filePath: string): string {
   }
   const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
   return `data:${mimeTypes[ext] || 'application/octet-stream'};base64,${readFileSync(filePath).toString('base64')}`
+}
+
+/**
+ * The four VS Code helpers and the UNC translator below moved here verbatim from
+ * `ipc/handlers.ts`, where they were private to the module.
+ *
+ * They have exactly one caller each, all of them in the map — `shell:openInVsCode` and
+ * `shell:revealInExplorer`. `handlers.ts` cannot export them, because it already imports
+ * this module and the dependency would become a cycle; a new module would give
+ * single-consumer logic a third home. So they live beside their callers.
+ */
+
+async function commandExists(cmd: string): Promise<boolean> {
+  try {
+    if (process.platform === 'win32') {
+      const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+      const whereExe = `${sysRoot}\\System32\\where.exe`
+      await runExecFile(whereExe, [cmd])
+      return true
+    }
+    await runExecFile('which', [cmd])
+    return true
+  } catch {
+    return false
+  }
+}
+
+function encodeUriPath(path: string): string {
+  return path
+    .split('/')
+    .map((segment, index) => (index === 0 && segment === '' ? '' : encodeURIComponent(segment)))
+    .join('/')
+}
+
+function getVsCodeFolderUri(dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): string {
+  if (wsl) {
+    const wslPath = /^[A-Za-z]:[/\\]/.test(dirPath) ? windowsPathToWsl(dirPath) : dirPath
+    return `vscode-remote://wsl+${encodeURIComponent(wsl.distro)}${encodeUriPath(wslPath)}`
+  }
+  if (ssh) {
+    const remotePath = dirPath.replace(/\\/g, '/')
+    return `vscode-remote://ssh-remote+${encodeURIComponent(ssh.host)}${encodeUriPath(remotePath.startsWith('/') ? remotePath : `/${remotePath}`)}`
+  }
+  return pathToFileURL(dirPath).toString()
+}
+
+async function openFolderInVsCode(dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  const folderUri = getVsCodeFolderUri(dirPath, ssh, wsl)
+  const candidates = process.platform === 'win32' ? ['code.cmd', 'code'] : ['code']
+
+  for (const candidate of candidates) {
+    if (!(await commandExists(candidate))) continue
+    spawn(candidate, ['--folder-uri', folderUri], { detached: true, stdio: 'ignore', shell: process.platform === 'win32' }).unref()
+    return
+  }
+
+  await shell.openExternal(folderUri)
+}
+
+/**
+ * Convert a WSL-native path to a Windows UNC path so Explorer can open it.
+ * e.g. /home/foo/bar in distro "Ubuntu"  →  \\wsl$\Ubuntu\home\foo\bar
+ *
+ * Handles /mnt/c-style paths specially: /mnt/c/Users/foo → C:\Users\foo
+ * so we use the real Windows path rather than going through the WSL filesystem.
+ */
+function wslPathToUnc(wslPath: string, distro: string): string {
+  // /mnt/<drive>/... is a mounted Windows drive — convert back to a native Windows path.
+  const mntMatch = wslPath.match(/^\/mnt\/([A-Za-z])(\/.*)?$/)
+  if (mntMatch) {
+    const drive = mntMatch[1].toUpperCase()
+    const rest = (mntMatch[2] ?? '').replace(/\//g, '\\')
+    return `${drive}:${rest || '\\'}`
+  }
+  const rel = wslPath.replace(/\//g, '\\').replace(/^\\+/, '')
+  return `\\\\wsl$\\${distro}\\${rel}`
 }
 
 /**
@@ -1023,6 +1118,201 @@ export const channelHandlers = {
   // result is `T | null` and JSON.stringify would drop an `undefined` on the way out.
   'plans:getForThread': (_ctx, threadId) =>
     sessionManager.get(threadId)?.getAssociatedPlan() ?? null,
+
+  // ── Desktop shell integration ─────────────────────────────────────────────
+  //
+  // Everything from here down is `{ local: true, remote: false }`, and — unlike every
+  // family above — none of it ever had a `case` in control-rpc.ts. There was one
+  // implementation, so nothing here resolves a difference between two; the fold is a pure
+  // move, and what the characterisation tests pin is that the channel stays registered on
+  // ipcMain and stays refused by `handleControlRpc`.
+  //
+  // The reason the whole group is local-only is the same one each time: a clipboard, an
+  // Explorer window, a native file dialog or a terminal belongs to the machine the user is
+  // sitting at, and forwarding it to a phone would open it on the wrong desk.
+
+  'shell:copyPath': (_ctx, dirPath) => clipboard.writeText(dirPath),
+
+  // The one place in the map that deliberately drops its callee's result. `shell.openPath`
+  // returns a promise of an *error string* (it resolves rather than rejects), and the
+  // pre-fold handler floated it: the invoke replied immediately. Returning it would make
+  // every reveal wait for Explorer to come up, and `Promise<string>` is not the contract's
+  // `void` anyway. Contrast `app:open-logs-folder` below, which does return it.
+  'shell:openInExplorer': (_ctx, dirPath) => { shell.openPath(dirPath) },
+
+  // `ssh`/`wsl` arrive as arguments here rather than from getConfigForPath — the caller
+  // decides which remote authority the vscode-remote URI addresses. Both are passed through
+  // raw: getVsCodeFolderUri tests each for truthiness in its own body, so `undefined` and
+  // `null` are already equivalent there.
+  'shell:openInVsCode': (_ctx, dirPath, ssh, wsl) => openFolderInVsCode(dirPath, ssh, wsl),
+
+  // Reveal a specific file in the native file manager (Explorer / Finder), highlighting it.
+  // For WSL-native paths, translates to a \\wsl$\<distro>\… UNC path so Explorer can open it.
+  // Throws for SSH-hosted paths (cannot reveal a remote file locally).
+  'shell:revealInExplorer': (_ctx, filePath) => {
+    const { ssh, wsl } = getConfigForPath(filePath)
+    if (ssh) {
+      throw new Error('Cannot reveal files hosted on a remote SSH location.')
+    }
+    let revealPath = filePath
+    if (wsl && !/^[A-Za-z]:[/\\]/.test(filePath)) {
+      revealPath = wslPathToUnc(filePath, wsl.distro)
+    }
+    return shell.showItemInFolder(revealPath)
+  },
+
+  // The candidate list is the behaviour: `wsl` (whatever the host OS is) beats the host
+  // platform's own terminal, and on Linux the three candidates are tried in order until one
+  // spawns. `wsl` is passed through raw — the branch is a truthiness test in this body.
+  'shell:openInTerminal': (_ctx, dirPath, wsl) => {
+    if (wsl) {
+      // Launch a WSL terminal in the given distro, cd-ing to the WSL path
+      const wslPath = /^[A-Za-z]:[/\\]/.test(dirPath) ? windowsPathToWsl(dirPath) : dirPath
+      spawn('wsl.exe', ['-d', wsl.distro, '--cd', wslPath], { detached: true, stdio: 'ignore' }).unref()
+    } else if (process.platform === 'win32') {
+      spawn('start', ['powershell.exe', '-NoExit', '-Command', `Set-Location '${dirPath.replace(/'/g, "''")}'`], { cwd: dirPath, detached: true, stdio: 'ignore', shell: true }).unref()
+    } else if (process.platform === 'darwin') {
+      spawn('open', ['-a', 'Terminal', dirPath], { detached: true, stdio: 'ignore' }).unref()
+    } else {
+      const terms = ['gnome-terminal', 'konsole', 'xterm']
+      for (const term of terms) {
+        try {
+          spawn(term, [], { cwd: dirPath, detached: true, stdio: 'ignore' }).unref()
+          break
+        } catch { /* try next */ }
+      }
+    }
+  },
+
+  // ── Window controls ───────────────────────────────────────────────────────
+  //
+  // The first family to need `ctx.window` for its own sake rather than as an event target.
+  // Both pre-fold and post-fold that is the same single BrowserWindow: the IPC adapter
+  // closed over the one `registerIpcHandlers` was given, and the context carries the same.
+  //
+  // The push half of this family — `window.on('maximize', …)` sending
+  // `window:maximized-changed` — stays in handlers.ts: it is a window event listener, not a
+  // channel, and the registry does not inventory push channels.
+
+  'window:minimize': (ctx) => ctx.window.minimize(),
+
+  // A toggle, so the state read is part of the behaviour and not a guard: `isMaximized()`
+  // is always called, and exactly one of unmaximize/maximize follows it.
+  'window:maximize': (ctx) => ctx.window.isMaximized() ? ctx.window.unmaximize() : ctx.window.maximize(),
+
+  'window:close': (ctx) => ctx.window.close(),
+
+  'window:is-maximized': (ctx) => ctx.window.isMaximized(),
+
+  // ── App info, logs and the auto-updater ───────────────────────────────────
+
+  // `app.getVersion()` is read before the branch and unconditionally, so a dev run computes
+  // a version it then throws away. Preserved verbatim: the alternative reading — that dev
+  // builds skip the lookup — would be a different (if harmless) behaviour.
+  'app:getVersion': () => {
+    const version = app.getVersion()
+    const packaged = app.isPackaged
+    const isDev = !packaged && process.env.NODE_ENV !== 'production'
+    if (isDev) return 'Local Dev'
+    return `v${version}`
+  },
+
+  // Unlike `shell:openInExplorer`, this one *does* pass openPath's promise through — the
+  // contract's result is the `string` it resolves to, which is empty on success and an
+  // error message otherwise, and the settings UI shows it.
+  'app:open-logs-folder': () => shell.openPath(getLogsDirPath()),
+
+  // Two calls, and the *second* one's value is the result. `checkForUpdates` is `: void`
+  // and only starts a background check, so there is nothing to pass through from it; the
+  // reply is the state as it stands at this instant, not the state after the check lands.
+  // The renderer learns about the outcome through the updater's own push events.
+  'update:check': () => {
+    checkForUpdates()
+    return getUpdateState()
+  },
+
+  'update:apply': () => ({ success: applyUpdate() }),
+
+  'update:get-state': () => getUpdateState(),
+
+  // ── Native file dialogs ───────────────────────────────────────────────────
+  //
+  // Both are modal on `ctx.window`, and their cancelled shapes deliberately differ: a
+  // directory picker answers `null` and a file picker answers `[]`, because the callers
+  // treat "nothing chosen" as an absent value and as an empty list respectively.
+
+  'dialog:open-directory': async (ctx) => {
+    const result = await dialog.showOpenDialog(ctx.window, {
+      properties: ['openDirectory']
+    })
+    // The second `?? null` is not redundant with `canceled`: a dialog can return
+    // `canceled: false` with an empty selection, and an `undefined` would be dropped by
+    // JSON.stringify on the way to the renderer while the contract promises `string | null`.
+    return result.canceled ? null : result.filePaths[0] ?? null
+  },
+
+  'dialog:open-files': async (ctx) => {
+    const result = await dialog.showOpenDialog(ctx.window, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [
+        { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
+        { name: 'PDF', extensions: ['pdf'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    })
+    return result.canceled ? [] : result.filePaths
+  },
+
+  // ── Settings and the webhook server ───────────────────────────────────────
+
+  // The generic key/value settings pair, on the same `settings` table the webhook and
+  // remote-control configs are stored in. Nothing depends on the order these are registered
+  // in — both are plain reads and writes against the DB, with no module init behind them.
+  'settings:get': (_ctx, key) => getSetting(key),
+
+  'settings:set': (_ctx, key, value) => setSetting(key, value),
+
+  // The three rows are read individually and each is normalised on the way out, because the
+  // never-configured state is three *missing rows* rather than a missing object: disabled,
+  // the default port, and an empty token.
+  //
+  // The `?? '3284'` fires on a missing row only — `??` does not fire on `''` — so a row
+  // stored as an empty string yields `parseInt('', 10)`, i.e. NaN, and the renderer would
+  // show a blank port. Preserved verbatim; `webhook:setConfig` always writes
+  // `String(config.port)` so nothing reachable today can store one, and widening this to
+  // `Number.isInteger` would be a fix rather than a fold.
+  'webhook:getConfig': () => ({
+    enabled: getSetting('webhook:enabled') === 'true',
+    port: parseInt(getSetting('webhook:port') ?? '3284', 10),
+    token: getSetting('webhook:token') ?? '',
+  } satisfies WebhookConfig),
+
+  // The restart comes last and is handed the *incoming* config rather than a re-read of
+  // what was just written. Both matter: restarting first would rebind the old port, and
+  // re-reading would make the restart depend on the writes having landed.
+  'webhook:setConfig': (ctx, config) => {
+    setSetting('webhook:enabled', config.enabled ? 'true' : 'false')
+    setSetting('webhook:port', String(config.port))
+    setSetting('webhook:token', config.token)
+    return restartWebhookServer(config, ctx.window)
+  },
+
+  // ── Remote control: the two channels that are not the client ──────────────
+  //
+  // The other nine `remote:*` channels stay registered in `remote/client.ts`. They are
+  // methods on the `RemoteControlClient` instance that `registerRemoteControlIpcHandlers`
+  // constructs and closes over, and reaching that instance from here would need either the
+  // module's `activeClient` variable — today only quit-time bookkeeping, and null after
+  // `stopRemoteControlClient()` — or an import of `remote/client.ts`, which imports
+  // `control/control-rpc.ts`, which imports this file. Both are worse than leaving them.
+  //
+  // These two are different in kind: they call module-level functions in `remote/config.ts`
+  // and `remote/lan.ts`, neither of which reaches back here, so folding them needs no
+  // instance and creates no cycle.
+
+  'remote:getServerConfig': () => readRemoteServerConfig(),
+
+  'remote:getPairingInfo': () => getPairingInfo(),
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers
