@@ -33,10 +33,23 @@ const H = vi.hoisted(() => {
 
   const note = (entry: string): void => { log.push(entry) }
 
+  /**
+   * Render an argument list so `undefined` and `null` are distinguishable.
+   *
+   * Plain `JSON.stringify` maps `undefined` array elements to `null`, which made the
+   * recorded log lie about exactly the axis the two legacy implementations most often
+   * differed on — one path coalescing an optional to `null` while the other passed it
+   * raw. Two folds in a row hit that blind spot. Argument slots are rendered explicitly;
+   * `undefined` nested inside an object is still dropped by JSON.stringify, which has not
+   * mattered so far.
+   */
+  const renderArgs = (args: unknown[]): string =>
+    `[${args.map((arg) => (arg === undefined ? 'undefined' : JSON.stringify(arg))).join(',')}]`
+
   /** Record a call and return a fixed value. */
   const stub = (label: string, value: unknown = undefined) =>
     (...args: unknown[]): unknown => {
-      note(`${label}(${JSON.stringify(args)})`)
+      note(`${label}(${renderArgs(args)})`)
       return typeof value === 'function' ? (value as (...a: unknown[]) => unknown)(...args) : value
     }
 
@@ -318,7 +331,7 @@ describe('locations:* — both transports agree', () => {
     // passes them through raw. Both reach db/queries.ts, which coalesces them again
     // before binding — so the observable call is the same either way.
     expect(rpc).toEqual(ipc)
-    expect(ipc).toEqual(['db.createLocation(["p1","Main","local","C:/repo",null,null,null])'])
+    expect(ipc).toEqual(['db.createLocation(["p1","Main","local","C:/repo",undefined,undefined,undefined])'])
   })
 
   it('locations:update forwards every argument in order', async () => {
@@ -339,7 +352,7 @@ describe('locations:* — both transports agree', () => {
     const rpc = await viaControlRpc('locations:update', args)
 
     expect(rpc).toEqual(ipc)
-    expect(ipc).toEqual(['db.updateLocation(["loc1","Renamed","local","C:/repo",null,null,null])'])
+    expect(ipc).toEqual(['db.updateLocation(["loc1","Renamed","local","C:/repo",undefined,undefined,undefined])'])
   })
 
   it('locations:delete', async () => {
@@ -361,7 +374,7 @@ describe('locations:* — both transports agree', () => {
     // That is safe because project-admin.ts:161 does `label || currentBranch || 'worktree'`,
     // and both `null` and `undefined` are falsy. This harness cannot tell the two apart,
     // so do not read this assertion as evidence about which one arrives.
-    expect(ipc).toEqual(['projectAdmin.createLocalWorktree(["loc1",null])'])
+    expect(ipc).toEqual(['projectAdmin.createLocalWorktree(["loc1",undefined])'])
   })
 
   it('locations:removeWorktree', async () => {
@@ -454,15 +467,17 @@ describe('commands:* — both transports agree', () => {
     // coalesce — but for an *omitted* argument the coalesce is behaviourally redundant:
     // createCommand's `runOnWorktreeCreate = false` parameter default would fire anyway.
     // The next test is the one that pins behaviour rather than spelling.
-    expect(ipc).toEqual(['db.createCommand(["p1","dev","pnpm dev",null,null,false])'])
+    expect(ipc).toEqual(['db.createCommand(["p1","dev","pnpm dev",undefined,undefined,false])'])
   })
 
   it('commands:create coalesces an explicit null runOnWorktreeCreate to false', async () => {
-    // This is the case a remote client actually produces: remote/client.ts sends
-    // `JSON.stringify({ channel, args })`, so an omitted trailing argument arrives as
-    // `null`, not `undefined`. `null` would *not* trigger createCommand's `= false`
-    // parameter default, which fires on `undefined` only — so the coalesce is what keeps
-    // the returned ProjectCommand's `run_on_worktree_create` a boolean.
+    // `null` does NOT trigger createCommand's `= false` parameter default, which fires on
+    // `undefined` only — so this coalesce is what keeps the returned ProjectCommand's
+    // `run_on_worktree_create` a boolean rather than a null.
+    //
+    // Note the null arrives explicitly, not by omission: JSON round-trips an *omitted*
+    // trailing argument as a shorter array (still `undefined` on arrival). It is an
+    // explicitly-`undefined` element that JSON.stringify turns into `null`.
     const args = ['p1', 'dev', 'pnpm dev', null, null, null]
     const ipc = await viaIpc('commands:create', args)
     const rpc = await viaControlRpc('commands:create', args)
@@ -480,12 +495,15 @@ describe('commands:* — both transports agree', () => {
     expect(ipc).toEqual(['db.updateCommand(["cmd1","dev","pnpm dev",null,null,true])'])
   })
 
-  it('commands:update coalesces an omitted or null runOnWorktreeCreate to false', async () => {
+  it('commands:update coalesces both an omitted and an explicit null runOnWorktreeCreate', async () => {
+    // These two inputs are genuinely different and the recorder now shows it: omitted
+    // optionals stay `undefined` in slots 4-5, explicit nulls stay `null`. Both end up
+    // `false` in slot 6, which is the behaviour under test.
     expect(await viaIpc('commands:update', ['cmd1', 'dev', 'pnpm dev'])).toEqual([
-      'db.updateCommand(["cmd1","dev","pnpm dev",null,null,false])',
+      'db.updateCommand(["cmd1","dev","pnpm dev",undefined,undefined,false])',
     ])
     expect(await viaControlRpc('commands:update', ['cmd1', 'dev', 'pnpm dev'])).toEqual([
-      'db.updateCommand(["cmd1","dev","pnpm dev",null,null,false])',
+      'db.updateCommand(["cmd1","dev","pnpm dev",undefined,undefined,false])',
     ])
     expect(await viaIpc('commands:update', ['cmd1', 'dev', 'pnpm dev', null, null, null])).toEqual([
       'db.updateCommand(["cmd1","dev","pnpm dev",null,null,false])',
@@ -593,8 +611,8 @@ describe('threads:send — the one deliberate divergence', () => {
     expect(started(rpc)).toBe(started(ipc))
     expect(started(ipc)).toContain('"t1"')
 
-    expect(ipc).toContain('session.sendMessage(["hello",null])')
-    expect(rpc).toContain('session.sendMessage(["hello",null])')
+    expect(ipc).toContain('session.sendMessage(["hello",undefined])')
+    expect(rpc).toContain('session.sendMessage(["hello",undefined])')
   })
 
   it('only the remote path echoes the message into the local renderer', async () => {

@@ -173,10 +173,18 @@ export const channelHandlers = {
   //
   // `runOnWorktreeCreate ?? false` is NOT the same kind of redundancy and must stay.
   // Downstream the default is a *parameter default* (`runOnWorktreeCreate = false`), which
-  // fires on `undefined` only. A remote client's args arrive as JSON, where an omitted
-  // trailing argument serialises to `null` — and `null` skips the parameter default, so it
-  // would land in the returned ProjectCommand's `run_on_worktree_create` verbatim, handing
-  // the caller a `null` in a field typed `boolean`.
+  // fires on `undefined` only — `null` sails straight past it and would land verbatim in
+  // the returned ProjectCommand's `run_on_worktree_create`, a field typed `boolean`.
+  //
+  // How `null` could get here: over the remote transport, args are JSON. Note the exact
+  // mechanism, because it is easy to state wrongly — an *omitted* trailing argument
+  // produces a SHORTER array and still arrives as `undefined`, which is fine. It is an
+  // explicitly-`undefined` element that JSON.stringify maps to `null`.
+  //
+  // Today no caller does that: stores/commands.ts:97,107 already coalesce before invoking,
+  // and mobile's allowlist (api/rpc.ts:84-90) excludes create/update entirely. So this is
+  // defence in depth against a future caller, not a live bug — and it also preserves both
+  // pre-fold paths verbatim, which is reason enough on its own.
   'commands:create': (_ctx, projectId, name, command, cwd, shell, runOnWorktreeCreate) =>
     createCommand(projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false),
 
@@ -224,11 +232,16 @@ export function isMigratedChannel(channel: string): channel is MigratedChannel {
  * `channel` with `isMigratedChannel`, and every entry in the map was type-checked
  * against the contract at its definition.
  */
-export function invokeChannelHandler(
+export async function invokeChannelHandler(
   channel: MigratedChannel,
   ctx: HandlerContext,
   args: unknown[],
 ): Promise<unknown> {
   const handler = channelHandlers[channel] as (ctx: HandlerContext, ...rest: unknown[]) => unknown
-  return Promise.resolve(handler(ctx, ...args))
+  // `async` rather than `Promise.resolve(handler(...))`: the latter evaluates the call
+  // outside any try, so a handler that throws *synchronously* would throw synchronously
+  // out of this function instead of rejecting. Both current callers sit inside async
+  // bodies and absorb it, but a future third caller would not, and the returned type says
+  // it cannot happen.
+  return handler(ctx, ...args)
 }
