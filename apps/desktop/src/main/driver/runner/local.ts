@@ -2,8 +2,8 @@ import { spawn, ChildProcess } from 'child_process'
 import { writeFileSync, unlinkSync, existsSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import { Runner, RunCommand, RunResult, SpawnCommand } from './types'
-import { winQuote, augmentWindowsPath } from './utils'
+import { Runner, RunCommand, RunResult, RunScriptCommand, ScriptCommand, SpawnCommand } from './types'
+import { winQuote, augmentWindowsPath, getCmdExe, getPowerShellExe } from './utils'
 import { collectProcess } from './collect'
 
 export class LocalRunner implements Runner {
@@ -11,6 +11,38 @@ export class LocalRunner implements Runner {
 
   run(cmd: RunCommand): Promise<RunResult> {
     return collectProcess(this.spawn(cmd), cmd)
+  }
+
+  runScript(cmd: RunScriptCommand): Promise<RunResult> {
+    return collectProcess(this.spawnScript(cmd), cmd)
+  }
+
+  spawnScript(cmd: ScriptCommand): ChildProcess {
+    const { script, workDir, env, localShell } = cmd
+    const isWindows = process.platform === 'win32'
+
+    if (workDir !== undefined && !existsSync(workDir)) {
+      throw new Error(`Working directory does not exist: "${workDir}"`)
+    }
+
+    // Match LocalRunner.spawn: on Windows the inherited PATH is routinely
+    // incomplete, so augment it unless the caller supplied its own environment.
+    const childEnv = env ?? (isWindows ? augmentWindowsPath() : undefined)
+
+    const [shellExe, shellArgs] = localShell === 'powershell'
+      ? [getPowerShellExe(), ['-NonInteractive', '-Command', script]]
+      : isWindows
+        // /d skips AutoRun, /s makes the quoting rules for the /c string predictable.
+        ? [getCmdExe(), ['/d', '/s', '/c', script]]
+        : ['/bin/sh', ['-c', script]]
+
+    console.log('[LocalRunner] Spawning script:', shellExe)
+    return spawn(shellExe, shellArgs, {
+      shell: false,
+      cwd: workDir,
+      env: childEnv,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   }
 
   spawn(cmd: SpawnCommand): ChildProcess {

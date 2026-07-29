@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import { SshConfig } from '../../../shared/types'
-import { Runner, RunCommand, RunResult, SpawnCommand } from './types'
+import { Runner, RunCommand, RunResult, RunScriptCommand, ScriptCommand, SpawnCommand } from './types'
 import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS } from './utils'
 import { collectProcess } from './collect'
 
@@ -11,6 +11,41 @@ export class SshRunner implements Runner {
 
   run(cmd: RunCommand): Promise<RunResult> {
     return collectProcess(this.spawn(cmd), cmd)
+  }
+
+  runScript(cmd: RunScriptCommand): Promise<RunResult> {
+    // BatchMode=yes only on the collecting path. runScript closes stdin and waits
+    // for exit, so an interactive password or passphrase prompt cannot be answered
+    // and would hang until the timeout; failing immediately is strictly better.
+    // spawnScript streams to a live UI and is left as-is, matching what the shell
+    // mode and command runner did before they moved behind this seam.
+    return collectProcess(this.spawnScriptWith(cmd, true), cmd)
+  }
+
+  spawnScript(cmd: ScriptCommand): ChildProcess {
+    return this.spawnScriptWith(cmd, false)
+  }
+
+  private spawnScriptWith(cmd: ScriptCommand, batchMode: boolean): ChildProcess {
+    const { script, workDir, preamble, env } = cmd
+
+    // Same LOAD_NODE_MANAGERS reasoning as spawn().
+    const parts: string[] = [LOAD_NODE_MANAGERS]
+    if (preamble) parts.push(preamble)
+    parts.push(workDir === undefined ? script : `cd ${cdTarget(workDir)} && ${script}`)
+    const innerCmd = parts.join('; ')
+
+    const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
+    const sshArgs = buildSshBaseArgs(this.ssh)
+    if (batchMode) sshArgs.push('-o', 'BatchMode=yes')
+    sshArgs.push(`${this.ssh.user}@${this.ssh.host}`, remoteCmd)
+
+    console.log('[SshRunner] Spawning script on', `${this.ssh.user}@${this.ssh.host}`)
+    return spawn('ssh', sshArgs, {
+      shell: false,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   }
 
   spawn(cmd: SpawnCommand): ChildProcess {

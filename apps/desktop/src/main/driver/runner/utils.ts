@@ -187,6 +187,31 @@ export function expandHomePath(
 }
 
 /**
+ * Absolute path to Windows PowerShell.
+ *
+ * Always absolute: PowerShell is not reliably on the PATH that Electron inherits,
+ * and a bare `powershell` spawn then fails with ENOENT. On non-Windows this is
+ * only reachable through an explicit `localShell: 'powershell'` request, which
+ * resolves to PowerShell Core instead.
+ */
+export function getPowerShellExe(): string {
+  if (process.platform !== 'win32') return 'pwsh'
+  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
+}
+
+/**
+ * Absolute path to the Windows command interpreter.
+ *
+ * Same reasoning as getPowerShellExe: C:\Windows\System32 is not always on the
+ * Electron process PATH, so a bare `cmd` spawn can fail with ENOENT.
+ */
+export function getCmdExe(): string {
+  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
+  return process.env.ComSpec ?? `${sysRoot}\\System32\\cmd.exe`
+}
+
+/**
  * Build a cd target expression for a working directory.
  * ~ is replaced with unquoted "$HOME" so the shell expands it correctly
  * (tilde does not expand inside single quotes).

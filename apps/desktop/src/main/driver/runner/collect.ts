@@ -1,9 +1,15 @@
 import type { ChildProcess } from 'child_process'
-import type { RunCommand, RunResult } from './types'
+import type { RunResult } from './types'
 
 const DEFAULT_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 
-export function collectProcess(proc: ChildProcess, command: RunCommand): Promise<RunResult> {
+/** The collection limits shared by RunCommand and RunScriptCommand. */
+interface CollectLimits {
+  timeoutMs?: number
+  maxOutputBytes?: number
+}
+
+export function collectProcess(proc: ChildProcess, command: CollectLimits): Promise<RunResult> {
   return new Promise((resolve) => {
     let stdout = ''
     let stderr = ''

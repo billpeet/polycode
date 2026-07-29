@@ -10,7 +10,11 @@
  */
 import { exec, execFile } from 'child_process'
 import { wslExec } from './wsl'
+import { getPowerShellExe } from './driver/runner'
 import type { WslConfig } from '../shared/types'
+
+// Re-exported because both dispatch files import it from here.
+export { getPowerShellExe }
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
 
@@ -33,11 +37,6 @@ export function runExecFile(
       },
     )
   })
-}
-
-export function getPowerShellExe(): string {
-  const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-  return `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
 }
 
 export function killByPid(pid: number, wsl?: WslConfig | null): Promise<void> {

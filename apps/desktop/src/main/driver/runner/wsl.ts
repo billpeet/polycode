@@ -1,6 +1,6 @@
 import { spawn, ChildProcess } from 'child_process'
 import { WslConfig } from '../../../shared/types'
-import { Runner, RunCommand, RunResult, SpawnCommand } from './types'
+import { Runner, RunCommand, RunResult, RunScriptCommand, ScriptCommand, SpawnCommand } from './types'
 import { shellEscape, cdTarget } from './utils'
 import { collectProcess } from './collect'
 
@@ -11,6 +11,27 @@ export class WslRunner implements Runner {
 
   run(cmd: RunCommand): Promise<RunResult> {
     return collectProcess(this.spawn(cmd), cmd)
+  }
+
+  runScript(cmd: RunScriptCommand): Promise<RunResult> {
+    return collectProcess(this.spawnScript(cmd), cmd)
+  }
+
+  spawnScript(cmd: ScriptCommand): ChildProcess {
+    const { script, workDir, preamble, env } = cmd
+
+    // Same -ilc reasoning as spawn().
+    const parts: string[] = []
+    if (preamble) parts.push(preamble)
+    parts.push(workDir === undefined ? script : `cd ${cdTarget(workDir)} && ${script}`)
+    const innerCmd = parts.join('; ')
+
+    console.log('[WslRunner] Spawning script in', this.wsl.distro)
+    return spawn('wsl', ['-d', this.wsl.distro, '--', 'bash', '-ilc', innerCmd], {
+      shell: false,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   }
 
   spawn(cmd: SpawnCommand): ChildProcess {
