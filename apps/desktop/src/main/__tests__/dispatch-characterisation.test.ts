@@ -70,6 +70,8 @@ const H = vi.hoisted(() => {
     proxyChecks: 0,
     /** How many times the adapter took the remote-forwarding hop. */
     proxyInvokes: 0,
+    /** Makes the mocked git read reject, so error propagation is observable. */
+    gitShouldFail: false,
     /**
      * What the `window` test double reports from `isMaximized()`. The only fixture that
      * steers `window:maximize`, whose whole body is
@@ -90,6 +92,16 @@ const H = vi.hoisted(() => {
      * so this is the only way to reach `shell:openInVsCode`'s openExternal fallback.
      */
     execFileFails: false,
+    /**
+     * The third argument `git:watchStart` hands `startRepoGitWatch` — the invalidation
+     * callback the watcher fires on every repo change.
+     *
+     * Captured as a value rather than logged because the recorder renders a function as an
+     * empty slot (`JSON.stringify(fn)` is `undefined`), so the call log alone cannot tell
+     * `invalidateRepoGitCache` from any other function, nor from the `undefined` a *call*
+     * would leave in that slot.
+     */
+    repoWatchCallback: null as unknown,
   }
 
   const note = (entry: string): void => { log.push(entry) }
@@ -336,6 +348,14 @@ vi.mock('../file-watch', () => H.autoModule('fileWatch', {
   startFileWatch: H.stub('fileWatch.startFileWatch', true),
   // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
   stopFileWatch: H.stub('fileWatch.stopFileWatch', 'RET_stopFileWatch'),
+  // The repo watcher behind `git:watchStart`. It captures its `onChanged` argument so the
+  // callback's *identity* is assertable — see `H.state.repoWatchCallback`.
+  startRepoGitWatch: H.stub('fileWatch.startRepoGitWatch', (...args: unknown[]) => {
+    H.state.repoWatchCallback = args[2]
+    return true
+  }),
+  // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
+  stopRepoGitWatch: H.stub('fileWatch.stopRepoGitWatch', 'RET_stopRepoGitWatch'),
 }))
 
 vi.mock('../claude-history', () => H.autoModule('claudeHistory', {
@@ -372,8 +392,57 @@ vi.mock('../cursor-models', () => H.autoModule('cursorModels', {
 vi.mock('../project-admin', () => H.autoModule('projectAdmin'))
 
 vi.mock('../git', () => H.autoModule('git', {
-  getCachedGitStatus: H.stub('git.getCachedGitStatus', () => H.state.gitStatus),
+  getCachedGitStatus: H.stub('git.getCachedGitStatus', () => {
+    // `gitShouldFail` lets a test prove a rejection propagates. Without it, wrapping a
+    // handler body in try/catch and returning null passes the whole suite — and for
+    // git:status that would show "not a repo" instead of surfacing a real failure.
+    if (H.state.gitShouldFail) throw new Error('git exploded')
+    return H.state.gitStatus
+  }),
   getCachedGitBranch: H.stub('git.getCachedGitBranch', () => Promise.resolve('feature/x')),
+  // ── The non-invalidating `git:*` batch ──────────────────────────────────────
+  //
+  // A distinct value per function, not a shared sentinel: the four `compare*` channels are
+  // one transposition away from each other (`compareToMain` vs `compareDiffToMain`,
+  // `ToBranch` vs `DiffToBranch`) and so are `commitFiles`/`commitDiff`. With a shared
+  // value a mis-wired handler would still return something plausible, so the result
+  // assertions carry as much of the pinning as the recorded calls do.
+  getCachedLastCommit: H.stub('git.getCachedLastCommit', { hash: 'abc123', subject: 'Last commit' }),
+  listStashes: H.stub('git.listStashes', [{ ref: 'stash@{0}', message: 'WIP' }]),
+  getFileDiff: H.stub('git.getFileDiff', 'DIFF working tree'),
+  getCachedCompareToMainChanges: H.stub('git.getCachedCompareToMainChanges', {
+    baseRef: 'origin/main', files: [{ status: 'M', path: 'src/a.ts' }],
+  }),
+  getCompareToMainFileDiff: H.stub('git.getCompareToMainFileDiff', 'DIFF one file vs main'),
+  getCompareToBranchChanges: H.stub('git.getCompareToBranchChanges', {
+    baseRef: 'origin/release/1', files: [{ status: 'A', path: 'src/b.ts' }],
+  }),
+  getCompareToBranchDiff: H.stub('git.getCompareToBranchDiff', 'DIFF all files vs branch'),
+  listCommits: H.stub('git.listCommits', [{ hash: 'c1', subject: 'One' }]),
+  listCommitFiles: H.stub('git.listCommitFiles', [{ status: 'M', path: 'src/c.ts' }]),
+  getCommitFileDiff: H.stub('git.getCommitFileDiff', 'DIFF one file of one commit'),
+  listCachedBranches: H.stub('git.listCachedBranches', {
+    current: 'feature/x', local: ['feature/x', 'main'], remote: ['origin/main'],
+  }),
+  isGitRepoCached: H.stub('git.isGitRepoCached', true),
+  getRemoteUrl: H.stub('git.getRemoteUrl', 'https://example.test/r.git'),
+  detectGitHostingProviderCached: H.stub('git.detectGitHostingProviderCached', 'github'),
+  getCachedDefaultBranch: H.stub('git.getCachedDefaultBranch', 'main'),
+  findMergedBranches: H.stub('git.findMergedBranches', ['feature/done']),
+  deleteBranches: H.stub('git.deleteBranches', { deleted: ['feature/done'], failed: [] }),
+  forceUnlockRepo: H.stub('git.forceUnlockRepo', { removed: ['index.lock'] }),
+  generateCommitMessage: H.stub('git.generateCommitMessage', 'feat: from the diff'),
+  generateCommitMessageWithContext: H.stub(
+    'git.generateCommitMessageWithContext', 'feat: from the conversation',
+  ),
+  generateBranchName: H.stub('git.generateBranchName', 'feature/generated'),
+  generatePullRequestText: H.stub('git.generatePullRequestText', {
+    title: 'PR title', description: 'PR body',
+  }),
+  // settlesLate, alone in this batch: `git:fetchRemote`'s contract result is `void`, so
+  // post-fold the handler cannot return what this resolves to and the `:settled` entry is
+  // the only observable proof that it is awaited rather than floated.
+  gitFetchRemoteCached: H.settlesLate('git.gitFetchRemoteCached', { fetched: true }),
 }))
 
 vi.mock('../session/manager', () => ({
@@ -665,9 +734,11 @@ beforeEach(() => {
   H.state.fileReads = 0
   H.state.proxyChecks = 0
   H.state.proxyInvokes = 0
+  H.state.gitShouldFail = false
   H.state.isMaximized = false
   H.state.dialogResult = { canceled: false, filePaths: ['C:/picked'] }
   H.state.execFileFails = false
+  H.state.repoWatchCallback = null
 })
 
 /**
@@ -1103,6 +1174,14 @@ describe("handlers pass the callee's result through", () => {
     }
     expect(await resultViaIpc('files:watchStop', ['C:/repo/a.ts'])).toBe('RET_stopFileWatch')
     expect(await resultViaControlRpc('files:watchStop', ['C:/repo/a.ts'])).toBe('RET_stopFileWatch')
+  })
+
+  it('git:watchStop returns its callee\'s value — neither pre-fold path did', async () => {
+    // Same shape as `files:watchStop`: both legacy paths called the `: void`
+    // `stopRepoGitWatch` as a statement (control-rpc.ts then wrote `return undefined`).
+    // Nothing observable turns on it, so the fold applies the standing rule and returns it.
+    expect(await resultViaIpc('git:watchStop', ['C:/repo'])).toBe('RET_stopRepoGitWatch')
+    expect(await resultViaControlRpc('git:watchStop', ['C:/repo'])).toBe('RET_stopRepoGitWatch')
   })
 
   it('the pty and session channels return their callee\'s value — no pre-fold path did', async () => {
@@ -1863,6 +1942,317 @@ describe('location-pools:* — both transports agree', () => {
     const rows = [{ id: 'pool1', name: 'Pool one' }]
     expect(await resultViaIpc('location-pools:list', ['p1'])).toEqual(rows)
     expect(await resultViaControlRpc('location-pools:list', ['p1'])).toEqual(rows)
+  })
+})
+
+/**
+ * The 27 `git:*` channels that do NOT invalidate the git cache.
+ *
+ * The other 24 — everything that calls `invalidateRepoGitCache` — are a separate round and
+ * stay in the two legacy files for now; `git:commit` and `git:checkout` are used here only
+ * as the contrast that makes two of these 27 interesting.
+ *
+ * Nearly every channel here resolves `{ ssh, wsl } = getConfigForPath(repoPath)` and hands
+ * both to a `git.ts` function in adjacent trailing slots. The default fixture nulls both,
+ * which makes a transposition invisible, so this whole block runs against DISTINCT_SSH and
+ * DISTINCT_WSL.
+ */
+/**
+ * Two properties the exact-log assertions are blind to on their own.
+ *
+ * Every git handler resolves `{ ssh, wsl } = getConfigForPath(repoPath)` and forwards both.
+ * The tests below install DISTINCT_SSH/DISTINCT_WSL so a transposition fails — but with a
+ * config always present, nothing pins what arrives when there is NO location row, and
+ * nothing pins that a failing git read propagates rather than being swallowed. Both
+ * mutations survived the whole suite before these tests existed.
+ */
+describe('git:* — host config nullability and error propagation', () => {
+  const CHANNELS: Array<[channel: string, args: unknown[], callee: string]> = [
+    ['git:status', ['C:/repo'], 'git.getCachedGitStatus'],
+    ['git:branch', ['C:/repo'], 'git.getCachedGitBranch'],
+    ['git:branches', ['C:/repo'], 'git.listCachedBranches'],
+    ['git:isRepo', ['C:/repo'], 'git.isGitRepoCached'],
+  ]
+
+  it('a path with no location row forwards null, not undefined', async () => {
+    // getConfigForPath coalesces a missing row to `{ ssh: null, wsl: null }`, and the git
+    // functions accept `null`. This is the common case — any path not in repo_locations —
+    // and it was entirely uncharacterised: `ssh ?? undefined` passed everything.
+    H.state.location = null
+
+    for (const [channel, args, callee] of CHANNELS) {
+      const ipc = await viaIpc(channel, args)
+      H.state.location = null
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      expect(ipc, channel).toEqual([
+        'db.getLocationByPath(["C:/repo"])',
+        `${callee}(["C:/repo",null,null])`,
+      ])
+      H.state.location = null
+    }
+  })
+
+  it('a failing git read rejects on both transports rather than resolving null', async () => {
+    // Swallowing this would make git:status report "not a repo" for a genuine failure.
+    H.state.gitShouldFail = true
+    await expect(viaIpc('git:status', ['C:/repo'])).rejects.toThrow('git exploded')
+    H.state.gitShouldFail = true
+    await expect(viaControlRpc('git:status', ['C:/repo'])).rejects.toThrow('git exploded')
+  })
+})
+
+describe('git:* — the reads and the three mutations that do not invalidate', () => {
+  beforeEach(() => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+      ssh: DISTINCT_SSH, wsl: DISTINCT_WSL,
+    }
+  })
+
+  /** The `(…, ssh, wsl)` tail every call below ends in. */
+  const hosts = `${JSON.stringify(DISTINCT_SSH)},${JSON.stringify(DISTINCT_WSL)}`
+  const lookup = 'db.getLocationByPath(["C:/repo"])'
+
+  /**
+   * One row per channel: the arguments in, the single `git.ts` call out, and the value that
+   * comes back. Every callee is distinct, which is what pins the `compare*` quartet and the
+   * `commitFiles`/`commitDiff` pair against being wired to each other.
+   */
+  const cases: Array<[channel: string, args: unknown[], call: string, result: unknown]> = [
+    ['git:branch', ['C:/repo'], `git.getCachedGitBranch(["C:/repo",${hosts}])`, 'feature/x'],
+    ['git:status', ['C:/repo'], `git.getCachedGitStatus(["C:/repo",${hosts}])`, { branch: 'feature/x' }],
+    [
+      'git:lastCommit', ['C:/repo'], `git.getCachedLastCommit(["C:/repo",${hosts}])`,
+      { hash: 'abc123', subject: 'Last commit' },
+    ],
+    [
+      'git:stashList', ['C:/repo'], `git.listStashes(["C:/repo",${hosts}])`,
+      [{ ref: 'stash@{0}', message: 'WIP' }],
+    ],
+    [
+      'git:diff', ['C:/repo', 'src/a.ts', true],
+      `git.getFileDiff(["C:/repo","src/a.ts",true,${hosts}])`, 'DIFF working tree',
+    ],
+    [
+      'git:compareToMain', ['C:/repo'], `git.getCachedCompareToMainChanges(["C:/repo",${hosts}])`,
+      { baseRef: 'origin/main', files: [{ status: 'M', path: 'src/a.ts' }] },
+    ],
+    [
+      'git:compareDiffToMain', ['C:/repo', 'src/a.ts'],
+      `git.getCompareToMainFileDiff(["C:/repo","src/a.ts",${hosts}])`, 'DIFF one file vs main',
+    ],
+    [
+      'git:compareToBranch', ['C:/repo', 'release/1'],
+      `git.getCompareToBranchChanges(["C:/repo","release/1",${hosts}])`,
+      { baseRef: 'origin/release/1', files: [{ status: 'A', path: 'src/b.ts' }] },
+    ],
+    [
+      'git:compareDiffToBranch', ['C:/repo', 'release/1'],
+      `git.getCompareToBranchDiff(["C:/repo","release/1",${hosts}])`, 'DIFF all files vs branch',
+    ],
+    [
+      'git:log', ['C:/repo', { range: 'origin/main..HEAD', limit: 20 }],
+      `git.listCommits(["C:/repo",{"range":"origin/main..HEAD","limit":20},${hosts}])`,
+      [{ hash: 'c1', subject: 'One' }],
+    ],
+    [
+      'git:commitFiles', ['C:/repo', 'abc123'],
+      `git.listCommitFiles(["C:/repo","abc123",${hosts}])`, [{ status: 'M', path: 'src/c.ts' }],
+    ],
+    [
+      'git:commitDiff', ['C:/repo', 'abc123', 'src/c.ts'],
+      `git.getCommitFileDiff(["C:/repo","abc123","src/c.ts",${hosts}])`,
+      'DIFF one file of one commit',
+    ],
+    [
+      'git:branches', ['C:/repo'], `git.listCachedBranches(["C:/repo",${hosts}])`,
+      { current: 'feature/x', local: ['feature/x', 'main'], remote: ['origin/main'] },
+    ],
+    ['git:isRepo', ['C:/repo'], `git.isGitRepoCached(["C:/repo",${hosts}])`, true],
+    [
+      'git:getRemoteUrl', ['C:/repo'], `git.getRemoteUrl(["C:/repo",${hosts}])`,
+      'https://example.test/r.git',
+    ],
+    [
+      'git:hostingProvider', ['C:/repo'],
+      `git.detectGitHostingProviderCached(["C:/repo",${hosts}])`, 'github',
+    ],
+    ['git:defaultBranch', ['C:/repo'], `git.getCachedDefaultBranch(["C:/repo",${hosts}])`, 'main'],
+    [
+      'git:findMergedBranches', ['C:/repo'], `git.findMergedBranches(["C:/repo",${hosts}])`,
+      ['feature/done'],
+    ],
+    [
+      'git:generateCommitMessage', ['C:/repo'],
+      `git.generateCommitMessage(["C:/repo",${hosts}])`, 'feat: from the diff',
+    ],
+    [
+      'git:generateCommitMessageWithContext', ['C:/repo', ['src/a.ts'], 'the conversation so far'],
+      `git.generateCommitMessageWithContext(["C:/repo",["src/a.ts"],"the conversation so far",${hosts}])`,
+      'feat: from the conversation',
+    ],
+    [
+      'git:generateBranchName', ['C:/repo'], `git.generateBranchName(["C:/repo",${hosts}])`,
+      'feature/generated',
+    ],
+    [
+      'git:generatePullRequestText', ['C:/repo', 'main'],
+      `git.generatePullRequestText(["C:/repo","main",${hosts}])`,
+      { title: 'PR title', description: 'PR body' },
+    ],
+    // The two mutations in this batch whose shape is otherwise a plain read. Their *absence*
+    // of a cache invalidation is asserted by the exact-log assertion below, and spelled out
+    // in the two dedicated tests that follow.
+    [
+      'git:forceUnlock', ['C:/repo'], `git.forceUnlockRepo(["C:/repo",${hosts}])`,
+      { removed: ['index.lock'] },
+    ],
+    [
+      'git:deleteBranches', ['C:/repo', ['feature/done']],
+      `git.deleteBranches(["C:/repo",["feature/done"],${hosts}])`,
+      { deleted: ['feature/done'], failed: [] },
+    ],
+  ]
+
+  for (const [channel, args, call, result] of cases) {
+    it(`${channel} resolves the host config, forwards it in the ssh/wsl slots, and returns the answer`, async () => {
+      const ipc = await viaIpc(channel, args)
+      const rpc = await viaControlRpc(channel, args)
+
+      expect(rpc).toEqual(ipc)
+      // Exactly two entries: the config lookup and the one git call. Nothing else — no
+      // second lookup, and in particular no `git.invalidateGitCache`.
+      expect(ipc).toEqual([lookup, call])
+      expect(await resultViaIpc(channel, args)).toEqual(result)
+      expect(await resultViaControlRpc(channel, args)).toEqual(result)
+    })
+  }
+
+  it('git:log coalesces an omitted or explicitly null opts to {}', async () => {
+    // Load-bearing, and for the *parameter default* reason rather than the in-body one:
+    // `listCommits` declares `opts: {…} = {}`, which fires on `undefined` only. A remote
+    // caller's explicitly-`undefined` argument arrives as `null` over JSON, sails straight
+    // past that default, and `opts.range` would throw on it. Both pre-fold paths coalesced.
+    const expected = [lookup, `git.listCommits(["C:/repo",{},${hosts}])`]
+
+    expect(await viaIpc('git:log', ['C:/repo'])).toEqual(expected)
+    expect(await viaControlRpc('git:log', ['C:/repo'])).toEqual(expected)
+    expect(await viaIpc('git:log', ['C:/repo', null])).toEqual(expected)
+    expect(await viaControlRpc('git:log', ['C:/repo', null])).toEqual(expected)
+  })
+
+  it('git:log leaves a partially-populated opts object exactly as it arrived', async () => {
+    // The coalesce must not become a merge: `listCommits` supplies its own `range`/`limit`
+    // defaults in its body, so materialising them here would move that decision.
+    const expected = [lookup, `git.listCommits(["C:/repo",{"limit":5},${hosts}])`]
+    expect(await viaIpc('git:log', ['C:/repo', { limit: 5 }])).toEqual(expected)
+    expect(await viaControlRpc('git:log', ['C:/repo', { limit: 5 }])).toEqual(expected)
+  })
+
+  it('git:fetchRemote has no handler-level invalidation — the callee owns it', async () => {
+    // Correct as it stands, and the precedent for where that responsibility belongs:
+    // `gitFetchRemoteCached` (git.ts:592-598) invalidates *inside* its own `readWithCache`,
+    // after the fetch resolves, so a second invalidation here would be a duplicate. The stub
+    // replaces that body, so what this pins is the absence at the handler level — on both
+    // paths, which agreed.
+    const ipc = await viaIpc('git:fetchRemote', ['C:/repo'])
+    const rpc = await viaControlRpc('git:fetchRemote', ['C:/repo'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      lookup,
+      `git.gitFetchRemoteCached(["C:/repo",${hosts}])`,
+      // Awaited rather than floated. This is the only observable proof of it: post-fold the
+      // handler cannot return the value, because the contract declares `void`.
+      'git.gitFetchRemoteCached:settled',
+    ])
+    // The one deliberate change the fold makes to this family, and it is a *value* change,
+    // not a timing one: both pre-fold paths returned the promise and so resolved
+    // `{ fetched: true }`, while the contract declares `void` and `satisfies` refuses that
+    // return — so the handler awaits and drops it. Unobservable: stores/git.ts:388 discards
+    // the value and the channel is absent from mobile's allowlist (apps/mobile/src/api/rpc.ts).
+    expect(await resultViaIpc('git:fetchRemote', ['C:/repo'])).toBeUndefined()
+    expect(await resultViaControlRpc('git:fetchRemote', ['C:/repo'])).toBeUndefined()
+  })
+
+  it('git:forceUnlock mutates the repo and invalidates nothing, on either path', async () => {
+    // `forceUnlockRepo` deletes `.git/index.lock` and friends. Neither transport invalidated
+    // afterwards and neither does git.ts, so a `git:status` read cached during the locked
+    // period survives the unlock for up to its 5 s TTL — even though stores/git.ts:379
+    // re-reads status immediately afterwards precisely to refresh that view. Reported, not
+    // fixed: preserved exactly as both pre-fold paths had it.
+    const ipc = await viaIpc('git:forceUnlock', ['C:/repo'])
+    const rpc = await viaControlRpc('git:forceUnlock', ['C:/repo'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([lookup, `git.forceUnlockRepo(["C:/repo",${hosts}])`])
+    expect(ipc.some((entry) => entry.includes('invalidateGitCache'))).toBe(false)
+  })
+
+  it('git:deleteBranches does NOT invalidate the branch cache — a KNOWN BUG, preserved', async () => {
+    // KNOWN BUG, recorded rather than fixed, and deliberately not "tidied" during a fold:
+    // fixing it here would hide a behaviour change inside a refactor.
+    //
+    // `deleteBranches` mutates branch state. Neither transport invalidates afterwards, and
+    // unlike `gitFetchRemoteCached` the git.ts function does not do it internally either
+    // (git.ts:1345). `listCachedBranches` caches under `'branches'` with a 30 s TTL, and
+    // stores/git.ts:449 re-reads `git:branches` the moment the delete resolves — so the
+    // deleted branch keeps showing in the UI for up to 30 s.
+    const ipc = await viaIpc('git:deleteBranches', ['C:/repo', ['feature/done']])
+    const rpc = await viaControlRpc('git:deleteBranches', ['C:/repo', ['feature/done']])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([lookup, `git.deleteBranches(["C:/repo",["feature/done"],${hosts}])`])
+    expect(ipc.some((entry) => entry.includes('invalidateGitCache'))).toBe(false)
+
+    // The contrast that makes it a bug rather than a design: the two neighbouring branch
+    // mutations both invalidate. If someone ever gives deleteBranches the same treatment,
+    // the assertion above fails and this one explains what it was measured against.
+    expect(await viaIpc('git:checkout', ['C:/repo', 'main'])).toContain(
+      `git.invalidateGitCache(["C:/repo",${hosts}])`,
+    )
+    expect(await viaIpc('git:createBranch', ['C:/repo', 'feature/y', 'main', false])).toContain(
+      `git.invalidateGitCache(["C:/repo",${hosts}])`,
+    )
+  })
+
+  it('git:watchStart hands the window and the invalidation callback to the watcher', async () => {
+    // `invalidateRepoGitCache` is passed as a *reference*, not a call: the watcher fires it
+    // on every repo change it sees. Calling it here instead would invalidate once,
+    // immediately, and leave the watcher with `undefined` — and the recorded call would look
+    // almost identical, because the recorder renders a function argument as an empty slot.
+    // Hence the identity assertion, and the "no invalidateGitCache" one.
+    const { invalidateRepoGitCache } = await import('../ipc/thread-context')
+
+    const ipc = await viaIpc('git:watchStart', ['C:/repo'])
+    const ipcCallback = H.state.repoWatchCallback
+    const rpc = await viaControlRpc('git:watchStart', ['C:/repo'])
+
+    expect(rpc).toEqual(ipc)
+    // The trailing comma inside the brackets is the callback's slot: present, but rendered
+    // empty because `JSON.stringify(fn)` is `undefined`. Its presence pins the argument
+    // count and order; `ipcCallback` below pins which function it is.
+    expect(ipc).toEqual([`fileWatch.startRepoGitWatch([${JSON.stringify(window)},"C:/repo",])`])
+    // Both transports resolve the same BrowserWindow — the IPC path closed over the one
+    // `registerIpcHandlers` was given, the control-RPC path took it as a parameter.
+    expect(ipcCallback).toBe(invalidateRepoGitCache)
+    expect(H.state.repoWatchCallback).toBe(invalidateRepoGitCache)
+    // Keyed on the path alone: no getConfigForPath, and nothing invalidated up front.
+    expect(ipc.some((entry) => entry.includes('getLocationByPath'))).toBe(false)
+    expect(ipc.some((entry) => entry.includes('invalidateGitCache'))).toBe(false)
+
+    expect(await resultViaIpc('git:watchStart', ['C:/repo'])).toBe(true)
+    expect(await resultViaControlRpc('git:watchStart', ['C:/repo'])).toBe(true)
+  })
+
+  it('git:watchStop stops the watcher without resolving the host config', async () => {
+    const ipc = await viaIpc('git:watchStop', ['C:/repo'])
+    const rpc = await viaControlRpc('git:watchStop', ['C:/repo'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['fileWatch.stopRepoGitWatch(["C:/repo"])'])
   })
 })
 

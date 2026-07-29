@@ -3,8 +3,7 @@ import { ipcMain, BrowserWindow } from 'electron'
 import { isLocalChannel, isRemoteChannel } from '@polycode/shared'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
-import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
-import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
+import { commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, checkoutBranch, createBranch, mergeBranch, gitInit, discardFileChanges, discardAllChanges, amendCommit, undoLastCommit, createStash, applyStash, popStash, dropStash } from '../git'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { MIGRATED_CHANNELS, filePathToDataUrl, invokeChannelHandler } from './channel-handlers'
@@ -90,26 +89,11 @@ export function registerIpcHandlers(window: BrowserWindow): void {
 
   // ── Git ───────────────────────────────────────────────────────────────────
 
-  proxyable('git:branch', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCachedGitBranch(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:status', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCachedGitStatus(repoPath, ssh, wsl)
-  })
-
   proxyable('git:commit', async (repoPath: string, message: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await commitChanges(repoPath, message, ssh, wsl)
     invalidateRepoGitCache(repoPath)
-  })
-
-  proxyable('git:lastCommit', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCachedLastCommit(repoPath, ssh, wsl)
   })
 
   proxyable('git:amendCommit', async (repoPath: string, message?: string | null) => {
@@ -184,26 +168,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     invalidateRepoGitCache(repoPath)
   })
 
-  proxyable('git:generateCommitMessage', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return generateCommitMessage(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:generateCommitMessageWithContext', (repoPath: string, filePaths: string[], context: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
-  })
-
-  proxyable('git:generateBranchName', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return generateBranchName(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:generatePullRequestText', (repoPath: string, targetBranch: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return generatePullRequestText(repoPath, targetBranch, ssh, wsl)
-  })
-
   proxyable('git:push', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     const result = await gitPush(repoPath, ssh, wsl)
@@ -244,11 +208,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   })
 
   // ─── Stash ────────────────────────────────────────────────────────────────
-  proxyable('git:stashList', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return listStashes(repoPath, ssh, wsl)
-  })
-
   proxyable('git:stashCreate', async (repoPath: string, opts: { message?: string; includeUntracked?: boolean }) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await createStash(repoPath, opts ?? {}, ssh, wsl)
@@ -273,69 +232,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     invalidateRepoGitCache(repoPath)
   })
 
-  proxyable('git:forceUnlock', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return forceUnlockRepo(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:fetchRemote', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return gitFetchRemoteCached(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:diff', (repoPath: string, filePath: string, staged: boolean) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getFileDiff(repoPath, filePath, staged, ssh, wsl)
-  })
-
-  proxyable('git:compareToMain', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCachedCompareToMainChanges(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:compareDiffToMain', (repoPath: string, filePath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
-  })
-
-  proxyable('git:compareToBranch', (repoPath: string, targetBranch: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCompareToBranchChanges(repoPath, targetBranch, ssh, wsl)
-  })
-
-  proxyable('git:compareDiffToBranch', (repoPath: string, targetBranch: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCompareToBranchDiff(repoPath, targetBranch, ssh, wsl)
-  })
-
-  proxyable('git:log', (repoPath: string, opts?: { range?: string; limit?: number }) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return listCommits(repoPath, opts ?? {}, ssh, wsl)
-  })
-
-  proxyable('git:commitFiles', (repoPath: string, sha: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return listCommitFiles(repoPath, sha, ssh, wsl)
-  })
-
-  proxyable('git:commitDiff', (repoPath: string, sha: string, filePath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCommitFileDiff(repoPath, sha, filePath, ssh, wsl)
-  })
-
-  proxyable('git:branches', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return listCachedBranches(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:watchStart', (repoPath: string) => {
-    return startRepoGitWatch(window, repoPath, invalidateRepoGitCache)
-  })
-
-  proxyable('git:watchStop', (repoPath: string) => {
-    stopRepoGitWatch(repoPath)
-  })
-
   proxyable('git:checkout', async (repoPath: string, branch: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await checkoutBranch(repoPath, branch, ssh, wsl)
@@ -355,40 +251,10 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return result
   })
 
-  proxyable('git:findMergedBranches', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return findMergedBranches(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:deleteBranches', (repoPath: string, branches: string[]) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return deleteBranches(repoPath, branches, ssh, wsl)
-  })
-
   proxyable('git:init', async (repoPath: string) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await gitInit(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
-  })
-
-  proxyable('git:isRepo', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return isGitRepoCached(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:getRemoteUrl', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getRemoteUrl(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:hostingProvider', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return detectGitHostingProviderCached(repoPath, ssh, wsl)
-  })
-
-  proxyable('git:defaultBranch', (repoPath: string) => {
-    const { ssh, wsl } = getConfigForPath(repoPath)
-    return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
   // ── Window state push ──────────────────────────────────────────────────────

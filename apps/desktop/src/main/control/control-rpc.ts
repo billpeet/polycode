@@ -5,28 +5,9 @@ import {
   commitChanges,
   createBranch,
   createStash,
-  deleteBranches,
-  detectGitHostingProviderCached,
   discardAllChanges,
   discardFileChanges,
   dropStash,
-  findMergedBranches,
-  forceUnlockRepo,
-  generateBranchName,
-  generateCommitMessage,
-  generateCommitMessageWithContext,
-  generatePullRequestText,
-  getCachedCompareToMainChanges,
-  getCachedDefaultBranch,
-  getCachedGitBranch,
-  getCachedGitStatus,
-  getCachedLastCommit,
-  getCommitFileDiff,
-  getCompareToBranchChanges,
-  getCompareToBranchDiff,
-  getCompareToMainFileDiff,
-  getFileDiff,
-  gitFetchRemoteCached,
   gitInit,
   gitPull,
   gitPullOrigin,
@@ -34,11 +15,6 @@ import {
   gitPush,
   gitPushSetUpstream,
   invalidateGitCache,
-  isGitRepoCached,
-  listCachedBranches,
-  listCommitFiles,
-  listCommits,
-  listStashes,
   mergeBranch,
   popStash,
   stageAll,
@@ -48,9 +24,7 @@ import {
   unstageAll,
   unstageFile,
   applyStash,
-  getRemoteUrl,
 } from '../git'
-import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { REMOTE_CHANNELS, isRemoteChannel } from '@polycode/shared'
 import { invokeChannelHandler, isMigratedChannel } from '../ipc/channel-handlers'
@@ -73,16 +47,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
 
   switch (channel) {
 
-    case 'git:branch': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCachedGitBranch(repoPath, ssh, wsl)
-    }
-    case 'git:status': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCachedGitStatus(repoPath, ssh, wsl)
-    }
     case 'git:commit': {
       const [repoPath, message] = args as [string, string]
       const { ssh, wsl } = getConfigForPath(repoPath)
@@ -90,11 +54,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       await commitChanges(repoPath, message, ssh, wsl)
       invalidateRepoGitCache(repoPath)
       return undefined
-    }
-    case 'git:lastCommit': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCachedLastCommit(repoPath, ssh, wsl)
     }
     case 'git:amendCommit': {
       const [repoPath, message] = args as [string, string | null | undefined]
@@ -177,26 +136,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       invalidateRepoGitCache(repoPath)
       return undefined
     }
-    case 'git:generateCommitMessage': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return generateCommitMessage(repoPath, ssh, wsl)
-    }
-    case 'git:generateCommitMessageWithContext': {
-      const [repoPath, filePaths, context] = args as [string, string[], string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
-    }
-    case 'git:generateBranchName': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return generateBranchName(repoPath, ssh, wsl)
-    }
-    case 'git:generatePullRequestText': {
-      const [repoPath, targetBranch] = args as [string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return generatePullRequestText(repoPath, targetBranch, ssh, wsl)
-    }
     case 'git:push': {
       const [repoPath] = args as [string]
       const { ssh, wsl } = getConfigForPath(repoPath)
@@ -236,11 +175,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       invalidateRepoGitCache(repoPath)
       return result
     }
-    case 'git:stashList': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return listStashes(repoPath, ssh, wsl)
-    }
     case 'git:stashCreate': {
       const [repoPath, opts] = args as [string, { message?: string; includeUntracked?: boolean }]
       const { ssh, wsl } = getConfigForPath(repoPath)
@@ -269,66 +203,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       invalidateRepoGitCache(repoPath)
       return undefined
     }
-    case 'git:forceUnlock': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return forceUnlockRepo(repoPath, ssh, wsl)
-    }
-    case 'git:fetchRemote': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return gitFetchRemoteCached(repoPath, ssh, wsl)
-    }
-    case 'git:diff': {
-      const [repoPath, filePath, staged] = args as [string, string, boolean]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getFileDiff(repoPath, filePath, staged, ssh, wsl)
-    }
-    case 'git:compareToMain': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCachedCompareToMainChanges(repoPath, ssh, wsl)
-    }
-    case 'git:compareDiffToMain': {
-      const [repoPath, filePath] = args as [string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
-    }
-    case 'git:compareToBranch': {
-      const [repoPath, targetBranch] = args as [string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCompareToBranchChanges(repoPath, targetBranch, ssh, wsl)
-    }
-    case 'git:compareDiffToBranch': {
-      const [repoPath, targetBranch] = args as [string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCompareToBranchDiff(repoPath, targetBranch, ssh, wsl)
-    }
-    case 'git:log': {
-      const [repoPath, opts] = args as [string, { range?: string; limit?: number } | undefined]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return listCommits(repoPath, opts ?? {}, ssh, wsl)
-    }
-    case 'git:commitFiles': {
-      const [repoPath, sha] = args as [string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return listCommitFiles(repoPath, sha, ssh, wsl)
-    }
-    case 'git:commitDiff': {
-      const [repoPath, sha, filePath] = args as [string, string, string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCommitFileDiff(repoPath, sha, filePath, ssh, wsl)
-    }
-    case 'git:branches': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return listCachedBranches(repoPath, ssh, wsl)
-    }
-    case 'git:watchStart':
-      return startRepoGitWatch(window, args[0] as string, invalidateRepoGitCache)
-    case 'git:watchStop':
-      stopRepoGitWatch(args[0] as string)
-      return undefined
     case 'git:checkout': {
       const [repoPath, branch] = args as [string, string]
       const { ssh, wsl } = getConfigForPath(repoPath)
@@ -350,42 +224,12 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       invalidateRepoGitCache(repoPath)
       return result
     }
-    case 'git:findMergedBranches': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return findMergedBranches(repoPath, ssh, wsl)
-    }
-    case 'git:deleteBranches': {
-      const [repoPath, branches] = args as [string, string[]]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return deleteBranches(repoPath, branches, ssh, wsl)
-    }
     case 'git:init': {
       const [repoPath] = args as [string]
       const { ssh, wsl } = getConfigForPath(repoPath)
       await gitInit(repoPath, ssh, wsl)
       invalidateRepoGitCache(repoPath)
       return undefined
-    }
-    case 'git:isRepo': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return isGitRepoCached(repoPath, ssh, wsl)
-    }
-    case 'git:getRemoteUrl': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getRemoteUrl(repoPath, ssh, wsl)
-    }
-    case 'git:hostingProvider': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return detectGitHostingProviderCached(repoPath, ssh, wsl)
-    }
-    case 'git:defaultBranch': {
-      const [repoPath] = args as [string]
-      const { ssh, wsl } = getConfigForPath(repoPath)
-      return getCachedDefaultBranch(repoPath, ssh, wsl)
     }
 
     default:

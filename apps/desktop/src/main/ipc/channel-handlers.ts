@@ -151,13 +151,39 @@ import {
 } from '../project-admin'
 import { projectFaviconDataUrl } from '../project-favicon'
 import { emitAppEvent } from '../app-events'
-import { getCachedGitBranch } from '../git'
+import {
+  deleteBranches,
+  detectGitHostingProviderCached,
+  findMergedBranches,
+  forceUnlockRepo,
+  generateBranchName,
+  generateCommitMessage,
+  generateCommitMessageWithContext,
+  generatePullRequestText,
+  getCachedCompareToMainChanges,
+  getCachedDefaultBranch,
+  getCachedGitBranch,
+  getCachedGitStatus,
+  getCachedLastCommit,
+  getCommitFileDiff,
+  getCompareToBranchChanges,
+  getCompareToBranchDiff,
+  getCompareToMainFileDiff,
+  getFileDiff,
+  getRemoteUrl,
+  gitFetchRemoteCached,
+  isGitRepoCached,
+  listCachedBranches,
+  listCommitFiles,
+  listCommits,
+  listStashes,
+} from '../git'
 import { getThreadLogs } from '../thread-logger'
 import { createForge } from '../forge'
 import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
-import { startFileWatch, stopFileWatch } from '../file-watch'
+import { startFileWatch, startRepoGitWatch, stopFileWatch, stopRepoGitWatch } from '../file-watch'
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
 import { listClaudeAvailableModels } from '../claude-models'
@@ -729,6 +755,223 @@ export const channelHandlers = {
   'location-pools:update': (_ctx, id, name) => updateLocationPool(id, name),
 
   'location-pools:delete': (_ctx, id) => deleteLocationPool(id),
+
+  // ── Git: the channels that do not invalidate the git cache ────────────────
+  //
+  // The other 24 `git:*` channels — every one that calls `invalidateRepoGitCache` — are a
+  // separate round and still live in the two legacy files, which is why both of them keep
+  // importing `invalidateRepoGitCache`.
+  //
+  // All but the two watch channels open with `getConfigForPath(repoPath)` and hand the pair
+  // to a `git.ts` function in adjacent trailing `(…, ssh, wsl)` slots. Nothing here branches
+  // on which config it got — `git.ts` decides how to reach the repo — so the only thing that
+  // can go wrong is the slot order, and a transposed pair still answers plausibly rather
+  // than failing. That is why the characterisation tests drive this whole family with an ssh
+  // config and a wsl config that render differently.
+
+  'git:branch': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCachedGitBranch(repoPath, ssh, wsl)
+  },
+
+  'git:status': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCachedGitStatus(repoPath, ssh, wsl)
+  },
+
+  'git:lastCommit': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCachedLastCommit(repoPath, ssh, wsl)
+  },
+
+  'git:stashList': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listStashes(repoPath, ssh, wsl)
+  },
+
+  'git:isRepo': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return isGitRepoCached(repoPath, ssh, wsl)
+  },
+
+  'git:getRemoteUrl': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getRemoteUrl(repoPath, ssh, wsl)
+  },
+
+  'git:hostingProvider': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return detectGitHostingProviderCached(repoPath, ssh, wsl)
+  },
+
+  'git:defaultBranch': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCachedDefaultBranch(repoPath, ssh, wsl)
+  },
+
+  'git:branches': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listCachedBranches(repoPath, ssh, wsl)
+  },
+
+  'git:findMergedBranches': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return findMergedBranches(repoPath, ssh, wsl)
+  },
+
+  // The uncommitted-work diff, and the only one of the diff channels that takes a
+  // `staged` flag: it selects `--cached` inside `getFileDiff` and is passed through raw.
+  'git:diff': (_ctx, repoPath, filePath, staged) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getFileDiff(repoPath, filePath, staged, ssh, wsl)
+  },
+
+  // The four `compare*` channels are two pairs, and each pair is one transposition away
+  // from being wrong in a way that still returns a diff:
+  //   compareToMain       → the file LIST vs the merge-base with the default branch
+  //   compareDiffToMain   → the diff of ONE file vs that merge-base  (takes a filePath)
+  //   compareToBranch     → the file LIST vs the merge-base with a named branch
+  //   compareDiffToBranch → the COMBINED diff of every file vs that merge-base (no filePath)
+  // Note the asymmetry in the second argument, which is the trap: `compareDiffToMain` takes
+  // a file path and `compareDiffToBranch` takes a branch name. Each is pinned to its own
+  // callee in the characterisation tests.
+  'git:compareToMain': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCachedCompareToMainChanges(repoPath, ssh, wsl)
+  },
+
+  'git:compareDiffToMain': (_ctx, repoPath, filePath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToMainFileDiff(repoPath, filePath, ssh, wsl)
+  },
+
+  'git:compareToBranch': (_ctx, repoPath, targetBranch) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToBranchChanges(repoPath, targetBranch, ssh, wsl)
+  },
+
+  'git:compareDiffToBranch': (_ctx, repoPath, targetBranch) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCompareToBranchDiff(repoPath, targetBranch, ssh, wsl)
+  },
+
+  // `opts ?? {}` is load-bearing, and for the *parameter default* reason rather than the
+  // in-body one: `listCommits` declares `opts: { range?, limit? } = {}`, which fires on
+  // `undefined` only. A remote caller's explicitly-`undefined` argument arrives as `null`
+  // over JSON, sails past that default, and `opts.range` would throw on it. It must also
+  // stay an empty object rather than a materialised `{ range: 'HEAD', limit: 100 }` — those
+  // defaults belong to `listCommits`'s body. Both pre-fold paths wrote exactly this.
+  'git:log': (_ctx, repoPath, opts) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listCommits(repoPath, opts ?? {}, ssh, wsl)
+  },
+
+  // The other easy transposition: both take a sha, and `commitDiff` narrows to one file.
+  'git:commitFiles': (_ctx, repoPath, sha) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return listCommitFiles(repoPath, sha, ssh, wsl)
+  },
+
+  'git:commitDiff': (_ctx, repoPath, sha, filePath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getCommitFileDiff(repoPath, sha, filePath, ssh, wsl)
+  },
+
+  // The four generation channels reach a CLI through git.ts's own cache. They differ only in
+  // what context they collect first, and all four pass their extra arguments *before* the
+  // host configs — `generateCommitMessageWithContext` takes (filePaths, messagesContext) in
+  // that order, which the channel's own argument order matches.
+  'git:generateCommitMessage': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return generateCommitMessage(repoPath, ssh, wsl)
+  },
+
+  'git:generateCommitMessageWithContext': (_ctx, repoPath, filePaths, context) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return generateCommitMessageWithContext(repoPath, filePaths, context, ssh, wsl)
+  },
+
+  'git:generateBranchName': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return generateBranchName(repoPath, ssh, wsl)
+  },
+
+  'git:generatePullRequestText': (_ctx, repoPath, targetBranch) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return generatePullRequestText(repoPath, targetBranch, ssh, wsl)
+  },
+
+  /**
+   * The one channel in this family whose callee's value cannot be passed through: the
+   * contract declares `void`, `gitFetchRemoteCached` resolves `{ fetched: true }`, and
+   * `satisfies` refuses the return. So it is awaited and the value dropped — awaited,
+   * because floating it would reply before the fetch lands, and both pre-fold paths returned
+   * the promise. Nothing observes the value: stores/git.ts:388 discards it and the channel is
+   * absent from mobile's RPC allowlist.
+   *
+   * There is deliberately no invalidation here, and unlike the two channels below that is
+   * correct: `gitFetchRemoteCached` (git.ts:592-598) invalidates *inside* its own
+   * `readWithCache`, once the fetch resolves. That is where the responsibility belongs — a
+   * second invalidation at this level would be a duplicate.
+   */
+  'git:fetchRemote': async (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    await gitFetchRemoteCached(repoPath, ssh, wsl)
+  },
+
+  /**
+   * Mutates — `forceUnlockRepo` deletes `.git/index.lock` and the loose-ref locks — and
+   * invalidates nothing, on either pre-fold path or inside `git.ts`. Preserved verbatim, so a
+   * `git:status` read cached while the repo was locked outlives the unlock by up to its 5 s
+   * TTL, even though stores/git.ts:379 re-reads status immediately afterwards to refresh
+   * exactly that view. Reported, not fixed: a cache change is not a fold.
+   */
+  'git:forceUnlock': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return forceUnlockRepo(repoPath, ssh, wsl)
+  },
+
+  /**
+   * KNOWN BUG, preserved deliberately.
+   *
+   * This mutates branch state and invalidates nothing: not here, not on either pre-fold path,
+   * and not inside `deleteBranches` (git.ts:1345) — unlike `gitFetchRemoteCached`, which owns
+   * its own invalidation, and unlike `git:checkout` and `git:createBranch`, the two
+   * neighbouring branch mutations, which both invalidate at the handler level.
+   * `listCachedBranches` caches under `'branches'` with a 30 s TTL and stores/git.ts:449
+   * re-reads `git:branches` the instant the delete resolves, so a deleted branch keeps
+   * showing in the UI for up to 30 s.
+   *
+   * Fixing it inside a refactor would hide a behaviour change in a diff that claims to have
+   * none, so the absence is preserved and a characterisation test records it as a bug rather
+   * than as intent.
+   */
+  'git:deleteBranches': (_ctx, repoPath, branches) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return deleteBranches(repoPath, branches, ssh, wsl)
+  },
+
+  /**
+   * `invalidateRepoGitCache` is passed as a *reference*, not a call: the watcher fires it
+   * every time it sees the repo change. Calling it here instead would invalidate once,
+   * immediately, and hand the watcher `undefined` — a mistake the recorded call log alone
+   * cannot see, so the characterisation test pins the callback's identity.
+   *
+   * `ctx.window` is the watcher's event target, the same shape as `files:watchStart`: the IPC
+   * path closed over the window `registerIpcHandlers` was given and the control-RPC path took
+   * it as a parameter, and both resolved to the same one.
+   *
+   * Note what is absent: no `getConfigForPath`. The repo watcher is `fs.watch` underneath and
+   * is keyed on the path alone — a remotely-hosted repo simply reports "not watching".
+   */
+  'git:watchStart': (ctx, repoPath) =>
+    startRepoGitWatch(ctx.window, repoPath, invalidateRepoGitCache),
+
+  // Passing the `: void` callee's value through, per the rule above. Both pre-fold paths
+  // discarded it — control-rpc.ts called it as a statement and followed it with
+  // `return undefined` — and nothing observable turns on the change, exactly as for
+  // `files:watchStop`.
+  'git:watchStop': (_ctx, repoPath) => stopRepoGitWatch(repoPath),
 
   // ── Forge: provider-neutral pull requests ─────────────────────────────────
   //
