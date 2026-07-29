@@ -13,7 +13,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { CHANNEL_REGISTRY, isRemoteChannel } from '@polycode/shared'
+import { CHANNEL_REGISTRY, LOCAL_CHANNELS, isLocalChannel, isRemoteChannel } from '@polycode/shared'
 
 const H = vi.hoisted(() => {
   const log: string[] = []
@@ -536,7 +536,11 @@ vi.mock('../remote/client', () => ({
       H.state.proxyChecks += 1
       return H.state.remoteProxy ? { id: 'host1' } : null
     },
-    shouldProxy: () => true,
+    // Channel-aware on purpose. A double that ignores its argument lets the adapter ask
+    // about the WRONG channel and still pass — and `attachments:saveFromPath` asking about
+    // itself (remote:false) instead of `attachments:save` would silently write every
+    // attachment to the local machine while controlling a remote desktop.
+    shouldProxy: (channel: string) => isRemoteChannel(channel),
     invokeIfActive: async (channel: string, args: unknown[]) => {
       // Counted, not logged: logging would add an entry to every pinned IPC sequence.
       H.state.proxyInvokes += 1
@@ -554,6 +558,11 @@ const ipcListeners = new Map<string, (event: unknown, ...args: unknown[]) => unk
 vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
+      // Real Electron throws on a second handler for the same channel. A plain Map.set
+      // would silently keep the last one and hide a double registration.
+      if (ipcHandlers.has(channel)) {
+        throw new Error(`duplicate ipcMain.handle registration for ${channel}`)
+      }
       ipcHandlers.set(channel, listener)
     },
     on: (channel: string, listener: (event: unknown, ...args: unknown[]) => unknown) => {
@@ -584,10 +593,14 @@ vi.mock('electron', () => ({
   BrowserWindow: class {},
 }))
 
+/** `window.on(...)` registrations — the titlebar push listeners, not channels. */
+const windowListeners = new Map<string, () => void>()
+
 const window = {
-  // Registration-time only (`window.on('maximize', …)` pushes `window:maximized-changed`
-  // to the renderer); deliberately not recorded, so it stays out of every call log.
-  on: () => {},
+  // Recorded into a separate map rather than the call log, so the titlebar push listeners
+  // are assertable without polluting every pinned sequence. Unrecorded, deleting either
+  // `window.on('maximize'|'unmaximize', …)` passed the whole suite.
+  on: (event: string, listener: () => void) => { windowListeners.set(event, listener) },
   minimize: H.stub('window.minimize'),
   maximize: H.stub('window.maximize'),
   unmaximize: H.stub('window.unmaximize'),
@@ -600,6 +613,7 @@ const window = {
 } as unknown as import('electron').BrowserWindow
 
 const { registerIpcHandlers } = await import('../ipc/handlers')
+const { MIGRATED_CHANNELS } = await import('../ipc/channel-handlers')
 const { handleControlRpc } = await import('../control/control-rpc')
 
 registerIpcHandlers(window)
@@ -2846,6 +2860,26 @@ describe('terminal:* — both transports agree', () => {
     await Promise.resolve()
     expect(H.log).toEqual(['ptyManager.resize(["term-1",100,30])'])
   })
+
+  it('the ipcMain.on listeners forward to an active host instead of writing locally', async () => {
+    // This is the LIVE terminal transport, so its remote hop carries every keystroke typed
+    // at a remotely-controlled terminal. With no active host the forwarding and
+    // non-forwarding shapes log identically, so the test above cannot tell them apart:
+    // replacing the whole invokeIfActive body with a bare ptyManager.write passed it.
+    H.state.remoteProxy = { handled: true, value: undefined }
+
+    H.log.length = 0
+    await ipcListeners.get('terminal:write')!({}, 'term-1', 'ls')
+    await Promise.resolve()
+    expect(H.log).toEqual(['remoteClient.invokeIfActive(["terminal:write",["term-1","ls"]])'])
+    expect(H.log.some((entry) => entry.startsWith('ptyManager.write'))).toBe(false)
+
+    H.log.length = 0
+    await ipcListeners.get('terminal:resize')!({}, 'term-1', 100, 30)
+    await Promise.resolve()
+    expect(H.log).toEqual(['remoteClient.invokeIfActive(["terminal:resize",["term-1",100,30]])'])
+    expect(H.log.some((entry) => entry.startsWith('ptyManager.resize'))).toBe(false)
+  })
 })
 
 /**
@@ -3012,10 +3046,59 @@ describe('the ipcMain adapter only pays for the remote hop where it can pay off'
     }
   })
 
-  it('a dual-path folded channel still takes the hop', async () => {
-    H.state.proxyInvokes = 0
-    await viaIpc('projects:list', [])
-    expect(H.state.proxyInvokes).toBe(1)
+  it('EVERY dual-path folded channel still takes the hop', async () => {
+    // Asserting this for one channel let a targeted loss through: excluding `threads:send`
+    // or every `forge:*` from the `isRemoteChannel` branch passed the whole suite, and
+    // desktop-A-controlling-desktop-B would break for those channels with nothing red.
+    //
+    // Args are omitted, so most handlers throw — that is fine and deliberate: `proxyable`
+    // awaits `invokeIfActive` BEFORE calling the handler, so the hop is already counted by
+    // the time anything can fail.
+    const dualPath = MIGRATED_CHANNELS.filter(
+      (channel) => isLocalChannel(channel) && isRemoteChannel(channel),
+    )
+    expect(dualPath.length).toBeGreaterThan(100)
+
+    for (const channel of dualPath) {
+      H.state.proxyInvokes = 0
+      try {
+        await viaIpc(channel, [])
+      } catch {
+        /* handler needs real args; the hop precedes it */
+      }
+      expect(H.state.proxyInvokes, `${channel} lost its remote-forwarding hop`).toBe(1)
+    }
+  })
+
+  it('every local:true channel has an ipcMain registration', async () => {
+    // Nothing else asserts the registry and the adapter agree in this direction: a folded
+    // channel silently failing to register would surface only as a dead button.
+    // Excluding the nine `remote:*` channels still registered inside `remote/client.ts`:
+    // this harness mocks that module wholesale (that mock is what keeps the forwarding hop
+    // inert everywhere else), so their real registrations cannot exist here. They are
+    // guarded instead by the source scan in channel-handler-migration.test.ts.
+    const registeredElsewhere = (channel: string): boolean =>
+      channel.startsWith('remote:') && !ipcHandlers.has(channel)
+    const missing = LOCAL_CHANNELS.filter(
+      (channel) => !ipcHandlers.has(channel) && !registeredElsewhere(channel),
+    )
+    expect(missing).toEqual([])
+    // Belt and braces: the exclusion must stay exactly nine channels wide.
+    expect(LOCAL_CHANNELS.filter(registeredElsewhere)).toHaveLength(9)
+  })
+
+  it('the titlebar push listeners are registered', async () => {
+    // `window.on(...)` is not a channel, so no other assertion covers it; deleting either
+    // line passed the entire suite. The renderer's maximise/restore chrome depends on them.
+    expect([...windowListeners.keys()].sort()).toEqual(['maximize', 'unmaximize'])
+
+    H.log.length = 0
+    windowListeners.get('maximize')?.()
+    windowListeners.get('unmaximize')?.()
+    expect(H.log).toEqual([
+      'window.send(["window:maximized-changed",true])',
+      'window.send(["window:maximized-changed",false])',
+    ])
   })
 })
 
