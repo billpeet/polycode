@@ -78,11 +78,12 @@ function isNotRegisteredWorktreeError(error: unknown): boolean {
   return message.includes('is not a working tree') || message.includes('is not a git repository')
 }
 
-function isWorktreeDirectoryCleanupError(error: unknown): boolean {
+export function isWorktreeDirectoryCleanupError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error)
   return message.includes('failed to delete') && (
     message.includes('Directory not empty') ||
-    message.includes('Permission denied')
+    message.includes('Permission denied') ||
+    message.includes('Filename too long')
   )
 }
 
