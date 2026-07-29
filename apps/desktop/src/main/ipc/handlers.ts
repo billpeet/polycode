@@ -25,7 +25,6 @@ import {
   updateThreadCursorContext,
   updateThreadPermissionMode,
   updateThreadYoloMode,
-  updateThreadStatus,
   updateThreadUnread,
   threadExists,
   threadHasMessages,
@@ -40,7 +39,6 @@ import {
   getActiveSession,
   getThreadModifiedFiles,
   updateThreadWsl,
-  setThreadGitBranchIfUnset,
   listYouTrackServers,
   createYouTrackServer,
   updateYouTrackServer,
@@ -52,7 +50,7 @@ import {
   getSetting,
   setSetting,
 } from '../db/queries'
-import { SshConfig, WslConfig, Provider, QuestionAnswerValue } from '../../shared/types'
+import { SshConfig, WslConfig, Provider } from '../../shared/types'
 import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
 import { listClaudeAvailableModels } from '../claude-models'
 import { listCodexAvailableModels } from '../codex-models'
@@ -79,7 +77,6 @@ import { getThreadLogs } from '../thread-logger'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
 import { listDetectedSkills } from '../skills'
-import { emitAppEvent } from '../app-events'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
@@ -90,7 +87,6 @@ import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
   getEffectiveWorkingDir,
-  getLocalPathError,
   getSshConfigForThread,
   getWorkingDirForThread,
   getWslConfigForThread,
@@ -336,130 +332,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     if (threadHasMessages(threadId)) return // locked after first message
     sessionManager.remove(threadId) // drop existing session so it gets recreated
     updateThreadWsl(threadId, useWsl, wslDistro)
-  })
-
-  proxyable('threads:start', (threadId: string) => {
-    if (!threadExists(threadId)) return
-    const pathError = getLocalPathError(threadId)
-    if (pathError) throw new Error(pathError)
-    const effectiveDir = getEffectiveWorkingDir(threadId)
-    const sshConfig = getSshConfigForThread(threadId)
-    const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
-    if (!session.isRunning()) {
-      session.start()
-    }
-  })
-
-  proxyable('threads:stop', (threadId: string, cleanBackgroundTerminals = false) => {
-    const session = sessionManager.get(threadId)
-    if (session?.isRunning()) {
-      session.stop(cleanBackgroundTerminals === true)
-    } else {
-      // No live session (e.g. after restart) — force-reset stuck status in DB and notify renderer
-      updateThreadStatus(threadId, 'idle')
-      emitAppEvent(window, `thread:status:${threadId}`, 'idle')
-      emitAppEvent(window, `thread:pid:${threadId}`, null)
-    }
-  })
-
-  proxyable('threads:backgroundTerminals:list', async (threadId: string) => {
-    return await sessionManager.get(threadId)?.listBackgroundTerminals() ?? []
-  })
-
-  proxyable('threads:backgroundTerminals:terminate', async (threadId: string, processId: string) => {
-    return await sessionManager.get(threadId)?.terminateBackgroundTerminal(processId) ?? false
-  })
-
-  proxyable('threads:backgroundTerminals:clean', async (threadId: string) => {
-    await sessionManager.get(threadId)?.cleanBackgroundTerminals()
-  })
-
-  proxyable('threads:reset', (threadId: string) => {
-    sessionManager.reset(threadId)
-    updateThreadStatus(threadId, 'idle')
-    emitAppEvent(window, `thread:status:${threadId}`, 'idle')
-    emitAppEvent(window, `thread:pid:${threadId}`, null)
-  })
-
-  proxyable('threads:getPid', (threadId: string) => {
-    return sessionManager.get(threadId)?.getPid() ?? null
-  })
-
-  proxyable('threads:send', (threadId: string, content: string, options?: { planMode?: boolean; fastMode?: boolean }) => {
-    if (!threadExists(threadId)) {
-      sessionManager.remove(threadId)
-      console.warn('[handlers] threads:send for missing thread — ignoring', threadId)
-      return
-    }
-    const pathError = getLocalPathError(threadId)
-    if (pathError) throw new Error(pathError)
-    const effectiveDir = getEffectiveWorkingDir(threadId)
-    const sshConfig = getSshConfigForThread(threadId)
-    const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
-    session.sendMessage(content, options)
-    // Capture git branch on first message (fire-and-forget, doesn't block send)
-    const location = getLocationForThread(threadId)
-    if (location) {
-      getCachedGitBranch(location.path, location.ssh, location.wsl).then((branch) => {
-        if (branch) setThreadGitBranchIfUnset(threadId, branch)
-      }).catch(() => {/* not a git repo */})
-    }
-  })
-
-  proxyable('threads:approvePlan', (threadId: string) => {
-    const session = sessionManager.get(threadId)
-    if (session) {
-      session.approvePlan()
-    }
-  })
-
-  proxyable('threads:rejectPlan', (threadId: string) => {
-    const session = sessionManager.get(threadId)
-    if (session) {
-      session.rejectPlan()
-    }
-  })
-
-  proxyable('threads:getQuestions', (threadId: string) => {
-    const session = sessionManager.get(threadId)
-    return session?.getPendingQuestions() ?? []
-  })
-
-  proxyable('threads:answerQuestion', (threadId: string, answers: Record<string, QuestionAnswerValue>, questionComments: Record<string, string>, generalComment: string) => {
-    const session = sessionManager.get(threadId)
-    if (session) {
-      session.answerQuestion(answers, questionComments, generalComment)
-    }
-  })
-
-  proxyable('threads:getPendingPermissions', (threadId: string) => {
-    const session = sessionManager.get(threadId)
-    return session?.getPendingPermissions() ?? []
-  })
-
-  proxyable('threads:approvePermissions', (threadId: string, requestId?: string) => {
-    const session = sessionManager.get(threadId)
-    if (session) {
-      session.approvePermissions(requestId)
-    }
-  })
-
-  proxyable('threads:denyPermissions', (threadId: string, requestId?: string) => {
-    const session = sessionManager.get(threadId)
-    if (session) {
-      session.denyPermissions(requestId)
-    }
-  })
-
-  proxyable('threads:executePlanInNewContext', (threadId: string) => {
-    if (!threadExists(threadId)) return
-    const effectiveDir = getEffectiveWorkingDir(threadId)
-    const sshConfig = getSshConfigForThread(threadId)
-    const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
-    session.executePlanInNewContext()
   })
 
   proxyable('threads:getModifiedFiles', (threadId: string) => {

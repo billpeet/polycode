@@ -29,6 +29,12 @@ const H = vi.hoisted(() => {
     gitStatus: { branch: 'feature/x' } as Record<string, unknown> | null,
     threadExists: true,
     threadWsl: { use_wsl: false, wsl_distro: null },
+    /** Whether `sessionManager.get` finds a live session for the thread. */
+    hasSession: true,
+    /** What that session reports from `isRunning()`. */
+    sessionRunning: false,
+    /** What the mocked `existsSync` answers — drives `getLocalPathError`. */
+    pathExists: true,
   }
 
   const note = (entry: string): void => { log.push(entry) }
@@ -73,17 +79,45 @@ const H = vi.hoisted(() => {
    * own result therefore cannot accidentally drain it: the `:settled` entry appears in the
    * call log only if the handler genuinely awaited (or returned) the callee's promise.
    */
-  const settlesLate = (label: string) =>
+  const settlesLate = (label: string, value: unknown = undefined) =>
     stub(label, () => new Promise((resolve) => {
-      setTimeout(() => { note(`${label}:settled`); resolve(undefined) }, 0)
+      setTimeout(() => { note(`${label}:settled`); resolve(value) }, 0)
     }))
 
-  return { log, state, note, stub, autoModule, settlesLate }
+  /**
+   * The one `Session` both transports reach, whether via `get` or `getOrCreate`.
+   *
+   * A single shared instance rather than a fresh object per call: the thread channels are
+   * about *which* session methods run in *which* order, and one recorder per method makes
+   * that directly readable in the call log.
+   */
+  const session = {
+    isRunning: stub('session.isRunning', () => state.sessionRunning),
+    start: stub('session.start'),
+    stop: stub('session.stop'),
+    sendMessage: stub('session.sendMessage'),
+    getPid: stub('session.getPid', 4321),
+    approvePlan: stub('session.approvePlan'),
+    rejectPlan: stub('session.rejectPlan'),
+    getPendingQuestions: stub('session.getPendingQuestions', [{ id: 'q1', text: 'Which one?' }]),
+    answerQuestion: stub('session.answerQuestion'),
+    getPendingPermissions: stub('session.getPendingPermissions', [{ requestId: 'perm1' }]),
+    approvePermissions: stub('session.approvePermissions'),
+    denyPermissions: stub('session.denyPermissions'),
+    executePlanInNewContext: stub('session.executePlanInNewContext'),
+    // settlesLate, not stub: these were `await`-ed pre-fold, and a plain stub returning a
+    // non-thenable makes `(await x) ?? []` and `x ?? []` indistinguishable.
+    listBackgroundTerminals: settlesLate('session.listBackgroundTerminals', [{ itemId: 'bg1' }]),
+    terminateBackgroundTerminal: settlesLate('session.terminateBackgroundTerminal', true),
+    cleanBackgroundTerminals: settlesLate('session.cleanBackgroundTerminals'),
+  }
+
+  return { log, state, note, stub, autoModule, settlesLate, session }
 })
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
-  return { ...actual, existsSync: () => true }
+  return { ...actual, existsSync: () => H.state.pathExists }
 })
 
 vi.mock('../db/queries', () => H.autoModule('db', {
@@ -119,9 +153,10 @@ vi.mock('../git', () => H.autoModule('git', {
 
 vi.mock('../session/manager', () => ({
   sessionManager: H.autoModule('sessionManager', {
-    getOrCreate: H.stub('sessionManager.getOrCreate', () => ({
-      sendMessage: H.stub('session.sendMessage'),
-    })),
+    getOrCreate: H.stub('sessionManager.getOrCreate', () => H.session),
+    // `get` returns `undefined` for a thread with no live session — the branch several
+    // thread channels take after a restart, and the one `?.` silently absorbs.
+    get: H.stub('sessionManager.get', () => (H.state.hasSession ? H.session : undefined)),
   }),
 }))
 
@@ -220,7 +255,30 @@ beforeEach(() => {
   H.state.project = { id: 'p1', allow_main_branch_commits: true }
   H.state.gitStatus = { branch: 'feature/x' }
   H.state.threadExists = true
+  H.state.hasSession = true
+  H.state.sessionRunning = false
+  H.state.pathExists = true
 })
+
+/**
+ * `sessionManager.getOrCreate(threadId, cwd, window, ssh, wsl)` as the recorder renders it.
+ * Spelled out rather than substring-matched so the argument *order* is pinned, but the
+ * window is interpolated so the assertion does not break when the test double grows a
+ * field.
+ */
+const getOrCreateEntry = (threadId: string, cwd = 'C:/repo'): string =>
+  `sessionManager.getOrCreate(["${threadId}","${cwd}",${JSON.stringify(window)},null,null])`
+
+/**
+ * SSH and WSL configs that render differently from each other.
+ *
+ * The default fixture has `ssh: null, wsl: null`, which makes the two argument slots
+ * indistinguishable — transposing `getSshConfigForThread` and `getWslConfigForThread` in a
+ * handler passes every assertion in this file. Tests that care about which config lands in
+ * which slot install these instead.
+ */
+const DISTINCT_SSH = { host: 'ssh.example.test', user: 'me' }
+const DISTINCT_WSL = { distro: 'Ubuntu' }
 
 describe('both transports produce identical behaviour', () => {
   it('git:commit — including the main-branch policy check and cache invalidation', async () => {
@@ -599,8 +657,312 @@ describe("handlers pass the callee's result through", () => {
   }
 })
 
+describe('threads:* session lifecycle and interaction — both transports agree', () => {
+  it('threads:start resolves the host context, then starts an idle session', async () => {
+    const ipc = await viaIpc('threads:start', ['t1'])
+    const rpc = await viaControlRpc('threads:start', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.threadExists(["t1"])',
+      // getLocalPathError
+      'db.getLocationForThread(["t1"])',
+      // getEffectiveWorkingDir
+      'db.getLocationForThread(["t1"])',
+      'db.getThreadWsl(["t1"])',
+      // getSshConfigForThread
+      'db.getLocationForThread(["t1"])',
+      // getWslConfigForThread
+      'db.getLocationForThread(["t1"])',
+      'db.getThreadWsl(["t1"])',
+      getOrCreateEntry('t1'),
+      'session.isRunning([])',
+      'session.start([])',
+    ])
+  })
+
+  it('threads:start does not re-start an already-running session', async () => {
+    H.state.sessionRunning = true
+
+    const ipc = await viaIpc('threads:start', ['t1'])
+    const rpc = await viaControlRpc('threads:start', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toContain('session.isRunning([])')
+    expect(ipc).not.toContain('session.start([])')
+  })
+
+  it('threads:start is a no-op for a thread that no longer exists', async () => {
+    H.state.threadExists = false
+
+    const ipc = await viaIpc('threads:start', ['t1'])
+    const rpc = await viaControlRpc('threads:start', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.threadExists(["t1"])'])
+  })
+
+  it('threads:start refuses when the local working directory is missing', async () => {
+    H.state.pathExists = false
+
+    await expect(viaIpc('threads:start', ['t1'])).rejects.toThrow(
+      'Directory not found: "C:/repo"',
+    )
+    await expect(viaControlRpc('threads:start', ['t1'])).rejects.toThrow(
+      'Directory not found: "C:/repo"',
+    )
+  })
+
+  it('threads:stop stops a running session', async () => {
+    H.state.sessionRunning = true
+
+    const ipc = await viaIpc('threads:stop', ['t1', true])
+    const rpc = await viaControlRpc('threads:stop', ['t1', true])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.get(["t1"])',
+      'session.isRunning([])',
+      'session.stop([true])',
+    ])
+  })
+
+  it('threads:stop treats an omitted or null cleanBackgroundTerminals as false', async () => {
+    H.state.sessionRunning = true
+
+    // Omitted: the IPC path had a `= false` *parameter default*, the control-RPC path had
+    // nothing. Both are moot — the shared `=== true` normalisation absorbs `undefined`,
+    // `null` and `false` alike, so the default could never change the outcome.
+    expect(await viaIpc('threads:stop', ['t1'])).toEqual([
+      'sessionManager.get(["t1"])', 'session.isRunning([])', 'session.stop([false])',
+    ])
+    expect(await viaControlRpc('threads:stop', ['t1'])).toEqual([
+      'sessionManager.get(["t1"])', 'session.isRunning([])', 'session.stop([false])',
+    ])
+    // Explicit null — reachable over the remote transport, where args are JSON.
+    expect(await viaIpc('threads:stop', ['t1', null])).toEqual([
+      'sessionManager.get(["t1"])', 'session.isRunning([])', 'session.stop([false])',
+    ])
+    expect(await viaControlRpc('threads:stop', ['t1', null])).toEqual([
+      'sessionManager.get(["t1"])', 'session.isRunning([])', 'session.stop([false])',
+    ])
+    // A non-boolean truthy value is the ONLY input that distinguishes the `=== true`
+    // normalisation from plain truthiness, and it is reachable over JSON. Without this
+    // case, rewriting `cleanBackgroundTerminals === true` as `!!cleanBackgroundTerminals`
+    // passes every other assertion here.
+    expect(await viaControlRpc('threads:stop', ['t1', 1])).toEqual([
+      'sessionManager.get(["t1"])', 'session.isRunning([])', 'session.stop([false])',
+    ])
+    expect(await viaControlRpc('threads:stop', ['t1', 'false'])).toEqual([
+      'sessionManager.get(["t1"])', 'session.isRunning([])', 'session.stop([false])',
+    ])
+  })
+
+  it('threads:stop force-resets a thread with no live session', async () => {
+    H.state.hasSession = false
+
+    const ipc = await viaIpc('threads:stop', ['t1'])
+    const rpc = await viaControlRpc('threads:stop', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.get(["t1"])',
+      'db.updateThreadStatus(["t1","idle"])',
+      'window.send(["thread:status:t1","idle"])',
+      'window.send(["thread:pid:t1",null])',
+    ])
+  })
+
+  it('threads:reset drops the session and clears the stuck status', async () => {
+    const ipc = await viaIpc('threads:reset', ['t1'])
+    const rpc = await viaControlRpc('threads:reset', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.reset(["t1"])',
+      'db.updateThreadStatus(["t1","idle"])',
+      'window.send(["thread:status:t1","idle"])',
+      'window.send(["thread:pid:t1",null])',
+    ])
+  })
+
+  it('threads:getPid returns the session pid, or null with no session', async () => {
+    expect(await resultViaIpc('threads:getPid', ['t1'])).toBe(4321)
+    expect(await resultViaControlRpc('threads:getPid', ['t1'])).toBe(4321)
+
+    H.state.hasSession = false
+    expect(await resultViaIpc('threads:getPid', ['t1'])).toBe(null)
+    expect(await resultViaControlRpc('threads:getPid', ['t1'])).toBe(null)
+  })
+
+  it('threads:executePlanInNewContext creates the session and hands the plan over', async () => {
+    const ipc = await viaIpc('threads:executePlanInNewContext', ['t1'])
+    const rpc = await viaControlRpc('threads:executePlanInNewContext', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    // No getLocalPathError here — unlike threads:start and threads:send. Preserved as-is.
+    expect(ipc).toEqual([
+      'db.threadExists(["t1"])',
+      'db.getLocationForThread(["t1"])',
+      'db.getThreadWsl(["t1"])',
+      'db.getLocationForThread(["t1"])',
+      'db.getLocationForThread(["t1"])',
+      'db.getThreadWsl(["t1"])',
+      getOrCreateEntry('t1'),
+      'session.executePlanInNewContext([])',
+    ])
+  })
+
+  it('threads:approvePlan and threads:rejectPlan reach the live session only', async () => {
+    for (const [channel, method] of [
+      ['threads:approvePlan', 'approvePlan'],
+      ['threads:rejectPlan', 'rejectPlan'],
+    ] as const) {
+      const ipc = await viaIpc(channel, ['t1'])
+      expect(await viaControlRpc(channel, ['t1'])).toEqual(ipc)
+      expect(ipc).toEqual(['sessionManager.get(["t1"])', `session.${method}([])`])
+
+      H.state.hasSession = false
+      expect(await viaIpc(channel, ['t1'])).toEqual(['sessionManager.get(["t1"])'])
+      expect(await viaControlRpc(channel, ['t1'])).toEqual(['sessionManager.get(["t1"])'])
+      H.state.hasSession = true
+    }
+  })
+
+  it('threads:getQuestions returns the pending questions, or [] with no session', async () => {
+    expect(await resultViaIpc('threads:getQuestions', ['t1'])).toEqual([
+      { id: 'q1', text: 'Which one?' },
+    ])
+    expect(await resultViaControlRpc('threads:getQuestions', ['t1'])).toEqual([
+      { id: 'q1', text: 'Which one?' },
+    ])
+
+    H.state.hasSession = false
+    expect(await resultViaIpc('threads:getQuestions', ['t1'])).toEqual([])
+    expect(await resultViaControlRpc('threads:getQuestions', ['t1'])).toEqual([])
+  })
+
+  it('threads:answerQuestion forwards all three answer arguments in order', async () => {
+    const args = ['t1', { q1: 'yes' }, { q1: 'because' }, 'general']
+    const ipc = await viaIpc('threads:answerQuestion', args)
+    const rpc = await viaControlRpc('threads:answerQuestion', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.get(["t1"])',
+      'session.answerQuestion([{"q1":"yes"},{"q1":"because"},"general"])',
+    ])
+  })
+
+  it('threads:getPendingPermissions returns the queue, or [] with no session', async () => {
+    expect(await resultViaIpc('threads:getPendingPermissions', ['t1'])).toEqual([
+      { requestId: 'perm1' },
+    ])
+    expect(await resultViaControlRpc('threads:getPendingPermissions', ['t1'])).toEqual([
+      { requestId: 'perm1' },
+    ])
+
+    H.state.hasSession = false
+    expect(await resultViaIpc('threads:getPendingPermissions', ['t1'])).toEqual([])
+    expect(await resultViaControlRpc('threads:getPendingPermissions', ['t1'])).toEqual([])
+  })
+
+  it('threads:approve/denyPermissions pass requestId through raw, omitted included', async () => {
+    for (const [channel, method] of [
+      ['threads:approvePermissions', 'approvePermissions'],
+      ['threads:denyPermissions', 'denyPermissions'],
+    ] as const) {
+      const withId = await viaIpc(channel, ['t1', 'perm1'])
+      expect(await viaControlRpc(channel, ['t1', 'perm1'])).toEqual(withId)
+      expect(withId).toEqual(['sessionManager.get(["t1"])', `session.${method}(["perm1"])`])
+
+      // Omitted requestId means "the first pending request". Neither path coalesces it,
+      // and Session.getTargetPermissionRequest tests it for truthiness, so `undefined`
+      // and `null` are equivalent there — nothing to normalise.
+      const without = await viaIpc(channel, ['t1'])
+      expect(await viaControlRpc(channel, ['t1'])).toEqual(without)
+      expect(without).toEqual(['sessionManager.get(["t1"])', `session.${method}([undefined])`])
+    }
+  })
+
+  it('threads:backgroundTerminals:list returns the session answer, or [] with no session', async () => {
+    const ipc = await viaIpc('threads:backgroundTerminals:list', ['t1'])
+    expect(await viaControlRpc('threads:backgroundTerminals:list', ['t1'])).toEqual(ipc)
+    // The `:settled` entry proves the handler genuinely awaited the promise rather than
+    // returning `[]` while the lookup was still in flight.
+    expect(ipc).toEqual([
+      'sessionManager.get(["t1"])',
+      'session.listBackgroundTerminals([])',
+      'session.listBackgroundTerminals:settled',
+    ])
+
+    expect(await resultViaIpc('threads:backgroundTerminals:list', ['t1'])).toEqual([
+      { itemId: 'bg1' },
+    ])
+    expect(await resultViaControlRpc('threads:backgroundTerminals:list', ['t1'])).toEqual([
+      { itemId: 'bg1' },
+    ])
+
+    H.state.hasSession = false
+    expect(await resultViaIpc('threads:backgroundTerminals:list', ['t1'])).toEqual([])
+    expect(await resultViaControlRpc('threads:backgroundTerminals:list', ['t1'])).toEqual([])
+  })
+
+  it('threads:backgroundTerminals:terminate forwards the process id and returns its result', async () => {
+    const args = ['t1', 'proc7']
+    const ipc = await viaIpc('threads:backgroundTerminals:terminate', args)
+    expect(await viaControlRpc('threads:backgroundTerminals:terminate', args)).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.get(["t1"])',
+      'session.terminateBackgroundTerminal(["proc7"])',
+      'session.terminateBackgroundTerminal:settled',
+    ])
+
+    expect(await resultViaIpc('threads:backgroundTerminals:terminate', args)).toBe(true)
+    expect(await resultViaControlRpc('threads:backgroundTerminals:terminate', args)).toBe(true)
+
+    H.state.hasSession = false
+    expect(await resultViaIpc('threads:backgroundTerminals:terminate', args)).toBe(false)
+    expect(await resultViaControlRpc('threads:backgroundTerminals:terminate', args)).toBe(false)
+  })
+
+  it('threads:backgroundTerminals:clean awaits the session rather than floating its promise', async () => {
+    const ipc = await viaIpc('threads:backgroundTerminals:clean', ['t1'])
+    const rpc = await viaControlRpc('threads:backgroundTerminals:clean', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.get(["t1"])',
+      'session.cleanBackgroundTerminals([])',
+      'session.cleanBackgroundTerminals:settled',
+    ])
+  })
+})
+
 describe('threads:send — the one deliberate divergence', () => {
   const args = ['t1', 'hello', undefined]
+
+  it('passes the ssh config and the wsl config to the right getOrCreate slots', async () => {
+    // The default fixture nulls both, so the two slots render identically and a transposed
+    // getSshConfigForThread/getWslConfigForThread survives every other assertion here.
+    // Distinct values make the slots tell each other apart.
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+      ssh: DISTINCT_SSH, wsl: DISTINCT_WSL,
+    }
+
+    const ipc = await viaIpc('threads:send', args)
+    const rpc = await viaControlRpc('threads:send', args)
+
+    const entry = (log: string[]): string | undefined =>
+      log.find((line) => line.startsWith('sessionManager.getOrCreate'))
+
+    expect(entry(rpc)).toBe(entry(ipc))
+    expect(entry(ipc)).toBe(
+      'sessionManager.getOrCreate(["t1","C:/repo",' + JSON.stringify(window) +
+      ',' + JSON.stringify(DISTINCT_SSH) + ',' + JSON.stringify(DISTINCT_WSL) + '])',
+    )
+  })
 
   it('both start the session with the same working directory and host config', async () => {
     const ipc = await viaIpc('threads:send', args)
@@ -638,6 +1000,56 @@ describe('threads:send — the one deliberate divergence', () => {
     expect(rpc).toContain('sessionManager.remove(["t1"])')
     expect(ipc.some((entry) => entry.startsWith('session.sendMessage'))).toBe(false)
     expect(rpc.some((entry) => entry.startsWith('session.sendMessage'))).toBe(false)
+  })
+
+  it('the remote echo carries the exact payload the renderer merges on', async () => {
+    const rpc = await viaControlRpc('threads:send', args)
+    const echo = rpc.find((entry) => entry.startsWith('window.send'))
+
+    // Pinned in full: the renderer's message-merge keys off `role` and `source`, and the
+    // whole point of sending it on the window directly (rather than via emitAppEvent) is
+    // that it must NOT go back out over SSE to the device that already rendered it.
+    expect(echo).toBe(
+      'window.send(["thread:output:t1",{"type":"text","content":"hello","metadata":{"role":"user","source":"remote_client"}}])',
+    )
+  })
+
+  it('the echo lands after the message is handed to the session, not before', async () => {
+    const rpc = await viaControlRpc('threads:send', args)
+    const sent = rpc.findIndex((entry) => entry.startsWith('session.sendMessage'))
+    const echoed = rpc.findIndex((entry) => entry.startsWith('window.send'))
+
+    expect(sent).toBeGreaterThanOrEqual(0)
+    expect(echoed).toBeGreaterThan(sent)
+  })
+
+  it('both forward SendOptions untouched', async () => {
+    const options = { planMode: true, clientUserMessageId: 'c1' }
+    const withOptions = ['t1', 'hello', options]
+    const ipc = await viaIpc('threads:send', withOptions)
+    const rpc = await viaControlRpc('threads:send', withOptions)
+
+    const expected = `session.sendMessage(["hello",${JSON.stringify(options)}])`
+    expect(ipc).toContain(expected)
+    expect(rpc).toContain(expected)
+  })
+
+  it('both refuse when the local working directory is missing', async () => {
+    H.state.pathExists = false
+
+    await expect(viaIpc('threads:send', args)).rejects.toThrow('Directory not found: "C:/repo"')
+    await expect(viaControlRpc('threads:send', args)).rejects.toThrow(
+      'Directory not found: "C:/repo"',
+    )
+  })
+
+  it('both capture the git branch on the way past', async () => {
+    const ipc = await viaIpc('threads:send', args)
+    const rpc = await viaControlRpc('threads:send', args)
+
+    // Fire-and-forget, so only the kick-off is deterministic in the recorded log.
+    expect(ipc).toContain('git.getCachedGitBranch(["C:/repo",null,null])')
+    expect(rpc).toContain('git.getCachedGitBranch(["C:/repo",null,null])')
   })
 })
 

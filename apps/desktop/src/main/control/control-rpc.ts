@@ -24,7 +24,6 @@ import {
   listSessions,
   listSlashCommands,
   listThreads,
-  setThreadGitBranchIfUnset,
   threadExists,
   threadHasMessages,
   unarchiveThread,
@@ -38,7 +37,6 @@ import {
   updateThreadCodexReasoningSummary,
   updateThreadCursorThinking,
   updateThreadCursorContext,
-  updateThreadStatus,
   updateThreadUnread,
   updateThreadWsl,
   updateThreadYoloMode,
@@ -109,8 +107,7 @@ import { listOpenCodeAvailableModels } from '../opencode-models'
 import { listPiAvailableModels } from '../pi-models'
 import { listCursorAvailableModels } from '../cursor-models'
 import { listDetectedSkills } from '../skills'
-import { emitAppEvent } from '../app-events'
-import { Provider, QuestionAnswerValue, SendOptions, SshConfig, WslConfig } from '../../shared/types'
+import { Provider, SshConfig, WslConfig } from '../../shared/types'
 import { listAllFiles, listDirectory, readFileContent } from '../files'
 import { sshListAllFiles, sshListDirectory, sshReadFileContent } from '../ssh'
 import { wslListAllFiles, wslListDirectory, wslReadFileContent } from '../wsl'
@@ -127,7 +124,6 @@ import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
   getEffectiveWorkingDir,
-  getLocalPathError,
   getSshConfigForThread,
   getWorkingDirForThread,
   getWslConfigForThread,
@@ -283,133 +279,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       if (threadHasMessages(threadId)) return undefined
       sessionManager.remove(threadId)
       return updateThreadWsl(threadId, useWsl, wslDistro)
-    }
-    case 'threads:start': {
-      const [threadId] = args as [string]
-      if (!threadExists(threadId)) return undefined
-      const pathError = getLocalPathError(threadId)
-      if (pathError) throw new Error(pathError)
-      const session = sessionManager.getOrCreate(
-        threadId,
-        getEffectiveWorkingDir(threadId),
-        window,
-        getSshConfigForThread(threadId),
-        getWslConfigForThread(threadId),
-      )
-      if (!session.isRunning()) session.start()
-      return undefined
-    }
-    case 'threads:stop': {
-      const [threadId, cleanBackgroundTerminals] = args as [string, boolean | undefined]
-      const session = sessionManager.get(threadId)
-      if (session?.isRunning()) {
-        session.stop(cleanBackgroundTerminals === true)
-      } else {
-        updateThreadStatus(threadId, 'idle')
-        emitAppEvent(window, `thread:status:${threadId}`, 'idle')
-        emitAppEvent(window, `thread:pid:${threadId}`, null)
-      }
-      return undefined
-    }
-    case 'threads:backgroundTerminals:list': {
-      return await sessionManager.get(args[0] as string)?.listBackgroundTerminals() ?? []
-    }
-    case 'threads:backgroundTerminals:terminate': {
-      const [threadId, processId] = args as [string, string]
-      return await sessionManager.get(threadId)?.terminateBackgroundTerminal(processId) ?? false
-    }
-    case 'threads:backgroundTerminals:clean': {
-      await sessionManager.get(args[0] as string)?.cleanBackgroundTerminals()
-      return undefined
-    }
-    case 'threads:reset': {
-      const [threadId] = args as [string]
-      sessionManager.reset(threadId)
-      updateThreadStatus(threadId, 'idle')
-      emitAppEvent(window, `thread:status:${threadId}`, 'idle')
-      emitAppEvent(window, `thread:pid:${threadId}`, null)
-      return undefined
-    }
-    case 'threads:getPid':
-      return sessionManager.get(args[0] as string)?.getPid() ?? null
-    case 'threads:send': {
-      const [threadId, content, options] = args as [string, string, SendOptions | undefined]
-      if (!threadExists(threadId)) {
-        sessionManager.remove(threadId)
-        console.warn('[remote-control] threads:send for missing thread - ignoring', threadId)
-        return undefined
-      }
-      const pathError = getLocalPathError(threadId)
-      if (pathError) throw new Error(pathError)
-      const session = sessionManager.getOrCreate(
-        threadId,
-        getEffectiveWorkingDir(threadId),
-        window,
-        getSshConfigForThread(threadId),
-        getWslConfigForThread(threadId),
-      )
-      session.sendMessage(content, options)
-      // Show the remote client's user message in the local renderer. Sent
-      // directly to this window (not via emitAppEvent) so it is NOT echoed
-      // back over the SSE stream — the originating device already rendered
-      // it optimistically and would merge the echo into a duplicate.
-      if (!window.webContents.isDestroyed()) {
-        window.webContents.send(`thread:output:${threadId}`, {
-          type: 'text',
-          content,
-          metadata: { role: 'user', source: 'remote_client' },
-        })
-      }
-      const location = getLocationForThread(threadId)
-      if (location) {
-        getCachedGitBranch(location.path, location.ssh, location.wsl)
-          .then((branch) => { if (branch) setThreadGitBranchIfUnset(threadId, branch) })
-          .catch(() => undefined)
-      }
-      return undefined
-    }
-    case 'threads:approvePlan':
-      sessionManager.get(args[0] as string)?.approvePlan()
-      return undefined
-    case 'threads:rejectPlan':
-      sessionManager.get(args[0] as string)?.rejectPlan()
-      return undefined
-    case 'threads:getQuestions':
-      return sessionManager.get(args[0] as string)?.getPendingQuestions() ?? []
-    case 'threads:answerQuestion': {
-      const [threadId, answers, questionComments, generalComment] = args as [
-        string,
-        Record<string, QuestionAnswerValue>,
-        Record<string, string>,
-        string,
-      ]
-      sessionManager.get(threadId)?.answerQuestion(answers, questionComments, generalComment)
-      return undefined
-    }
-    case 'threads:getPendingPermissions':
-      return sessionManager.get(args[0] as string)?.getPendingPermissions() ?? []
-    case 'threads:approvePermissions': {
-      const [threadId, requestId] = args as [string, string | undefined]
-      sessionManager.get(threadId)?.approvePermissions(requestId)
-      return undefined
-    }
-    case 'threads:denyPermissions': {
-      const [threadId, requestId] = args as [string, string | undefined]
-      sessionManager.get(threadId)?.denyPermissions(requestId)
-      return undefined
-    }
-    case 'threads:executePlanInNewContext': {
-      const [threadId] = args as [string]
-      if (!threadExists(threadId)) return undefined
-      const session = sessionManager.getOrCreate(
-        threadId,
-        getEffectiveWorkingDir(threadId),
-        window,
-        getSshConfigForThread(threadId),
-        getWslConfigForThread(threadId),
-      )
-      session.executePlanInNewContext()
-      return undefined
     }
     case 'threads:getModifiedFiles': {
       const [threadId] = args as [string]

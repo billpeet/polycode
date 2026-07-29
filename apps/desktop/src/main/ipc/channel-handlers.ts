@@ -54,15 +54,19 @@ import {
   deleteCommand,
   deleteLocation,
   deleteProject,
+  getLocationForThread,
   listArchivedProjects,
   listCommands,
   listLocations,
   listProjects,
   returnLocationToPool,
+  setThreadGitBranchIfUnset,
+  threadExists,
   unarchiveProject,
   updateCommand,
   updateLocation,
   updateProject,
+  updateThreadStatus,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
@@ -74,6 +78,14 @@ import {
   suggestUniquePath,
 } from '../project-admin'
 import { projectFaviconDataUrl } from '../project-favicon'
+import { emitAppEvent } from '../app-events'
+import { getCachedGitBranch } from '../git'
+import {
+  getEffectiveWorkingDir,
+  getLocalPathError,
+  getSshConfigForThread,
+  getWslConfigForThread,
+} from './thread-context'
 
 /**
  * What a handler is given besides its arguments.
@@ -213,6 +225,151 @@ export const channelHandlers = {
 
   'commands:getPorts': (_ctx, commandId, locationId) =>
     commandManager.getPorts(commandId, locationId),
+
+  // ── Thread session lifecycle and interaction ──────────────────────────────
+  //
+  // Every channel below reaches the thread's Session, either the live one
+  // (`sessionManager.get`, which yields `undefined` after a restart and is why the
+  // optional chaining is load-bearing rather than defensive) or one created on demand
+  // (`sessionManager.getOrCreate`).
+  //
+  // The four context lookups are always evaluated in the same order — working dir, then
+  // ssh, then wsl — because each hits db/queries and the pre-fold implementations pinned
+  // that order on both transports.
+
+  'threads:start': (ctx, threadId) => {
+    if (!threadExists(threadId)) return
+    const pathError = getLocalPathError(threadId)
+    if (pathError) throw new Error(pathError)
+    const session = sessionManager.getOrCreate(
+      threadId,
+      getEffectiveWorkingDir(threadId),
+      ctx.window,
+      getSshConfigForThread(threadId),
+      getWslConfigForThread(threadId),
+    )
+    if (!session.isRunning()) return session.start()
+  },
+
+  // `cleanBackgroundTerminals` is passed through raw. The IPC path used to declare a
+  // `= false` parameter default and the control-RPC path declared nothing, but neither
+  // could ever matter: both normalise with `=== true` immediately below, which maps
+  // `undefined`, `null` and `false` alike to `false`. That is the opposite of the
+  // `commands:create` case, where the downstream default was a *parameter* default that
+  // `null` sails past — here the normalisation is in the body and absorbs both.
+  'threads:stop': (ctx, threadId, cleanBackgroundTerminals) => {
+    const session = sessionManager.get(threadId)
+    if (session?.isRunning()) return session.stop(cleanBackgroundTerminals === true)
+    // No live session (e.g. after a restart) — force-reset the stuck status in the DB and
+    // tell the renderer, which would otherwise show a thread that can never finish.
+    updateThreadStatus(threadId, 'idle')
+    emitAppEvent(ctx.window, `thread:status:${threadId}`, 'idle')
+    return emitAppEvent(ctx.window, `thread:pid:${threadId}`, null)
+  },
+
+  'threads:reset': (ctx, threadId) => {
+    sessionManager.reset(threadId)
+    updateThreadStatus(threadId, 'idle')
+    emitAppEvent(ctx.window, `thread:status:${threadId}`, 'idle')
+    return emitAppEvent(ctx.window, `thread:pid:${threadId}`, null)
+  },
+
+  'threads:getPid': (_ctx, threadId) => sessionManager.get(threadId)?.getPid() ?? null,
+
+  /**
+   * The one channel whose two pre-fold implementations deliberately differed, and the
+   * first real use of `ctx.origin`.
+   *
+   * A message that arrives over the remote transport was typed on another device, which
+   * has already rendered it optimistically. The local renderer has not, so it needs to be
+   * told — but *only* it. Sending on `window.webContents` directly rather than through
+   * `emitAppEvent` is what keeps the echo off the SSE stream: `emitAppEvent` also
+   * publishes to the app event bus, and the originating device would merge that echo back
+   * in as a duplicate of the message it is already showing.
+   */
+  'threads:send': (ctx, threadId, content, options) => {
+    if (!threadExists(threadId)) {
+      sessionManager.remove(threadId)
+      console.warn('[channel-handlers] threads:send for missing thread — ignoring', threadId)
+      return
+    }
+    const pathError = getLocalPathError(threadId)
+    if (pathError) throw new Error(pathError)
+    const session = sessionManager.getOrCreate(
+      threadId,
+      getEffectiveWorkingDir(threadId),
+      ctx.window,
+      getSshConfigForThread(threadId),
+      getWslConfigForThread(threadId),
+    )
+    // Deliberately not returned, unlike every other handler here: the echo and the branch
+    // capture below must both run after the message is handed over, so there is nothing
+    // left to pass through. Both pre-fold paths discarded it too.
+    session.sendMessage(content, options)
+
+    if (ctx.origin === 'remote' && !ctx.window.webContents.isDestroyed()) {
+      ctx.window.webContents.send(`thread:output:${threadId}`, {
+        type: 'text',
+        content,
+        metadata: { role: 'user', source: 'remote_client' },
+      })
+    }
+
+    // Capture the git branch on the first message. Fire-and-forget by design — it must
+    // not delay the send, and a non-repo working directory is not an error.
+    const location = getLocationForThread(threadId)
+    if (location) {
+      getCachedGitBranch(location.path, location.ssh, location.wsl)
+        .then((branch) => { if (branch) setThreadGitBranchIfUnset(threadId, branch) })
+        .catch(() => undefined)
+    }
+  },
+
+  'threads:approvePlan': (_ctx, threadId) => sessionManager.get(threadId)?.approvePlan(),
+
+  'threads:rejectPlan': (_ctx, threadId) => sessionManager.get(threadId)?.rejectPlan(),
+
+  'threads:getQuestions': (_ctx, threadId) =>
+    sessionManager.get(threadId)?.getPendingQuestions() ?? [],
+
+  'threads:answerQuestion': (_ctx, threadId, answers, questionComments, generalComment) =>
+    sessionManager.get(threadId)?.answerQuestion(answers, questionComments, generalComment),
+
+  'threads:getPendingPermissions': (_ctx, threadId) =>
+    sessionManager.get(threadId)?.getPendingPermissions() ?? [],
+
+  // `requestId` is passed through raw on both of these. An omitted one means "the first
+  // pending request", and Session.getTargetPermissionRequest tests it for truthiness, so
+  // `undefined` and `null` are already equivalent there — a coalesce would be noise.
+  'threads:approvePermissions': (_ctx, threadId, requestId) =>
+    sessionManager.get(threadId)?.approvePermissions(requestId),
+
+  'threads:denyPermissions': (_ctx, threadId, requestId) =>
+    sessionManager.get(threadId)?.denyPermissions(requestId),
+
+  // Note the missing getLocalPathError check, which threads:start and threads:send both
+  // have. Both pre-fold paths agreed on its absence, so it is preserved rather than
+  // "fixed" here.
+  'threads:executePlanInNewContext': (ctx, threadId) => {
+    if (!threadExists(threadId)) return
+    const session = sessionManager.getOrCreate(
+      threadId,
+      getEffectiveWorkingDir(threadId),
+      ctx.window,
+      getSshConfigForThread(threadId),
+      getWslConfigForThread(threadId),
+    )
+    return session.executePlanInNewContext()
+  },
+
+  'threads:backgroundTerminals:list': async (_ctx, threadId) =>
+    (await sessionManager.get(threadId)?.listBackgroundTerminals()) ?? [],
+
+  'threads:backgroundTerminals:terminate': async (_ctx, threadId, processId) =>
+    (await sessionManager.get(threadId)?.terminateBackgroundTerminal(processId)) ?? false,
+
+  'threads:backgroundTerminals:clean': (_ctx, threadId) =>
+    sessionManager.get(threadId)?.cleanBackgroundTerminals(),
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers
