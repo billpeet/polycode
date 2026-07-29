@@ -106,6 +106,7 @@ import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLo
 import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
+import { publishRepositoryBranch } from '../publish-branch-adapter'
 
 const MAX_EXEC_OUTPUT = 1024 * 1024
 
@@ -832,6 +833,15 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     const result = await gitPush(repoPath, ssh, wsl)
     invalidateRepoGitCache(repoPath)
     return result
+  })
+
+  proxyable('git:publishBranch', async (input: import('../../shared/types').PublishBranchInput) => {
+    const { ssh, wsl } = getConfigForPath(input.repoPath)
+    try {
+      return await publishRepositoryBranch(input, ssh, wsl)
+    } finally {
+      invalidateRepoGitCache(input.repoPath)
+    }
   })
 
   proxyable('git:pushSetUpstream', async (repoPath: string, branch: string) => {

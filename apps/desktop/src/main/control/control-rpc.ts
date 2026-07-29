@@ -157,6 +157,7 @@ import { cloneLocation, createFullProject, createLocalWorktree, removeWorktreeLo
 import { listClaudeProjects, listClaudeSessions, parseSessionMessages } from '../claude-history'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { searchYouTrack, testYouTrackConnection } from '../youtrack'
+import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { projectFaviconDataUrl } from '../project-favicon'
 import { REMOTE_CHANNELS } from '@polycode/shared'
 
@@ -835,6 +836,15 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       const result = await gitPush(repoPath, ssh, wsl)
       invalidateRepoGitCache(repoPath)
       return result
+    }
+    case 'git:publishBranch': {
+      const [input] = args as [import('../../shared/types').PublishBranchInput]
+      const { ssh, wsl } = getConfigForPath(input.repoPath)
+      try {
+        return await publishRepositoryBranch(input, ssh, wsl)
+      } finally {
+        invalidateGitCache(input.repoPath, ssh, wsl)
+      }
     }
     case 'git:pushSetUpstream': {
       const [repoPath, branch] = args as [string, string]

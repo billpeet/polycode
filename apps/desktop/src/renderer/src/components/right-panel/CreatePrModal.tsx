@@ -8,21 +8,9 @@ import { GitBranches, GitFileChange } from '../../types/ipc'
 import MarkdownEditor from '../MarkdownEditor'
 import { SparkleIcon } from './shared'
 
-type PullRequestItem = {
-  id: number
-  title: string
-  status: string
-  sourceBranch: string
-  targetBranch: string
-  authorName: string
-  url: string
-  creationDate: string
-}
-
 interface Props {
   projectPath: string
   sourceBranch: string
-  provider: 'azure' | 'github'
   defaultTarget: string
   onClose: () => void
   /** Called after a PR is successfully created (e.g. to refresh the PR list). */
@@ -89,7 +77,7 @@ function statusColor(status: GitFileChange['status']): string {
 
 const EMPTY_FILES: GitFileChange[] = []
 
-export default function CreatePrModal({ projectPath, sourceBranch, provider, defaultTarget, onClose, onCreated }: Props) {
+export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget, onClose, onCreated }: Props) {
   const backdropClose = useBackdropClose(onClose)
   const addToast = useToastStore((s) => s.add)
 
@@ -132,7 +120,6 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
   const uncommittedFiles = gitStatus?.files ?? EMPTY_FILES
   const dirty = uncommittedFiles.length > 0
   const ahead = gitStatus?.ahead ?? 0
-  const hasUpstream = gitStatus?.hasUpstream ?? false
   // You can't open a PR directly from the default branch — committing there is blocked and
   // the PR would have no distinct source. When on it, we create a new branch first.
   const onDefaultBranch = sourceBranch === defaultTarget
@@ -349,50 +336,47 @@ export default function CreatePrModal({ projectPath, sourceBranch, provider, def
   async function handleCreate() {
     if (!canCreate) return
     setCreating(true)
-    let step = 'start'
     try {
-      // 1. On the default branch, branch off first so changes land on a feature branch.
-      //    `git checkout -b <new> <source>` carries the uncommitted working tree along.
-      if (onDefaultBranch) {
-        step = 'git:createBranch'
-        await window.api.invoke('git:createBranch', projectPath, newBranchName.trim(), sourceBranch, false)
+      const result = await window.api.invoke('git:publishBranch', {
+        repoPath: projectPath,
+        targetBranch: target.trim(),
+        title: title.trim(),
+        description: description.trim() || undefined,
+        newBranchName: onDefaultBranch ? newBranchName.trim() : undefined,
+        commitMessage: dirty ? commitMessage.trim() : undefined,
+      })
+      if (!result.ok) {
+        const error = new Error(result.message) as Error & {
+          failedAt: typeof result.failedAt
+          effects: typeof result.effects
+        }
+        error.failedAt = result.failedAt
+        error.effects = result.effects
+        throw error
       }
-      // 2. Stage + commit any uncommitted changes so they're part of the PR.
-      if (dirty) {
-        step = 'git:stageAll'
-        await window.api.invoke('git:stageAll', projectPath)
-        step = 'git:commit'
-        await window.api.invoke('git:commit', projectPath, commitMessage.trim())
-      }
-      // 3. Push so the source branch (and its commits) exist on the remote.
-      if (onDefaultBranch || dirty || ahead > 0 || !hasUpstream) {
-        step = 'git:push'
-        await window.api.invoke('git:push', projectPath)
-      }
-      // 4. Create the PR (uses the now-current branch as the source).
-      step = provider === 'azure' ? 'azdo:pr:create' : 'gh:pr:create'
-      const payload = { target: target.trim(), title: title.trim(), description: description.trim() || undefined }
-      const pr = provider === 'azure'
-        ? await window.api.invoke('azdo:pr:create', projectPath, payload)
-        : await window.api.invoke('gh:pr:create', projectPath, payload)
-      addToast({ type: 'success', message: `Created PR #${String((pr as PullRequestItem).id)}`, duration: 3000 })
+      addToast({ type: 'success', message: `Created PR #${String(result.pullRequest.id)}`, duration: 3000 })
       await fetchGit(projectPath)
       onCreated()
       onClose()
     } catch (err) {
+      await fetchGit(projectPath).catch(() => undefined)
+      const publishError = err as Error & {
+        failedAt?: string
+        effects?: { branchCreated?: string; commitCreated?: string; pushed?: boolean }
+      }
       addToast({
         type: 'error',
         title: 'Create Pull Request Failed',
         message: err instanceof Error ? err.message : 'Failed to create pull request',
         details: formatErrorDetails({
-          action: step,
+          action: publishError.failedAt ? `git:publishBranch:${publishError.failedAt}` : 'git:publishBranch',
           projectPath,
-          provider,
           source: effectiveSource,
           target: target.trim(),
           title: title.trim(),
-          newBranch: onDefaultBranch ? newBranchName.trim() : undefined,
-          committed: dirty,
+          branchCreated: publishError.effects?.branchCreated,
+          commitCreated: publishError.effects?.commitCreated,
+          pushed: publishError.effects?.pushed,
         }, err),
         duration: 0,
       })
