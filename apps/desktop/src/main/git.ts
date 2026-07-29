@@ -352,6 +352,16 @@ export async function commitChanges(repoPath: string, message: string, ssh?: Ssh
   await git(repoPath, ['commit', '-m', message], ssh, wsl)
 }
 
+export async function commitChangesAndGetHash(
+  repoPath: string,
+  message: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<string> {
+  await commitChanges(repoPath, message, ssh, wsl)
+  return (await git(repoPath, ['rev-parse', 'HEAD'], ssh, wsl)).trim()
+}
+
 export async function getLastCommit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<LastCommitInfo | null> {
   try {
     const hash = (await git(repoPath, ['rev-parse', 'HEAD'], ssh, wsl)).trim()

@@ -1415,7 +1415,6 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
         <CreatePrModal
           projectPath={projectPath}
           sourceBranch={gitStatus.branch}
-          provider={prProvider}
           defaultTarget={effectiveDefaultBranch}
           onClose={() => setShowCreatePr(false)}
           onCreated={() => { void refreshPullRequests() }}

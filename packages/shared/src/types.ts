@@ -473,6 +473,40 @@ export interface GitHubPullRequest {
   creationDate: string
 }
 
+export type PullRequest = AzureDevOpsPullRequest | GitHubPullRequest
+
+export type PublishStep = 'inspect' | 'branch' | 'stage' | 'commit' | 'push' | 'pull-request'
+
+export interface PublishEffects {
+  branchCreated?: string
+  commitCreated?: string
+  pushed: boolean
+}
+
+export interface PublishBranchInput {
+  repoPath: string
+  targetBranch: string
+  title: string
+  description?: string
+  newBranchName?: string
+  commitMessage?: string
+}
+
+export interface PublishBranchSuccess {
+  ok: true
+  pullRequest: PullRequest
+  effects: PublishEffects
+}
+
+export interface PublishBranchFailure {
+  ok: false
+  failedAt: PublishStep
+  effects: PublishEffects
+  message: string
+}
+
+export type PublishBranchResult = PublishBranchSuccess | PublishBranchFailure
+
 /** Options passed when sending a message to a thread */
 export interface SendOptions {
   planMode?: boolean

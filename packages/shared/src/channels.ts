@@ -96,6 +96,7 @@ export const CHANNEL_REGISTRY = {
   'git:generatePullRequestText': { local: true, remote: true },
   'git:generateBranchName': { local: true, remote: true },
   'git:push': { local: true, remote: true },
+  'git:publishBranch': { local: true, remote: true },
   'git:pushSetUpstream': { local: true, remote: true },
   'git:pull': { local: true, remote: true },
   'git:pullOrigin': { local: true, remote: true },
