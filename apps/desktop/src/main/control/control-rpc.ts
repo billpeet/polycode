@@ -1,16 +1,4 @@
-import { readFileSync } from 'fs'
-import { basename, join } from 'path'
 import { BrowserWindow } from 'electron'
-import {
-  getActiveSession,
-  getLocationForThread,
-  listMessages,
-  listMessagesBySession,
-  listSessions,
-  threadExists,
-} from '../db/queries'
-import { sessionManager } from '../session/manager'
-import { ptyManager } from '../terminal/manager'
 import {
   amendCommit,
   checkoutBranch,
@@ -62,22 +50,13 @@ import {
   applyStash,
   getRemoteUrl,
 } from '../git'
-import { checkCliHealth, invalidateCliHealthCache, updateCli } from '../health/checker'
-import { listDetectedSkills } from '../skills'
-import { Provider, SshConfig, WslConfig } from '../../shared/types'
 import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
-import { cleanupThreadAttachments, getAttachmentDir, getFileInfo, saveAttachment } from '../attachments'
-import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
 import { REMOTE_CHANNELS, isRemoteChannel } from '@polycode/shared'
 import { invokeChannelHandler, isMigratedChannel } from '../ipc/channel-handlers'
-import { killByPid, killByPort } from '../process-control'
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
-  getEffectiveWorkingDir,
-  getSshConfigForThread,
-  getWslConfigForThread,
   invalidateRepoGitCache,
 } from '../ipc/thread-context'
 
@@ -93,40 +72,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
   }
 
   switch (channel) {
-
-    case 'ssh:test': {
-      const [ssh, remotePath] = args as [SshConfig, string]
-      return testSshConnection(ssh, remotePath)
-    }
-    case 'wsl:test': {
-      const [wsl, wslPath] = args as [WslConfig, string]
-      return testWslConnection(wsl, wslPath)
-    }
-    case 'wsl:list-distros':
-      return listWslDistros()
-
-    case 'sessions:list':
-      return listSessions(args[0] as string)
-    case 'sessions:getActive':
-      return getActiveSession(args[0] as string)
-    case 'sessions:switch': {
-      const [threadId, sessionId] = args as [string, string]
-      if (!threadExists(threadId)) return undefined
-      const session = sessionManager.getOrCreate(
-        threadId,
-        getEffectiveWorkingDir(threadId),
-        window,
-        getSshConfigForThread(threadId),
-        getWslConfigForThread(threadId),
-      )
-      session.switchSession(sessionId)
-      return undefined
-    }
-
-    case 'messages:list':
-      return listMessages(args[0] as string)
-    case 'messages:listBySession':
-      return listMessagesBySession(args[0] as string)
 
     case 'git:branch': {
       const [repoPath] = args as [string]
@@ -443,109 +388,6 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
       return getCachedDefaultBranch(repoPath, ssh, wsl)
     }
 
-    case 'terminal:spawn': {
-      const [threadId, cols, rows] = args as [string, number, number]
-      const location = getLocationForThread(threadId)
-      if (!location) throw new Error('No location associated with this thread')
-      const terminalId = `term-${threadId}-${Date.now()}`
-      ptyManager.spawn(
-        terminalId,
-        threadId,
-        getEffectiveWorkingDir(threadId) || location.path,
-        location.connection_type,
-        cols,
-        rows,
-        getSshConfigForThread(threadId),
-        getWslConfigForThread(threadId),
-      )
-      return terminalId
-    }
-    case 'terminal:write': {
-      const [terminalId, data] = args as [string, string]
-      ptyManager.write(terminalId, data)
-      return undefined
-    }
-    case 'terminal:resize': {
-      const [terminalId, cols, rows] = args as [string, number, number]
-      ptyManager.resize(terminalId, cols, rows)
-      return undefined
-    }
-    case 'terminal:kill':
-      ptyManager.kill(args[0] as string)
-      return undefined
-    case 'terminal:getBuffer':
-      return ptyManager.getBuffer(args[0] as string)
-
-    case 'attachments:save': {
-      const [dataUrl, filename, threadId] = args as [string, string, string]
-      return saveAttachment(dataUrl, filename, threadId)
-    }
-    case 'attachments:cleanup':
-      cleanupThreadAttachments(args[0] as string)
-      return undefined
-    case 'attachments:readDataUrl': {
-      // Serve a saved attachment back to remote clients (they cannot use the
-      // Electron-only attachment:// protocol). Filename is sanitized against
-      // path traversal; responses capped at 15 MB to match the RPC body limit.
-      const [threadId, filename] = args as [string, string]
-      const safeName = basename(filename)
-      const filePath = join(getAttachmentDir(), basename(threadId), safeName)
-      try {
-        const info = getFileInfo(filePath)
-        if (!info || info.size > 15 * 1024 * 1024) return null
-        const data = readFileSync(filePath)
-        return `data:${info.mimeType};base64,${data.toString('base64')}`
-      } catch {
-        return null
-      }
-    }
-    case 'plans:getForThread':
-      return sessionManager.get(args[0] as string)?.getAssociatedPlan() ?? null
-
-    case 'process:kill': {
-      const [target, type, threadId] = args as [string, 'pid' | 'port', string | undefined]
-      try {
-        const num = Number.parseInt(target, 10)
-        if (Number.isNaN(num)) return { ok: false, error: 'Invalid number' }
-        const wsl = threadId ? getWslConfigForThread(threadId) : null
-        if (type === 'pid') {
-          await killByPid(num, wsl)
-        } else {
-          await killByPort(num, wsl)
-        }
-        return { ok: true }
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : String(error) }
-      }
-    }
-
-    case 'cli:health': {
-      const [provider, connectionType, ssh, wsl] = args as [Provider, string, SshConfig | null | undefined, WslConfig | null | undefined]
-      return checkCliHealth(provider, connectionType, ssh, wsl)
-    }
-    case 'cli:update': {
-      const [provider, connectionType, ssh, wsl] = args as [Provider, string, SshConfig | null | undefined, WslConfig | null | undefined]
-      const result = await updateCli(provider, connectionType, ssh, wsl)
-      invalidateCliHealthCache(provider, connectionType, ssh, wsl)
-      return result
-    }
-
-    case 'skills:list':
-      return listDetectedSkills(args[0] as Provider, (args[1] as string | null | undefined) ?? null).map((skill, index) => ({
-        id: skill.id,
-        project_id: skill.scope === 'project' ? 'project' : null,
-        name: skill.name,
-        description: skill.description,
-        prompt: skill.invocation,
-        sort_order: index,
-        created_at: '',
-        updated_at: '',
-        kind: 'skill' as const,
-        scope: skill.scope,
-        harness: skill.harness,
-        path: skill.path,
-        invocation: skill.invocation,
-      }))
     default:
       throw new Error(`Unsupported remote control channel: ${channel}`)
   }

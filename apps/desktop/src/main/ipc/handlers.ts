@@ -1,66 +1,27 @@
 import { spawn } from 'child_process'
-import { readFileSync } from 'fs'
 import { basename } from 'path'
 import { pathToFileURL } from 'url'
 import { app, ipcMain, dialog, BrowserWindow, shell, clipboard } from 'electron'
+import { isLocalChannel } from '@polycode/shared'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
-import {
-  getLocationForThread,
-  threadExists,
-  listMessages,
-  listMessagesBySession,
-  listSessions,
-  getActiveSession,
-  getSetting,
-  setSetting,
-} from '../db/queries'
-import { SshConfig, WslConfig, Provider } from '../../shared/types'
-import { checkCliHealth, updateCli, invalidateCliHealthCache } from '../health/checker'
-import { sessionManager } from '../session/manager'
+import { getSetting, setSetting } from '../db/queries'
+import { SshConfig, WslConfig } from '../../shared/types'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { getCachedGitBranch, getCachedGitStatus, commitChanges, stageFile, stageFiles, unstageFile, stageAll, unstageAll, generateCommitMessage, generateCommitMessageWithContext, generateBranchName, generatePullRequestText, gitPush, gitPushSetUpstream, gitPull, gitPullOrigin, gitPullWithAutoStash, gitFetchRemoteCached, getFileDiff, getCachedCompareToMainChanges, getCompareToMainFileDiff, getCompareToBranchChanges, getCompareToBranchDiff, listCachedBranches, checkoutBranch, createBranch, mergeBranch, findMergedBranches, deleteBranches, gitInit, getRemoteUrl, isGitRepoCached, detectGitHostingProviderCached, getCachedDefaultBranch, discardFileChanges, discardAllChanges, getCachedLastCommit, amendCommit, undoLastCommit, listStashes, createStash, applyStash, popStash, dropStash, forceUnlockRepo, listCommits, listCommitFiles, getCommitFileDiff } from '../git'
 import { startRepoGitWatch, stopRepoGitWatch } from '../file-watch'
-import {
-  saveAttachment,
-  copyAttachmentFromPath,
-  cleanupThreadAttachments,
-  getFileInfo,
-} from '../attachments'
 import { restartWebhookServer, WebhookConfig } from '../webhook/server'
 import { getLogsDirPath } from '../app-logger'
-import { listDetectedSkills } from '../skills'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
-import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { publishRepositoryBranch } from '../publish-branch-adapter'
-import { killByPid, killByPort, runExecFile } from '../process-control'
-import { MIGRATED_CHANNELS, invokeChannelHandler } from './channel-handlers'
+import { runExecFile } from '../process-control'
+import { MIGRATED_CHANNELS, filePathToDataUrl, invokeChannelHandler } from './channel-handlers'
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
-  getEffectiveWorkingDir,
-  getSshConfigForThread,
-  getWslConfigForThread,
   invalidateRepoGitCache,
   windowsPathToWsl,
 } from './thread-context'
-
-function mimeTypeForPath(filePath: string): string {
-  const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
-  const mimeMap: Record<string, string> = {
-    '.jpg': 'image/jpeg',
-    '.jpeg': 'image/jpeg',
-    '.png': 'image/png',
-    '.gif': 'image/gif',
-    '.webp': 'image/webp',
-    '.pdf': 'application/pdf',
-  }
-  return mimeMap[ext] || 'application/octet-stream'
-}
-
-function filePathToDataUrl(filePath: string): string {
-  return `data:${mimeTypeForPath(filePath)};base64,${readFileSync(filePath).toString('base64')}`
-}
 
 async function commandExists(cmd: string): Promise<boolean> {
   try {
@@ -149,53 +110,48 @@ export function registerIpcHandlers(window: BrowserWindow): void {
   // ChannelContract. This adapter's only remaining job for them is the ipcMain
   // registration and the remote-forwarding hop that `proxyable` provides.
   for (const channel of MIGRATED_CHANNELS) {
-    proxyable(channel, (...args: unknown[]) =>
-      invokeChannelHandler(channel, { window, origin: 'local' }, args),
-    )
+    // Reachability comes from the registry, not from membership of the map — the mirror of
+    // the `isRemoteChannel` guard in control-rpc.ts. Without this, folding a `local: false`
+    // channel (`attachments:readDataUrl`, `plans:getForThread`) would register it on
+    // ipcMain and make a remote-only channel locally reachable. The preload allowlist would
+    // still refuse it, but that is the *other* layer of the same trust boundary, and
+    // `local: false` is supposed to mean "no handler exists" rather than "one exists but
+    // something else blocks the door".
+    if (!isLocalChannel(channel)) continue
+
+    const invokeLocally = (...args: unknown[]): Promise<unknown> =>
+      invokeChannelHandler(channel, { window, origin: 'local' }, args)
+
+    // The one folded channel whose remote hop is not "same channel, same arguments".
+    // A source path on this machine is meaningless to the host, so with a remote host
+    // active the file is read here and uploaded as an `attachments:save`; the local
+    // implementation in the handler map is the fallback. `proxyable` cannot express this,
+    // and it is forwarding — an adapter concern — so it stays here rather than in the map.
+    if (channel === 'attachments:saveFromPath') {
+      ipcMain.handle(channel, async (_event, sourcePath: string, threadId: string) => {
+        // Encode only when there is actually a host to upload to. `invokeIfActive` returns
+        // `handled: true` exactly when `getActiveHost() && shouldProxy(...)`, so hoisting
+        // that condition is equivalent — and it keeps the local path to a single read of
+        // the file, which the map handler does. Computing the data URL unconditionally
+        // here would read and base64 every attachment twice on the common path.
+        if (remoteClient.getActiveHost() && remoteClient.shouldProxy('attachments:save')) {
+          const dataUrl = filePathToDataUrl(sourcePath)
+          const proxied = await remoteClient.invokeIfActive('attachments:save', [
+            dataUrl,
+            basename(sourcePath),
+            threadId,
+          ])
+          if (proxied.handled && proxied.value && typeof proxied.value === 'object') {
+            return { ...proxied.value, dataUrl }
+          }
+        }
+        return invokeLocally(sourcePath, threadId)
+      })
+      continue
+    }
+
+    proxyable(channel, invokeLocally)
   }
-
-  // ── SSH / WSL test ──────────────────────────────────────────────────────────
-
-  proxyable('ssh:test', (ssh: SshConfig, remotePath: string) => {
-    return testSshConnection(ssh, remotePath)
-  })
-
-  proxyable('wsl:test', (wsl: WslConfig, wslPath: string) => {
-    return testWslConnection(wsl, wslPath)
-  })
-
-  proxyable('wsl:list-distros', () => {
-    return listWslDistros()
-  })
-
-  // ── Sessions ────────────────────────────────────────────────────────────────
-
-  proxyable('sessions:list', (threadId: string) => {
-    return listSessions(threadId)
-  })
-
-  proxyable('sessions:getActive', (threadId: string) => {
-    return getActiveSession(threadId)
-  })
-
-  proxyable('sessions:switch', (threadId: string, sessionId: string) => {
-    if (!threadExists(threadId)) return
-    const effectiveDir = getEffectiveWorkingDir(threadId)
-    const sshConfig = getSshConfigForThread(threadId)
-    const wslConfig = getWslConfigForThread(threadId)
-    const session = sessionManager.getOrCreate(threadId, effectiveDir, window, sshConfig, wslConfig)
-    session.switchSession(sessionId)
-  })
-
-  // ── Messages ──────────────────────────────────────────────────────────────
-
-  proxyable('messages:list', (threadId: string) => {
-    return listMessages(threadId)
-  })
-
-  proxyable('messages:listBySession', (sessionId: string) => {
-    return listMessagesBySession(sessionId)
-  })
 
   // ── Dialog ────────────────────────────────────────────────────────────────
 
@@ -509,39 +465,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getCachedDefaultBranch(repoPath, ssh, wsl)
   })
 
-  // ── Attachments ─────────────────────────────────────────────────────────────
-
-  ipcMain.handle('attachments:save', (_event, dataUrl: string, filename: string, threadId: string) => {
-    return remoteClient.invokeIfActive('attachments:save', [dataUrl, filename, threadId]).then((proxied) => {
-      if (proxied.handled) return proxied.value
-      return saveAttachment(dataUrl, filename, threadId)
-    })
-  })
-
-  ipcMain.handle('attachments:saveFromPath', async (_event, sourcePath: string, threadId: string) => {
-    const dataUrl = filePathToDataUrl(sourcePath)
-    const proxied = await remoteClient.invokeIfActive('attachments:save', [
-      dataUrl,
-      basename(sourcePath),
-      threadId,
-    ])
-    if (proxied.handled && proxied.value && typeof proxied.value === 'object') {
-      return { ...proxied.value, dataUrl }
-    }
-    return { ...copyAttachmentFromPath(sourcePath, threadId), dataUrl }
-  })
-
-  ipcMain.handle('attachments:cleanup', (_event, threadId: string) => {
-    return remoteClient.invokeIfActive('attachments:cleanup', [threadId]).then((proxied) => {
-      if (proxied.handled) return proxied.value
-      return cleanupThreadAttachments(threadId)
-    })
-  })
-
-  ipcMain.handle('attachments:getFileInfo', (_event, filePath: string) => {
-    return getFileInfo(filePath)
-  })
-
   ipcMain.handle('dialog:open-files', async () => {
     const result = await dialog.showOpenDialog(window, {
       properties: ['openFile', 'multiSelections'],
@@ -552,26 +475,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
       ],
     })
     return result.canceled ? [] : result.filePaths
-  })
-
-  // ── Slash Commands ─────────────────────────────────────────────────────────
-
-  proxyable('skills:list', (provider: Provider, cwd?: string | null) => {
-    return listDetectedSkills(provider, cwd ?? null).map((s, index) => ({
-      id: s.id,
-      project_id: s.scope === 'project' ? 'project' : null,
-      name: s.name,
-      description: s.description,
-      prompt: s.invocation,
-      sort_order: index,
-      created_at: '',
-      updated_at: '',
-      kind: 'skill' as const,
-      scope: s.scope,
-      harness: s.harness,
-      path: s.path,
-      invocation: s.invocation,
-    }))
   })
 
   // ── Settings ───────────────────────────────────────────────────────────────
@@ -633,22 +536,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     }
   })
 
-  proxyable('process:kill', async (target: string, type: 'pid' | 'port', threadId?: string) => {
-    try {
-      const num = parseInt(target, 10)
-      if (isNaN(num)) return { ok: false, error: 'Invalid number' }
-      const wsl = threadId ? getWslConfigForThread(threadId) : null
-      if (type === 'pid') {
-        await killByPid(num, wsl)
-      } else {
-        await killByPort(num, wsl)
-      }
-      return { ok: true }
-    } catch (e: unknown) {
-      return { ok: false, error: e instanceof Error ? e.message : String(e) }
-    }
-  })
-
   // ── Window Controls ────────────────────────────────────────────────────────
 
   ipcMain.handle('window:minimize',     () => window.minimize())
@@ -688,43 +575,12 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     return getUpdateState()
   })
 
-  // ── CLI health & updates ────────────────────────────────────────────────────
-
-  proxyable('cli:health', (
-    provider: Provider,
-    connectionType: string,
-    ssh?: SshConfig | null,
-    wsl?: WslConfig | null,
-  ) => {
-    return checkCliHealth(provider, connectionType, ssh, wsl)
-  })
-
-  proxyable('cli:update', async (
-    provider: Provider,
-    connectionType: string,
-    ssh?: SshConfig | null,
-    wsl?: WslConfig | null,
-  ) => {
-    const result = await updateCli(provider, connectionType, ssh, wsl)
-    invalidateCliHealthCache(provider, connectionType, ssh, wsl)
-    return result
-  })
-
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────
-
-  proxyable('terminal:spawn', (threadId: string, cols: number, rows: number) => {
-    const location = getLocationForThread(threadId)
-    if (!location) throw new Error('No location associated with this thread')
-
-    const terminalId = `term-${threadId}-${Date.now()}`
-    const connectionType = location.connection_type
-    const cwd = getEffectiveWorkingDir(threadId) || location.path
-    const ssh = getSshConfigForThread(threadId)
-    const wsl = getWslConfigForThread(threadId)
-
-    ptyManager.spawn(terminalId, threadId, cwd, connectionType, cols, rows, ssh, wsl)
-    return terminalId
-  })
+  //
+  // These two are fire-and-forget `ipcMain.on` listeners, which is how the renderer
+  // actually drives a terminal (`window.api.send` — Terminal.tsx, stores/terminal.ts).
+  // CHANNEL_REGISTRY inventories request/response channels only, so this transport shape
+  // sits outside the fold by design; the matching `invoke` registrations are folded.
 
   ipcMain.on('terminal:write', (_event, terminalId: string, data: string) => {
     void remoteClient.invokeIfActive('terminal:write', [terminalId, data]).then((proxied) => {
@@ -736,22 +592,6 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     void remoteClient.invokeIfActive('terminal:resize', [terminalId, cols, rows]).then((proxied) => {
       if (!proxied.handled) ptyManager.resize(terminalId, cols, rows)
     })
-  })
-
-  proxyable('terminal:write', (terminalId: string, data: string) => {
-    ptyManager.write(terminalId, data)
-  })
-
-  proxyable('terminal:resize', (terminalId: string, cols: number, rows: number) => {
-    ptyManager.resize(terminalId, cols, rows)
-  })
-
-  proxyable('terminal:kill', (terminalId: string) => {
-    ptyManager.kill(terminalId)
-  })
-
-  proxyable('terminal:getBuffer', (terminalId: string) => {
-    return ptyManager.getBuffer(terminalId)
   })
 
   // ── Webhook ─────────────────────────────────────────────────────────────────

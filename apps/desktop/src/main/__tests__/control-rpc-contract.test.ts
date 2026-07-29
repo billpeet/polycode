@@ -40,7 +40,22 @@ describe('remote control RPC channel contract', () => {
     const expected = Object.entries(CHANNEL_REGISTRY)
       .filter(([, capabilities]) => capabilities.local && capabilities.remote)
       .map(([channel]) => channel)
-    const registered = new Set([...proxyableChannels, ...directlyProxiedChannels, ...migratedChannels])
+    // The folded map is no longer only dual-path: it also holds local-only
+    // (`attachments:getFileInfo`, `attachments:saveFromPath`) and remote-only
+    // (`attachments:readDataUrl`, `plans:getForThread`) channels, whose reachability comes
+    // from the registry guards in the two adapters — `isLocalChannel` in handlers.ts,
+    // `isRemoteChannel` in control-rpc.ts. Membership of the map is therefore no longer the
+    // same claim as "registered on ipcMain with a remote-forwarding hop", which is what
+    // this test is about, so only the dual-path entries count here.
+    //
+    // The assertion still bites in both directions: a dual-path channel missing from all
+    // three sets fails, and a local-only channel appearing in a literal `proxyable(...)`
+    // registration fails.
+    const dualPathMigrated = [...migratedChannels].filter((channel) => {
+      const capabilities = CHANNEL_REGISTRY[channel as keyof typeof CHANNEL_REGISTRY]
+      return Boolean(capabilities?.local && capabilities.remote)
+    })
+    const registered = new Set([...proxyableChannels, ...directlyProxiedChannels, ...dualPathMigrated])
     expect([...registered].sort()).toEqual(expected.sort())
   })
 

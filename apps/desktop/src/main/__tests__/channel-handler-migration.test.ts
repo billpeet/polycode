@@ -15,7 +15,7 @@ import { describe, expect, test } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { CHANNEL_REGISTRY, REMOTE_CHANNELS } from '@polycode/shared'
+import { CHANNEL_REGISTRY, LOCAL_CHANNELS, REMOTE_CHANNELS } from '@polycode/shared'
 
 const mainDir = join(dirname(fileURLToPath(import.meta.url)), '..')
 const handlersSource = readFileSync(join(mainDir, 'ipc', 'handlers.ts'), 'utf8')
@@ -63,9 +63,22 @@ describe('channel handler map migration', () => {
   test('no local-only channel is reachable through the folded path', () => {
     const remote = new Set<string>(REMOTE_CHANNELS)
     const localOnlyButFolded = migratedChannels.filter((channel) => !remote.has(channel))
-    // Folding a local-only channel is fine — the adapter guard handles it — but it must
-    // be a deliberate act, so record which ones are in that state.
-    expect(localOnlyButFolded).toEqual([])
+    // Folding a local-only channel is fine — control-rpc.ts's `isRemoteChannel` guard keeps
+    // it off the network — but it must be a deliberate act, so record which ones are in
+    // that state.
+    expect(localOnlyButFolded).toEqual(['attachments:getFileInfo', 'attachments:saveFromPath'])
+  })
+
+  test('no remote-only channel is reachable through the folded path', () => {
+    const local = new Set<string>(LOCAL_CHANNELS)
+    const remoteOnlyButFolded = migratedChannels.filter((channel) => !local.has(channel))
+    expect(remoteOnlyButFolded).toEqual(['attachments:readDataUrl', 'plans:getForThread'])
+    // The mirror image of the test above, and the half that had no assertion. The
+    // MIGRATED_CHANNELS loop calls `ipcMain.handle` for every channel it is given, so
+    // without this guard folding a `local: false` channel would register it in the renderer's
+    // reach. The preload allowlist would still refuse it, but that is the *other* layer of
+    // the same trust boundary: `local: false` is supposed to mean "no handler exists".
+    expect(handlersSource).toContain('if (!isLocalChannel(channel)) continue')
   })
 
   test('reports migration progress', () => {

@@ -42,7 +42,8 @@
  * `channel-handler-migration.test.ts` enforces the other half: a channel handled here
  * must have no legacy registration left, so a third dispatch site cannot exist.
  */
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
+import { basename, join } from 'path'
 import type { BrowserWindow } from 'electron'
 import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
 import type { SshConfig, WslConfig } from '../../shared/types'
@@ -65,6 +66,7 @@ import {
   deleteSlashCommand,
   deleteThread,
   deleteYouTrackServer,
+  getActiveSession,
   getImportedSessionIds,
   getLastUsedProviderAndModel,
   getLocationForThread,
@@ -75,7 +77,10 @@ import {
   listCommands,
   listLocationPools,
   listLocations,
+  listMessages,
+  listMessagesBySession,
   listProjects,
+  listSessions,
   listSlashCommands,
   listThreads,
   listYouTrackServers,
@@ -107,6 +112,18 @@ import {
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 import { commandManager } from '../commands/manager'
+import { ptyManager } from '../terminal/manager'
+import {
+  cleanupThreadAttachments,
+  copyAttachmentFromPath,
+  getAttachmentDir,
+  getFileInfo,
+  saveAttachment,
+} from '../attachments'
+import { checkCliHealth, invalidateCliHealthCache, updateCli } from '../health/checker'
+import { listDetectedSkills } from '../skills'
+import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
+import { killByPid, killByPort } from '../process-control'
 import {
   cloneLocation,
   createFullProject,
@@ -164,6 +181,31 @@ function modelQueryOptions(threadId?: string | null):
     ssh: getSshConfigForThread(threadId),
     wsl: getWslConfigForThread(threadId),
   }
+}
+
+/**
+ * The `data:` URL for a file on *this* machine, typed by its extension.
+ *
+ * Exported because `attachments:saveFromPath` needs the same value on two paths that
+ * cannot share a call: the handler below, and the remote-upload hop in `ipc/handlers.ts`,
+ * which has to produce the URL *before* it knows whether a remote host is active. Keeping
+ * one definition is the only thing stopping the two mime tables from drifting.
+ *
+ * The table stays inside the function body, exactly as it was in ipc/handlers.ts. At module
+ * scope its keys would sit at the same two-space indent the migration tests use to scrape
+ * channel names out of this file, and `'.png'` would be reported as an unknown channel.
+ */
+export function filePathToDataUrl(filePath: string): string {
+  const mimeTypes: Record<string, string> = {
+    '.jpg': 'image/jpeg',
+    '.jpeg': 'image/jpeg',
+    '.png': 'image/png',
+    '.gif': 'image/gif',
+    '.webp': 'image/webp',
+    '.pdf': 'application/pdf',
+  }
+  const ext = filePath.slice(filePath.lastIndexOf('.')).toLowerCase()
+  return `data:${mimeTypes[ext] || 'application/octet-stream'};base64,${readFileSync(filePath).toString('base64')}`
 }
 
 /**
@@ -757,6 +799,230 @@ export const channelHandlers = {
 
   'models:cursorAvailable': (_ctx, threadId) =>
     listCursorAvailableModels(modelQueryOptions(threadId)),
+
+  // ── Sessions and messages ─────────────────────────────────────────────────
+
+  'sessions:list': (_ctx, threadId) => listSessions(threadId),
+
+  'sessions:getActive': (_ctx, threadId) => getActiveSession(threadId),
+
+  // The one channel of the five that reaches the live Session rather than the DB: changing
+  // which session is active has to reconfigure the running CLI, so it takes the same
+  // getOrCreate path threads:start does, with the same (cwd, window, ssh, wsl) ordering.
+  //
+  // Note the absence of a getLocalPathError check, which threads:start and threads:send
+  // both have. The pre-fold paths agreed on its absence, so it is preserved rather than
+  // "fixed" here.
+  'sessions:switch': (ctx, threadId, sessionId) => {
+    if (!threadExists(threadId)) return
+    const session = sessionManager.getOrCreate(
+      threadId,
+      getEffectiveWorkingDir(threadId),
+      ctx.window,
+      getSshConfigForThread(threadId),
+      getWslConfigForThread(threadId),
+    )
+    return session.switchSession(sessionId)
+  },
+
+  'messages:list': (_ctx, threadId) => listMessages(threadId),
+
+  'messages:listBySession': (_ctx, sessionId) => listMessagesBySession(sessionId),
+
+  // ── SSH / WSL connection tests ────────────────────────────────────────────
+
+  'ssh:test': (_ctx, ssh, remotePath) => testSshConnection(ssh, remotePath),
+
+  'wsl:test': (_ctx, wsl, wslPath) => testWslConnection(wsl, wslPath),
+
+  'wsl:list-distros': () => listWslDistros(),
+
+  // ── CLI health and updates ────────────────────────────────────────────────
+
+  'cli:health': (_ctx, provider, connectionType, ssh, wsl) =>
+    checkCliHealth(provider, connectionType, ssh, wsl),
+
+  // The only one of the pair that changes anything, so the only one that busts the cache —
+  // and the invalidation must follow the await rather than race it, or a health read
+  // landing mid-install would repopulate the cache with the pre-update version and the
+  // renderer would keep offering the update.
+  'cli:update': async (_ctx, provider, connectionType, ssh, wsl) => {
+    const result = await updateCli(provider, connectionType, ssh, wsl)
+    invalidateCliHealthCache(provider, connectionType, ssh, wsl)
+    return result
+  },
+
+  // ── Process control ───────────────────────────────────────────────────────
+
+  /**
+   * Answers `{ ok, error }` rather than throwing: the renderer shows the message beside a
+   * still-listed process, so a rejected invoke would be the wrong shape. The `{ ok: false }`
+   * strings are therefore part of the contract, `'Invalid number'` included.
+   *
+   * `threadId` is passed to a plain truthiness test — an omitted one means "not a thread's
+   * process", so `undefined`, `null` and `''` all mean "no WSL config" and skip the lookup.
+   *
+   * `Number.parseInt`/`Number.isNaN` rather than the globals: the two pre-fold paths were
+   * spelled differently and the pair is interchangeable here, because `Number.parseInt`
+   * *is* the global `parseInt` and its result is always a number, so `isNaN`'s coercion
+   * never gets anything to coerce.
+   */
+  'process:kill': async (_ctx, target, type, threadId) => {
+    try {
+      const parsed = Number.parseInt(target, 10)
+      if (Number.isNaN(parsed)) return { ok: false, error: 'Invalid number' }
+      const wsl = threadId ? getWslConfigForThread(threadId) : null
+      if (type === 'pid') {
+        await killByPid(parsed, wsl)
+      } else {
+        await killByPort(parsed, wsl)
+      }
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, error: error instanceof Error ? error.message : String(error) }
+    }
+  },
+
+  // ── Skills ────────────────────────────────────────────────────────────────
+
+  // Detected skills are reshaped onto the SlashCommand row so the renderer can merge them
+  // with `slash-commands:list` onto one palette; `kind: 'skill'` is the tag it branches on,
+  // mirroring `kind: 'command'` there. The array index becomes `sort_order`, and the two
+  // timestamps are empty because a skill is a file on disk rather than a row.
+  //
+  // `cwd ?? null` is redundant — listDetectedSkills branches on `if (cwd)` in its own body,
+  // so `undefined`, `null` and `''` are already equivalent there — but both pre-fold paths
+  // wrote it and the difference is visible in the call, so it is preserved rather than
+  // tidied away.
+  'skills:list': (_ctx, provider, cwd) =>
+    listDetectedSkills(provider, cwd ?? null).map((skill, index) => ({
+      id: skill.id,
+      project_id: skill.scope === 'project' ? 'project' : null,
+      name: skill.name,
+      description: skill.description,
+      prompt: skill.invocation,
+      sort_order: index,
+      created_at: '',
+      updated_at: '',
+      kind: 'skill' as const,
+      scope: skill.scope,
+      harness: skill.harness,
+      path: skill.path,
+      invocation: skill.invocation,
+    })),
+
+  // ── Terminal (PTY) ────────────────────────────────────────────────────────
+  //
+  // `terminal:write` and `terminal:resize` are ALSO registered as `ipcMain.on`
+  // fire-and-forget listeners in ipc/handlers.ts, and that pair is the one the renderer
+  // actually uses (`window.api.send`, Terminal.tsx and stores/terminal.ts). Those listeners
+  // are a different transport shape, outside this registry's remit — see the file header —
+  // and are deliberately left where they are. The entries below are the request/response
+  // registrations the registry and the contract describe.
+
+  'terminal:spawn': (_ctx, threadId, cols, rows) => {
+    const location = getLocationForThread(threadId)
+    if (!location) throw new Error('No location associated with this thread')
+    const terminalId = `term-${threadId}-${Date.now()}`
+    ptyManager.spawn(
+      terminalId,
+      threadId,
+      // The `|| location.path` fallback cannot fire: getEffectiveWorkingDir returns '' only
+      // for a thread with no location row, which the guard above has already rejected using
+      // the same lookup. Preserved because both pre-fold paths had it and it costs nothing.
+      getEffectiveWorkingDir(threadId) || location.path,
+      // The connection type comes from the location row, not from which host config
+      // happens to be set — that is what decides whether a PTY is local, ssh or wsl.
+      location.connection_type,
+      cols,
+      rows,
+      getSshConfigForThread(threadId),
+      getWslConfigForThread(threadId),
+    )
+    // Not the callee's value, unlike the rule below: `spawn` is `: void` and the minted id
+    // *is* the contract's result — the renderer needs it to address the terminal.
+    return terminalId
+  },
+
+  'terminal:write': (_ctx, terminalId, data) => ptyManager.write(terminalId, data),
+
+  'terminal:resize': (_ctx, terminalId, cols, rows) => ptyManager.resize(terminalId, cols, rows),
+
+  'terminal:kill': (_ctx, terminalId) => ptyManager.kill(terminalId),
+
+  'terminal:getBuffer': (_ctx, terminalId) => ptyManager.getBuffer(terminalId),
+
+  // ── Attachments ───────────────────────────────────────────────────────────
+  //
+  // The one family that spans all three reachability shapes: save/cleanup are local *and*
+  // remote, getFileInfo/saveFromPath are local-only, readDataUrl is remote-only. They sit
+  // together because both adapters derive reachability from CHANNEL_REGISTRY rather than
+  // from which dispatch site happens to carry a registration.
+
+  'attachments:save': (_ctx, dataUrl, filename, threadId) =>
+    saveAttachment(dataUrl, filename, threadId),
+
+  // The two pre-fold paths differed here in form only, exactly like `threads:setWsl`:
+  // ipc/handlers.ts returned `cleanupThreadAttachments`'s value and control-rpc.ts
+  // discarded it and returned undefined. The callee is `: void` and so is the contract's
+  // result, so nothing observable changes; the returning form is kept, per the rule above.
+  'attachments:cleanup': (_ctx, threadId) => cleanupThreadAttachments(threadId),
+
+  /**
+   * Remote-only. Remote clients cannot use the Electron-only `attachment://` protocol, so
+   * a saved attachment is served back inline as a data URL.
+   *
+   * Both path segments come off the wire, hence `basename` on each: `..` in either would
+   * otherwise escape the attachment directory and read arbitrary files off the host. The
+   * 15 MB cap matches the RPC body limit, so an oversized file refuses rather than
+   * producing a response the transport will drop anyway.
+   *
+   * `getAttachmentDir()` is deliberately outside the try — it creates the directory, and a
+   * failure there is a real error rather than "no such attachment". Only the lookup and
+   * the read are swallowed into `null`.
+   */
+  'attachments:readDataUrl': (_ctx, threadId, filename) => {
+    const safeName = basename(filename)
+    const filePath = join(getAttachmentDir(), basename(threadId), safeName)
+    try {
+      const info = getFileInfo(filePath)
+      if (!info || info.size > 15 * 1024 * 1024) return null
+      const data = readFileSync(filePath)
+      return `data:${info.mimeType};base64,${data.toString('base64')}`
+    } catch {
+      return null
+    }
+  },
+
+  'attachments:getFileInfo': (_ctx, filePath) => getFileInfo(filePath),
+
+  /**
+   * Local-only, and the only channel in the map whose remote hop is not a plain
+   * same-channel forward: a source path on *this* machine means nothing to a remote host,
+   * so `ipc/handlers.ts` reads the file here and uploads it as an `attachments:save`. That
+   * hop stays in the adapter; this is the local implementation it falls back to.
+   *
+   * The read runs BEFORE the copy — an unreadable source must fail without leaving a
+   * half-made attachment behind — and the mime type comes from the *source* path's
+   * extension, not from the copy's generated filename.
+   *
+   * `dataUrl` is absent from the channel contract, yet InputBar.tsx destructures it off the
+   * result, so it is live: the contract under-declares this one. Preserved as-is — widening
+   * the contract is a separate change — and note that `satisfies` does NOT catch it, so the
+   * gap is invisible to the build rather than merely tolerated by it.
+   */
+  'attachments:saveFromPath': (_ctx, sourcePath, threadId) => {
+    const dataUrl = filePathToDataUrl(sourcePath)
+    return { ...copyAttachmentFromPath(sourcePath, threadId), dataUrl }
+  },
+
+  // ── Plans ─────────────────────────────────────────────────────────────────
+
+  // Remote-only: the desktop renderer reads the plan file through the files:* channels,
+  // mobile cannot. `?? null` rather than bare optional chaining because the contract's
+  // result is `T | null` and JSON.stringify would drop an `undefined` on the way out.
+  'plans:getForThread': (_ctx, threadId) =>
+    sessionManager.get(threadId)?.getAssociatedPlan() ?? null,
 } satisfies Partial<ChannelHandlerMap>
 
 export type MigratedChannel = keyof typeof channelHandlers

@@ -11,6 +11,7 @@
  * typed handler map. They should stay green through the fold — that is the point.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { basename, join } from 'node:path'
 import { CHANNEL_REGISTRY, isRemoteChannel } from '@polycode/shared'
 
 const H = vi.hoisted(() => {
@@ -41,6 +42,29 @@ const H = vi.hoisted(() => {
     sessionRunning: false,
     /** What the mocked `existsSync` answers — drives `getLocalPathError`. */
     pathExists: true,
+    /**
+     * What `attachments.getFileInfo` answers. `null` is the "no such file" branch and a
+     * size over 15 MB is the refusal branch of `attachments:readDataUrl`.
+     */
+    fileInfo: { size: 1234, mimeType: 'image/png' } as Record<string, unknown> | null,
+    /**
+     * Bytes the mocked `fs.readFileSync` serves. `null` delegates to the real one, so
+     * anything in the graph that is not under test keeps working.
+     */
+    fileBytes: null as Buffer | null,
+    /**
+     * What `killByPid`/`killByPort` reject with, or `null` to resolve. `process:kill`
+     * converts a rejection into `{ ok: false, error }` rather than throwing.
+     */
+    killError: null as string | null,
+    /**
+     * What the remote-control client's `invokeIfActive` answers, or `null` for "no active
+     * host" — the state every other test in this file runs in, because it is the one that
+     * exercises the local implementation.
+     */
+    remoteProxy: null as { handled: boolean; value?: unknown } | null,
+    /** How many times the stubbed readFileSync served `fileBytes`. */
+    fileReads: 0,
   }
 
   const note = (entry: string): void => { log.push(entry) }
@@ -116,6 +140,11 @@ const H = vi.hoisted(() => {
     listBackgroundTerminals: settlesLate('session.listBackgroundTerminals', [{ itemId: 'bg1' }]),
     terminateBackgroundTerminal: settlesLate('session.terminateBackgroundTerminal', true),
     cleanBackgroundTerminals: settlesLate('session.cleanBackgroundTerminals'),
+    // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
+    switchSession: stub('session.switchSession', 'RET_switchSession'),
+    getAssociatedPlan: stub('session.getAssociatedPlan', {
+      name: 'plan.md', path: 'C:/repo/plan.md', content: '# Plan',
+    }),
   }
 
   /**
@@ -134,12 +163,25 @@ const H = vi.hoisted(() => {
     getRepoWebUrl: settlesLate('forge.getRepoWebUrl', 'https://forge.test/repo'),
   }
 
-  return { log, state, note, stub, autoModule, settlesLate, session, forge }
+  return { log, state, note, stub, autoModule, settlesLate, renderArgs, session, forge }
 })
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
-  return { ...actual, existsSync: () => H.state.pathExists }
+  return {
+    ...actual,
+    existsSync: () => H.state.pathExists,
+    // `attachments:readDataUrl` and the `attachments:saveFromPath` source read are the only
+    // things under test that reach this. `fileBytes` defaults to null, so every other
+    // reader in the module graph keeps the real implementation.
+    readFileSync: (...args: unknown[]): unknown => {
+      if (H.state.fileBytes === null) {
+        return (actual.readFileSync as (...rest: unknown[]) => unknown)(...args)
+      }
+      H.state.fileReads += 1
+      return H.state.fileBytes
+    },
+  }
 })
 
 vi.mock('../db/queries', () => H.autoModule('db', {
@@ -225,6 +267,20 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   deleteSlashCommand: H.stub('db.deleteSlashCommand', 'RET_deleteSlashCommand'),
   getImportedSessionIds: H.stub('db.getImportedSessionIds', ['sess-a', 'sess-b']),
   importThread: H.stub('db.importThread', { id: 't-imported', name: 'Imported thread' }),
+  // Two rows so ORDER is observable — the session switcher lists them chronologically.
+  listSessions: H.stub('db.listSessions', [
+    { id: 's1', thread_id: 't1', name: 'Session one', is_active: true },
+    { id: 's2', thread_id: 't1', name: 'Session two', is_active: false },
+  ]),
+  getActiveSession: H.stub('db.getActiveSession', {
+    id: 's1', thread_id: 't1', name: 'Session one', is_active: true,
+  }),
+  // Distinct fixtures per query: `messages:list` and `messages:listBySession` take
+  // different keys, and a handler that called the wrong one would still return messages.
+  listMessages: H.stub('db.listMessages', [{ id: 'm1', role: 'user', content: 'by thread' }]),
+  listMessagesBySession: H.stub('db.listMessagesBySession', [
+    { id: 'm2', role: 'assistant', content: 'by session' },
+  ]),
 }))
 
 vi.mock('../forge', () => ({ createForge: H.stub('forge.createForge', () => H.forge) }))
@@ -315,7 +371,75 @@ vi.mock('../commands/manager', () => ({
     getPorts: H.stub('commandManager.getPorts', [3000, 3001]),
   }),
 }))
-vi.mock('../terminal/manager', () => ({ ptyManager: H.autoModule('ptyManager') }))
+// Sentinels on the four `: void` methods, so "forwarded and returned" is distinguishable
+// from "forwarded and discarded"; a distinctive buffer so `getBuffer` cannot be faked.
+vi.mock('../terminal/manager', () => ({
+  ptyManager: H.autoModule('ptyManager', {
+    spawn: H.stub('ptyManager.spawn', 'RET_ptySpawn'),
+    write: H.stub('ptyManager.write', 'RET_ptyWrite'),
+    resize: H.stub('ptyManager.resize', 'RET_ptyResize'),
+    kill: H.stub('ptyManager.kill', 'RET_ptyKill'),
+    getBuffer: H.stub('ptyManager.getBuffer', 'buffered terminal output'),
+  }),
+}))
+
+vi.mock('../attachments', () => H.autoModule('attachments', {
+  getAttachmentDir: H.stub('attachments.getAttachmentDir', 'C:/tmp/polycode-attachments'),
+  saveAttachment: H.stub('attachments.saveAttachment', { tempPath: 'C:/tmp/att/saved.png', id: 'att-saved' }),
+  copyAttachmentFromPath: H.stub('attachments.copyAttachmentFromPath', {
+    tempPath: 'C:/tmp/att/copied.png', id: 'att-copied',
+  }),
+  // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
+  cleanupThreadAttachments: H.stub('attachments.cleanupThreadAttachments', 'RET_cleanupThreadAttachments'),
+  getFileInfo: H.stub('attachments.getFileInfo', () => H.state.fileInfo),
+}))
+
+vi.mock('../health/checker', () => H.autoModule('cli', {
+  checkCliHealth: H.settlesLate('cli.checkCliHealth', { installed: true, currentVersion: '1.2.3' }),
+  updateCli: H.settlesLate('cli.updateCli', { success: true, output: 'updated' }),
+  invalidateCliHealthCache: H.stub('cli.invalidateCliHealthCache'),
+}))
+
+vi.mock('../skills', () => H.autoModule('skills', {
+  // Two rows so the derived `sort_order` is observable, and one of each scope so the
+  // `scope === 'project' ? 'project' : null` mapping cannot be faked by a constant.
+  listDetectedSkills: H.stub('skills.listDetectedSkills', [
+    {
+      id: 'sk1', name: 'review', description: 'Review the diff', invocation: '/review',
+      scope: 'project', harness: 'claude-code', path: 'C:/repo/.claude/skills/review',
+    },
+    {
+      id: 'sk2', name: 'deploy', description: null, invocation: '/deploy',
+      scope: 'global', harness: 'claude-code', path: 'C:/home/.claude/skills/deploy',
+    },
+  ]),
+}))
+
+vi.mock('../host-connection-tests', () => H.autoModule('hostTests', {
+  // Distinct answers per backend, so "which connection test ran" is readable off the result.
+  testSshConnection: H.settlesLate('hostTests.testSshConnection', { ok: true }),
+  testWslConnection: H.settlesLate('hostTests.testWslConnection', { ok: false, error: 'no distro' }),
+  listWslDistros: H.settlesLate('hostTests.listWslDistros', ['Ubuntu', 'Debian']),
+}))
+
+vi.mock('../process-control', () => H.autoModule('processControl', {
+  // Hand-rolled rather than `settlesLate` because `process:kill`'s whole shape is its
+  // rejection branch: it converts a thrown error into `{ ok: false, error }`.
+  killByPid: H.stub('processControl.killByPid', () => new Promise((resolve, reject) => {
+    setTimeout(() => {
+      H.note('processControl.killByPid:settled')
+      if (H.state.killError) reject(new Error(H.state.killError))
+      else resolve(undefined)
+    }, 0)
+  })),
+  killByPort: H.stub('processControl.killByPort', () => new Promise((resolve, reject) => {
+    setTimeout(() => {
+      H.note('processControl.killByPort:settled')
+      if (H.state.killError) reject(new Error(H.state.killError))
+      else resolve(undefined)
+    }, 0)
+  })),
+}))
 
 // Mocked so `threads:getLogs` records a call and returns something distinguishable. The
 // real module reads `%userData%/logs/<id>.log` and swallows every failure into `[]`, which
@@ -324,11 +448,24 @@ vi.mock('../thread-logger', () => H.autoModule('threadLogger', {
   getThreadLogs: H.stub('threadLogger.getThreadLogs', [{ type: 'start', at: '2026-01-01' }]),
 }))
 
-// The remote-forwarding hop belongs to the ipcMain adapter only. Inactive here, so the
-// local implementation runs — which is exactly the path we want to compare.
+// The remote-forwarding hop belongs to the ipcMain adapter only. Inactive by default, so
+// the local implementation runs — which is exactly the path we want to compare.
+//
+// `H.state.remoteProxy` switches it on for the one channel where the hop is not a plain
+// same-channel forward: `attachments:saveFromPath` reads the file *here* and uploads it to
+// the host under a different channel (`attachments:save`), so the hop is behaviour rather
+// than plumbing and has its own test below.
 vi.mock('../remote/client', () => ({
   registerRemoteControlIpcHandlers: () => ({
-    invokeIfActive: async () => ({ handled: false, value: undefined }),
+    // `invokeIfActive` returns handled:true exactly when both of these hold, so the
+    // adapter hoists them to decide whether the source file is worth encoding at all.
+    getActiveHost: () => (H.state.remoteProxy ? { id: 'host1' } : null),
+    shouldProxy: () => true,
+    invokeIfActive: async (channel: string, args: unknown[]) => {
+      if (!H.state.remoteProxy) return { handled: false, value: undefined }
+      H.note(`remoteClient.invokeIfActive(["${channel}",${H.renderArgs(args)}])`)
+      return H.state.remoteProxy
+    },
   }),
 }))
 
@@ -410,6 +547,11 @@ beforeEach(() => {
   H.state.hasSession = true
   H.state.sessionRunning = false
   H.state.pathExists = true
+  H.state.fileInfo = { size: 1234, mimeType: 'image/png' }
+  H.state.fileBytes = null
+  H.state.killError = null
+  H.state.remoteProxy = null
+  H.state.fileReads = 0
 })
 
 /**
@@ -845,6 +987,37 @@ describe("handlers pass the callee's result through", () => {
     }
     expect(await resultViaIpc('files:watchStop', ['C:/repo/a.ts'])).toBe('RET_stopFileWatch')
     expect(await resultViaControlRpc('files:watchStop', ['C:/repo/a.ts'])).toBe('RET_stopFileWatch')
+  })
+
+  it('the pty and session channels return their callee\'s value — no pre-fold path did', async () => {
+    // Four more of the `files:watchStop` shape: both legacy paths called a `: void` callee
+    // as a statement (control-rpc.ts then wrote `return undefined`). Nothing observable
+    // turns on it today, so the fold applies the standing rule and returns it, which
+    // removes the floated-promise trap if any of them ever goes async — `ptyManager.write`
+    // in particular sits in front of a child process.
+    const cases: Array<[channel: string, args: unknown[], expected: string]> = [
+      ['sessions:switch', ['t1', 's2'], 'RET_switchSession'],
+      ['terminal:write', ['term-1', 'ls\r'], 'RET_ptyWrite'],
+      ['terminal:resize', ['term-1', 100, 30], 'RET_ptyResize'],
+      ['terminal:kill', ['term-1'], 'RET_ptyKill'],
+    ]
+    for (const [channel, args, expected] of cases) {
+      expect(await resultViaIpc(channel, args)).toBe(expected)
+      expect(await resultViaControlRpc(channel, args)).toBe(expected)
+    }
+  })
+
+  it('attachments:cleanup returns its callee\'s value — the one place the two paths differed', async () => {
+    // The only form-level disagreement found in this fold, and the same shape as
+    // `threads:setWsl` in the last one: ipc/handlers.ts wrote
+    // `return cleanupThreadAttachments(threadId)` and control-rpc.ts called it as a
+    // statement followed by `return undefined`. Nothing observable turned on it — the
+    // callee is `: void` and so is the contract's result — so the fold adopts the
+    // returning form, and this pins it.
+    expect(await resultViaIpc('attachments:cleanup', ['t1'])).toBe('RET_cleanupThreadAttachments')
+    expect(await resultViaControlRpc('attachments:cleanup', ['t1'])).toBe(
+      'RET_cleanupThreadAttachments',
+    )
   })
 
   it('threads:setWsl returns its callee\'s value — the one place the two paths differed', async () => {
@@ -2123,6 +2296,620 @@ describe('models:* — both transports agree', () => {
         'models.listClaudeAvailableModels:settled',
       ])
     }
+  })
+})
+
+/**
+ * An ssh location that also carries a wsl config.
+ *
+ * Used by every describe below that hands *both* configs to one callee — the default
+ * fixture nulls both, so a transposed `getSshConfigForThread`/`getWslConfigForThread`
+ * would be invisible.
+ */
+const sshAndWslThread = (): void => {
+  H.state.location = {
+    id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
+    ssh: DISTINCT_SSH, wsl: DISTINCT_WSL,
+  }
+}
+
+describe('sessions:* and messages:* — both transports agree', () => {
+  it('sessions:list returns the rows in order', async () => {
+    const ipc = await viaIpc('sessions:list', ['t1'])
+    const rpc = await viaControlRpc('sessions:list', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.listSessions(["t1"])'])
+
+    // Two rows, so a handler that reversed or re-sorted them would fail — the session
+    // switcher lists them in creation order.
+    const rows = [
+      { id: 's1', thread_id: 't1', name: 'Session one', is_active: true },
+      { id: 's2', thread_id: 't1', name: 'Session two', is_active: false },
+    ]
+    expect(await resultViaIpc('sessions:list', ['t1'])).toEqual(rows)
+    expect(await resultViaControlRpc('sessions:list', ['t1'])).toEqual(rows)
+  })
+
+  it('sessions:getActive', async () => {
+    const ipc = await viaIpc('sessions:getActive', ['t1'])
+    const rpc = await viaControlRpc('sessions:getActive', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.getActiveSession(["t1"])'])
+    const row = { id: 's1', thread_id: 't1', name: 'Session one', is_active: true }
+    expect(await resultViaIpc('sessions:getActive', ['t1'])).toEqual(row)
+    expect(await resultViaControlRpc('sessions:getActive', ['t1'])).toEqual(row)
+  })
+
+  it('sessions:switch resolves the host context, creates the session, then switches', async () => {
+    // Distinct ssh/wsl: getOrCreate takes the two adjacent, and this channel is the only
+    // one in this batch that reaches it.
+    sshAndWslThread()
+    const args = ['t1', 's2']
+    const ipc = await viaIpc('sessions:switch', args)
+    const rpc = await viaControlRpc('sessions:switch', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.threadExists(["t1"])',
+      // getEffectiveWorkingDir
+      'db.getLocationForThread(["t1"])',
+      // getSshConfigForThread
+      'db.getLocationForThread(["t1"])',
+      // getWslConfigForThread
+      'db.getLocationForThread(["t1"])',
+      'sessionManager.getOrCreate(["t1","C:/repo",' + JSON.stringify(window) +
+        ',' + JSON.stringify(DISTINCT_SSH) + ',' + JSON.stringify(DISTINCT_WSL) + '])',
+      'session.switchSession(["s2"])',
+    ])
+  })
+
+  it('sessions:switch is a no-op for a thread that no longer exists', async () => {
+    H.state.threadExists = false
+
+    const ipc = await viaIpc('sessions:switch', ['t1', 's2'])
+    const rpc = await viaControlRpc('sessions:switch', ['t1', 's2'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['db.threadExists(["t1"])'])
+  })
+
+  it('messages:list and messages:listBySession key off different columns', async () => {
+    // The two fixtures differ, so a handler that called the wrong query would still return
+    // a plausible-looking message list.
+    expect(await viaControlRpc('messages:list', ['t1'])).toEqual(await viaIpc('messages:list', ['t1']))
+    expect(await viaIpc('messages:list', ['t1'])).toEqual(['db.listMessages(["t1"])'])
+    expect(await resultViaIpc('messages:list', ['t1'])).toEqual([
+      { id: 'm1', role: 'user', content: 'by thread' },
+    ])
+    expect(await resultViaControlRpc('messages:list', ['t1'])).toEqual([
+      { id: 'm1', role: 'user', content: 'by thread' },
+    ])
+
+    expect(await viaControlRpc('messages:listBySession', ['s1'])).toEqual(
+      await viaIpc('messages:listBySession', ['s1']),
+    )
+    expect(await viaIpc('messages:listBySession', ['s1'])).toEqual([
+      'db.listMessagesBySession(["s1"])',
+    ])
+    expect(await resultViaIpc('messages:listBySession', ['s1'])).toEqual([
+      { id: 'm2', role: 'assistant', content: 'by session' },
+    ])
+    expect(await resultViaControlRpc('messages:listBySession', ['s1'])).toEqual([
+      { id: 'm2', role: 'assistant', content: 'by session' },
+    ])
+  })
+})
+
+describe('ssh:test / wsl:* — both transports agree', () => {
+  it('ssh:test forwards (config, path) in that order and awaits the probe', async () => {
+    const args = [DISTINCT_SSH, '/srv/repo']
+    const ipc = await viaIpc('ssh:test', args)
+    const rpc = await viaControlRpc('ssh:test', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      `hostTests.testSshConnection([${JSON.stringify(DISTINCT_SSH)},"/srv/repo"])`,
+      'hostTests.testSshConnection:settled',
+    ])
+    expect(await resultViaIpc('ssh:test', args)).toEqual({ ok: true })
+    expect(await resultViaControlRpc('ssh:test', args)).toEqual({ ok: true })
+  })
+
+  it('wsl:test forwards (config, path) in that order and awaits the probe', async () => {
+    const args = [DISTINCT_WSL, '/home/me/repo']
+    const ipc = await viaIpc('wsl:test', args)
+    const rpc = await viaControlRpc('wsl:test', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      `hostTests.testWslConnection([${JSON.stringify(DISTINCT_WSL)},"/home/me/repo"])`,
+      'hostTests.testWslConnection:settled',
+    ])
+    // A distinct answer from ssh:test, so the two probes cannot be swapped undetected.
+    expect(await resultViaIpc('wsl:test', args)).toEqual({ ok: false, error: 'no distro' })
+    expect(await resultViaControlRpc('wsl:test', args)).toEqual({ ok: false, error: 'no distro' })
+  })
+
+  it('wsl:list-distros takes no arguments and returns the list in order', async () => {
+    const ipc = await viaIpc('wsl:list-distros', [])
+    const rpc = await viaControlRpc('wsl:list-distros', [])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'hostTests.listWslDistros([])',
+      'hostTests.listWslDistros:settled',
+    ])
+    expect(await resultViaIpc('wsl:list-distros', [])).toEqual(['Ubuntu', 'Debian'])
+    expect(await resultViaControlRpc('wsl:list-distros', [])).toEqual(['Ubuntu', 'Debian'])
+  })
+})
+
+describe('cli:* — both transports agree', () => {
+  // Distinct ssh/wsl: these two take the pair adjacent in the argument list and the cache
+  // key is derived from both, so a transposition would key the cache wrongly rather than
+  // fail outright.
+  const args = ['claude-code', 'ssh', DISTINCT_SSH, DISTINCT_WSL]
+  const rendered = `["claude-code","ssh",${JSON.stringify(DISTINCT_SSH)},${JSON.stringify(DISTINCT_WSL)}]`
+
+  it('cli:health forwards all four arguments and does NOT touch the cache', async () => {
+    const ipc = await viaIpc('cli:health', args)
+    const rpc = await viaControlRpc('cli:health', args)
+
+    expect(rpc).toEqual(ipc)
+    // The absence of an invalidate call is the behaviour: only cli:update busts the cache.
+    expect(ipc).toEqual([`cli.checkCliHealth(${rendered})`, 'cli.checkCliHealth:settled'])
+    expect(await resultViaIpc('cli:health', args)).toEqual({ installed: true, currentVersion: '1.2.3' })
+    expect(await resultViaControlRpc('cli:health', args)).toEqual({
+      installed: true, currentVersion: '1.2.3',
+    })
+  })
+
+  it('cli:update invalidates the health cache AFTER the update settles', async () => {
+    const ipc = await viaIpc('cli:update', args)
+    const rpc = await viaControlRpc('cli:update', args)
+
+    expect(rpc).toEqual(ipc)
+    // Ordering is the point: invalidating before the await would race a stale re-read back
+    // into the cache while the install was still running.
+    expect(ipc).toEqual([
+      `cli.updateCli(${rendered})`,
+      'cli.updateCli:settled',
+      `cli.invalidateCliHealthCache(${rendered})`,
+    ])
+    expect(await resultViaIpc('cli:update', args)).toEqual({ success: true, output: 'updated' })
+    expect(await resultViaControlRpc('cli:update', args)).toEqual({
+      success: true, output: 'updated',
+    })
+  })
+
+  it('both pass omitted ssh/wsl through raw', async () => {
+    // Neither path coalesces, and neither needs to: getTransportCacheKey and the runners
+    // below it all treat a missing host config as "local".
+    const local = ['claude-code', 'local']
+    expect(await viaIpc('cli:health', local)).toEqual([
+      'cli.checkCliHealth(["claude-code","local",undefined,undefined])',
+      'cli.checkCliHealth:settled',
+    ])
+    expect(await viaControlRpc('cli:health', local)).toEqual([
+      'cli.checkCliHealth(["claude-code","local",undefined,undefined])',
+      'cli.checkCliHealth:settled',
+    ])
+  })
+})
+
+describe('process:kill — both transports agree', () => {
+  // A wsl location, so the resolved config is distinguishable from the default null.
+  const wslThread = (): void => {
+    H.state.location = {
+      id: 'loc1', project_id: 'p1', path: '/home/me/repo', connection_type: 'wsl',
+      ssh: null, wsl: DISTINCT_WSL,
+    }
+  }
+
+  it('kills by pid, resolving the wsl config from the thread first', async () => {
+    wslThread()
+    const args = ['1234', 'pid', 't1']
+    const ipc = await viaIpc('process:kill', args)
+    const rpc = await viaControlRpc('process:kill', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.getLocationForThread(["t1"])',
+      `processControl.killByPid([1234,${JSON.stringify(DISTINCT_WSL)}])`,
+      'processControl.killByPid:settled',
+    ])
+    expect(await resultViaIpc('process:kill', args)).toEqual({ ok: true })
+    expect(await resultViaControlRpc('process:kill', args)).toEqual({ ok: true })
+  })
+
+  it('kills by port when the type is "port"', async () => {
+    wslThread()
+    const args = ['3000', 'port', 't1']
+    const ipc = await viaIpc('process:kill', args)
+    const rpc = await viaControlRpc('process:kill', args)
+
+    expect(rpc).toEqual(ipc)
+    // The branch is `type === 'pid' ? killByPid : killByPort`, so only one of the two runs.
+    expect(ipc).toEqual([
+      'db.getLocationForThread(["t1"])',
+      `processControl.killByPort([3000,${JSON.stringify(DISTINCT_WSL)}])`,
+      'processControl.killByPort:settled',
+    ])
+  })
+
+  it('passes a null wsl config when threadId is omitted', async () => {
+    // `threadId ? getWslConfigForThread(threadId) : null` — plain truthiness, so an omitted
+    // thread never reaches the DB at all.
+    const args = ['1234', 'pid']
+    const ipc = await viaIpc('process:kill', args)
+    const rpc = await viaControlRpc('process:kill', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'processControl.killByPid([1234,null])',
+      'processControl.killByPid:settled',
+    ])
+  })
+
+  it('refuses a non-numeric target before touching the thread or the process table', async () => {
+    const args = ['not-a-number', 'pid', 't1']
+    const ipc = await viaIpc('process:kill', args)
+    const rpc = await viaControlRpc('process:kill', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([])
+    // The exact string is what the renderer shows in the toast.
+    const refusal = { ok: false, error: 'Invalid number' }
+    expect(await resultViaIpc('process:kill', args)).toEqual(refusal)
+    expect(await resultViaControlRpc('process:kill', args)).toEqual(refusal)
+  })
+
+  it('parses a trailing-garbage target the way parseInt does', async () => {
+    // `parseInt('80abc', 10)` is 80, not NaN — pinned because `Number('80abc')` is NaN and
+    // the two are easy to swap while "reads a number out of a string" stays true.
+    const args = ['80abc', 'port']
+    expect(await viaIpc('process:kill', args)).toEqual([
+      'processControl.killByPort([80,null])',
+      'processControl.killByPort:settled',
+    ])
+    expect(await viaControlRpc('process:kill', args)).toEqual([
+      'processControl.killByPort([80,null])',
+      'processControl.killByPort:settled',
+    ])
+  })
+
+  it('converts a rejection into { ok: false, error } rather than throwing', async () => {
+    H.state.killError = 'Access denied'
+    const args = ['1234', 'pid']
+
+    // The whole point of this channel's shape: the renderer gets a result object, not a
+    // rejected invoke, so the error message must survive verbatim.
+    const failure = { ok: false, error: 'Access denied' }
+    expect(await resultViaIpc('process:kill', args)).toEqual(failure)
+    expect(await resultViaControlRpc('process:kill', args)).toEqual(failure)
+  })
+})
+
+describe('skills:list — both transports agree', () => {
+  it('reshapes detected skills onto the SlashCommand row, tagged kind: skill', async () => {
+    const args = ['claude-code', 'C:/repo']
+    const ipc = await viaIpc('skills:list', args)
+    const rpc = await viaControlRpc('skills:list', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['skills.listDetectedSkills(["claude-code","C:/repo"])'])
+
+    // The reshape is the whole behaviour: `invocation` is copied into `prompt`, the array
+    // index becomes `sort_order`, `scope === 'project'` becomes a synthetic project_id, and
+    // the `kind: 'skill'` tag is what the renderer branches on to tell these apart from
+    // stored slash commands on the same palette.
+    const expected = [
+      {
+        id: 'sk1', project_id: 'project', name: 'review', description: 'Review the diff',
+        prompt: '/review', sort_order: 0, created_at: '', updated_at: '', kind: 'skill',
+        scope: 'project', harness: 'claude-code', path: 'C:/repo/.claude/skills/review',
+        invocation: '/review',
+      },
+      {
+        id: 'sk2', project_id: null, name: 'deploy', description: null,
+        prompt: '/deploy', sort_order: 1, created_at: '', updated_at: '', kind: 'skill',
+        scope: 'global', harness: 'claude-code', path: 'C:/home/.claude/skills/deploy',
+        invocation: '/deploy',
+      },
+    ]
+    expect(await resultViaIpc('skills:list', args)).toEqual(expected)
+    expect(await resultViaControlRpc('skills:list', args)).toEqual(expected)
+  })
+
+  it('coalesces an omitted or null cwd to null', async () => {
+    // Both pre-fold paths wrote `cwd ?? null`. Behaviourally redundant — listDetectedSkills
+    // branches on `if (cwd)` in its own body, so `undefined`, `null` and `''` are already
+    // equivalent there — but it is what both paths did and it is observable in the call.
+    expect(await viaIpc('skills:list', ['claude-code'])).toEqual([
+      'skills.listDetectedSkills(["claude-code",null])',
+    ])
+    expect(await viaControlRpc('skills:list', ['claude-code'])).toEqual([
+      'skills.listDetectedSkills(["claude-code",null])',
+    ])
+    expect(await viaIpc('skills:list', ['claude-code', null])).toEqual([
+      'skills.listDetectedSkills(["claude-code",null])',
+    ])
+    expect(await viaControlRpc('skills:list', ['claude-code', null])).toEqual([
+      'skills.listDetectedSkills(["claude-code",null])',
+    ])
+  })
+})
+
+describe('terminal:* — both transports agree', () => {
+  /**
+   * `terminal:spawn` mints `term-${threadId}-${Date.now()}`, so the two transports would
+   * otherwise disagree purely on the millisecond they ran in.
+   */
+  const frozenNow = 1_767_225_600_000
+  const freezeClock = (): void => { vi.spyOn(Date, 'now').mockReturnValue(frozenNow) }
+
+  it('terminal:spawn resolves cwd and both host configs into ptyManager.spawn', async () => {
+    freezeClock()
+    sshAndWslThread()
+    const args = ['t1', 120, 40]
+    const ipc = await viaIpc('terminal:spawn', args)
+    const rpc = await viaControlRpc('terminal:spawn', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      // The location guard, then the same three context lookups every session channel makes.
+      'db.getLocationForThread(["t1"])',
+      'db.getLocationForThread(["t1"])',
+      'db.getLocationForThread(["t1"])',
+      'db.getLocationForThread(["t1"])',
+      // (terminalId, threadId, cwd, connectionType, cols, rows, ssh, wsl) — the connection
+      // type comes from the location row, not from which config happens to be set.
+      `ptyManager.spawn(["term-t1-${frozenNow}","t1","C:/repo","ssh",120,40,` +
+        `${JSON.stringify(DISTINCT_SSH)},${JSON.stringify(DISTINCT_WSL)}])`,
+    ])
+
+    freezeClock()
+    sshAndWslThread()
+    expect(await resultViaIpc('terminal:spawn', args)).toBe(`term-t1-${frozenNow}`)
+    freezeClock()
+    sshAndWslThread()
+    expect(await resultViaControlRpc('terminal:spawn', args)).toBe(`term-t1-${frozenNow}`)
+    vi.restoreAllMocks()
+  })
+
+  it('terminal:spawn refuses a thread with no location', async () => {
+    H.state.location = null
+
+    await expect(viaIpc('terminal:spawn', ['t1', 120, 40])).rejects.toThrow(
+      'No location associated with this thread',
+    )
+    await expect(viaControlRpc('terminal:spawn', ['t1', 120, 40])).rejects.toThrow(
+      'No location associated with this thread',
+    )
+  })
+
+  it('terminal:write, resize, kill and getBuffer forward to the pty manager', async () => {
+    // NOTE: `terminal:write`/`terminal:resize` are registered TWICE in ipc/handlers.ts —
+    // once as `ipcMain.on` (what the renderer actually uses, via window.api.send) and once
+    // as an `invoke` handler. `viaIpc` reaches the `invoke` one, which is the registration
+    // the channel registry and the contract describe.
+    expect(await viaControlRpc('terminal:write', ['term-1', 'ls\r'])).toEqual(
+      await viaIpc('terminal:write', ['term-1', 'ls\r']),
+    )
+    expect(await viaIpc('terminal:write', ['term-1', 'ls\r'])).toEqual([
+      'ptyManager.write(["term-1","ls\\r"])',
+    ])
+
+    expect(await viaControlRpc('terminal:resize', ['term-1', 100, 30])).toEqual(
+      await viaIpc('terminal:resize', ['term-1', 100, 30]),
+    )
+    expect(await viaIpc('terminal:resize', ['term-1', 100, 30])).toEqual([
+      'ptyManager.resize(["term-1",100,30])',
+    ])
+
+    expect(await viaControlRpc('terminal:kill', ['term-1'])).toEqual(
+      await viaIpc('terminal:kill', ['term-1']),
+    )
+    expect(await viaIpc('terminal:kill', ['term-1'])).toEqual(['ptyManager.kill(["term-1"])'])
+
+    expect(await viaControlRpc('terminal:getBuffer', ['term-1'])).toEqual(
+      await viaIpc('terminal:getBuffer', ['term-1']),
+    )
+    expect(await viaIpc('terminal:getBuffer', ['term-1'])).toEqual([
+      'ptyManager.getBuffer(["term-1"])',
+    ])
+    expect(await resultViaIpc('terminal:getBuffer', ['term-1'])).toBe('buffered terminal output')
+    expect(await resultViaControlRpc('terminal:getBuffer', ['term-1'])).toBe(
+      'buffered terminal output',
+    )
+  })
+
+  it('the fire-and-forget terminal:write/resize listeners stay outside the registry', async () => {
+    // `ipcMain.on` channels are deliberately not part of CHANNEL_REGISTRY's remit, and the
+    // renderer reaches these two through `window.api.send`. They are a separate transport
+    // shape from the `invoke` registrations above and are not folded.
+    expect(ipcListeners.has('terminal:write')).toBe(true)
+    expect(ipcListeners.has('terminal:resize')).toBe(true)
+
+    H.log.length = 0
+    await ipcListeners.get('terminal:write')!({}, 'term-1', 'ls\r')
+    // The listener awaits the remote hop before writing, so drain the microtask queue.
+    await Promise.resolve()
+    expect(H.log).toEqual(['ptyManager.write(["term-1","ls\\r"])'])
+
+    H.log.length = 0
+    await ipcListeners.get('terminal:resize')!({}, 'term-1', 100, 30)
+    await Promise.resolve()
+    expect(H.log).toEqual(['ptyManager.resize(["term-1",100,30])'])
+  })
+})
+
+/**
+ * `attachments:*` is the only family that spans all three reachability shapes:
+ * `save`/`cleanup` are local *and* remote, `getFileInfo`/`saveFromPath` are local-only, and
+ * `readDataUrl` is remote-only. Each shape is pinned from both directions — where it is
+ * reachable, and where it must stay unreachable.
+ */
+describe('attachments:* — all three reachability shapes', () => {
+  it('attachments:save forwards (dataUrl, filename, threadId) in that order', async () => {
+    const args = ['data:image/png;base64,AAAA', 'shot.png', 't1']
+    const ipc = await viaIpc('attachments:save', args)
+    const rpc = await viaControlRpc('attachments:save', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'attachments.saveAttachment(["data:image/png;base64,AAAA","shot.png","t1"])',
+    ])
+    const saved = { tempPath: 'C:/tmp/att/saved.png', id: 'att-saved' }
+    expect(await resultViaIpc('attachments:save', args)).toEqual(saved)
+    expect(await resultViaControlRpc('attachments:save', args)).toEqual(saved)
+  })
+
+  it('attachments:cleanup removes the thread directory', async () => {
+    const ipc = await viaIpc('attachments:cleanup', ['t1'])
+    const rpc = await viaControlRpc('attachments:cleanup', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual(['attachments.cleanupThreadAttachments(["t1"])'])
+  })
+
+  it('attachments:readDataUrl is remote-only — no ipcMain registration at all', async () => {
+    expect(CHANNEL_REGISTRY['attachments:readDataUrl']).toMatchObject({
+      local: false, remote: true,
+    })
+    // The registry says `local: false`, and that must mean "not registered", not merely
+    // "blocked by the preload allowlist" — the ipcMain registration is the second layer of
+    // the same trust boundary.
+    expect(ipcHandlers.has('attachments:readDataUrl')).toBe(false)
+
+    H.state.fileBytes = Buffer.from('PNGDATA')
+    const expectedPath = join('C:/tmp/polycode-attachments', 't1', 'shot.png')
+    const rpc = await viaControlRpc('attachments:readDataUrl', ['t1', 'shot.png'])
+    expect(rpc).toEqual([
+      'attachments.getAttachmentDir([])',
+      `attachments.getFileInfo([${JSON.stringify(expectedPath)}])`,
+    ])
+    expect(await resultViaControlRpc('attachments:readDataUrl', ['t1', 'shot.png'])).toBe(
+      `data:image/png;base64,${Buffer.from('PNGDATA').toString('base64')}`,
+    )
+  })
+
+  it('attachments:readDataUrl strips path traversal from both the thread id and the filename', async () => {
+    H.state.fileBytes = Buffer.from('PNGDATA')
+    // basename() on each segment is the whole defence: a remote client controls both.
+    const expectedPath = join('C:/tmp/polycode-attachments', 'other', 'evil.png')
+    const rpc = await viaControlRpc('attachments:readDataUrl', [
+      '../../other', '../../../etc/evil.png',
+    ])
+    expect(rpc).toContain(`attachments.getFileInfo([${JSON.stringify(expectedPath)}])`)
+    expect(basename('../../../etc/evil.png')).toBe('evil.png')
+  })
+
+  it('attachments:readDataUrl returns null for a missing file, an oversized one, or a read error', async () => {
+    H.state.fileInfo = null
+    expect(await resultViaControlRpc('attachments:readDataUrl', ['t1', 'shot.png'])).toBe(null)
+
+    // 15 MB is the RPC body limit; one byte over must refuse rather than truncate.
+    H.state.fileInfo = { size: 15 * 1024 * 1024 + 1, mimeType: 'image/png' }
+    expect(await resultViaControlRpc('attachments:readDataUrl', ['t1', 'shot.png'])).toBe(null)
+
+    // Exactly at the limit is allowed — the test above would also pass against `>=`.
+    H.state.fileInfo = { size: 15 * 1024 * 1024, mimeType: 'image/png' }
+    H.state.fileBytes = Buffer.from('OK')
+    expect(await resultViaControlRpc('attachments:readDataUrl', ['t1', 'shot.png'])).toBe(
+      `data:image/png;base64,${Buffer.from('OK').toString('base64')}`,
+    )
+  })
+
+  it('attachments:getFileInfo is local-only — registered on ipcMain, refused over control RPC', async () => {
+    expect(CHANNEL_REGISTRY['attachments:getFileInfo']).toMatchObject({
+      local: true, remote: false,
+    })
+    expect(ipcHandlers.has('attachments:getFileInfo')).toBe(true)
+
+    const ipc = await viaIpc('attachments:getFileInfo', ['C:/tmp/shot.png'])
+    expect(ipc).toEqual(['attachments.getFileInfo(["C:/tmp/shot.png"])'])
+    expect(await resultViaIpc('attachments:getFileInfo', ['C:/tmp/shot.png'])).toEqual({
+      size: 1234, mimeType: 'image/png',
+    })
+
+    await expect(handleControlRpc(window, 'attachments:getFileInfo', ['C:/tmp/shot.png']))
+      .rejects.toThrow('Unsupported remote control channel: attachments:getFileInfo')
+  })
+
+  it('attachments:saveFromPath is local-only, and reads the source file before copying it', async () => {
+    expect(CHANNEL_REGISTRY['attachments:saveFromPath']).toMatchObject({
+      local: true, remote: false,
+    })
+    H.state.fileBytes = Buffer.from('PNGDATA')
+
+    const ipc = await viaIpc('attachments:saveFromPath', ['C:/pics/shot.png', 't1'])
+    expect(ipc).toEqual(['attachments.copyAttachmentFromPath(["C:/pics/shot.png","t1"])'])
+
+    H.state.fileBytes = Buffer.from('PNGDATA')
+    H.state.fileReads = 0
+    // The `dataUrl` is NOT in the channel contract, but the renderer destructures it
+    // (InputBar.tsx) — so it is live behaviour and the mime type is derived from the source
+    // path's extension, not from the copy's.
+    expect(await resultViaIpc('attachments:saveFromPath', ['C:/pics/shot.png', 't1'])).toEqual({
+      tempPath: 'C:/tmp/att/copied.png',
+      id: 'att-copied',
+      dataUrl: `data:image/png;base64,${Buffer.from('PNGDATA').toString('base64')}`,
+    })
+    // Exactly one read. The adapter asks whether a remote host is active BEFORE encoding,
+    // so with none the source file is read once, by the handler. Encoding unconditionally
+    // in the adapter — which the fold briefly did — reads and base64s every attachment
+    // twice on the common path.
+    expect(H.state.fileReads).toBe(1)
+
+    await expect(handleControlRpc(window, 'attachments:saveFromPath', ['C:/pics/shot.png', 't1']))
+      .rejects.toThrow('Unsupported remote control channel: attachments:saveFromPath')
+  })
+
+  it('attachments:saveFromPath uploads to the active remote host instead of copying locally', async () => {
+    // The one remote hop in the whole IPC adapter that is NOT "same channel, same args":
+    // a source path on this machine is meaningless to the host, so the file is read here
+    // and uploaded as an `attachments:save`. Dropping this would silently save a
+    // remote-controlled thread's attachment on the wrong machine.
+    H.state.fileBytes = Buffer.from('PNGDATA')
+    H.state.remoteProxy = { handled: true, value: { tempPath: '/srv/att/remote.png', id: 'att-remote' } }
+
+    const dataUrl = `data:image/png;base64,${Buffer.from('PNGDATA').toString('base64')}`
+    const ipc = await viaIpc('attachments:saveFromPath', ['C:/pics/shot.png', 't1'])
+    expect(ipc).toEqual([
+      `remoteClient.invokeIfActive(["attachments:save",[${JSON.stringify(dataUrl)},"shot.png","t1"]])`,
+    ])
+    // Note what is absent: no local copy is made.
+    expect(ipc.some((entry) => entry.startsWith('attachments.copyAttachmentFromPath'))).toBe(false)
+
+    H.state.fileBytes = Buffer.from('PNGDATA')
+    expect(await resultViaIpc('attachments:saveFromPath', ['C:/pics/shot.png', 't1'])).toEqual({
+      tempPath: '/srv/att/remote.png',
+      id: 'att-remote',
+      dataUrl,
+    })
+  })
+})
+
+describe('plans:getForThread — remote-only', () => {
+  it('has no ipcMain registration and is served over control RPC only', async () => {
+    expect(CHANNEL_REGISTRY['plans:getForThread']).toMatchObject({ local: false, remote: true })
+    expect(ipcHandlers.has('plans:getForThread')).toBe(false)
+
+    const rpc = await viaControlRpc('plans:getForThread', ['t1'])
+    expect(rpc).toEqual(['sessionManager.get(["t1"])', 'session.getAssociatedPlan([])'])
+    expect(await resultViaControlRpc('plans:getForThread', ['t1'])).toEqual({
+      name: 'plan.md', path: 'C:/repo/plan.md', content: '# Plan',
+    })
+  })
+
+  it('answers null when there is no live session', async () => {
+    // `?? null`, not `?.` alone: the contract's result is `T | null`, and an `undefined`
+    // would be dropped by JSON.stringify on the way out to the mobile client.
+    H.state.hasSession = false
+    expect(await resultViaControlRpc('plans:getForThread', ['t1'])).toBe(null)
   })
 })
 
