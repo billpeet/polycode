@@ -4,7 +4,7 @@ import path from 'path'
 import { BrowserWindow } from 'electron'
 import { CommandStatus, CommandLogLine, ProjectCommand, ConnectionType } from '../../shared/types'
 import { getCommandById, listCommands, getLocationById } from '../db/queries'
-import { shellEscape, cdTarget, buildSshBaseArgs, LOAD_NODE_MANAGERS, augmentWindowsPath } from '../driver/runner'
+import { createRunner, augmentWindowsPath } from '../driver/runner'
 import { runExecFile, getPowerShellExe } from '../process-control'
 import { emitAppEvent } from '../app-events'
 
@@ -164,9 +164,10 @@ class CommandManager {
     const location = getLocationById(locationId)
     const connectionType = location?.connection_type ?? 'local'
     const commandEnv = this.buildCommandEnv(location)
+    // Remote shells get WORKTREE_ID through the script; local ones get it in `env`.
     const remoteEnvPrefix = location?.is_worktree && location.worktree_id != null
-      ? `export WORKTREE_ID=${location.worktree_id}; `
-      : 'unset WORKTREE_ID; '
+      ? `export WORKTREE_ID=${location.worktree_id}`
+      : 'unset WORKTREE_ID'
 
     // Resolve cwd: if cmdDef.cwd is relative, join it with the location path.
     // For local connections use path.join (Windows-aware); for WSL/SSH use POSIX join.
@@ -208,70 +209,22 @@ class CommandManager {
     this.running.set(key, entry)
     this.pushStatus(commandId, locationId, 'running')
 
-    let proc: ChildProcess
+    const runner = connectionType === 'wsl' && location?.wsl
+      ? createRunner({ wsl: location.wsl })
+      : connectionType === 'ssh' && location?.ssh
+        ? createRunner({ ssh: location.ssh })
+        : createRunner({})
 
-    if (connectionType === 'wsl' && location?.wsl) {
-      // ── WSL spawn ──────────────────────────────────────────────────────────
-      // bash -ilc (interactive + login) ensures .bashrc runs in full, giving
-      // the user's real PATH instead of Windows tools bleeding in via /mnt/c/.
-      const workDir = cwd ?? '~'
-      const innerCmd = `${remoteEnvPrefix}cd ${cdTarget(workDir)} && ${cmdDef.command}`
-      proc = spawn('wsl', ['-d', location.wsl.distro, '--', 'bash', '-ilc', innerCmd], {
-        shell: false,
-        env: commandEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    } else if (connectionType === 'ssh' && location?.ssh) {
-      // ── SSH spawn ──────────────────────────────────────────────────────────
-      const ssh = location.ssh
-      const workDir = cwd ?? '~'
-      const innerCmd = `${LOAD_NODE_MANAGERS}; ${remoteEnvPrefix}cd ${cdTarget(workDir)} && ${cmdDef.command}`
-      const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`
-      const sshArgs = buildSshBaseArgs(ssh)
-      sshArgs.push(`${ssh.user}@${ssh.host}`, remoteCmd)
-      proc = spawn('ssh', sshArgs, {
-        shell: false,
-        env: commandEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    } else if (cmdDef.shell === 'powershell') {
-      // ── Local PowerShell spawn ─────────────────────────────────────────────
-      // Use absolute path on Windows to avoid ENOENT when PowerShell isn't in PATH
-      let psExe: string
-      if (process.platform === 'win32') {
-        const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-        psExe = `${sysRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
-      } else {
-        psExe = 'pwsh'
-      }
-      proc = spawn(psExe, ['-NonInteractive', '-Command', cmdDef.command], {
-        shell: false,
-        cwd,
-        env: commandEnv,
-        stdio: ['ignore', 'pipe', 'pipe'],
-      })
-    } else {
-      // ── Local default shell spawn ──────────────────────────────────────────
-      // On Windows, use cmd.exe via ComSpec or absolute path to avoid ENOENT
-      // when C:\Windows\System32 isn't in the Electron process PATH.
-      if (process.platform === 'win32') {
-        const sysRoot = process.env.SystemRoot ?? 'C:\\Windows'
-        const cmdExe = process.env.ComSpec ?? `${sysRoot}\\System32\\cmd.exe`
-        proc = spawn(cmdExe, ['/d', '/s', '/c', cmdDef.command], {
-          shell: false,
-          cwd,
-          env: commandEnv,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-      } else {
-        proc = spawn('/bin/sh', ['-c', cmdDef.command], {
-          shell: false,
-          cwd,
-          env: commandEnv,
-          stdio: ['ignore', 'pipe', 'pipe'],
-        })
-      }
-    }
+    const proc = runner.spawnScript({
+      script: cmdDef.command,
+      // A remote command with no resolved cwd lands in the login shell's home.
+      // Locally, an undefined cwd means "inherit ours" — which is what the
+      // existsSync guard above deliberately falls back to.
+      workDir: runner.type === 'local' ? cwd : cwd ?? '~',
+      preamble: remoteEnvPrefix,
+      env: commandEnv,
+      localShell: cmdDef.shell === 'powershell' ? 'powershell' : 'default',
+    })
 
     entry.process = proc
     this.startPortPolling(key, entry)
