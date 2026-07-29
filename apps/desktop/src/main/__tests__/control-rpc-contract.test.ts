@@ -50,6 +50,25 @@ describe('remote control RPC channel contract', () => {
     expect(remoteOnly).toEqual(['attachments:readDataUrl', 'plans:getForThread'])
   })
 
+  test('local-only remote-control adapter channels are explicit', () => {
+    const localOnlyRemoteControlChannels = Object.entries(CHANNEL_REGISTRY)
+      .filter(([channel, capabilities]) => channel.startsWith('remote:') && capabilities.local && !capabilities.remote)
+      .map(([channel]) => channel)
+    expect(localOnlyRemoteControlChannels).toEqual([
+      'remote:getServerConfig',
+      'remote:setServerConfig',
+      'remote:regenerateServerToken',
+      'remote:getHosts',
+      'remote:addHost',
+      'remote:updateHost',
+      'remote:removeHost',
+      'remote:setActiveHost',
+      'remote:getActiveHost',
+      'remote:testHost',
+      'remote:getPairingInfo',
+    ])
+  })
+
   test('origin-specific behavior is explicit', () => {
     expect(CHANNEL_REGISTRY['threads:send']).toMatchObject({ originAware: true })
   })

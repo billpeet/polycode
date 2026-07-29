@@ -4,8 +4,8 @@
  * `local` means Electron renderer IPC can invoke the channel.
  * `remote` means the control RPC transport can invoke the channel.
  *
- * Argument and result types are declaration-merged by the desktop and mobile
- * adapters so this dependency-free registry can be consumed by both apps.
+ * Argument and result types live in the exhaustive `ChannelContract` interface.
+ * Desktop and mobile adapters derive their callable interfaces from that contract.
  */
 export const CHANNEL_REGISTRY = {
   'projects:list': { local: true, remote: true },
@@ -206,6 +206,17 @@ export const CHANNEL_REGISTRY = {
   'update:get-state': { local: true, remote: false },
   'webhook:getConfig': { local: true, remote: false },
   'webhook:setConfig': { local: true, remote: false },
+  'remote:getServerConfig': { local: true, remote: false },
+  'remote:setServerConfig': { local: true, remote: false },
+  'remote:regenerateServerToken': { local: true, remote: false },
+  'remote:getHosts': { local: true, remote: false },
+  'remote:addHost': { local: true, remote: false },
+  'remote:updateHost': { local: true, remote: false },
+  'remote:removeHost': { local: true, remote: false },
+  'remote:setActiveHost': { local: true, remote: false },
+  'remote:getActiveHost': { local: true, remote: false },
+  'remote:testHost': { local: true, remote: false },
+  'remote:getPairingInfo': { local: true, remote: false },
   'window:close': { local: true, remote: false },
   'window:is-maximized': { local: true, remote: false },
   'window:maximize': { local: true, remote: false },
