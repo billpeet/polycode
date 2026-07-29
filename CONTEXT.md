@@ -22,4 +22,9 @@ The Provider-specific participant that conducts a Session.
 
 ## Runner
 
-The environment in which a Driver executes, such as the local machine, SSH, or WSL.
+The way PolyCode runs an external command at a Project Location, whether that is the
+local machine, SSH, or WSL. A Runner takes either structured argv or a shell script,
+and either streams the process or collects its output.
+
+Drivers are the largest caller but not the only one: shell mode, project commands,
+CLI health checks, and every Git and Forge operation go through the same Runner.
