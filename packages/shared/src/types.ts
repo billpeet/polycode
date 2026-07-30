@@ -425,8 +425,15 @@ export interface StashEntry {
 /** Result of a pull that may have auto-stashed first. */
 export interface PullResult {
   pulled: boolean
-  /** true if we stashed dirty changes before pulling. */
-  stashed: boolean
+  /**
+   * true if we stashed dirty changes before pulling.
+   *
+   * Optional because the plain (non-auto-stash) pull path never sets it: `gitPull`
+   * resolves `{ pulled: true }`. Declaring it required made `git:pull` violate its own
+   * contract, which only stayed invisible because both the handler and the renderer
+   * reached for an `as` cast. The one consumer already guards with `'stashed' in result`.
+   */
+  stashed?: boolean
   /** true if pop-after-pull hit a conflict and the stash was left intact. */
   popConflict?: boolean
   /** The stash ref we created (present when stashed). */
