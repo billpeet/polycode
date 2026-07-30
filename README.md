@@ -6,7 +6,8 @@ PolyCode is an Electron desktop app for orchestrating multiple AI coding-agent s
 
 PolyCode's desktop-to-desktop and mobile remote-control protocol uses bearer-authenticated HTTP. HTTP does not encrypt bearer tokens, stored integration credentials, filesystem data, or command results in transit. When a remote host uses an `http://` URL, only run it on a trusted LAN or behind a trusted encrypted tunnel/reverse proxy; use HTTPS for traffic that crosses an untrusted network.
 
-Built with Electron, React, TypeScript, Vite, Tailwind CSS, Zustand, and Bun.
+Built with Electron, React, TypeScript, Vite, Tailwind CSS, Zustand, pnpm, and
+Node.js.
 
 ## Features
 
@@ -60,7 +61,7 @@ pnpm install
 
 ```bash
 pnpm run dev          # Start Electron + Vite dev server with hot reload
-pnpm run build        # Build production assets into out/
+pnpm run build        # Build desktop production assets into apps/desktop/out/
 pnpm run preview      # Run electron-vite preview
 pnpm run start        # Run Electron from the built main entry
 pnpm run start:prod   # Build + run an isolated production-like instance
@@ -73,14 +74,15 @@ pnpm run dist:publish # Build and publish a Windows release via electron-builder
 
 ## Architecture
 
-PolyCode has three main layers:
+PolyCode is a pnpm workspace with desktop and mobile apps plus a shared package:
 
 | Layer | Location | Description |
 |---|---|---|
-| Main process | `src/main/` | Node/Electron process that owns SQLite, spawns agent CLIs, runs git/terminal/command operations, manages sessions, and exposes IPC handlers. |
-| Preload | `src/preload/` | Electron `contextBridge` that exposes the safe `window.api` IPC surface to the renderer. |
-| Renderer | `src/renderer/src/` | React + Zustand SPA for projects, threads, messages, terminals, git panels, commands, todos, plans, settings, and integrations. |
-| Shared types | `src/shared/types.ts` | TypeScript types, providers, model catalogs, thread/message/session shapes, and shared IPC payload types. |
+| Desktop main process | `apps/desktop/src/main/` | Node/Electron process that owns SQLite, spawns agent CLIs, runs git/terminal/command operations, manages sessions, and exposes IPC handlers. |
+| Desktop preload | `apps/desktop/src/preload/` | Electron `contextBridge` that exposes the safe `window.api` IPC surface to the renderer. |
+| Desktop renderer | `apps/desktop/src/renderer/src/` | React + Zustand SPA for projects, threads, messages, terminals, git panels, commands, todos, plans, settings, and integrations. |
+| Mobile app | `apps/mobile/` | Expo/React Native client for the remote-control API. |
+| Shared package | `packages/shared/` | Dependency-free TypeScript domain types and protocol logic consumed as source by both apps. |
 
 The renderer does not use Node APIs directly. It communicates with the main process through:
 
@@ -95,16 +97,17 @@ Streaming events are pushed from main to renderer over channels such as `thread:
 ## Important source areas
 
 ```txt
-src/main/db/              SQLite schema, migrations, and queries
-src/main/driver/          Agent CLI drivers: Claude, Codex, OpenCode, Pi
-src/main/session/         Thread/session lifecycle management
-src/main/ipc/             Main-process IPC handlers
-src/main/terminal/        Terminal session management
-src/main/commands/        Project command runner management
-src/main/health/          CLI health/update checks
-src/renderer/src/stores/  Zustand stores
-src/renderer/src/components/ React UI components
-src/shared/types.ts       Shared models, providers, and event types
+apps/desktop/src/main/db/                 SQLite schema, migrations, and queries
+apps/desktop/src/main/driver/             Agent CLI drivers
+apps/desktop/src/main/session/            Thread/session lifecycle management
+apps/desktop/src/main/ipc/                Main-process IPC handlers
+apps/desktop/src/main/terminal/           Terminal session management
+apps/desktop/src/main/commands/           Project command runner management
+apps/desktop/src/main/health/             CLI health/update checks
+apps/desktop/src/renderer/src/stores/     Zustand stores
+apps/desktop/src/renderer/src/components/ React UI components
+apps/mobile/                              Expo remote-control client
+packages/shared/src/                      Shared domain and protocol code
 ```
 
 ## Data storage
@@ -117,9 +120,9 @@ SQLite runs with WAL mode and foreign keys enabled.
 
 | Area | Technology |
 |---|---|
-| Shell | Electron 33 |
-| Build | electron-vite 5 + Vite 8 |
-| UI | React 19 + TypeScript 5 |
+| Shell | Electron |
+| Build | electron-vite + Vite |
+| UI | React + TypeScript |
 | Styling | Tailwind CSS v4 |
 | State | Zustand 5 |
 | Database | better-sqlite3 |
@@ -127,7 +130,7 @@ SQLite runs with WAL mode and foreign keys enabled.
 | Markdown/code highlighting | marked + DOMPurify + Shiki |
 | Packaging/updating | electron-builder + electron-updater |
 | Error reporting | Sentry Electron + Sentry React |
-| Package manager/runtime | Bun |
+| Package manager/runtime | pnpm 11 + Node.js 22 |
 
 ## License
 

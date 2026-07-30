@@ -1,5 +1,10 @@
 # Plan: Refactor Projects to Support Multiple Repo Locations
 
+> **Historical document.** This implementation plan is retained for design
+> history; paths and implementation details may no longer match the repository.
+> See [README.md](README.md) and [CONTEXT.md](CONTEXT.md) for current
+> documentation.
+
 ## Summary
 
 Projects will no longer be locked to a single directory. Instead, a project has an optional upstream git URL and one or more **repo locations**, each specifying a connection type (local/SSH/WSL) and path. Threads are linked to a specific location. The sidebar groups threads by location under each project.

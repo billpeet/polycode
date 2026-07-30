@@ -1,5 +1,9 @@
 # PolyCode — Product Specification
 
+> **Historical document.** This records the original desktop specification and
+> is not maintained as current architecture documentation. See
+> [README.md](README.md) and [CONTEXT.md](CONTEXT.md) for the current project.
+>
 > Desktop app for orchestrating multiple Claude Code (and future CLI agent) sessions across projects, with git integration, markdown rendering, and SQLite persistence.
 
 ---

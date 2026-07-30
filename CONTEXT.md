@@ -1,4 +1,8 @@
-# PolyCode domain glossary
+# PolyCode domain context
+
+PolyCode orchestrates AI coding providers across projects and execution
+locations. The terms below are the canonical vocabulary for code and
+documentation.
 
 ## Provider
 
