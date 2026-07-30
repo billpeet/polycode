@@ -1,4 +1,5 @@
 import { isIP } from 'node:net'
+import { hostname } from 'node:os'
 
 interface ParsedHost {
   hostname: string
@@ -33,19 +34,24 @@ function isWildcardHost(host: string): boolean {
 
 /**
  * Validate Host before handling a local HTTP request. Wildcard listeners accept
- * literal IP addresses (plus localhost), but not arbitrary DNS names, which
- * blocks the attacker-controlled Host header used by DNS rebinding.
+ * literal IP addresses, localhost, and this machine's own hostname, but not
+ * arbitrary DNS names. The hostname exception supports normal desktop-to-desktop
+ * connections without reopening the attacker-controlled Host header used by DNS
+ * rebinding.
  */
 export function isAllowedHostHeader(
   hostHeader: string | undefined,
   bindHost: string,
   port: number,
+  localHostname = hostname(),
 ): boolean {
   const requested = parseHost(hostHeader)
   if (!requested || requested.port !== String(port)) return false
 
   if (isWildcardHost(bindHost)) {
-    return requested.hostname === 'localhost' || isIP(requested.hostname) !== 0
+    return requested.hostname === 'localhost'
+      || requested.hostname === normalizeHostname(localHostname.trim())
+      || isIP(requested.hostname) !== 0
   }
 
   return requested.hostname === normalizeHostname(bindHost.trim())

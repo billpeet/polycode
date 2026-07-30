@@ -18,10 +18,12 @@ describe('isAllowedHostHeader', () => {
     expect(isAllowedHostHeader(host, '127.0.0.1', 3285)).toBe(false)
   })
 
-  it('allows IP literals but not arbitrary DNS names for wildcard listeners', () => {
-    expect(isAllowedHostHeader('192.168.1.20:3285', '0.0.0.0', 3285)).toBe(true)
-    expect(isAllowedHostHeader('localhost:3285', '0.0.0.0', 3285)).toBe(true)
-    expect(isAllowedHostHeader('rebind.attacker.example:3285', '0.0.0.0', 3285)).toBe(false)
+  it('allows IP literals and the local hostname but not arbitrary DNS names for wildcard listeners', () => {
+    const localHostname = 'desktop-er4u7gp'
+    expect(isAllowedHostHeader('192.168.1.20:3285', '0.0.0.0', 3285, localHostname)).toBe(true)
+    expect(isAllowedHostHeader('localhost:3285', '0.0.0.0', 3285, localHostname)).toBe(true)
+    expect(isAllowedHostHeader('DESKTOP-ER4U7GP:3285', '0.0.0.0', 3285, localHostname)).toBe(true)
+    expect(isAllowedHostHeader('rebind.attacker.example:3285', '0.0.0.0', 3285, localHostname)).toBe(false)
   })
 })
 
