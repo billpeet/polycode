@@ -93,8 +93,8 @@ const H = vi.hoisted(() => {
     discardFailures: [] as string[],
     /**
      * Makes the mocked `publishRepositoryBranch` reject. Separate from `gitShouldFail`
-     * because it is a different module — and because `git:publishBranch` is the one channel
-     * in the invalidating batch whose invalidation sits in a `finally`, so what it does on
+     * because it is a different module — and because `git:publishBranch` is the one mutating
+     * channel that still invalidates at the handler level, in a `finally`, so what it does on
      * failure differs from every sibling.
      */
     publishShouldFail: false,
@@ -178,17 +178,18 @@ const H = vi.hoisted(() => {
     }))
 
   /**
-   * A `git.ts` *mutation* — the callees behind the 24 invalidating `git:*` channels.
+   * A `git.ts` *mutation* — the callees behind the 24 mutating `git:*` channels.
    *
    * Two properties beyond a plain stub, and both are load-bearing for this batch:
    *
-   * - It settles on a macrotask (`settlesLate`), so "awaited" is observable. Every one of
-   *   those 24 handlers runs `invalidateRepoGitCache` *after* awaiting the mutation, and 18
-   *   of them have a `void` contract result — so a handler that floated the promise would
-   *   return the same value and log the same two calls in the same order. The `:settled`
-   *   entry landing *before* the invalidation is the only thing that pins the sequencing.
-   * - It rejects when `gitShouldFail`, so the batch's characteristic question — does the
-   *   invalidation still happen when the operation fails? — is answerable.
+   * - It settles on a macrotask (`settlesLate`), so "awaited" is observable. 18 of those 24
+   *   handlers have a `void` contract result, so a handler that floated the promise would
+   *   return the same value and log the same call. Since the invalidation moved down into
+   *   `git.ts` — where this stub replaces it — the `:settled` entry is the *only* remaining
+   *   evidence that the handler awaited at all.
+   * - It rejects when `gitShouldFail`, so error propagation through each handler is
+   *   answerable. (Whether a failed mutation invalidates is now a `git.ts` question, and is
+   *   answered in `git-cache-invalidation.test.ts` against the real module.)
    */
   const gitMutation = (label: string, value: unknown = undefined) =>
     stub(label, () => new Promise((resolve, reject) => {
@@ -943,7 +944,7 @@ const DISTINCT_SSH = { host: 'ssh.example.test', user: 'me' }
 const DISTINCT_WSL = { distro: 'Ubuntu' }
 
 describe('both transports produce identical behaviour', () => {
-  it('git:commit — including the main-branch policy check and cache invalidation', async () => {
+  it('git:commit — including the main-branch policy check', async () => {
     const args = ['C:/repo', 'a message']
     const ipc = await viaIpc('git:commit', args)
     const rpc = await viaControlRpc('git:commit', args)
@@ -955,12 +956,13 @@ describe('both transports produce identical behaviour', () => {
       'db.getLocationByPath(["C:/repo"])',
       'db.getProjectById(["p1"])',
       'git.commitChanges(["C:/repo","a message",null,null])',
-      // The commit is awaited before the cache is invalidated. `commitChanges` settles on a
-      // macrotask (`H.gitMutation`), so this entry appears only if the handler awaited it —
-      // and it appearing *before* the two invalidation entries is what pins the order.
+      // The commit is awaited. `commitChanges` settles on a macrotask (`H.gitMutation`), so this
+      // entry appears only if the handler awaited it — and since the cache invalidation moved
+      // into `git.ts` (which this file mocks), it is the only remaining evidence of that.
       'git.commitChanges:settled',
-      'db.getLocationByPath(["C:/repo"])',
-      'git.invalidateGitCache(["C:/repo",null,null])',
+      // Two lookups, not three: the third used to be `invalidateRepoGitCache` re-deriving
+      // ssh/wsl to invalidate the cache. `commitChanges` does that itself now, with the configs
+      // it was handed. Asserted in `git-cache-invalidation.test.ts`.
     ])
   })
 
@@ -2131,11 +2133,13 @@ describe('location-pools:* — both transports agree', () => {
 })
 
 /**
- * The 27 `git:*` channels that do NOT invalidate the git cache.
+ * The 27 `git:*` read channels.
  *
- * The other 24 — everything that calls `invalidateRepoGitCache` — are a separate round and
- * stay in the two legacy files for now; `git:commit` and `git:checkout` are used here only
- * as the contrast that makes two of these 27 interesting.
+ * This used to be "the channels that do not invalidate the git cache", against a second batch
+ * of 24 that did. No `git:*` handler invalidates any more: every `git.ts` mutation clears its
+ * own cache scope at the end of its own body (git.ts:119-146), so the invalidation is invisible
+ * to this file — `../git` is mocked wholesale here. That property is asserted directly against
+ * the real module in `git-cache-invalidation.test.ts`.
  *
  * Nearly every channel here resolves `{ ssh, wsl } = getConfigForPath(repoPath)` and hands
  * both to a `git.ts` function in adjacent trailing slots. The default fixture nulls both,
@@ -2179,11 +2183,11 @@ describe('git:* — host config nullability and error propagation', () => {
     }
   })
 
-  it('a path with no location row forwards null to the invalidation too', async () => {
-    // The same gap, on the invalidating half of the family: `invalidateRepoGitCache` resolves
-    // the config a second time, so a missing row has to produce `null, null` in *both* the
-    // operation's slots and `invalidateGitCache`'s. With a row always present, an
-    // `ssh ?? undefined` in either place passed.
+  it('a path with no location row forwards null to the mutating channels too', async () => {
+    // The same gap on the mutating half of the family. This used to have a second
+    // `getLocationByPath` after the operation, because `invalidateRepoGitCache` re-resolved the
+    // config to recover ssh/wsl — the exact cost the move into `git.ts` removes, since these
+    // functions already have both as parameters. One lookup now, and it is the only one.
     for (const [channel, args, call] of [
       ['git:stage', ['C:/repo', 'src/a.ts'], 'git.stageFile(["C:/repo","src/a.ts",null,null])'],
       ['git:init', ['C:/repo'], 'git.gitInit(["C:/repo",null,null])'],
@@ -2198,9 +2202,11 @@ describe('git:* — host config nullability and error propagation', () => {
         'db.getLocationByPath(["C:/repo"])',
         call,
         `${call.slice(0, call.indexOf('('))}:settled`,
-        'db.getLocationByPath(["C:/repo"])',
-        'git.invalidateGitCache(["C:/repo",null,null])',
       ])
+      // The invalidation is the callee's business now, and `../git` is mocked here — so its
+      // absence from this log is expected rather than a regression. Where it IS asserted:
+      // `git-cache-invalidation.test.ts`, against the real `git.ts`.
+      expect(ipc.some((entry) => entry.includes('invalidateGitCache')), channel).toBe(false)
     }
     H.state.location = null
   })
@@ -2214,7 +2220,7 @@ describe('git:* — host config nullability and error propagation', () => {
   })
 })
 
-describe('git:* — the reads and the three mutations that do not invalidate', () => {
+describe('git:* — the reads, and the three mutations that sit among them', () => {
   beforeEach(() => {
     H.state.location = {
       id: 'loc1', project_id: 'p1', path: 'C:/repo', connection_type: 'ssh',
@@ -2363,11 +2369,11 @@ describe('git:* — the reads and the three mutations that do not invalidate', (
   })
 
   it('git:fetchRemote has no handler-level invalidation — the callee owns it', async () => {
-    // Correct as it stands, and the precedent for where that responsibility belongs:
-    // `gitFetchRemoteCached` (git.ts:592-598) invalidates *inside* its own `readWithCache`,
-    // after the fetch resolves, so a second invalidation here would be a duplicate. The stub
-    // replaces that body, so what this pins is the absence at the handler level — on both
-    // paths, which agreed.
+    // The precedent every other `git.ts` mutation now follows: `gitFetchRemoteCached`
+    // invalidates *inside* its own `readWithCache`, after the fetch resolves, so a second
+    // invalidation here would be a duplicate. The stub replaces that body, so what this pins is
+    // the absence at the handler level — which is now the whole family's shape, not this
+    // channel's peculiarity.
     const ipc = await viaIpc('git:fetchRemote', ['C:/repo'])
     const rpc = await viaControlRpc('git:fetchRemote', ['C:/repo'])
 
@@ -2389,11 +2395,13 @@ describe('git:* — the reads and the three mutations that do not invalidate', (
   })
 
   it('git:forceUnlock mutates the repo and invalidates nothing, on either path', async () => {
-    // `forceUnlockRepo` deletes `.git/index.lock` and friends. Neither transport invalidated
-    // afterwards and neither does git.ts, so a `git:status` read cached during the locked
+    // `forceUnlockRepo` deletes `.git/index.lock` and friends. The handler does not invalidate
+    // afterwards and neither does `git.ts`, so a `git:status` read cached during the locked
     // period survives the unlock for up to its 5 s TTL — even though stores/git.ts:379
-    // re-reads status immediately afterwards precisely to refresh that view. Reported, not
-    // fixed: preserved exactly as both pre-fold paths had it.
+    // re-reads status immediately afterwards precisely to refresh that view. Now that every
+    // other `git.ts` mutation self-invalidates, this is a visible inconsistency rather than an
+    // undocumented one; still reported rather than fixed here, because it is a behaviour change
+    // and belongs in its own commit with its own test.
     const ipc = await viaIpc('git:forceUnlock', ['C:/repo'])
     const rpc = await viaControlRpc('git:forceUnlock', ['C:/repo'])
 
@@ -2406,11 +2414,11 @@ describe('git:* — the reads and the three mutations that do not invalidate', (
     // KNOWN BUG, recorded rather than fixed, and deliberately not "tidied" during a fold:
     // fixing it here would hide a behaviour change inside a refactor.
     //
-    // `deleteBranches` mutates branch state. Neither transport invalidates afterwards, and
-    // unlike `gitFetchRemoteCached` the git.ts function does not do it internally either
-    // (git.ts:1345). `listCachedBranches` caches under `'branches'` with a 30 s TTL, and
-    // stores/git.ts:449 re-reads `git:branches` the moment the delete resolves — so the
-    // deleted branch keeps showing in the UI for up to 30 s.
+    // `deleteBranches` mutates branch state and nothing invalidates: not the handler, and not
+    // the `git.ts` function, which is now the odd one out in that module (git.ts:119-146 lists
+    // it as one of four documented exceptions). `listCachedBranches` caches under `'branches'`
+    // with a 30 s TTL, and stores/git.ts:449 re-reads `git:branches` the moment the delete
+    // resolves — so the deleted branch keeps showing in the UI for up to 30 s.
     const ipc = await viaIpc('git:deleteBranches', ['C:/repo', ['feature/done']])
     const rpc = await viaControlRpc('git:deleteBranches', ['C:/repo', ['feature/done']])
 
@@ -2418,15 +2426,16 @@ describe('git:* — the reads and the three mutations that do not invalidate', (
     expect(ipc).toEqual([lookup, `git.deleteBranches(["C:/repo",["feature/done"],${hosts}])`])
     expect(ipc.some((entry) => entry.includes('invalidateGitCache'))).toBe(false)
 
-    // The contrast that makes it a bug rather than a design: the two neighbouring branch
-    // mutations both invalidate. If someone ever gives deleteBranches the same treatment,
-    // the assertion above fails and this one explains what it was measured against.
-    expect(await viaIpc('git:checkout', ['C:/repo', 'main'])).toContain(
-      `git.invalidateGitCache(["C:/repo",${hosts}])`,
-    )
-    expect(await viaIpc('git:createBranch', ['C:/repo', 'feature/y', 'main', false])).toContain(
-      `git.invalidateGitCache(["C:/repo",${hosts}])`,
-    )
+    // The contrast that makes it a bug rather than a design used to be visible right here: the
+    // two neighbouring branch mutations invalidated at the handler level, so their call logs
+    // showed it. They now invalidate inside `git.ts`, which this file mocks, so the contrast is
+    // no longer expressible as a log difference — every mutating handler's log looks like this
+    // one. It lives in `git-cache-invalidation.test.ts` instead, where `checkoutBranch` and
+    // `createBranch` are shown clearing the cache against the real module.
+    const checkout = await viaIpc('git:checkout', ['C:/repo', 'main'])
+    expect(checkout).toEqual([
+      lookup, `git.checkoutBranch(["C:/repo","main",${hosts}])`, 'git.checkoutBranch:settled',
+    ])
   })
 
   it('git:watchStart hands the window and the invalidation callback to the watcher', async () => {
@@ -2468,27 +2477,41 @@ describe('git:* — the reads and the three mutations that do not invalidate', (
 })
 
 /**
- * The 24 `git:*` channels that DO invalidate the git cache — the last batch of the fold.
+ * The 24 `git:*` channels that mutate the repo.
  *
- * Shared shape: resolve `{ ssh, wsl } = getConfigForPath(repoPath)`, `await` one `git.ts`
- * mutation with both configs in the trailing slots, then `invalidateRepoGitCache(repoPath)`
- * — which resolves the config a *second* time (a second `db.getLocationByPath`) before
- * calling `invalidateGitCache`. That second lookup is why the expected log for almost every
- * channel here ends in two entries rather than one.
+ * Shared shape: resolve `{ ssh, wsl } = getConfigForPath(repoPath)`, then `await` one `git.ts`
+ * mutation with both configs in the trailing slots. That is the whole handler.
  *
- * Three things this batch has that the non-invalidating 27 did not:
+ * ## WHERE THE INVALIDATION COVERAGE WENT
  *
- * - **Ordering.** The invalidation runs after the awaited operation. Because 18 of the 24
- *   declare `void`, a handler that floated the mutation's promise would return the same
- *   value and log the same calls in the same order — so every mutation callee here settles
- *   on a macrotask (`H.gitMutation`) and the `:settled` entry sits between the call and the
- *   invalidation.
- * - **Failure.** The invalidation is *after* the `await`, so a rejecting operation skips it
- *   entirely — except `git:publishBranch`, which uses `try/finally`. Pinned below.
+ * Every sequence in this block used to end with two more entries —
+ * `db.getLocationByPath(["C:/repo"])` and `git.invalidateGitCache([…])` — from a trailing
+ * `invalidateRepoGitCache(repoPath)` in each handler, which re-read the location row purely to
+ * recover the ssh/wsl pair the handler already had. That responsibility now sits in `git.ts`,
+ * at the end of each mutation's own body, where the cache lives and the two configs are already
+ * parameters.
+ *
+ * This file mocks `../git` wholesale, so the invalidation is no longer observable from here at
+ * all — deleting those two entries per sequence would have silently dropped the only assertion
+ * in the suite that any git mutation invalidates anything, across ~24 channels. It did not move
+ * to nowhere: **`git-cache-invalidation.test.ts`** asserts it against the real `git.ts`, by
+ * observing whether a cached read re-runs its git commands after a mutation (rather than by
+ * spying on a function name, which cannot tell a correct cache scope from a wrong one). It also
+ * covers the scoping — repo A vs repo B, and ssh vs local for one path — and the per-file
+ * invalidation that fixes `git:discardFiles`' partial-failure staleness.
+ *
+ * What this block still pins, and what only it can:
+ *
+ * - **Ordering.** The handler `await`s the mutation before replying. 18 of the 24 declare
+ *   `void`, so a floated promise would return the same value and log the same call — the
+ *   `:settled` entry landing before the handler resolves is the only evidence, and it is now
+ *   the *only* reason these callees are `H.gitMutation` rather than plain stubs.
+ * - **Failure.** A rejecting mutation propagates. `git:publishBranch` is the sole channel that
+ *   still invalidates at the handler level, in a `finally`; pinned below.
  * - **Policy.** `git:commit` and `git:amendCommit` are the only two channels that call
  *   `assertMainBranchCommitAllowed`, which throws before the operation runs.
  */
-describe('git:* — the 24 channels that invalidate the git cache', () => {
+describe('git:* — the 24 channels that mutate the repo', () => {
   beforeEach(() => {
     // DISTINCT configs, for the same reason as the batch above: every one of these 24
     // forwards ssh and wsl in adjacent slots, and the default fixture nulls both.
@@ -2501,8 +2524,11 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
   const hosts = `${JSON.stringify(DISTINCT_SSH)},${JSON.stringify(DISTINCT_WSL)}`
   const lookup = 'db.getLocationByPath(["C:/repo"])'
   /**
-   * What `invalidateRepoGitCache(repoPath)` (thread-context.ts) records: it re-resolves the
-   * host config from the DB and then invalidates that scope. Two entries, not one.
+   * What `invalidateRepoGitCache(repoPath)` (thread-context.ts) records: it re-resolves the host
+   * config from the DB and then invalidates that scope. Two entries, not one.
+   *
+   * Only `git:publishBranch` still produces this, and only because its mutation is a *composite*
+   * assembled in publish-branch-adapter.ts rather than a single `git.ts` function.
    */
   const invalidation = [lookup, `git.invalidateGitCache(["C:/repo",${hosts}])`]
 
@@ -2521,10 +2547,10 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
   /**
    * One row per channel: arguments in, the `git.ts` call(s) out, and the resolved value.
    *
-   * The `call` column omits the `:settled` and invalidation entries — the loop appends them,
-   * because they are the same for every row and the point is that no row is missing them.
-   * The optional fifth column overrides the derived `:settled` label, which only
-   * `discardFileChanges` needs (its stub names the file it settled for).
+   * The `call` column omits the `:settled` entry — the loop appends it, because it is the same
+   * for every row and the point is that no row is missing it. The optional fifth column
+   * overrides the derived `:settled` label, which only `discardFileChanges` needs (its stub
+   * names the file it settled for).
    */
   const cases: Array<
     [channel: string, args: unknown[], calls: string[], result: unknown, settled?: string]
@@ -2597,17 +2623,23 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
   ]
 
   for (const [channel, args, calls, result, settledOverride] of cases) {
-    it(`${channel} awaits the operation, then invalidates the repo's cache`, async () => {
+    it(`${channel} resolves the host config once, then awaits the operation`, async () => {
       const ipc = await viaIpc(channel, args)
       const rpc = await viaControlRpc(channel, args)
 
-      // The last `git.ts` call in the row is the operation; it must settle before the
-      // invalidation runs.
+      // The last `git.ts` call in the row is the operation; it must settle before the handler
+      // resolves.
       const operation = calls[calls.length - 1]
       const settled = settledOverride ?? `${operation.slice(0, operation.indexOf('('))}:settled`
 
       expect(rpc).toEqual(ipc)
-      expect(ipc, channel).toEqual([lookup, ...calls, settled, ...invalidation])
+      expect(ipc, channel).toEqual([lookup, ...calls, settled])
+      // No handler-level invalidation, and — visible in the exact log above — no trailing
+      // `db.getLocationByPath` either: that second lookup was `invalidateRepoGitCache`
+      // re-deriving ssh/wsl from the DB, and the callee has both as arguments. Asserted
+      // separately so a reader of a failure sees which half changed. Where the invalidation is
+      // asserted now: this block's doc comment.
+      expect(ipc.some((entry) => entry.includes('invalidateGitCache')), channel).toBe(false)
       expect(await resultViaIpc(channel, args), channel).toEqual(result)
       expect(await resultViaControlRpc(channel, args), channel).toEqual(result)
     })
@@ -2636,7 +2668,7 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     }
   })
 
-  it('git:discardFiles discards one file at a time and invalidates once', async () => {
+  it('git:discardFiles discards one file at a time', async () => {
     const files = [{ path: 'src/a.ts' }, { path: 'src/new.ts', oldPath: 'src/old.ts' }]
     const ipc = await viaIpc('git:discardFiles', ['C:/repo', files])
     const rpc = await viaControlRpc('git:discardFiles', ['C:/repo', files])
@@ -2645,13 +2677,16 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     // Sequential, not `Promise.all`: each discard settles before the next one starts. Both
     // pre-fold paths wrote a `for … of` with an `await` inside, and concurrent discards of
     // paths that share an index lock is not the same operation.
+    //
+    // There is no single trailing invalidation any more, and that is the fix rather than a
+    // loss: `discardFileChanges` invalidates per file, so the partial-failure case below no
+    // longer leaves a stale cache. Pinned in `git-cache-invalidation.test.ts`.
     expect(ipc).toEqual([
       lookup,
       `git.discardFileChanges(["C:/repo","src/a.ts",null,${hosts}])`,
       'git.discardFileChanges:settled("src/a.ts")',
       `git.discardFileChanges(["C:/repo","src/new.ts","src/old.ts",${hosts}])`,
       'git.discardFileChanges:settled("src/new.ts")',
-      ...invalidation,
     ])
   })
 
@@ -2673,10 +2708,12 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     )
 
     expect(rpc).toEqual(ipc)
-    // All three attempted — the good one first, then both failures — and NO invalidation,
-    // because the summary throw precedes it. Note the asymmetry that makes this a bug worth
-    // reporting: `src/a.ts` really was discarded, so the cache is now stale for a repo whose
-    // cache nobody invalidated.
+    // All three attempted — the good one first, then both failures. The handler still reaches no
+    // invalidation of its own, because the summary throw precedes where that line used to be;
+    // the difference is that `src/a.ts`'s successful discard has already invalidated on its own
+    // way out, so the repo that really did change no longer keeps a stale cache. That is
+    // asserted where it is observable: `git-cache-invalidation.test.ts`, "a bulk discard that
+    // fails part-way leaves no stale cache".
     expect(ipc).toEqual([
       lookup,
       `git.discardFileChanges(["C:/repo","src/a.ts",null,${hosts}])`,
@@ -2700,18 +2737,21 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     )
   })
 
-  it('git:discardFiles with an empty list invalidates without touching git', async () => {
+  it('git:discardFiles with an empty list resolves the config and does nothing else', async () => {
+    // This used to end in an invalidation for a repo nothing had touched. It now costs one
+    // location lookup and no git work at all — the same reasoning as `stageFiles`' empty-list
+    // early return in git.ts: nothing mutated, so nothing cached went stale.
     const ipc = await viaIpc('git:discardFiles', ['C:/repo', []])
     const rpc = await viaControlRpc('git:discardFiles', ['C:/repo', []])
 
     expect(rpc).toEqual(ipc)
-    expect(ipc).toEqual([lookup, ...invalidation])
+    expect(ipc).toEqual([lookup])
   })
 
   it('git:commit and git:amendCommit refuse a commit on main before running it', async () => {
     // The two policy-checked channels, and the ordering is the whole point: the check runs
-    // BEFORE the operation, so a refusal leaves the repo untouched and — because the
-    // invalidation is after the operation — leaves the cache alone too.
+    // BEFORE the operation, so a refusal leaves the repo untouched — and therefore, since the
+    // callee is what invalidates and the callee never runs, leaves the cache alone too.
     H.state.project = { id: 'p1', allow_main_branch_commits: false }
     H.state.gitStatus = { branch: 'main' }
     const refusal = 'Commits are disabled on main for this project'
@@ -2743,9 +2783,7 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     // `gitPullWithAutoStash(repoPath, true, …)` — the second argument is a literal, so the
     // function's own `if (!autoStash)` fallback is unreachable from this channel. Anything
     // falsy, including omitted and an explicit null off the wire, takes the plain `gitPull`.
-    const plain = [
-      lookup, `git.gitPull(["C:/repo",${hosts}])`, 'git.gitPull:settled', ...invalidation,
-    ]
+    const plain = [lookup, `git.gitPull(["C:/repo",${hosts}])`, 'git.gitPull:settled']
 
     for (const args of [['C:/repo'], ['C:/repo', null], ['C:/repo', false]]) {
       expect(await viaIpc('git:pull', args), JSON.stringify(args)).toEqual(plain)
@@ -2769,7 +2807,6 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
       lookup,
       `git.discardFileChanges(["C:/repo","src/a.ts",null,${hosts}])`,
       'git.discardFileChanges:settled("src/a.ts")',
-      ...invalidation,
     ]
 
     for (const args of [['C:/repo', 'src/a.ts'], ['C:/repo', 'src/a.ts', null]]) {
@@ -2788,7 +2825,6 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
       'db.getProjectById(["p1"])',
       `git.amendCommit(["C:/repo",null,${hosts}])`,
       'git.amendCommit:settled',
-      ...invalidation,
     ]
 
     for (const args of [['C:/repo'], ['C:/repo', null], ['C:/repo', undefined]]) {
@@ -2803,7 +2839,7 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     // required, but the renderer's stash button and any remote caller can still omit it —
     // and over the wire an explicitly-`undefined` argument arrives as `null`.
     const expected = [
-      lookup, `git.createStash(["C:/repo",{},${hosts}])`, 'git.createStash:settled', ...invalidation,
+      lookup, `git.createStash(["C:/repo",{},${hosts}])`, 'git.createStash:settled',
     ]
 
     for (const args of [['C:/repo'], ['C:/repo', null]]) {
@@ -2812,12 +2848,15 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     }
   })
 
-  it('a failing operation skips the invalidation on both transports', async () => {
-    // The characteristic property of this batch. `invalidateRepoGitCache` sits after the
-    // `await`, so a rejection propagates out of the handler and the cache is never
-    // invalidated — for every one of the 24 except `git:publishBranch`, which uses
-    // `try/finally`. Both pre-fold paths agreed, and it is arguably the right behaviour: a
-    // failed operation changed nothing, so there is nothing stale to clear. Preserved.
+  it('a failing operation propagates and adds nothing after the rejection', async () => {
+    // What this pins post-move: the rejection reaches the caller on both transports, and the
+    // handler does no bookkeeping after it — the operation's `:settled` is the last entry.
+    //
+    // The property it USED to pin, that a failure skipped the invalidation, is preserved rather
+    // than dropped: the callee's `invalidateGitCache` sits at the END of its body, not in a
+    // `finally`, so a throw still skips it. That is now a `git.ts` fact and is asserted there —
+    // `git-cache-invalidation.test.ts`, "a mutation that throws leaves the cache alone". The
+    // sole exception remains `git:publishBranch`, below.
     for (const [channel, args, operation] of [
       ['git:commit', ['C:/repo', 'm'], 'git.commitChanges'],
       ['git:stage', ['C:/repo', 'src/a.ts'], 'git.stageFile'],
@@ -2835,28 +2874,21 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
     }
   })
 
-  it('git:publishBranch — the one genuine divergence, resolved in favour of handlers.ts', async () => {
-    // DELIBERATE RESOLUTION, not a silently adopted shape. This was the only `git:*` pair
-    // whose two implementations differed, and the two pre-fold sequences were:
+  it('git:publishBranch is now the only mutating channel that invalidates at the handler level', async () => {
+    // Kept deliberately, and it is now the *only* `invalidateRepoGitCache` left in the mutating
+    // family. The reason it is different: `publishRepositoryBranch` is not a `git.ts` function
+    // but a composite that calls several of them — `createBranch`, `stageAll`,
+    // `commitChangesAndGetHash` (→ `commitChanges`) and `gitPush`, every one of which now
+    // invalidates on its own way out — plus `forge.createPullRequest`, which touches no local
+    // git state.
     //
-    //   handlers.ts     finally { invalidateRepoGitCache(input.repoPath) }
-    //     [lookup, publishRepositoryBranch, :settled, lookup, invalidateGitCache]
-    //   control-rpc.ts  finally { invalidateGitCache(input.repoPath, ssh, wsl) }
-    //     [lookup, publishRepositoryBranch, :settled,         invalidateGitCache]
-    //
-    // Both invalidate the same cache scope — `getCacheScope` keys on repoPath + ssh + wsl and
-    // both resolve the same row — so the observable difference was exactly one extra
-    // `db.getLocationByPath`, on a rare user-initiated network operation.
-    //
-    // The fold takes the `handlers.ts` form: it is what the other 23 channels in this batch
-    // do, and it is the shared `invalidateRepoGitCache` helper, so there is one invalidation
-    // path to move when this responsibility eventually goes down into `git.ts`.
-    //
-    // The case for the discarded form, recorded because it is not nothing: it invalidates the
-    // scope the operation actually *used*. If the location row is re-pointed (local → ssh,
-    // say) while a multi-second publish is in flight, the re-resolving form clears the new
-    // scope and leaves the entries written under the old one stale. All 23 siblings have that
-    // same race, so this makes publishBranch uniform rather than making anything worse.
+    // So this handler invalidates several times per publish instead of once. Harmless:
+    // `invalidateGitCache` deletes keys from two Maps and is idempotent. What the `finally` buys
+    // is the only invalidation that survives a failure *inside* a step, since each callee
+    // invalidates at the end of its own body — and it costs one `db.getLocationByPath` on a
+    // rare, user-initiated, network-bound operation. Note also that a `PublishBranchError` comes
+    // back as a resolved `{ ok: false }` rather than a rejection, so `finally` vs. a trailing
+    // statement is close to moot in practice.
     const input = { repoPath: 'C:/repo', title: 'T', description: 'D', target: 'main' }
     const ipc = await viaIpc('git:publishBranch', [input])
     const rpc = await viaControlRpc('git:publishBranch', [input])
@@ -2876,10 +2908,10 @@ describe('git:* — the 24 channels that invalidate the git cache', () => {
   })
 
   it('git:publishBranch invalidates even when the publish fails — alone in this batch', async () => {
-    // `try { return await … } finally { … }` on both paths, so unlike every sibling above
-    // the invalidation survives a rejection. Worth having: publishBranch is multi-step
-    // (branch, stage, commit, push, PR) and a mid-sequence failure leaves the repo changed,
-    // so the cache genuinely is stale.
+    // `try { return await … } finally { … }`, so unlike every sibling above the invalidation
+    // survives a rejection. Worth having: publishBranch is multi-step (branch, stage, commit,
+    // push, PR) and a step that mutates and then throws before reaching its own trailing
+    // invalidation leaves the cache stale.
     const input = { repoPath: 'C:/repo', title: 'T', description: 'D', target: 'main' }
 
     H.state.publishShouldFail = true

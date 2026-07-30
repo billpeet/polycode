@@ -904,11 +904,15 @@ export const channelHandlers = {
 
   'location-pools:delete': (_ctx, id) => deleteLocationPool(id),
 
-  // ── Git: the channels that do not invalidate the git cache ────────────────
+  // ── Git: the read channels ────────────────────────────────────────────────
   //
-  // The 24 that DO invalidate follow this group; the split is historical (they were folded
-  // one round apart) and the boundary is still worth reading as documentation, because the
-  // invalidating group carries an ordering obligation this one does not.
+  // The mutating channels follow this group. The split used to be "does the handler
+  // invalidate the git cache", and that distinction has moved out of this file: every
+  // mutation in `git.ts` now invalidates its own scope at the end of its own body
+  // (git.ts:119-146), the way `gitFetchRemoteCached` always did. No handler below performs a
+  // git-cache invalidation except `forge:pr:checkout`, whose mutation is not a `git.ts`
+  // function. The boundary is kept because the second group still carries an ordering
+  // obligation this one does not: it must `await` the mutation before replying.
   //
   // All but the two watch channels open with `getConfigForPath(repoPath)` and hand the pair
   // to a `git.ts` function in adjacent trailing `(…, ssh, wsl)` slots. Nothing here branches
@@ -1057,10 +1061,10 @@ export const channelHandlers = {
    * the promise. Nothing observes the value: stores/git.ts:388 discards it and the channel is
    * absent from mobile's RPC allowlist.
    *
-   * There is deliberately no invalidation here, and unlike the two channels below that is
-   * correct: `gitFetchRemoteCached` (git.ts:592-598) invalidates *inside* its own
-   * `readWithCache`, once the fetch resolves. That is where the responsibility belongs — a
-   * second invalidation at this level would be a duplicate.
+   * There is deliberately no invalidation here: `gitFetchRemoteCached` invalidates *inside*
+   * its own `readWithCache`, once the fetch resolves. It was the precedent for the rule every
+   * other `git.ts` mutation now follows, and the reason this channel was already a one-liner
+   * while its 23 siblings each carried a trailing `invalidateRepoGitCache(repoPath)`.
    */
   'git:fetchRemote': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
@@ -1069,10 +1073,13 @@ export const channelHandlers = {
 
   /**
    * Mutates — `forceUnlockRepo` deletes `.git/index.lock` and the loose-ref locks — and
-   * invalidates nothing, on either pre-fold path or inside `git.ts`. Preserved verbatim, so a
-   * `git:status` read cached while the repo was locked outlives the unlock by up to its 5 s
-   * TTL, even though stores/git.ts:379 re-reads status immediately afterwards to refresh
-   * exactly that view. Reported, not fixed: a cache change is not a fold.
+   * invalidates nothing, here or inside `git.ts`. Preserved verbatim, so a `git:status` read
+   * cached while the repo was locked outlives the unlock by up to its 5 s TTL, even though
+   * stores/git.ts:379 re-reads status immediately afterwards to refresh exactly that view.
+   *
+   * Now that every other `git.ts` mutation self-invalidates, this omission is visibly
+   * inconsistent rather than merely undocumented — which is the point. It is fixed in its own
+   * commit, with its own test, not folded into a refactor.
    */
   'git:forceUnlock': (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
@@ -1082,17 +1089,16 @@ export const channelHandlers = {
   /**
    * KNOWN BUG, preserved deliberately.
    *
-   * This mutates branch state and invalidates nothing: not here, not on either pre-fold path,
-   * and not inside `deleteBranches` (git.ts:1345) — unlike `gitFetchRemoteCached`, which owns
-   * its own invalidation, and unlike `git:checkout` and `git:createBranch`, the two
-   * neighbouring branch mutations, which both invalidate at the handler level.
+   * This mutates branch state and invalidates nothing: not here, and not inside
+   * `deleteBranches` — unlike `checkoutBranch` and `createBranch`, the two neighbouring branch
+   * mutations, which now invalidate inside `git.ts` like every other mutation in that module.
    * `listCachedBranches` caches under `'branches'` with a 30 s TTL and stores/git.ts:449
    * re-reads `git:branches` the instant the delete resolves, so a deleted branch keeps
    * showing in the UI for up to 30 s.
    *
    * Fixing it inside a refactor would hide a behaviour change in a diff that claims to have
-   * none, so the absence is preserved and a characterisation test records it as a bug rather
-   * than as intent.
+   * none, so the absence is preserved and a test records it as a bug rather than as intent.
+   * It is fixed in its own commit, alongside `git:forceUnlock`.
    */
   'git:deleteBranches': (_ctx, repoPath, branches) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
@@ -1121,42 +1127,38 @@ export const channelHandlers = {
   // `files:watchStop`.
   'git:watchStop': (_ctx, repoPath) => stopRepoGitWatch(repoPath),
 
-  // ── Git: the channels that invalidate the git cache ───────────────────────
+  // ── Git: the channels that mutate the repo ────────────────────────────────
   //
-  // Every one of these mutates the repo and then clears the read cache for it, in that
-  // order: `await` the `git.ts` mutation, then `invalidateRepoGitCache(repoPath)` — which
-  // resolves the host config a *second* time (thread-context.ts:92-95) before calling
-  // `invalidateGitCache`. Preserved verbatim from both pre-fold paths, including that second
-  // lookup.
+  // Every one of these mutates the repo, and every one of them used to clear the read cache
+  // afterwards with `invalidateRepoGitCache(repoPath)` — which resolved the host config a
+  // *second* time (thread-context.ts) purely to recover the `ssh`/`wsl` pair these handlers
+  // already had in hand. That call is gone from all 23: the `git.ts` mutation invalidates its
+  // own scope at the end of its own body, which is where the cache lives and where the two
+  // configs are already parameters. See git.ts:119-146 for the rule and its four documented
+  // exceptions.
   //
-  // Two consequences of "after the await" that the characterisation tests pin, because both
-  // are easy to change by accident and neither shows up in a return value:
+  // What still lives here is the `await`. Floating a mutation would reply before the repo
+  // changed — and 18 of these declare `void`, so the resolved value would not give it away.
+  // The `:settled` entries in the dispatch characterisation tests are the only proof of it.
   //
-  // - A rejecting operation skips the invalidation entirely — the throw precedes it.
-  //   `git:publishBranch` is the sole exception: it uses `try/finally`.
-  // - Floating the mutation instead of awaiting it would invalidate before the repo changed,
-  //   and 18 of these declare `void`, so the resolved value would not give it away.
-  //
-  // The invalidation stays an explicit call in each handler rather than becoming a registry
-  // flag. `git.ts` already shows where it belongs: `gitFetchRemoteCached` (git.ts:592-598)
-  // invalidates inside its own `readWithCache`, which is why `git:fetchRemote` above needs no
-  // handler-level call. Pushing the other 24 down into `git.ts` is a separate change; a flag
-  // would only move the duplication into the registry.
+  // The failure semantics are unchanged by the move: the invalidation sits at the end of the
+  // callee's body, not in a `finally`, so a rejecting operation still skips it. What the
+  // move DOES change is `git:discardFiles`, which throws its summary error before it ever
+  // reached the handler-level call — see that handler.
 
   /**
    * The two policy-checked channels, and the only two that call
    * `assertMainBranchCommitAllowed` — which reads the project row and throws for a commit on
    * `main`/`master` unless the project opted in.
    *
-   * The order is the policy: check, then commit, then invalidate. The check costs a second
-   * `getLocationByPath` (it resolves the project through the location row) and reads git
-   * status only once the project has opted out, so the happy path never reads status.
+   * The order is the policy: check, then commit. The check costs a second `getLocationByPath`
+   * (it resolves the project through the location row) and reads git status only once the
+   * project has opted out, so the happy path never reads status.
    */
   'git:commit': async (_ctx, repoPath, message) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await commitChanges(repoPath, message, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   /**
@@ -1171,7 +1173,6 @@ export const channelHandlers = {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await assertMainBranchCommitAllowed(repoPath, ssh, wsl)
     await amendCommit(repoPath, message ?? null, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   // Note what this does NOT do: `undoLastCommit` is `reset --soft HEAD~1`, which rewrites
@@ -1179,37 +1180,31 @@ export const channelHandlers = {
   'git:undoLastCommit': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await undoLastCommit(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:stage': async (_ctx, repoPath, filePath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await stageFile(repoPath, filePath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:unstage': async (_ctx, repoPath, filePath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await unstageFile(repoPath, filePath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:stageAll': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await stageAll(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:unstageAll': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await unstageAll(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:stageFiles': async (_ctx, repoPath, filePaths) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await stageFiles(repoPath, filePaths, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   /**
@@ -1224,7 +1219,6 @@ export const channelHandlers = {
   'git:discardFile': async (_ctx, repoPath, filePath, oldPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await discardFileChanges(repoPath, filePath, oldPath ?? null, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   /**
@@ -1233,9 +1227,13 @@ export const channelHandlers = {
    * thrown, so one unreadable file does not leave the rest of the selection undiscarded.
    * Only at the end does a summary naming every failed path throw.
    *
-   * Which means the invalidation is skipped on a partial failure even though some files WERE
-   * discarded — the cache is then stale for a repo that really did change. Both pre-fold
-   * paths had exactly this; reported, not fixed.
+   * BEHAVIOUR CHANGE, and an unavoidable one. This used to end in
+   * `invalidateRepoGitCache(repoPath)`, which the summary `throw` above jumped straight past —
+   * so a partial failure discarded some files and then left the cache stale for a repo that
+   * really did change. A recorded bug, and moving the invalidation into `discardFileChanges`
+   * fixes it as a side effect: each successful discard now clears the cache on its own, before
+   * the loop reaches the file that fails. There is no way to move the responsibility down and
+   * *keep* the bug. Pinned by a test rather than left to happen quietly.
    */
   'git:discardFiles': async (_ctx, repoPath, files) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
@@ -1251,13 +1249,11 @@ export const channelHandlers = {
     if (errors.length > 0) {
       throw new Error(`Failed to discard ${errors.length} file${errors.length !== 1 ? 's' : ''}: ${errors.map((error) => `${error.path} (${error.error})`).join('; ')}`)
     }
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:discardAll': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await discardAllChanges(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   /**
@@ -1276,19 +1272,16 @@ export const channelHandlers = {
   'git:push': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await gitPush(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:pushSetUpstream': async (_ctx, repoPath, branch) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await gitPushSetUpstream(repoPath, branch, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:pullOrigin': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await gitPullOrigin(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   /**
@@ -1314,7 +1307,6 @@ export const channelHandlers = {
     const result = autoStash
       ? await gitPullWithAutoStash(repoPath, true, ssh, wsl)
       : await gitPull(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
     return result
   },
 
@@ -1330,7 +1322,6 @@ export const channelHandlers = {
   'git:stashCreate': async (_ctx, repoPath, opts) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await createStash(repoPath, opts ?? {}, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   // The three stash consumers take `(repoPath, ref)` and pass the ref straight through —
@@ -1340,76 +1331,72 @@ export const channelHandlers = {
   'git:stashApply': async (_ctx, repoPath, ref) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await applyStash(repoPath, ref, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:stashPop': async (_ctx, repoPath, ref) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await popStash(repoPath, ref, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:stashDrop': async (_ctx, repoPath, ref) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await dropStash(repoPath, ref, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
-  // The two branch mutations that DO invalidate — the contrast that makes
+  // The two branch mutations whose callee invalidates — the contrast that makes
   // `git:deleteBranches` above a bug rather than a design.
   'git:checkout': async (_ctx, repoPath, branch) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await checkoutBranch(repoPath, branch, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   'git:createBranch': async (_ctx, repoPath, name, base, pullFirst) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await createBranch(repoPath, name, base, pullFirst, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   // `mergeBranch` resolves `{ conflicts }` rather than rejecting on a conflicted merge — a
-  // conflict is a state the UI renders, not an error — so the value is passed through and the
-  // invalidation still runs, which is what makes the conflicted files show up in git status.
+  // conflict is a state the UI renders, not an error — so the value is passed through. Note
+  // that this is why `mergeBranch` is the one `git.ts` mutation that invalidates on two
+  // separate exits: the conflicted one has to clear the cache as well, or the conflicted files
+  // never show up in git status.
   'git:merge': async (_ctx, repoPath, source) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
-    const result = await mergeBranch(repoPath, source, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
-    return result
+    return await mergeBranch(repoPath, source, ssh, wsl)
   },
 
-  // Invalidating after `git init` matters more than it looks: `isGitRepoCached` and
-  // `getCachedGitStatus` have both cached a "not a repo" answer for this path by now.
   'git:init': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     await gitInit(repoPath, ssh, wsl)
-    invalidateRepoGitCache(repoPath)
   },
 
   /**
-   * The one `git:*` pair whose two implementations genuinely differed, resolved deliberately
-   * in favour of the `ipc/handlers.ts` form:
+   * The one handler in this group that keeps an explicit invalidation, and the only one whose
+   * mutation is not a `git.ts` function: `publishRepositoryBranch` (publish-branch-adapter.ts)
+   * composes a sequence out of them.
    *
-   *   handlers.ts     finally { invalidateRepoGitCache(input.repoPath) }
-   *   control-rpc.ts  finally { invalidateGitCache(input.repoPath, ssh, wsl) }
+   * Every mutating step of that sequence is now self-invalidating, so this `finally` fires
+   * *in addition* to several calls it used to be the only one of:
    *
-   * Same cache scope — `getCacheScope` keys on `repoPath` + `ssh` + `wsl` and both resolve
-   * the same row — so nothing about the cache differs; the observable difference is one extra
-   * `getLocationByPath`, on a rare, user-initiated, network-bound operation.
+   *   createBranch → `createBranch(…, pullFirst: false)`   invalidates
+   *   stageAll     → `stageAll`                            invalidates
+   *   commit       → `commitChangesAndGetHash` → `commitChanges`  invalidates
+   *   push         → `gitPush`                             invalidates
+   *   inspect      → `getGitStatus` (a read, uncached)      n/a
+   *   pull-request → `forge.createPullRequest`              touches no local git state
    *
-   * `invalidateRepoGitCache` wins because it is what the other 23 do and it is the shared
-   * helper, so there is one invalidation path to move when this responsibility goes down into
-   * `git.ts`. The argument for the other form is real but narrow: it invalidates the scope the
-   * operation actually *used*, so if the location row is re-pointed while a multi-second
-   * publish is in flight, the re-resolving form clears the new scope and leaves the entries
-   * written under the old one stale. Every one of the other 23 has that same race, and
-   * uniformity is worth more than guarding one channel against it.
+   * KEPT ANYWAY, deliberately. `invalidateGitCache` is idempotent — it deletes keys from two
+   * Maps — so the duplication costs one `getLocationByPath` on a rare, user-initiated,
+   * network-bound operation. What it buys is the only invalidation that survives a failure
+   * *inside* a step: each self-invalidating callee clears the cache at the end of its own
+   * body, so a step that mutates and then throws before reaching that line leaves the cache
+   * stale, and this `finally` is what covers it. That window is narrow today (each step is
+   * effectively one git command), but "publish" is a composite whose steps are expected to
+   * grow, and this is the seam where the composite's staleness is knowable.
    *
-   * The `try/finally` is preserved as-is, and it is the reason this channel behaves
-   * differently from its siblings on failure: publishing is a multi-step sequence (create
-   * branch, stage, commit, push, open PR) that leaves the repo changed when it fails
-   * part-way, so the cache genuinely is stale and clearing it is right.
+   * Note also that `publishRepositoryBranch` converts a `PublishBranchError` into a resolved
+   * `{ ok: false, failedAt, effects }`, so in practice this handler almost never *rejects* —
+   * making `finally` vs. a trailing statement close to moot in any case.
    */
   'git:publishBranch': async (_ctx, input) => {
     const { ssh, wsl } = getConfigForPath(input.repoPath)

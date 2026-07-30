@@ -116,6 +116,34 @@ async function readWithCache<T>(
   return promise
 }
 
+/**
+ * Clear every cached read for one repo *in one transport scope*.
+ *
+ * ## Mutations in this module invalidate their own scope
+ *
+ * Every mutating function below ends with `invalidateGitCache(repoPath, ssh, wsl)` — the
+ * cache lives here, so the responsibility does too. It used to sit in the IPC dispatch
+ * layer, which had to re-read the location row to recover `ssh`/`wsl`; these functions
+ * already have both as parameters, so doing it here is strictly cheaper as well as closer
+ * to the state being invalidated.
+ *
+ * The call goes at the **end of the body**, not in a `finally`: an operation that throws
+ * generally changed nothing, so there is nothing stale to clear, and that is the behaviour
+ * the dispatch layer had. Where a function has several success exits (`mergeBranch`) or
+ * mutates before it can throw (`discardFileChanges`, `gitPullWithAutoStash`), it is spelled
+ * out per-exit rather than hoisted, so the failure semantics stay visible.
+ *
+ * Four mutations deliberately do NOT invalidate, and the inconsistency is the point —
+ * each is a recorded bug or a knowingly-cheap read path, not an oversight:
+ *
+ * - `deleteBranches` (branch state; `'branches'` caches for 30 s) — KNOWN BUG.
+ * - `forceUnlockRepo` (deletes `.git/*.lock`) — KNOWN BUG.
+ * - `gitFetchRemote` — its only caller is `gitFetchRemoteCached`, which invalidates.
+ * - the bare `git fetch origin <ref>` inside `resolveCompareMainRef`,
+ *   `resolveCompareBranchRef`, `resolvePullRequestBaseRef` and `findMergedBranches`: they
+ *   move remote-tracking refs from inside a *read*, and invalidating there would clear the
+ *   very entry the read is about to write.
+ */
 export function invalidateGitCache(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): void {
   const scope = getCacheScope(repoPath, ssh, wsl)
   for (const key of gitReadCache.keys()) {
@@ -364,8 +392,10 @@ export function getCachedGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
 
 export async function commitChanges(repoPath: string, message: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['commit', '-m', message], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
+/** Inherits `commitChanges`'s invalidation; the trailing `rev-parse` is a read. */
 export async function commitChangesAndGetHash(
   repoPath: string,
   message: string,
@@ -407,6 +437,7 @@ export async function amendCommit(repoPath: string, message: string | null | und
   } else {
     await git(repoPath, ['commit', '--amend', '--no-edit'], ssh, wsl)
   }
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 /**
@@ -415,28 +446,36 @@ export async function amendCommit(repoPath: string, message: string | null | und
  */
 export async function undoLastCommit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['reset', '--soft', 'HEAD~1'], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function stageFile(repoPath: string, filePath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['add', '--', filePath], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function stageFiles(repoPath: string, filePaths: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  // The empty-list early return skips the invalidation, because it also skips the `git add`:
+  // nothing was staged, so no cached read became stale.
   if (filePaths.length === 0) return
   await git(repoPath, ['add', '--', ...filePaths], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function unstageFile(repoPath: string, filePath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   // Use restore --staged which works for both tracked and untracked files
   await git(repoPath, ['restore', '--staged', '--', filePath], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function stageAll(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['add', '-A'], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function unstageAll(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['restore', '--staged', '.'], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function gitPush(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pushed: true }> {
@@ -448,22 +487,26 @@ export async function gitPush(repoPath: string, ssh?: SshConfig | null, wsl?: Ws
   // if the remote ref has moved since our last fetch, the push is rejected rather than overwriting
   // someone else's commits. Fast-forward pushes behave identically to a plain push.
   await git(repoPath, ['push', '--force-with-lease', '--set-upstream', 'origin', 'HEAD'], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
   return { pushed: true }
 }
 
 export async function gitPushSetUpstream(repoPath: string, branch: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pushed: true }> {
   // See gitPush for rationale behind --force-with-lease.
   await git(repoPath, ['push', '--force-with-lease', '--set-upstream', 'origin', branch], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
   return { pushed: true }
 }
 
 export async function gitPull(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pulled: true }> {
   await git(repoPath, ['pull'], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
   return { pulled: true }
 }
 
 export async function gitPullOrigin(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ pulled: true }> {
   await git(repoPath, ['pull', 'origin'], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
   return { pulled: true }
 }
 
@@ -481,8 +524,20 @@ async function hasDirtyWorkingTree(repoPath: string, ssh?: SshConfig | null, wsl
  * - If autoStash is false or the tree is clean, behaves like a plain pull.
  * - Otherwise: stash -u → pull → pop. If pop hits a conflict, the stash is left intact so the user can resolve.
  * - If the pull itself fails after stashing, we best-effort pop the stash to restore state before re-throwing.
+ *
+ * Wrapped so that all five success exits invalidate and none of the throwing ones do. The
+ * throwing paths *have* mutated (the stash was pushed, and possibly popped back) and so leave
+ * the cache stale — but that is exactly what the dispatch layer did before the invalidation
+ * moved in here, and turning it into a `finally` would be a behaviour change smuggled into a
+ * refactor. Recorded, not fixed.
  */
 export async function gitPullWithAutoStash(repoPath: string, autoStash: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<PullResult> {
+  const result = await pullWithAutoStash(repoPath, autoStash, ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
+  return result
+}
+
+async function pullWithAutoStash(repoPath: string, autoStash: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<PullResult> {
   if (!autoStash) {
     await git(repoPath, ['pull'], ssh, wsl)
     return { pulled: true, stashed: false }
@@ -566,21 +621,26 @@ export async function createStash(repoPath: string, opts: { message?: string; in
     args.push('-m', opts.message.trim())
   }
   const output = await git(repoPath, args, ssh, wsl)
+  // "Nothing to stash" throws, and therefore does not invalidate: nothing moved.
   if (/No local changes to save/i.test(output)) {
     throw new Error('No local changes to stash.')
   }
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function applyStash(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['stash', 'apply', ref], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function popStash(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['stash', 'pop', ref], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function dropStash(repoPath: string, ref: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['stash', 'drop', ref], ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function gitFetchRemote(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ fetched: true }> {
@@ -1259,6 +1319,7 @@ export async function checkoutBranch(repoPath: string, branch: string, ssh?: Ssh
   } else {
     await git(repoPath, ['checkout', branch], ssh, wsl)
   }
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function createBranch(repoPath: string, name: string, base: string, pullFirst: boolean, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
@@ -1275,6 +1336,7 @@ export async function createBranch(repoPath: string, name: string, base: string,
   } else {
     await git(repoPath, ['checkout', '-b', name, base], ssh, wsl)
   }
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 /**
@@ -1360,6 +1422,11 @@ export async function deleteBranches(repoPath: string, branches: string[], ssh?:
 
 export async function gitInit(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
   await git(repoPath, ['init'], ssh, wsl)
+  // Matters more than it looks for an *adopted* directory: `isGitRepoCached` and
+  // `getCachedGitStatus` may already have cached a "not a repo" answer for this path. For a
+  // directory created moments earlier (project-admin.ts:122) there is nothing cached and this
+  // is a no-op.
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 /**
@@ -1450,8 +1517,25 @@ async function fileExistsInHead(repoPath: string, filePath: string, ssh?: SshCon
  *   - Rename (R): restore the old path from HEAD, delete the new path
  *
  * Irreversible — the caller is expected to confirm.
+ *
+ * Wrapped so that all four success exits invalidate. Doing it *per file* is what makes the
+ * bulk `git:discardFiles` path correct: that handler discards one file at a time, collects
+ * per-file errors and only throws a summary at the end, so it used to skip its single
+ * handler-level invalidation on a partial failure and leave a stale cache for files that
+ * really were discarded. Each successful discard now clears the cache on its own.
  */
 export async function discardFileChanges(
+  repoPath: string,
+  filePath: string,
+  oldPath?: string | null,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<void> {
+  await discardOneFile(repoPath, filePath, oldPath, ssh, wsl)
+  invalidateGitCache(repoPath, ssh, wsl)
+}
+
+async function discardOneFile(
   repoPath: string,
   filePath: string,
   oldPath?: string | null,
@@ -1517,11 +1601,13 @@ export async function discardAllChanges(
   }
   // Remove untracked files + directories (ignored files preserved)
   try { await git(repoPath, ['clean', '-fd'], ssh, wsl) } catch { /* nothing to clean */ }
+  invalidateGitCache(repoPath, ssh, wsl)
 }
 
 export async function mergeBranch(repoPath: string, source: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<{ conflicts: string[] }> {
   try {
     await git(repoPath, ['merge', source], ssh, wsl)
+    invalidateGitCache(repoPath, ssh, wsl)
     return { conflicts: [] }
   } catch (err: unknown) {
     // Runner errors retain stderr separately so callers can distinguish an invalid range.
@@ -1532,6 +1618,10 @@ export async function mergeBranch(repoPath: string, source: string, ssh?: SshCon
         const m = line.match(/CONFLICT.*?Merge conflict in (.+)/)
         if (m) conflicts.push(m[1].trim())
       }
+      // A conflicted merge is a *resolved* outcome, not a failure: the working tree now holds
+      // conflict markers and the index is half-merged, so it invalidates like a clean merge —
+      // which is what makes the conflicted files show up in the next `git:status` read.
+      invalidateGitCache(repoPath, ssh, wsl)
       return { conflicts: conflicts.length > 0 ? conflicts : ['(see git status)'] }
     }
     throw err
