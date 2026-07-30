@@ -4,12 +4,35 @@ import { isLocalChannel, isRemoteChannel } from '@polycode/shared'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import { registerRemoteControlIpcHandlers } from '../remote/client'
+// A *value* import, and safe as one: nothing imports this file except `main/index.ts`, so
+// the edge `handlers.ts → remote/server.ts → control/control-rpc.ts → channel-handlers.ts`
+// terminates rather than closing. `channel-handlers.ts` could not do the same — it is the
+// tail of that chain — which is why the restart reaches the map pre-bound, through the
+// context, instead of being imported there.
+import { restartRemoteControlServer } from '../remote/server'
 import { MIGRATED_CHANNELS, filePathToDataUrl, invokeChannelHandler } from './channel-handlers'
+import type { LocalHandlerContext } from './channel-handlers'
 
 export function registerIpcHandlers(window: BrowserWindow): void {
   commandManager.init(window)
   ptyManager.init(window)
   const remoteClient = registerRemoteControlIpcHandlers(window)
+
+  // The context every folded channel is invoked with on this transport. It is the *richer*
+  // `LocalHandlerContext`: this adapter is the only one that has a `RemoteControlClient` and
+  // a window to bind the server restart to. Nine of the eleven `remote:*` channels read one
+  // or the other; `CtxFor` in channel-handlers.ts is what stops any other handler reaching
+  // for either. Note `CtxFor` hands this richer context to all 33 `{ remote: false }`
+  // channels, not just the `remote:*` ones -- the other 24 simply ignore both members.
+  //
+  // Hoisted out of the loop rather than built per call: it is immutable and the same for
+  // every channel, and `window:is-maximized` alone fires on every titlebar interaction.
+  const ctx: LocalHandlerContext = {
+    window,
+    origin: 'local',
+    remoteClient,
+    restartServer: (config) => restartRemoteControlServer(config, window),
+  }
   const proxyable = <T extends unknown[]>(
     channel: string,
     handler: (...args: T) => unknown | Promise<unknown>,
@@ -37,7 +60,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     if (!isLocalChannel(channel)) continue
 
     const invokeLocally = (...args: unknown[]): Promise<unknown> =>
-      invokeChannelHandler(channel, { window, origin: 'local' }, args)
+      invokeChannelHandler(channel, ctx, args)
 
     // The one folded channel whose remote hop is not "same channel, same arguments".
     // A source path on this machine is meaningless to the host, so with a remote host

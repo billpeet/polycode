@@ -29,18 +29,27 @@
  * implementations touch better-sqlite3, Electron and `git.ts`, so they cannot live
  * there. The *types* stay in shared; the map is desktop-only.
  *
- * ## Migration state
+ * ## The map is complete, and the type system now says so
  *
- * `channelHandlers` is checked against `Partial<ChannelHandlerMap>`, so every entry
- * present is fully type-checked — arguments and result — against the contract, while
- * channels not yet moved keep their existing implementation.
+ * `channelHandlers` is checked against `ChannelHandlerMap` — not `Partial<>`. Through the
+ * migration it was `Partial<`, and the completion criterion was "drop the `Partial<` and
+ * see what the compiler lists". All 207 channels are folded, so that criterion has been
+ * met and retired: the total form is now the permanent invariant.
  *
- * **The completion criterion is mechanical:** change `Partial<ChannelHandlerMap>` below
- * to `ChannelHandlerMap`. The build then lists every channel still missing. When it
- * compiles, the migration is done and the two legacy dispatch sites are empty.
+ * What that buys, and it is the whole point of the exercise:
  *
- * `channel-handler-migration.test.ts` enforces the other half: a channel handled here
- * must have no legacy registration left, so a third dispatch site cannot exist.
+ * - **Every channel in `CHANNEL_REGISTRY` has exactly one implementation.** Adding a
+ *   channel to the registry without one fails the build, here, immediately.
+ * - Every implementation is type-checked against `ChannelContract` — arguments *and*
+ *   result. There is no `channel: string` and no cast anywhere in a handler body.
+ *
+ * Do not weaken this back to `Partial<`. A channel that is genuinely unimplementable in
+ * one transport belongs in the registry with `local: false` or `remote: false`, which the
+ * two adapters already honour; it does not belong as a missing map entry.
+ *
+ * `channel-handler-migration.test.ts` enforces the other half: a channel handled here must
+ * have no legacy registration left, so a third dispatch site cannot exist. Both legacy
+ * dispatch sites are now empty, and so is `remote/client.ts`, which was the fifth.
  */
 // Fire-and-forget GUI launching (VS Code, Explorer, Terminal) — the exception the
 // no-restricted-imports rule documents. It is genuinely not "run a command and collect
@@ -50,13 +59,14 @@
 // before they were folded into the map below; that entry is now stale.
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { spawn } from 'child_process'
+import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { app, clipboard, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
-import type { Channel, ChannelArgs, ChannelResult } from '@polycode/shared'
-import type { SshConfig, WslConfig } from '../../shared/types'
+import type { Channel, ChannelArgs, ChannelResult, RemoteChannel } from '@polycode/shared'
+import type { RemoteServerConfig, SshConfig, WslConfig } from '../../shared/types'
 import {
   archivedThreadCount,
   archiveProject,
@@ -140,8 +150,11 @@ import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import { getLogsDirPath } from '../app-logger'
 import { restartWebhookServer } from '../webhook/server'
 import type { WebhookConfig } from '../webhook/server'
-import { readRemoteServerConfig } from '../remote/config'
+import { readRemoteServerConfig, saveRemoteServerConfig } from '../remote/config'
 import { getPairingInfo } from '../remote/lan'
+// `import type`, and it has to stay that way — see `LocalHandlerContext` below and the
+// assertion in channel-handler-migration.test.ts that pins the `type` keyword.
+import type { RemoteControlClient } from '../remote/client'
 import {
   cloneLocation,
   createFullProject,
@@ -360,21 +373,131 @@ function wslPathToUnc(wslPath: string, distro: string): string {
  * `origin` is the answer to the `originAware` registry flag, which until now was
  * declared on `threads:send` and read by nobody. A handler that behaves differently
  * per transport branches on this rather than existing twice.
+ *
+ * This is what *both* transports can supply, so it is what a channel a remote host could
+ * serve is allowed to ask for.
  */
 export interface HandlerContext {
   window: BrowserWindow
   origin: 'local' | 'remote'
 }
 
+/**
+ * The richer context, available only to `{ remote: false }` channels.
+ *
+ * Both members exist for the eleven `remote:*` channels, which are the only capabilities in
+ * the whole surface that are genuinely *local-machine* rather than merely
+ * local-by-convention: they configure and control this desktop's own remote-control server
+ * and its list of hosts. Nine of them were the last unfolded channels in the app, on the
+ * grounds that reaching `RemoteControlClient` from here needed an import cycle
+ * (`channel-handlers → remote/client → control/control-rpc → channel-handlers`). It does
+ * not: the *instance* arrives through the context, supplied by the ipcMain adapter which
+ * already holds it, and the *type* arrives through an `import type`, which is erased and so
+ * adds no runtime edge. `remote/client.ts` also no longer imports `control-rpc.ts` at all,
+ * so the edge that would have closed the cycle is gone at the source too.
+ *
+ * Why this is a separate interface rather than two optional members on `HandlerContext`:
+ * optional members would compile for every channel and fail at runtime for the ones the
+ * control-RPC transport can reach, since that transport has neither a client nor a window
+ * to bind a restart to. `CtxFor` below turns that into a compile error instead.
+ */
+export interface LocalHandlerContext extends HandlerContext {
+  origin: 'local'
+  remoteClient: RemoteControlClient
+  /**
+   * Restart this desktop's remote-control HTTP server with `config`.
+   *
+   * Pre-bound to the adapter's window so the map does not have to plumb it — and, more
+   * importantly, so this module does not have to import `remote/server.ts` as a value.
+   * That import *would* cycle: `remote/server.ts → control/control-rpc.ts → here`.
+   */
+  restartServer: (config: RemoteServerConfig) => void
+}
+
+/**
+ * Which context a channel's handler is handed: the richer one iff no remote host could ever
+ * serve the channel.
+ *
+ * A local-only handler therefore reads `ctx.remoteClient` with no narrowing and no runtime
+ * branch, while a dual-path or remote-only handler cannot name it at all — `Property
+ * 'remoteClient' does not exist on type 'HandlerContext'`. That negative half is the
+ * load-bearing one, and the `AssertTrue` aliases below pin it; without it the conditional
+ * buys nothing over putting both members on `HandlerContext`.
+ */
+type CtxFor<C extends Channel> = C extends RemoteChannel ? HandlerContext : LocalHandlerContext
+
+/**
+ * Compile-time proof that `CtxFor` still discriminates, in both directions.
+ *
+ * These live here, in a source file, rather than in a test: `tsconfig.node.json` excludes
+ * every `__tests__` directory, so a type-level assertion in the test suite would be checked
+ * by nothing at all — vitest transpiles without type checking. `pnpm typecheck` covers this
+ * file, so `AssertTrue` failing to satisfy its constraint is a build error.
+ *
+ * Exported only so they count as used. Nothing should import them.
+ */
+type AssertTrue<T extends true> = T
+/**
+ * Deliberately `extends LocalHandlerContext`, not `extends { remoteClient: unknown }`.
+ *
+ * The latter looks equivalent and is not: `{ remoteClient?: X }` is NOT assignable to
+ * `{ remoteClient: unknown }`. So declaring both members as *optional* on `HandlerContext` —
+ * exactly the design the note above argues against — left all three assertions holding while
+ * every handler could reach for `ctx.remoteClient!`. Found by mutation, not by reading.
+ */
+type HasRemoteClient<C extends Channel> = CtxFor<C> extends LocalHandlerContext
+  ? true
+  : false
+
+/** A `{ remote: false }` channel reads `ctx.remoteClient` with no narrowing and no branch. */
+export type _LocalOnlyChannelReachesTheClient = AssertTrue<HasRemoteClient<'remote:getHosts'>>
+
+/**
+ * A dual-path channel cannot name it — `Property 'remoteClient' does not exist on type
+ * 'HandlerContext'`. This is the half that matters: if it ever stopped holding, the
+ * conditional would buy nothing over declaring both members on `HandlerContext`, and a
+ * handler could reach for a client the control-RPC transport has no way to supply.
+ */
+export type _DualPathChannelCannotReachTheClient = AssertTrue<
+  HasRemoteClient<'projects:listArchived'> extends false ? true : false
+>
+
+/**
+ * And neither can a remote-only one.
+ *
+ * The uniquely load-bearing member of the three: keying `CtxFor` on
+ * `RemoteChannel & LocalChannel` instead of `RemoteChannel` leaves the other two holding and
+ * only this one fails. `plans:getForThread` is `{ local: false }`, so it is reachable *only*
+ * from control RPC, where `remoteClient` is genuinely absent.
+ */
+export type _RemoteOnlyChannelCannotReachTheClient = AssertTrue<
+  HasRemoteClient<'plans:getForThread'> extends false ? true : false
+>
+
+/**
+ * `HandlerContext` itself must not carry the local capabilities, even optionally.
+ *
+ * The three assertions above test which branch `CtxFor` selects, and are blind to this:
+ * adding `remoteClient?: RemoteControlClient` to `HandlerContext` leaves all three holding
+ * (`{ a?: X }` does not satisfy `{ a: unknown }`, and the optional member does not make
+ * `HandlerContext` assignable to `LocalHandlerContext` either) while letting every handler
+ * in the map reach for `ctx.remoteClient!` and fail at runtime on the remote transport.
+ * That is precisely the design the note above rejects, so it needs its own assertion.
+ */
+export type _HandlerContextHasNoLocalCapabilities = AssertTrue<
+  'remoteClient' | 'restartServer' extends keyof HandlerContext ? false : true
+>
+
 export type ChannelHandler<C extends Channel> = (
-  ctx: HandlerContext,
+  ctx: CtxFor<C>,
   ...args: ChannelArgs<C>
 ) => ChannelResult<C> | Promise<ChannelResult<C>>
 
 export type ChannelHandlerMap = { [C in Channel]: ChannelHandler<C> }
 
 /**
- * Handlers that have been folded out of the two legacy dispatch sites.
+ * The implementation of every channel in `CHANNEL_REGISTRY` — all 207 of them, checked
+ * against `ChannelHandlerMap` below, which is total.
  *
  * Handlers that need neither context nor arguments simply declare fewer parameters —
  * a uniform `ctx` first parameter costs nothing at the call sites that ignore it.
@@ -1864,23 +1987,74 @@ export const channelHandlers = {
     return restartWebhookServer(config, ctx.window)
   },
 
-  // ── Remote control: the two channels that are not the client ──────────────
+  // ── Remote control ─────────────────────────────────────────────────────────
   //
-  // The other nine `remote:*` channels stay registered in `remote/client.ts`. They are
-  // methods on the `RemoteControlClient` instance that `registerRemoteControlIpcHandlers`
-  // constructs and closes over, and reaching that instance from here would need either the
-  // module's `activeClient` variable — today only quit-time bookkeeping, and null after
-  // `stopRemoteControlClient()` — or an import of `remote/client.ts`, which imports
-  // `control/control-rpc.ts`, which imports this file. Both are worse than leaving them.
+  // All eleven, in registry order. They are `{ local: true, remote: false }` to a channel:
+  // they configure *this* desktop's remote-control server and *this* desktop's list of
+  // hosts, so serving them to a remote caller would let a paired phone re-point or unpair
+  // the desktop it is talking through.
   //
-  // These two are different in kind: they call module-level functions in `remote/config.ts`
-  // and `remote/lan.ts`, neither of which reaches back here, so folding them needs no
-  // instance and creates no cycle.
+  // Four reach module-level functions in `remote/config.ts` / `remote/lan.ts`
+  // (`getServerConfig`, `setServerConfig`, `regenerateServerToken`, `getPairingInfo`).
+  // The other seven are methods on the `RemoteControlClient` instance, which they get from
+  // `ctx.remoteClient` — see `LocalHandlerContext`. That instance is not reconstructible
+  // here: three of the seven drive the live SSE connection to the active host through the
+  // client's private `restartEventStream()`, and `addHost` emits `remote:hosts-changed` on
+  // the window the client was constructed with. Delegating is the whole implementation, and
+  // deliberately so — normalisation, id/timestamp minting and the change events all stay in
+  // `remote/client.ts` where the state they touch lives.
 
   'remote:getServerConfig': () => readRemoteServerConfig(),
 
+  // Save first, then restart — restarting first would rebind the old port. The restart is
+  // handed what `saveRemoteServerConfig` *returned*, not the config that came in: the saved
+  // form is the normalised one (host defaulted, port range-checked, a token minted if the
+  // caller sent an empty one), and binding the raw form would listen somewhere other than
+  // where the settings panel is about to say it listens.
+  'remote:setServerConfig': (ctx, config) => {
+    const saved = saveRemoteServerConfig(config)
+    ctx.restartServer(saved)
+    return saved
+  },
+
+  // Read-modify-write: only the token changes, so enabled/host/port come from the stored
+  // config rather than from the caller. The restart is what actually invalidates the old
+  // token — every existing paired client is authenticated against it.
+  'remote:regenerateServerToken': (ctx) => {
+    const current = readRemoteServerConfig()
+    const saved = saveRemoteServerConfig({
+      ...current,
+      token: randomBytes(24).toString('hex'),
+    })
+    ctx.restartServer(saved)
+    return saved
+  },
+
+  'remote:getHosts': (ctx) => ctx.remoteClient.getHosts(),
+
+  'remote:addHost': (ctx, input) => ctx.remoteClient.addHost(input),
+
+  'remote:updateHost': (ctx, id, input) => ctx.remoteClient.updateHost(id, input),
+
+  // `void` contract, and the pass-through rule applies anyway: `removeHost` is the one of
+  // the seven that returns nothing today, and it tears down the SSE stream when the host it
+  // removed was the active one. If it ever becomes `async`, returning it is what keeps the
+  // reply behind that teardown.
+  'remote:removeHost': (ctx, id) => ctx.remoteClient.removeHost(id),
+
+  // `id` is passed through raw. `null` is not an absent argument here, it is the *deactivate*
+  // signal — the client branches on it to clear the setting, drop the SSE stream and emit
+  // `remote:active-changed` with null. Coalescing it would take the "host not found" throw.
+  'remote:setActiveHost': (ctx, id) => ctx.remoteClient.setActiveHost(id),
+
+  'remote:getActiveHost': (ctx) => ctx.remoteClient.getActiveHost(),
+
+  // The only async one. It never rejects — the client converts every failure, including the
+  // 5s abort, into `{ ok: false, error }`, because the settings panel renders the reason.
+  'remote:testHost': (ctx, input) => ctx.remoteClient.testHost(input),
+
   'remote:getPairingInfo': () => getPairingInfo(),
-} satisfies Partial<ChannelHandlerMap>
+} satisfies ChannelHandlerMap
 
 export type MigratedChannel = keyof typeof channelHandlers
 
@@ -1898,7 +2072,28 @@ export function isMigratedChannel(channel: string): channel is MigratedChannel {
  * The cast is contained to this one line: callers reach it having already narrowed
  * `channel` with `isMigratedChannel`, and every entry in the map was type-checked
  * against the contract at its definition.
+ *
+ * The overloads enforce the `CtxFor` split at the boundary rather than trusting a comment.
+ * A caller holding only a plain `HandlerContext` — control RPC, which has no client and no
+ * window-bound restart to put in one — may dispatch only channels a remote host can serve;
+ * reaching a `{ remote: false }` channel requires supplying a `LocalHandlerContext`.
+ *
+ * Without this the registry guards in the two adapters were the only thing keeping it
+ * honest, and a future third transport could dispatch `remote:getHosts` with a remote-origin
+ * context, compile cleanly, and fail at runtime on `ctx.remoteClient` being undefined.
+ * control-rpc.ts already narrows to `MigratedChannel & RemoteChannel` at its call site, so it
+ * satisfies the first overload unchanged.
  */
+export async function invokeChannelHandler(
+  channel: MigratedChannel & RemoteChannel,
+  ctx: HandlerContext,
+  args: unknown[],
+): Promise<unknown>
+export async function invokeChannelHandler(
+  channel: MigratedChannel,
+  ctx: LocalHandlerContext,
+  args: unknown[],
+): Promise<unknown>
 export async function invokeChannelHandler(
   channel: MigratedChannel,
   ctx: HandlerContext,

@@ -1,15 +1,12 @@
-import { randomBytes, randomUUID } from 'crypto'
-import { BrowserWindow, ipcMain } from 'electron'
+import { randomUUID } from 'crypto'
+import { BrowserWindow } from 'electron'
+import { isRemoteChannel } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
-import { CONTROL_RPC_CHANNELS } from '../control/control-rpc'
-import { readRemoteServerConfig, saveRemoteServerConfig } from './config'
-import { restartRemoteControlServer } from './server'
 import { emitAppEvent } from '../app-events'
 import {
   RemoteConnectionStatus,
   RemoteHost,
   RemoteHostInput,
-  RemoteServerConfig,
 } from '../../shared/types'
 
 const REMOTE_HOSTS_KEY = 'remote:hosts'
@@ -181,8 +178,18 @@ export class RemoteControlClient {
     return host
   }
 
+  /**
+   * Whether a channel is one a remote host could serve, and so a candidate for forwarding.
+   *
+   * `isRemoteChannel` rather than `CONTROL_RPC_CHANNELS`: the two are the same set —
+   * `CONTROL_RPC_CHANNELS = new Set(REMOTE_CHANNELS)` and `isRemoteChannel` is a lookup in
+   * exactly that set — but the constant lives in `control/control-rpc.ts`, which imports the
+   * handler map, which needs this module's `RemoteControlClient` type. Reading the registry
+   * straight from `@polycode/shared` removes that edge outright instead of leaving it to
+   * `import type` discipline.
+   */
   shouldProxy(channel: string): boolean {
-    return CONTROL_RPC_CHANNELS.has(channel)
+    return isRemoteChannel(channel)
   }
 
   async invokeIfActive(channel: string, args: unknown[]): Promise<ProxyResult> {
@@ -326,60 +333,24 @@ export class RemoteControlClient {
   }
 }
 
+/**
+ * Construct the remote-control client for `window` and hand it back.
+ *
+ * The name is now a slight misnomer: this function registers no IPC handlers. It used to
+ * register eleven `remote:*` channels, all of which are folded into the typed handler map in
+ * `ipc/channel-handlers.ts` — the seven that are methods on this class reach the instance
+ * through `LocalHandlerContext.remoteClient`, which is the value returned here.
+ *
+ * It is still the constructor call the caller wants, and the returned instance is what
+ * `ipc/handlers.ts` closes over for three separate jobs: `ctx.remoteClient` for those seven
+ * channels, `invokeIfActive` for the remote-forwarding hop on every dual-path channel and on
+ * the two `terminal:*` `ipcMain.on` listeners, and `getActiveHost`/`shouldProxy` for
+ * `attachments:saveFromPath`'s upload hop. Constructing it starts the SSE stream to the
+ * active host, so the call is not a no-op even before any of that.
+ */
 export function registerRemoteControlIpcHandlers(window: BrowserWindow): RemoteControlClient {
   const client = new RemoteControlClient(window)
   activeClient = client
-
-  // `remote:getServerConfig` and `remote:getPairingInfo` used to be registered here too.
-  // They are the only two of the eleven that call module-level functions rather than a
-  // method on `client`, so they moved into the typed handler map in
-  // `ipc/channel-handlers.ts` and are registered by the MIGRATED_CHANNELS loop instead.
-  // The other nine stay because they close over this instance — see the fold note there.
-
-  ipcMain.handle('remote:setServerConfig', (_event, config: RemoteServerConfig) => {
-    const saved = saveRemoteServerConfig(config)
-    restartRemoteControlServer(saved, window)
-    return saved
-  })
-
-  ipcMain.handle('remote:regenerateServerToken', () => {
-    const current = readRemoteServerConfig()
-    const saved = saveRemoteServerConfig({
-      ...current,
-      token: randomBytes(24).toString('hex'),
-    })
-    restartRemoteControlServer(saved, window)
-    return saved
-  })
-
-  ipcMain.handle('remote:getHosts', () => {
-    return client.getHosts()
-  })
-
-  ipcMain.handle('remote:addHost', (_event, input: RemoteHostInput) => {
-    return client.addHost(input)
-  })
-
-  ipcMain.handle('remote:updateHost', (_event, id: string, input: RemoteHostInput) => {
-    return client.updateHost(id, input)
-  })
-
-  ipcMain.handle('remote:removeHost', (_event, id: string) => {
-    client.removeHost(id)
-  })
-
-  ipcMain.handle('remote:setActiveHost', (_event, id: string | null) => {
-    return client.setActiveHost(id)
-  })
-
-  ipcMain.handle('remote:getActiveHost', () => {
-    return client.getActiveHost()
-  })
-
-  ipcMain.handle('remote:testHost', (_event, input: RemoteHostInput) => {
-    return client.testHost(input)
-  })
-
   return client
 }
 

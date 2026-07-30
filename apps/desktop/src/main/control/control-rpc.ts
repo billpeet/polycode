@@ -13,9 +13,9 @@ export async function handleControlRpc(window: BrowserWindow, channel: string, a
     return invokeChannelHandler(channel, { window, origin: 'remote' }, args)
   }
 
-  // The switch this file used to be is gone: every channel it dispatched now lives in
-  // `ipc/channel-handlers.ts`, typed against ChannelContract. The nine `remote:*` channels
-  // that are still unfolded are registered in `remote/client.ts` and are `local`-only, so
-  // they were never reachable from here either.
+  // The switch this file used to be is gone: all 207 channels now live in
+  // `ipc/channel-handlers.ts`, typed against ChannelContract. Reaching here means the
+  // channel is either unknown or `{ remote: false }` -- the guard above admits only what
+  // the registry says a remote caller may invoke.
   throw new Error(`Unsupported remote control channel: ${channel}`)
 }

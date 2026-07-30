@@ -14,6 +14,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { CHANNEL_REGISTRY, LOCAL_CHANNELS, isLocalChannel, isRemoteChannel } from '@polycode/shared'
+import type { RemoteHostInput, RemoteServerConfig } from '../../shared/types'
 
 const H = vi.hoisted(() => {
   const log: string[] = []
@@ -64,6 +65,15 @@ const H = vi.hoisted(() => {
      * exercises the local implementation.
      */
     remoteProxy: null as { handled: boolean; value?: unknown } | null,
+    /**
+     * What the client double's `getActiveHost` answers when no proxy is configured.
+     *
+     * Separate from `remoteProxy` because `remote:getActiveHost` is a *channel* that reads
+     * it, not the forwarding hop: steering it through `remoteProxy` would mean that
+     * channel's return value could only be characterised while a host was also being
+     * proxied to, which is not the state it is normally called in.
+     */
+    activeHost: null as Record<string, unknown> | null,
     /** How many times the stubbed readFileSync served `fileBytes`. */
     fileReads: 0,
     /** How many times the adapter asked the remote client for the active host. */
@@ -238,8 +248,50 @@ const H = vi.hoisted(() => {
     getRepoWebUrl: settlesLate('forge.getRepoWebUrl', 'https://forge.test/repo'),
   }
 
+  /**
+   * A stored remote host, as `RemoteControlClient` hands them out.
+   *
+   * One shared fixture so the seven client-instance `remote:*` channels can each return a
+   * *distinguishable* value derived from it — a double whose methods all answered the same
+   * object would let two handlers be transposed and still pass.
+   */
+  const REMOTE_HOST = {
+    id: 'h1',
+    label: 'Studio',
+    baseUrl: 'http://192.168.1.10:3285',
+    token: 'host-token',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  }
+
+  /**
+   * The `RemoteControlClient` instance the seven client-instance `remote:*` handlers reach
+   * through `ctx.remoteClient` — the same shape trick as `session` and `forge`.
+   *
+   * All seven handlers are pure delegation, so what there is to pin is the argument list,
+   * the pass-through of the result, and that nothing else happens on the way. Hence exact
+   * log equality plus a distinct return value per method.
+   *
+   * `getActiveHost` is deliberately NOT here. The ipcMain adapter's forwarding hop calls it
+   * too, so it lives in the mock factory below where it is *counted* rather than logged — a
+   * log entry would land in every pinned dual-path sequence in this file.
+   */
+  const remoteClient = {
+    getHosts: stub('remoteClient.getHosts', [REMOTE_HOST]),
+    addHost: stub('remoteClient.addHost', { ...REMOTE_HOST, id: 'added' }),
+    updateHost: stub('remoteClient.updateHost', { ...REMOTE_HOST, id: 'updated' }),
+    // No value: the contract's result is `void` and the real method returns nothing, so
+    // "resolves undefined" is the thing to pin.
+    removeHost: stub('remoteClient.removeHost'),
+    setActiveHost: stub('remoteClient.setActiveHost', { ...REMOTE_HOST, id: 'activated' }),
+    // settlesLate, not stub: `testHost` is the one async method of the seven, and with a
+    // plain stub a handler that dropped the returned promise would log the same sequence.
+    testHost: settlesLate('remoteClient.testHost', { ok: true }),
+  }
+
   return {
     log, state, note, stub, autoModule, settlesLate, gitMutation, renderArgs, session, forge,
+    remoteClient, REMOTE_HOST,
   }
 })
 
@@ -666,13 +718,31 @@ vi.mock('../app-logger', () => H.autoModule('appLogger', {
   getLogsDirPath: H.stub('appLogger.getLogsDirPath', 'C:/tmp/polycode-logs'),
 }))
 
-// `remote:getServerConfig` and `remote:getPairingInfo` are the two channels of the
-// `remote:*` family that reach module-level functions rather than the RemoteControlClient
-// instance — see the fold note in channel-handlers.ts for why the other nine stay put.
+// The three `remote:*` channels that reach module-level config functions rather than the
+// RemoteControlClient instance: `remote:getServerConfig`, `remote:setServerConfig` and
+// `remote:regenerateServerToken`.
 vi.mock('../remote/config', () => H.autoModule('remoteConfig', {
   readRemoteServerConfig: H.stub('remoteConfig.readRemoteServerConfig', {
     enabled: false, host: '127.0.0.1', port: 3285, token: 'server-token',
   }),
+  // Echoes its argument with a marked token, which is what makes the two writing channels
+  // characterisable at all: both hand the *saved* config to the server restart and return
+  // it, and an implementation that passed the incoming config along instead would be
+  // indistinguishable from a stub that echoed verbatim. It also makes the result
+  // deterministic despite `remote:regenerateServerToken` minting a random token.
+  saveRemoteServerConfig: H.stub(
+    'remoteConfig.saveRemoteServerConfig',
+    (config: unknown) => ({ ...(config as Record<string, unknown>), token: 'normalised-token' }),
+  ),
+}))
+
+// Mocked for the first time by the fold of `remote:setServerConfig` and
+// `remote:regenerateServerToken`: pre-fold this module was reached only from
+// `remote/client.ts`, which this file replaces wholesale, so it was never loaded. Post-fold
+// `ipc/handlers.ts` imports the restart as a value to pre-bind it to the window, and the
+// real module opens an HTTP listener.
+vi.mock('../remote/server', () => H.autoModule('remoteServer', {
+  restartRemoteControlServer: H.stub('remoteServer.restartRemoteControlServer'),
 }))
 
 vi.mock('../remote/lan', () => H.autoModule('remoteLan', {
@@ -699,15 +769,19 @@ vi.mock('child_process', async (importOriginal) => {
 // same-channel forward: `attachments:saveFromPath` reads the file *here* and uploads it to
 // the host under a different channel (`attachments:save`), so the hop is behaviour rather
 // than plumbing and has its own test below.
+//
+// The double is also what `ctx.remoteClient` is for the seven folded client-instance
+// `remote:*` channels — `H.remoteClient` holds their recorders.
 vi.mock('../remote/client', () => ({
   registerRemoteControlIpcHandlers: () => ({
+    ...H.remoteClient,
     // `invokeIfActive` returns handled:true exactly when both of these hold, so the
     // adapter hoists them to decide whether the source file is worth encoding at all.
     getActiveHost: () => {
       // Counted, not logged: logging would add an entry to every pinned IPC sequence in
       // the file. The count is what the local-only-channels test below asserts.
       H.state.proxyChecks += 1
-      return H.state.remoteProxy ? { id: 'host1' } : null
+      return H.state.remoteProxy ? { id: 'host1' } : H.state.activeHost
     },
     // Channel-aware on purpose. A double that ignores its argument lets the adapter ask
     // about the WRONG channel and still pass — and `attachments:saveFromPath` asking about
@@ -835,6 +909,7 @@ beforeEach(() => {
   H.state.fileBytes = null
   H.state.killError = null
   H.state.remoteProxy = null
+  H.state.activeHost = null
   H.state.fileReads = 0
   H.state.proxyChecks = 0
   H.state.proxyInvokes = 0
@@ -3989,7 +4064,7 @@ describe('the ipcMain adapter only pays for the remote hop where it can pay off'
     // read can only ever lead to "not handled", and pre-fold these were bare
     // `ipcMain.handle` with no hop at all. `window:is-maximized` fires on every titlebar
     // interaction, so the difference is not academic.
-    for (const channel of ['window:is-maximized', 'settings:get', 'app:getVersion']) {
+    for (const channel of ['window:is-maximized', 'settings:get', 'app:getVersion', 'remote:getHosts']) {
       expect(CHANNEL_REGISTRY[channel as keyof typeof CHANNEL_REGISTRY]).toMatchObject({
         local: true, remote: false,
       })
@@ -4026,18 +4101,12 @@ describe('the ipcMain adapter only pays for the remote hop where it can pay off'
   it('every local:true channel has an ipcMain registration', async () => {
     // Nothing else asserts the registry and the adapter agree in this direction: a folded
     // channel silently failing to register would surface only as a dead button.
-    // Excluding the nine `remote:*` channels still registered inside `remote/client.ts`:
-    // this harness mocks that module wholesale (that mock is what keeps the forwarding hop
-    // inert everywhere else), so their real registrations cannot exist here. They are
-    // guarded instead by the source scan in channel-handler-migration.test.ts.
-    const registeredElsewhere = (channel: string): boolean =>
-      channel.startsWith('remote:') && !ipcHandlers.has(channel)
-    const missing = LOCAL_CHANNELS.filter(
-      (channel) => !ipcHandlers.has(channel) && !registeredElsewhere(channel),
-    )
-    expect(missing).toEqual([])
-    // Belt and braces: the exclusion must stay exactly nine channels wide.
-    expect(LOCAL_CHANNELS.filter(registeredElsewhere)).toHaveLength(9)
+    //
+    // This used to carry an exemption for the nine `remote:*` channels registered inside
+    // `remote/client.ts`, which this harness mocks away wholesale. They are folded now, so
+    // the exemption is gone and the claim is unconditional: every locally-reachable channel
+    // in the registry is registered by the MIGRATED_CHANNELS loop, here, in this process.
+    expect(LOCAL_CHANNELS.filter((channel) => !ipcHandlers.has(channel))).toEqual([])
   })
 
   it('the titlebar push listeners are registered', async () => {
@@ -4468,20 +4537,171 @@ describe('remote:getServerConfig and remote:getPairingInfo — folded out of rem
     })
   })
 
-  it('the nine client-instance remote:* channels are NOT registered by the folded loop', async () => {
-    // They keep their registrations in remote/client.ts, which this file mocks away — so
-    // here they are absent entirely. The real invariant (exactly one registration, and not
-    // in the map) is asserted by source scan in channel-handler-migration.test.ts.
-    for (const channel of [
-      'remote:setServerConfig', 'remote:regenerateServerToken', 'remote:getHosts',
-      'remote:addHost', 'remote:updateHost', 'remote:removeHost', 'remote:setActiveHost',
-      'remote:getActiveHost', 'remote:testHost',
-    ]) {
-      expect(ipcHandlers.has(channel)).toBe(false)
-      await expect(handleControlRpc(window, channel, [])).rejects.toThrow(
-        `Unsupported remote control channel: ${channel}`,
-      )
-    }
+})
+
+/**
+ * The nine `remote:*` channels that were the last thing left in `remote/client.ts`.
+ *
+ * All nine are `{ local: true, remote: false }` and none ever had a `case` in
+ * control-rpc.ts, so — like the `shell:*`/`window:*`/`dialog:*` families above — there is
+ * no second implementation to diff against. What each has to keep across the fold is the
+ * same triple: its single call sequence and return value, that control RPC still REFUSES
+ * it, and that it IS registered on ipcMain.
+ *
+ * Seven of the nine are pure delegation to the `RemoteControlClient` instance, which
+ * reaches the handler map as `ctx.remoteClient` — supplied by the ipcMain adapter, which
+ * already held it. The instance here is the test double (`H.remoteClient`), so what is
+ * pinned is the delegation: which method, which arguments, and that the result comes back
+ * untouched. The client's own internals — `emitAppEvent('remote:hosts-changed', …)` and the
+ * private `restartEventStream()` — are not observable through the double, and are not
+ * touched by the fold either: they stay inside `remote/client.ts` exactly as they were.
+ *
+ * The other two reach `remote/config.ts` directly and hand the result to the server
+ * restart, which the adapter pre-binds to its window as `ctx.restartServer` so the map does
+ * not have to plumb it.
+ */
+describe('the nine client-instance remote:* channels — folded out of remote/client.ts', () => {
+  /** A host input as the Remote Control settings panel sends it. */
+  const HOST_INPUT: RemoteHostInput = {
+    label: 'Studio',
+    baseUrl: 'http://192.168.1.10:3285',
+    token: 'host-token',
+  }
+
+  const SERVER_CONFIG: RemoteServerConfig = {
+    enabled: true, host: '0.0.0.0', port: 3300, token: 'chosen-token',
+  }
+
+  /**
+   * `restartRemoteControlServer(config, window)` as the recorder renders it.
+   *
+   * The window slot is interpolated rather than spelled out — the point of the assertion is
+   * that the *saved* config reaches the restart, and that the restart happens at all.
+   */
+  const restartEntry = (config: unknown): string =>
+    `remoteServer.restartRemoteControlServer([${JSON.stringify(config)},${JSON.stringify(window)}])`
+
+  it('remote:getHosts returns the client’s host list untouched', async () => {
+    await expectLocalOnly('remote:getHosts')
+    expect(await viaIpc('remote:getHosts', [])).toEqual(['remoteClient.getHosts([])'])
+    expect(await resultViaIpc('remote:getHosts', [])).toEqual([H.REMOTE_HOST])
+  })
+
+  it('remote:getActiveHost asks the client and does nothing else', async () => {
+    await expectLocalOnly('remote:getActiveHost')
+    H.state.activeHost = H.REMOTE_HOST
+    H.state.proxyChecks = 0
+    // `getActiveHost` is counted rather than logged (see the client mock), so the empty log
+    // is the assertion that no *other* backend call happens, and the count is the assertion
+    // that the client was asked exactly once.
+    expect(await viaIpc('remote:getActiveHost', [])).toEqual([])
+    expect(H.state.proxyChecks).toBe(1)
+    expect(await resultViaIpc('remote:getActiveHost', [])).toEqual(H.REMOTE_HOST)
+  })
+
+  it('remote:getActiveHost answers null when no host is active', async () => {
+    expect(await resultViaIpc('remote:getActiveHost', [])).toBe(null)
+  })
+
+  it('remote:addHost passes the input through verbatim', async () => {
+    await expectLocalOnly('remote:addHost', [HOST_INPUT])
+    expect(await viaIpc('remote:addHost', [HOST_INPUT])).toEqual([
+      `remoteClient.addHost([${JSON.stringify(HOST_INPUT)}])`,
+    ])
+    // Normalisation (trimming, the `http://` default, the generated id and timestamps) is
+    // the client's job and stays there — the handler adds nothing.
+    expect(await resultViaIpc('remote:addHost', [HOST_INPUT])).toEqual({
+      ...H.REMOTE_HOST, id: 'added',
+    })
+  })
+
+  it('remote:updateHost passes id and input in that order', async () => {
+    await expectLocalOnly('remote:updateHost', ['h1', HOST_INPUT])
+    expect(await viaIpc('remote:updateHost', ['h1', HOST_INPUT])).toEqual([
+      `remoteClient.updateHost(["h1",${JSON.stringify(HOST_INPUT)}])`,
+    ])
+    expect(await resultViaIpc('remote:updateHost', ['h1', HOST_INPUT])).toEqual({
+      ...H.REMOTE_HOST, id: 'updated',
+    })
+  })
+
+  it('remote:removeHost resolves nothing', async () => {
+    await expectLocalOnly('remote:removeHost', ['h1'])
+    expect(await viaIpc('remote:removeHost', ['h1'])).toEqual(['remoteClient.removeHost(["h1"])'])
+    // The contract's result is `void`. The client's `removeHost` is the one of the seven
+    // that returns nothing, and the renderer re-reads the list from the change event.
+    expect(await resultViaIpc('remote:removeHost', ['h1'])).toBeUndefined()
+  })
+
+  it('remote:setActiveHost forwards an id', async () => {
+    await expectLocalOnly('remote:setActiveHost', ['h1'])
+    expect(await viaIpc('remote:setActiveHost', ['h1'])).toEqual([
+      'remoteClient.setActiveHost(["h1"])',
+    ])
+    expect(await resultViaIpc('remote:setActiveHost', ['h1'])).toEqual({
+      ...H.REMOTE_HOST, id: 'activated',
+    })
+  })
+
+  it('remote:setActiveHost forwards a null id verbatim rather than coalescing it', async () => {
+    // `null` is the deactivate signal — the client branches on it to clear the setting and
+    // tear the SSE stream down. Coalescing it to `undefined` anywhere on the way would take
+    // the "host not found" throw instead.
+    expect(await viaIpc('remote:setActiveHost', [null])).toEqual([
+      'remoteClient.setActiveHost([null])',
+    ])
+  })
+
+  it('remote:testHost awaits the probe rather than floating it', async () => {
+    await expectLocalOnly('remote:testHost', [HOST_INPUT])
+    expect(await viaIpc('remote:testHost', [HOST_INPUT])).toEqual([
+      `remoteClient.testHost([${JSON.stringify(HOST_INPUT)}])`,
+      'remoteClient.testHost:settled',
+    ])
+    expect(await resultViaIpc('remote:testHost', [HOST_INPUT])).toEqual({ ok: true })
+  })
+
+  it('remote:setServerConfig saves first, then restarts with the SAVED config', async () => {
+    await expectLocalOnly('remote:setServerConfig', [SERVER_CONFIG])
+    // Order matters in both directions: restarting first would rebind the old port, and the
+    // restart is handed what `saveRemoteServerConfig` returned — the *normalised* config —
+    // not the config that came in off the wire.
+    expect(await viaIpc('remote:setServerConfig', [SERVER_CONFIG])).toEqual([
+      `remoteConfig.saveRemoteServerConfig([${JSON.stringify(SERVER_CONFIG)}])`,
+      restartEntry({ ...SERVER_CONFIG, token: 'normalised-token' }),
+    ])
+    expect(await resultViaIpc('remote:setServerConfig', [SERVER_CONFIG])).toEqual({
+      ...SERVER_CONFIG, token: 'normalised-token',
+    })
+  })
+
+  it('remote:regenerateServerToken mints a fresh 24-byte token over the stored config', async () => {
+    await expectLocalOnly('remote:regenerateServerToken')
+    const log = await viaIpc('remote:regenerateServerToken', [])
+    expect(log).toHaveLength(3)
+    // Read, then write, then restart. The read is what supplies enabled/host/port, so only
+    // the token changes — a regenerate that dropped the read would disable the server.
+    expect(log[0]).toBe('remoteConfig.readRemoteServerConfig([])')
+    expect(log[1]).toMatch(
+      /^remoteConfig\.saveRemoteServerConfig\(\[\{"enabled":false,"host":"127\.0\.0\.1","port":3285,"token":"[0-9a-f]{48}"\}\]\)$/,
+    )
+    expect(log[2]).toBe(restartEntry({
+      enabled: false, host: '127.0.0.1', port: 3285, token: 'normalised-token',
+    }))
+    expect(await resultViaIpc('remote:regenerateServerToken', [])).toEqual({
+      enabled: false, host: '127.0.0.1', port: 3285, token: 'normalised-token',
+    })
+  })
+
+  it('remote:regenerateServerToken mints a different token every time', async () => {
+    // Otherwise a hoisted or memoised token would satisfy the assertion above while making
+    // the button a no-op — the whole point of the channel is that the old token stops
+    // working.
+    const tokenOf = (log: string[]): string => /"token":"([0-9a-f]+)"/.exec(log[1])?.[1] ?? ''
+    const first = tokenOf(await viaIpc('remote:regenerateServerToken', []))
+    const second = tokenOf(await viaIpc('remote:regenerateServerToken', []))
+    expect(first).toHaveLength(48)
+    expect(second).not.toBe(first)
   })
 })
 
