@@ -271,3 +271,80 @@ async function countingRead(read: () => Promise<unknown>): Promise<number> {
   await read()
   return runner.runCommands.length - before
 }
+
+describe('the two mutations that used to leave a stale cache', () => {
+  it('deleteBranches clears the cache when at least one branch was deleted', async () => {
+    // Was a recorded bug: `branch -D` mutates branch state, `listCachedBranches` caches under
+    // `'branches'` for 30s, and nothing invalidated -- so a deleted branch kept showing while
+    // the renderer re-read `git:branches` the instant the delete resolved.
+    await warmCache()
+
+    const result = await git.deleteBranches(REPO, ['feature/done'], null, null)
+    expect(result.deleted).toEqual(['feature/done'])
+    expect(result.failed).toEqual([])
+
+    expect(await statusCost()).toBeGreaterThan(0)
+  })
+
+  it('deleteBranches leaves the cache alone when every delete failed', async () => {
+    // Conditional on purpose, and this is the case that makes it conditional: the function
+    // reports failure by returning rather than throwing, so an all-failed run changed nothing
+    // and dropping a valid entry would be pure cost.
+    await warmCache()
+
+    runner.failFor = /^branch -D feature\/stuck$/
+    const result = await git.deleteBranches(REPO, ['feature/stuck'], null, null)
+    expect(result.deleted).toEqual([])
+    expect(result.failed).toHaveLength(1)
+
+    expect(await statusCost()).toBe(0)
+  })
+
+  it('deleteBranches clears the cache on partial success', async () => {
+    await warmCache()
+
+    runner.failFor = /^branch -D feature\/stuck$/
+    const result = await git.deleteBranches(REPO, ['feature/done', 'feature/stuck'], null, null)
+    expect(result.deleted).toEqual(['feature/done'])
+    expect(result.failed).toHaveLength(1)
+
+    // One branch really went, so the cached list is wrong even though the call "failed".
+    expect(await statusCost()).toBeGreaterThan(0)
+  })
+
+  it('forceUnlockRepo clears the cache even when it removes nothing', async () => {
+    // The one unconditional-on-empty mutation here, and the reason is the inverse of
+    // deleteBranches: the stale entry was caused by the LOCK, not by the unlock.
+    // `getGitStatus` swallows a failure and returns null, `readWithCache` caches that null for
+    // the status TTL, and the renderer re-reads status immediately after unlocking expecting a
+    // fresh answer. A run that finds no lock must still clear that null.
+    await warmCache(REPO, SSH, null)
+
+    const result = await git.forceUnlockRepo(REPO, SSH, null)
+    expect(result.removed).toEqual([])
+
+    expect(await statusCost(REPO, SSH, null)).toBeGreaterThan(0)
+  })
+
+  it('forceUnlockRepo clears the cache on the LOCAL path too', async () => {
+    // Two separate code paths: hosted repos run a shell script, local ones resolve `.git` and
+    // unlink directly. Testing only the hosted branch let a revert of the local one survive.
+    // The fs walk finds nothing under the fake git-dir and ENOENTs out harmlessly, which is
+    // fine -- what is under test is that the invalidation happens regardless.
+    await warmCache(REPO, null, null)
+
+    await git.forceUnlockRepo(REPO, null, null)
+
+    expect(await statusCost(REPO, null, null)).toBeGreaterThan(0)
+  })
+
+  it('forceUnlockRepo clears only its own transport scope', async () => {
+    await warmCache(REPO, SSH, null)
+    await warmCache(REPO, null, null)
+
+    await git.forceUnlockRepo(REPO, SSH, null)
+
+    expect(await statusCost(REPO, SSH, null)).toBeGreaterThan(0)
+    expect(await statusCost(REPO, null, null)).toBe(0)
+  })
+})

@@ -2410,15 +2410,17 @@ describe('git:* — the reads, and the three mutations that sit among them', () 
     expect(ipc.some((entry) => entry.includes('invalidateGitCache'))).toBe(false)
   })
 
-  it('git:deleteBranches does NOT invalidate the branch cache — a KNOWN BUG, preserved', async () => {
-    // KNOWN BUG, recorded rather than fixed, and deliberately not "tidied" during a fold:
-    // fixing it here would hide a behaviour change inside a refactor.
+  it('git:deleteBranches reaches the mutation, which now clears the branch cache', async () => {
+    // This test used to record the opposite: `deleteBranches` mutated branch state and nothing
+    // invalidated, so a deleted branch kept showing for up to the 30 s `'branches'` TTL while
+    // stores/git.ts:449 re-read `git:branches` the moment the delete resolved. It was preserved
+    // through the fold so the fix would not hide inside a refactor, and is now fixed in
+    // `git.ts` alongside `forceUnlockRepo`.
     //
-    // `deleteBranches` mutates branch state and nothing invalidates: not the handler, and not
-    // the `git.ts` function, which is now the odd one out in that module (git.ts:119-146 lists
-    // it as one of four documented exceptions). `listCachedBranches` caches under `'branches'`
-    // with a 30 s TTL, and stores/git.ts:449 re-reads `git:branches` the moment the delete
-    // resolves — so the deleted branch keeps showing in the UI for up to 30 s.
+    // The invalidation is no longer visible from here — this file mocks `git.ts`, so every
+    // mutating handler's log looks alike. What this still pins is that the handler reaches the
+    // mutation with the right arguments and adds nothing of its own; the cache behaviour is
+    // asserted against the real module in `git-cache-invalidation.test.ts`.
     const ipc = await viaIpc('git:deleteBranches', ['C:/repo', ['feature/done']])
     const rpc = await viaControlRpc('git:deleteBranches', ['C:/repo', ['feature/done']])
 

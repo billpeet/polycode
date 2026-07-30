@@ -133,11 +133,14 @@ async function readWithCache<T>(
  * mutates before it can throw (`discardFileChanges`, `gitPullWithAutoStash`), it is spelled
  * out per-exit rather than hoisted, so the failure semantics stay visible.
  *
- * Four mutations deliberately do NOT invalidate, and the inconsistency is the point —
- * each is a recorded bug or a knowingly-cheap read path, not an oversight:
+ * Two mutations depart from "unconditional, at the end of the body", each for a stated
+ * reason: `deleteBranches` guards on `deleted.length > 0`, because it reports partial failure
+ * by returning rather than throwing, so an all-failed run changed nothing; and
+ * `forceUnlockRepo` invalidates even when it removes nothing, because the stale entry it is
+ * clearing was caused by the lock rather than by the unlock.
  *
- * - `deleteBranches` (branch state; `'branches'` caches for 30 s) — KNOWN BUG.
- * - `forceUnlockRepo` (deletes `.git/*.lock`) — KNOWN BUG.
+ * Two mutations do NOT invalidate, and both are deliberate rather than oversights:
+ *
  * - `gitFetchRemote` — its only caller is `gitFetchRemoteCached`, which invalidates.
  * - the bare `git fetch origin <ref>` inside `resolveCompareMainRef`,
  *   `resolveCompareBranchRef`, `resolvePullRequestBaseRef` and `findMergedBranches`: they
@@ -199,6 +202,14 @@ const TOP_LEVEL_LOCK_FILES = ['index.lock', 'HEAD.lock', 'config.lock', 'shallow
  *   - loose-ref locks (`.git/refs/heads/*.lock`, `.git/refs/tags/*.lock`, etc.)
  *
  * Returns the list of files that were removed (relative to `.git/`) so the UI can report outcome.
+ *
+ * Invalidates unconditionally, even when nothing was removed — the one mutation here that
+ * does. The reason it is reached at all is that reads were failing: `getGitStatus` swallows a
+ * failure and returns `null`, and `readWithCache` caches that `null` for the status TTL. So the
+ * stale entry this clears was caused by the lock rather than by the unlock, and it survives a
+ * run that finds no lock to remove. `stores/git.ts` re-reads status immediately afterwards
+ * expecting a fresh answer; without this it could be served the cached `null` it was trying to
+ * escape.
  */
 export async function forceUnlockRepo(
   repoPath: string,
@@ -220,6 +231,7 @@ export async function forceUnlockRepo(
     ].join(' && ')
     const out = await shell(repoPath, script, ssh, wsl)
     const removed = out.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
+    invalidateGitCache(repoPath, ssh, wsl)
     return { removed }
   }
 
@@ -264,6 +276,8 @@ export async function forceUnlockRepo(
     }
   }
   await walkAndUnlock(refsDir)
+
+  invalidateGitCache(repoPath, ssh, wsl)
 
   return { removed }
 }
@@ -1416,6 +1430,11 @@ export async function deleteBranches(repoPath: string, branches: string[], ssh?:
       failed.push({ branch, error: err instanceof Error ? err.message : String(err) })
     }
   }
+
+  // Conditional, unlike every other mutation here: this function reports partial failure by
+  // returning rather than throwing, so `deleted.length === 0` means nothing changed and
+  // dropping a valid `branches` entry would be pure cost.
+  if (deleted.length > 0) invalidateGitCache(repoPath, ssh, wsl)
 
   return { deleted, failed }
 }
