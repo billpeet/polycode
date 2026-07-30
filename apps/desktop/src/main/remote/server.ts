@@ -4,6 +4,7 @@ import { handleControlRpc, CONTROL_RPC_CHANNELS } from '../control/control-rpc'
 import { onAppEvent } from '../app-events'
 import { RemoteServerConfig } from '../../shared/types'
 import { isValidBearerToken } from '../http-auth'
+import { getAllowedCorsOrigin, isAllowedHostHeader } from '../http-request-security'
 
 let server: http.Server | null = null
 
@@ -51,7 +52,15 @@ function shouldStreamEvent(channel: string): boolean {
 
 function createRequestHandler(config: RemoteServerConfig, window: BrowserWindow): http.RequestListener {
   return async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    if (!isAllowedHostHeader(req.headers.host, config.host, config.port)) {
+      return sendJson(res, 421, { error: 'Misdirected request' })
+    }
+
+    const allowedOrigin = getAllowedCorsOrigin(req.headers.origin, req.headers.host)
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+    }
+    res.setHeader('Vary', 'Origin')
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 

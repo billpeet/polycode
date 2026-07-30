@@ -56,7 +56,7 @@ export class SshRunner implements Runner {
     // LOAD_NODE_MANAGERS explicitly adds common tool directories to PATH.
     const parts: string[] = [LOAD_NODE_MANAGERS]
     if (preamble) parts.push(preamble)
-    parts.push(`cd ${cdTarget(workDir)} && ${binary} ${args.map(shellEscape).join(' ')}`)
+    parts.push(`cd ${cdTarget(workDir)} && ${shellEscape(binary)} ${args.map(shellEscape).join(' ')}`)
     const innerCmd = parts.join('; ')
 
     const remoteCmd = `bash -lc ${shellEscape(innerCmd)}`

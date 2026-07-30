@@ -23,7 +23,7 @@ const { LocalRunner } = await import('../runner/local')
 const { WslRunner } = await import('../runner/wsl')
 const { SshRunner } = await import('../runner/ssh')
 const { FakeRunner } = await import('../runner/fake')
-const { LOAD_NODE_MANAGERS } = await import('../runner/utils')
+const { LOAD_NODE_MANAGERS, shellEscape } = await import('../runner/utils')
 const { expectSuccess } = await import('../runner/collect')
 
 /** The argv of the single spawn the adapter performed. */
@@ -179,6 +179,18 @@ describe('WslRunner.spawnScript', () => {
 
     expect(lastSpawn().args[5]).toBe('cd "$HOME"\'\' && pwd')
   })
+
+  it('shell-escapes an executable path containing spaces', () => {
+    new WslRunner({ distro: 'Ubuntu' }).spawn({
+      binary: '/opt/Claude Code/bin/claude',
+      args: ['say hi'],
+      workDir: '/srv/app',
+    })
+
+    expect(lastSpawn().args[5]).toBe(
+      "cd '/srv/app' && '/opt/Claude Code/bin/claude' 'say hi'",
+    )
+  })
 })
 
 // ── SshRunner ─────────────────────────────────────────────────────────────────
@@ -210,6 +222,20 @@ describe('SshRunner.spawnScript', () => {
     void new SshRunner(SSH).runScript({ script: 'git status', workDir: '/srv/app' })
 
     expect(lastSpawn().args).toContain('BatchMode=yes')
+  })
+
+  it('shell-escapes an executable path containing spaces', () => {
+    new SshRunner(SSH).spawn({
+      binary: '/opt/Claude Code/bin/claude',
+      args: ['say hi'],
+      workDir: '/srv/app',
+    })
+
+    const expectedInner = [
+      LOAD_NODE_MANAGERS,
+      "cd '/srv/app' && '/opt/Claude Code/bin/claude' 'say hi'",
+    ].join('; ')
+    expect(lastSpawn().args.at(-1)).toBe(`bash -lc ${shellEscape(expectedInner)}`)
   })
 })
 

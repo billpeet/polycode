@@ -32,6 +32,10 @@ export function WebhookPanel({ hideHeader }: Props) {
       setError('Port must be between 1024 and 65535')
       return
     }
+    if (!config.token.trim()) {
+      setError('Auth token is required')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -110,14 +114,14 @@ export function WebhookPanel({ hideHeader }: Props) {
       {/* Auth token */}
       <div className="flex flex-col gap-1">
         <label className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>
-          Auth token <span style={{ color: 'var(--color-text-muted)', fontWeight: 400 }}>(optional)</span>
+          Auth token
         </label>
         <div className="flex gap-2">
           <input
             type={showToken ? 'text' : 'password'}
             value={config.token}
             onChange={(e) => setConfig((c) => ({ ...c, token: e.target.value }))}
-            placeholder="Leave empty to disable auth"
+            placeholder="Required"
             className="flex-1 rounded px-2 py-1 text-xs"
             style={{
               background: 'var(--color-surface)',
@@ -138,7 +142,8 @@ export function WebhookPanel({ hideHeader }: Props) {
           </button>
         </div>
         <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-          If set, requests must include <code>Authorization: Bearer &lt;token&gt;</code>.
+          Generated automatically on first use. Requests must include{' '}
+          <code>Authorization: Bearer &lt;token&gt;</code>.
         </span>
       </div>
 

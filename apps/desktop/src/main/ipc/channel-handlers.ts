@@ -149,7 +149,7 @@ import { killByPid, killByPort, runExecFile } from '../process-control'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
 import { getLogsDirPath } from '../app-logger'
 import { restartWebhookServer } from '../webhook/server'
-import type { WebhookConfig } from '../webhook/server'
+import { readWebhookConfig, saveWebhookConfig } from '../webhook/config'
 import { readRemoteServerConfig, saveRemoteServerConfig } from '../remote/config'
 import { getPairingInfo } from '../remote/lan'
 // `import type`, and it has to stay that way — see `LocalHandlerContext` below and the
@@ -1949,29 +1949,15 @@ export const channelHandlers = {
 
   'settings:set': (_ctx, key, value) => setSetting(key, value),
 
-  // The three rows are read individually and each is normalised on the way out, because the
-  // never-configured state is three *missing rows* rather than a missing object: disabled,
-  // the default port, and an empty token.
-  //
-  // The `?? '3284'` fires on a missing row only — `??` does not fire on `''` — so a row
-  // stored as an empty string yields `parseInt('', 10)`, i.e. NaN, and the renderer would
-  // show a blank port. Preserved verbatim; `webhook:setConfig` always writes
-  // `String(config.port)` so nothing reachable today can store one, and widening this to
-  // `Number.isInteger` would be a fix rather than a fold.
-  'webhook:getConfig': () => ({
-    enabled: getSetting('webhook:enabled') === 'true',
-    port: parseInt(getSetting('webhook:port') ?? '3284', 10),
-    token: getSetting('webhook:token') ?? '',
-  } satisfies WebhookConfig),
+  // Reading mints and persists a token for the never-configured state, so enabling the
+  // webhook can never silently expose an unauthenticated thread-creation endpoint.
+  'webhook:getConfig': () => readWebhookConfig(),
 
-  // The restart comes last and is handed the *incoming* config rather than a re-read of
-  // what was just written. Both matter: restarting first would rebind the old port, and
-  // re-reading would make the restart depend on the writes having landed.
+  // Save first, then restart with the normalised config. In particular, an empty token is
+  // replaced before the listener starts, even if a caller bypasses renderer validation.
   'webhook:setConfig': (ctx, config) => {
-    setSetting('webhook:enabled', config.enabled ? 'true' : 'false')
-    setSetting('webhook:port', String(config.port))
-    setSetting('webhook:token', config.token)
-    return restartWebhookServer(config, ctx.window)
+    const saved = saveWebhookConfig(config)
+    restartWebhookServer(saved, ctx.window)
   },
 
   // ── Remote control ─────────────────────────────────────────────────────────

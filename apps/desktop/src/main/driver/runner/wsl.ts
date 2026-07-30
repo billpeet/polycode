@@ -43,7 +43,7 @@ export class WslRunner implements Runner {
     // Windows binaries to shadow Linux ones (e.g. Windows bun instead of Linux bun).
     const parts: string[] = []
     if (preamble) parts.push(preamble)
-    parts.push(`cd ${cdTarget(workDir)} && ${binary} ${args.map(shellEscape).join(' ')}`)
+    parts.push(`cd ${cdTarget(workDir)} && ${shellEscape(binary)} ${args.map(shellEscape).join(' ')}`)
     const innerCmd = parts.join('; ')
 
     const wslArgs = ['-d', this.wsl.distro, '--', 'bash', '-ilc', innerCmd]

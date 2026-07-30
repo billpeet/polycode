@@ -4506,17 +4506,19 @@ describe('settings:* and webhook:* — local-only', () => {
     ])
   })
 
-  it('webhook:getConfig reads three rows and coerces each', async () => {
+  it('webhook:getConfig reads the three rows and persists a token on first use', async () => {
     await expectLocalOnly('webhook:getConfig')
-    expect(await viaIpc('webhook:getConfig', [])).toEqual([
+    const calls = await viaIpc('webhook:getConfig', [])
+    expect(calls.slice(0, 3)).toEqual([
       'db.getSetting(["webhook:enabled"])',
       'db.getSetting(["webhook:port"])',
       'db.getSetting(["webhook:token"])',
     ])
+    expect(calls[3]).toMatch(/^db\.setSetting\(\["webhook:token","[0-9a-f]{48}"\]\)$/)
     // The stubbed getSetting answers undefined for every key, which is the never-configured
-    // state: disabled, the default port, and an empty token rather than undefined.
-    expect(await resultViaIpc('webhook:getConfig', [])).toEqual({
-      enabled: false, port: 3284, token: '',
+    // state: disabled and the default port, with a newly generated token.
+    expect(await resultViaIpc('webhook:getConfig', [])).toMatchObject({
+      enabled: false, port: 3284, token: expect.stringMatching(/^[0-9a-f]{48}$/),
     })
   })
 
@@ -4534,9 +4536,14 @@ describe('settings:* and webhook:* — local-only', () => {
   })
 
   it('webhook:setConfig writes "false" rather than omitting the disabled flag', async () => {
-    expect(await viaIpc('webhook:setConfig', [{ enabled: false, port: 3284, token: '' }])).toContain(
+    const calls = await viaIpc('webhook:setConfig', [{ enabled: false, port: 3284, token: '' }])
+    expect(calls).toContain(
       'db.setSetting(["webhook:enabled","false"])',
     )
+    expect(calls).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^db\.setSetting\(\["webhook:token","[0-9a-f]{48}"\]\)$/),
+      expect.stringMatching(/^webhook\.restartWebhookServer\(\[\{"enabled":false,"port":3284,"token":"[0-9a-f]{48}"\},/),
+    ]))
   })
 })
 

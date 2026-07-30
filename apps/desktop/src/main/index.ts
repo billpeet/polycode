@@ -10,12 +10,12 @@ import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
 import { SENTRY_DSN } from '../shared/sentry.config'
 import { startWebhookServer, stopWebhookServer } from './webhook/server'
+import { readWebhookConfig } from './webhook/config'
 import { startRemoteControlServer, stopRemoteControlServer } from './remote/server'
 import { readRemoteServerConfig } from './remote/config'
 import { stopRemoteControlClient } from './remote/client'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
-import { getSetting } from './db/queries'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
 import { installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
@@ -234,11 +234,7 @@ app.whenReady().then(() => {
   registerIpcHandlers(win)
   startPlanWatcher(win)
 
-  startWebhookServer({
-    enabled: getSetting('webhook:enabled') === 'true',
-    port: parseInt(getSetting('webhook:port') ?? '3284', 10),
-    token: getSetting('webhook:token') ?? '',
-  }, win)
+  startWebhookServer(readWebhookConfig(), win)
   startRemoteControlServer(readRemoteServerConfig(), win)
 
   initUpdater(() => win)

@@ -14,14 +14,10 @@ import { sessionManager } from '../session/manager'
 import { getModelsForProvider, getDefaultModelForProvider, Provider } from '../../shared/types'
 import { emitAppEvent } from '../app-events'
 import { isValidBearerToken } from '../http-auth'
+import { getAllowedCorsOrigin, isAllowedHostHeader } from '../http-request-security'
+import { WebhookConfig } from './config'
 
 let server: http.Server | null = null
-
-export interface WebhookConfig {
-  enabled: boolean
-  port: number
-  token: string
-}
 
 function windowsPathToWsl(winPath: string): string {
   return winPath
@@ -120,7 +116,15 @@ async function handleCreateThread(
 
 function createRequestHandler(config: WebhookConfig, window: BrowserWindow): http.RequestListener {
   return async (req, res) => {
-    res.setHeader('Access-Control-Allow-Origin', '*')
+    if (!isAllowedHostHeader(req.headers.host, '127.0.0.1', config.port)) {
+      return sendJson(res, 421, { error: 'Misdirected request' })
+    }
+
+    const allowedOrigin = getAllowedCorsOrigin(req.headers.origin, req.headers.host)
+    if (allowedOrigin) {
+      res.setHeader('Access-Control-Allow-Origin', allowedOrigin)
+    }
+    res.setHeader('Vary', 'Origin')
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
 
@@ -130,10 +134,8 @@ function createRequestHandler(config: WebhookConfig, window: BrowserWindow): htt
       return
     }
 
-    if (config.token) {
-      if (!isValidBearerToken(req.headers.authorization, config.token)) {
-        return sendJson(res, 401, { error: 'Unauthorized' })
-      }
+    if (!isValidBearerToken(req.headers.authorization, config.token)) {
+      return sendJson(res, 401, { error: 'Unauthorized' })
     }
 
     if (req.method === 'POST' && req.url === '/api/threads') {

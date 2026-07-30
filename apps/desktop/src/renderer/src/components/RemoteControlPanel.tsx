@@ -19,6 +19,11 @@ interface Props {
   hideHeader?: boolean
 }
 
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase()
+  return normalized === '127.0.0.1' || normalized === 'localhost' || normalized === '::1' || normalized === '[::1]'
+}
+
 function inputStyle() {
   return {
     background: 'var(--color-surface)',
@@ -51,7 +56,7 @@ function PairingQrSection({
   const [selectedIp, setSelectedIp] = useState<string | null>(null)
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
 
-  const isLoopback = server.host === '127.0.0.1' || server.host === 'localhost' || server.host === '::1'
+  const isLoopback = isLoopbackHost(server.host)
   const bindsAll = server.host === '0.0.0.0' || server.host === '::' || server.host === ''
   const pairingIp = !isLoopback && !bindsAll ? server.host : (selectedIp ?? info?.addresses[0] ?? null)
 
@@ -317,6 +322,20 @@ export function RemoteControlPanel({ hideHeader }: Props) {
             />
           </div>
         </div>
+
+        {server.enabled && !isLoopbackHost(server.host) && (
+          <p
+            className="rounded px-3 py-2 text-xs"
+            style={{
+              color: 'var(--color-error, #f87171)',
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-error, #f87171)',
+            }}
+          >
+            Network access uses unencrypted HTTP, so the bearer token can be observed in transit.
+            Only enable this on a trusted LAN.
+          </p>
+        )}
 
         <div className="flex flex-col gap-1">
           <label className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>
