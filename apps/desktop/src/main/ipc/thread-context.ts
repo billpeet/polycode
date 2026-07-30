@@ -10,7 +10,10 @@
 import { existsSync } from 'fs'
 import { getLocationForThread, getLocationByPath, getProjectById, getThreadWsl } from '../db/queries'
 import { getCachedGitStatus, invalidateGitCache } from '../git'
+import { windowsPathToWsl } from '../path-utils'
 import type { SshConfig, WslConfig } from '../../shared/types'
+
+export { windowsPathToWsl }
 
 /** Get SSH config from the thread's linked repo location. */
 export function getSshConfigForThread(threadId: string): SshConfig | null {
@@ -35,16 +38,6 @@ export function getWslConfigForThread(threadId: string): WslConfig | null {
 export function getWorkingDirForThread(threadId: string): string | null {
   const location = getLocationForThread(threadId)
   return location?.path ?? null
-}
-
-/**
- * Convert a Windows absolute path to its WSL /mnt/... equivalent.
- * e.g. C:\Users\foo\bar  →  /mnt/c/Users/foo/bar
- */
-export function windowsPathToWsl(winPath: string): string {
-  return winPath
-    .replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
-    .replace(/\\/g, '/')
 }
 
 /**

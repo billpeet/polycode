@@ -15,15 +15,10 @@ import { getModelsForProvider, getDefaultModelForProvider, Provider } from '../.
 import { emitAppEvent } from '../app-events'
 import { isValidBearerToken } from '../http-auth'
 import { getAllowedCorsOrigin, isAllowedHostHeader } from '../http-request-security'
+import { windowsPathToWsl } from '../path-utils'
 import { WebhookConfig } from './config'
 
 let server: http.Server | null = null
-
-function windowsPathToWsl(winPath: string): string {
-  return winPath
-    .replace(/^([A-Za-z]):[/\\]/, (_, drive) => `/mnt/${drive.toLowerCase()}/`)
-    .replace(/\\/g, '/')
-}
 
 function sendJson(res: http.ServerResponse, status: number, body: unknown): void {
   const json = JSON.stringify(body)

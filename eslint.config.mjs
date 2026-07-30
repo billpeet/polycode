@@ -84,9 +84,6 @@ const boundaryOwners = {
     // The OS process-control module: killing by pid, finding what holds a port.
     // A different concern from running a command, with its own home already.
     'apps/desktop/src/main/process-control.ts',
-    // Fire-and-forget GUI launching (VS Code, Explorer, Terminal). Genuinely not
-    // "run a command and collect output" — nothing to collect, nothing to wait for.
-    'apps/desktop/src/main/ipc/handlers.ts',
   ],
   rules: {
     '@typescript-eslint/no-restricted-imports': 'off',
