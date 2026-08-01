@@ -19,6 +19,7 @@ import { homedir } from 'os'
 import path from 'path'
 import readline from 'readline'
 import { parseShellCommand } from '../../shared/shell-command'
+import { CodexAgentTracker } from './codex-agents'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
 
@@ -549,6 +550,40 @@ function buildSubAgentActivityEvent(item: SubAgentActivityItem): OutputEvent {
   }
 }
 
+function buildSubAgentSpawnAnchor(params: Record<string, unknown> | undefined): OutputEvent | null {
+  const rawItem = params?.item
+  if (!rawItem || typeof rawItem !== 'object') return null
+  const item = rawItem as Record<string, unknown>
+  if (
+    item.type !== 'subAgentActivity' ||
+    item.kind !== 'started' ||
+    typeof item.id !== 'string' ||
+    !item.id
+  ) {
+    return null
+  }
+
+  const path = typeof item.agentPath === 'string' ? item.agentPath : ''
+  const taskName = path.split('/').filter(Boolean).at(-1)
+  return {
+    type: 'tool_call',
+    content: path ? `Spawn agent: ${path}` : 'Spawn agent',
+    metadata: {
+      id: item.id,
+      type: 'tool_call',
+      name: 'Agent',
+      tool: 'spawnAgent',
+      input: {
+        tool: 'spawnAgent',
+        ...(taskName ? { task_name: taskName } : {}),
+      },
+      source: 'codex_subagent_anchor',
+      synthetic: true,
+      agent_scope: 'main',
+    },
+  }
+}
+
 function normalizeCodexQuestion(raw: Record<string, unknown>, index: number) {
   const id = typeof raw.id === 'string' && raw.id ? raw.id : `question-${index + 1}`
   const header = typeof raw.header === 'string' && raw.header ? raw.header : 'Question'
@@ -969,6 +1004,15 @@ export function parseCodexAppServerNotification(
       }
 
       if (item.type === 'reasoning') break
+
+      // Multi-agent v2 deliberately reuses the spawning dynamic tool call id
+      // for its SubAgentActivity item. Handle the activity before generic item
+      // de-duplication so that shared id does not suppress the lifecycle event.
+      if (item.type === 'sub_agent_activity') {
+        events.push(buildSubAgentActivityEvent(item))
+        break
+      }
+
       if (method === 'item/completed' && state.completedItemIds.has(item.id)) break
       if (method === 'item/completed') state.completedItemIds.add(item.id)
 
@@ -988,11 +1032,6 @@ export function parseCodexAppServerNotification(
             })
           }
         }
-        break
-      }
-
-      if (item.type === 'sub_agent_activity') {
-        events.push(buildSubAgentActivityEvent(item))
         break
       }
 
@@ -1659,6 +1698,13 @@ class CodexAppServerDriver implements CLIDriver {
   private activeTurnId: string | null = null
   private readyPromise: Promise<void> | null = null
   private state = createCodexStreamState()
+  private readonly threadStates = new Map<string, CodexStreamState>()
+  private readonly agentTracker = new CodexAgentTracker()
+  private readonly pendingAgentNotifications = new Map<string, Array<{
+    method: string
+    params: Record<string, unknown> | undefined
+  }>>()
+  private rootTurnCompleted = false
   private stopRequested = false
 
   constructor(private readonly options: DriverOptions) {
@@ -1830,6 +1876,7 @@ class CodexAppServerDriver implements CLIDriver {
       throw new Error('Codex session is missing a thread id')
     }
 
+    this.rootTurnCompleted = false
     this.outstandingTurnCount += 1
     try {
       const permissionMode = resolvePermissionMode({
@@ -1944,37 +1991,10 @@ class CodexAppServerDriver implements CLIDriver {
       const params = parsed.params && typeof parsed.params === 'object'
         ? parsed.params as Record<string, unknown>
         : undefined
-      const isRestoredUsage = parsed.method === 'thread/tokenUsage/updated'
-        && (!this.activeTurnId || params?.turnId !== this.activeTurnId)
-      const outputEvents = isRestoredUsage ? [] : parseCodexAppServerNotification(parsed.method, params, this.state, (sessionId) => {
-        this.codexThreadId = sessionId
-        this.options.onSessionId?.(sessionId)
-      })
-      for (const event of outputEvents) this.emit(event)
+      this.handleNotification(parsed.method, params)
 
       if (parsed.method === 'serverRequest/resolved') {
         this.resolveServerRequest(params?.requestId)
-      } else if (parsed.method === 'turn/started') {
-        const turn = params?.turn as Record<string, unknown> | undefined
-        this.activeTurnId = (turn?.id as string | undefined) ?? this.activeTurnId
-      } else if (parsed.method === 'turn/completed') {
-        const turn = params?.turn as Record<string, unknown> | undefined
-        const status = turn?.status as string | undefined
-        this.activeTurnId = null
-        if (status === 'failed') {
-          const error = turn?.error as Record<string, unknown> | undefined
-          this.outstandingTurnCount = 0
-          this.finishTurn(new Error(String(error?.message ?? 'Codex turn failed')))
-        } else {
-          this.outstandingTurnCount = Math.max(0, this.outstandingTurnCount - 1)
-          if (this.outstandingTurnCount === 0) {
-            this.finishTurn()
-          }
-        }
-      } else if (parsed.method === 'error' && params?.willRetry !== true) {
-        const error = params?.error as Record<string, unknown> | undefined
-        this.outstandingTurnCount = 0
-        this.finishTurn(new Error(String(error?.message ?? 'Codex app-server error')))
       }
       return
     }
@@ -1984,6 +2004,144 @@ class CodexAppServerDriver implements CLIDriver {
         ? parsed.params as Record<string, unknown>
         : {}
       this.handleServerRequest(parsed.id, parsed.method, params)
+    }
+  }
+
+  private handleNotification(
+    method: string,
+    params: Record<string, unknown> | undefined,
+  ): void {
+    const thread = params?.thread && typeof params.thread === 'object'
+      ? params.thread as Record<string, unknown>
+      : undefined
+    const threadId = typeof params?.threadId === 'string'
+      ? params.threadId
+      : typeof thread?.id === 'string'
+        ? thread.id
+        : this.codexThreadId
+
+    if (method === 'thread/started' && !this.codexThreadId && threadId) {
+      this.codexThreadId = threadId
+      this.options.onSessionId?.(threadId)
+    }
+
+    const observation = this.agentTracker.observeNotification(method, params)
+    const isRootThread = !threadId || threadId === this.codexThreadId
+    const isKnownAgent = Boolean(threadId && this.agentTracker.hasAgent(threadId))
+
+    // App-server auto-subscribes this connection to newly spawned threads. A
+    // child can start streaming before its parent's spawn item has supplied the
+    // anchor id, so hold those notifications briefly instead of leaking them
+    // into the root transcript.
+    if (!isRootThread && !isKnownAgent) {
+      if (method !== 'thread/started' && threadId) {
+        const pending = this.pendingAgentNotifications.get(threadId) ?? []
+        pending.push({ method, params })
+        if (pending.length > 512) pending.shift()
+        this.pendingAgentNotifications.set(threadId, pending)
+      }
+      return
+    }
+
+    let terminalAgentEvent: OutputEvent | null = null
+    if (threadId && isKnownAgent) {
+      if (method === 'turn/started') {
+        this.agentTracker.markTurnStarted(threadId)
+      } else if (method === 'turn/completed') {
+        const turn = params?.turn && typeof params.turn === 'object'
+          ? params.turn as Record<string, unknown>
+          : undefined
+        const usage = turn?.usage && typeof turn.usage === 'object'
+          ? turn.usage as Record<string, unknown>
+          : undefined
+        terminalAgentEvent = this.agentTracker.markTurnCompleted(threadId, turn?.status, usage)
+      } else if (method === 'thread/closed') {
+        terminalAgentEvent = this.agentTracker.markTurnCompleted(threadId, 'shutdown')
+      } else if (method === 'error' && params?.willRetry !== true) {
+        terminalAgentEvent = this.agentTracker.markTurnCompleted(threadId, 'failed')
+      }
+    }
+
+    const isRestoredRootUsage = isRootThread
+      && method === 'thread/tokenUsage/updated'
+      && (!this.activeTurnId || params?.turnId !== this.activeTurnId)
+    const state = this.streamStateFor(threadId)
+    const spawnAnchor = isRootThread
+      ? buildSubAgentSpawnAnchor(params)
+      : null
+    const shouldEmitSpawnAnchor = Boolean(
+      spawnAnchor &&
+      typeof spawnAnchor.metadata?.id === 'string' &&
+      !state.announcedItemIds.has(spawnAnchor.metadata.id)
+    )
+    let outputEvents = isRestoredRootUsage
+      ? []
+      : parseCodexAppServerNotification(method, params, state)
+
+    if (threadId) {
+      this.agentTracker.recordEvents(threadId, outputEvents)
+      outputEvents = observation.activityThreadId
+        ? this.agentTracker.scopeActivity(observation.activityThreadId, outputEvents)
+        : this.agentTracker.scopeEvents(threadId, outputEvents)
+    }
+    if (shouldEmitSpawnAnchor && spawnAnchor) {
+      state.announcedItemIds.add(spawnAnchor.metadata?.id as string)
+      outputEvents.unshift(spawnAnchor)
+    }
+    for (const event of outputEvents) this.emit(event)
+    if (terminalAgentEvent) this.emit(terminalAgentEvent)
+
+    if (isRootThread && method === 'turn/started') {
+      const turnRecord = params?.turn as Record<string, unknown> | undefined
+      this.activeTurnId = (turnRecord?.id as string | undefined) ?? this.activeTurnId
+    } else if (isRootThread && method === 'turn/completed') {
+      const turnRecord = params?.turn as Record<string, unknown> | undefined
+      const status = turnRecord?.status as string | undefined
+      this.activeTurnId = null
+      if (status === 'failed') {
+        const error = turnRecord?.error as Record<string, unknown> | undefined
+        this.outstandingTurnCount = 0
+        this.finishTurn(new Error(String(error?.message ?? 'Codex turn failed')))
+      } else {
+        this.outstandingTurnCount = Math.max(0, this.outstandingTurnCount - 1)
+        this.rootTurnCompleted = this.outstandingTurnCount === 0
+        this.finishSuccessfulTurnWhenIdle()
+      }
+    } else if (isRootThread && method === 'error' && params?.willRetry !== true) {
+      const error = params?.error as Record<string, unknown> | undefined
+      this.outstandingTurnCount = 0
+      this.finishTurn(new Error(String(error?.message ?? 'Codex app-server error')))
+    } else {
+      this.finishSuccessfulTurnWhenIdle()
+    }
+
+    for (const registeredThreadId of new Set(observation.registeredThreadIds)) {
+      this.flushAgentNotifications(registeredThreadId)
+    }
+  }
+
+  private streamStateFor(threadId: string | null): CodexStreamState {
+    if (!threadId || threadId === this.codexThreadId) return this.state
+    let state = this.threadStates.get(threadId)
+    if (!state) {
+      state = createCodexStreamState()
+      this.threadStates.set(threadId, state)
+    }
+    return state
+  }
+
+  private flushAgentNotifications(threadId: string): void {
+    const pending = this.pendingAgentNotifications.get(threadId)
+    if (!pending) return
+    this.pendingAgentNotifications.delete(threadId)
+    for (const notification of pending) {
+      this.handleNotification(notification.method, notification.params)
+    }
+  }
+
+  private finishSuccessfulTurnWhenIdle(): void {
+    if (this.rootTurnCompleted && !this.agentTracker.hasRunningAgents()) {
+      this.finishTurn()
     }
   }
 
@@ -2271,6 +2429,10 @@ class CodexAppServerDriver implements CLIDriver {
     this.readyPromise = null
     this.activeTurnId = null
     this.state = createCodexStreamState()
+    this.threadStates.clear()
+    this.agentTracker.clear()
+    this.pendingAgentNotifications.clear()
+    this.rootTurnCompleted = false
   }
 }
 

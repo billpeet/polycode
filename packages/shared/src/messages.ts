@@ -86,7 +86,7 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
       return [...messages, incoming]
     }
     const previousType = previousMetadata?.type
-    if (!previousType && sameScope) {
+    if ((!previousType || previousType === 'text') && sameScope) {
       return [
         ...messages.slice(0, -1),
         {

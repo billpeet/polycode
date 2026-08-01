@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { foldMessages } from '@polycode/shared'
 import { groupByAgent, collectActiveAgents, findAgentGroup, agentStatsLabel } from '../MessageStream'
 import type { Message } from '../../types/ipc'
 
@@ -125,6 +126,104 @@ describe('groupByAgent', () => {
     expect(hasStatusBubble).toBe(false)
     // The actual sub-agent text is still present.
     expect(group.entries.some((e) => e.kind === 'single' && e.message.content === 'a joke')).toBe(true)
+  })
+
+  it('renders Codex child-thread output through the same first-class agent group', () => {
+    const messages = [
+      msg('assistant', 'spawn_agent', { type: 'tool_call', id: 'spawn-1', name: 'collaboration.spawn_agent', input: { message: 'Review the parser', task_name: 'reviewer' }, agent_scope: 'main' }),
+      msg('assistant', '**Subagent started:** /root/reviewer', { type: 'thinking', source: 'codex_subagent', task_event: 'started', agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-1', agent_task_id: 'child-1', agent_subagent_type: 'reviewer', agent_status: 'running' }),
+      msg('assistant', 'The parser drops nested events.', { type: 'text', agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-1', agent_task_id: 'child-1', agent_subagent_type: 'reviewer', agent_status: 'running' }),
+      msg('assistant', '**Subagent completed:** /root/reviewer', { type: 'thinking', source: 'codex_subagent', task_event: 'notification', status: 'completed', usage: { total_tokens: 150, tool_uses: 2 }, agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-1', agent_task_id: 'child-1', agent_subagent_type: 'reviewer', agent_status: 'completed' }),
+    ]
+
+    const group = groupByAgent(messages).find((entry) => entry.kind === 'agent')
+    if (!group || group.kind !== 'agent') throw new Error('expected Codex agent group')
+    expect(group.label).toBe('Reviewer')
+    expect(group.prompt).toBe('Review the parser')
+    expect(group.status).toBe('completed')
+    expect(group.usage).toEqual({ totalTokens: 150, toolUses: 2, durationMs: undefined })
+    expect(group.entries.map((entry) => entry.kind === 'single' ? entry.message.content : '')).toContain('The parser drops nested events.')
+    expect(group.entries.some((entry) => entry.kind === 'single' && entry.metadata?.source === 'codex_subagent')).toBe(false)
+  })
+
+  it('recombines one Codex agent text stream interrupted by another agent event', () => {
+    const messages = foldMessages([
+      msg('assistant', 'spawn_agent', { type: 'tool_call', id: 'spawn-a', name: 'Agent', agent_scope: 'main' }),
+      msg('assistant', 'spawn_agent', { type: 'tool_call', id: 'spawn-b', name: 'Agent', agent_scope: 'main' }),
+      msg('assistant', "I'll inspect the assigned test file and", { agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-a', agent_task_id: 'agent-a' }),
+      msg('assistant', 'PowerShell', { type: 'tool_call', id: 'tool-b', name: 'PowerShell', agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-b', agent_task_id: 'agent-b' }),
+      msg('assistant', ' nearby guidance, then return only evidence-backed findings—no edits.', { agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-a', agent_task_id: 'agent-a' }),
+    ])
+
+    const group = findAgentGroup(groupByAgent(messages), 'agent-spawn-a')
+    if (!group) throw new Error('expected first agent group')
+    const textEntries = group.entries.filter(
+      (entry) => entry.kind === 'single' && !entry.metadata?.type
+    )
+
+    expect(textEntries).toHaveLength(1)
+    expect(textEntries[0]).toMatchObject({
+      kind: 'single',
+      message: {
+        content: "I'll inspect the assigned test file and nearby guidance, then return only evidence-backed findings—no edits.",
+      },
+    })
+  })
+
+  it('places an orphaned Codex agent group at its first event before the final report', () => {
+    const messages = [
+      msg('assistant', 'I will dispatch three agents.', { agent_scope: 'main' }),
+      msg('assistant', '**Subagent started:** /root/french_joke', { type: 'thinking', source: 'codex_subagent', task_event: 'started', agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-1', agent_task_id: 'child-1', agent_subagent_type: 'french_joke', agent_status: 'running' }),
+      msg('assistant', 'Pourquoi les plongeurs plongent-ils toujours en arriere?', { type: 'text', agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-1', agent_task_id: 'child-1', agent_subagent_type: 'french_joke', agent_status: 'running' }),
+      msg('assistant', '**Subagent completed:** /root/french_joke', { type: 'thinking', source: 'codex_subagent', task_event: 'notification', status: 'completed', agent_scope: 'subagent', agent_parent_tool_use_id: 'spawn-1', agent_task_id: 'child-1', agent_subagent_type: 'french_joke', agent_status: 'completed' }),
+      msg('assistant', 'Wait for agent', { type: 'tool_call', id: 'wait-1', name: 'Agent', agent_scope: 'main' }),
+      msg('assistant', '# Sub-agent joke report', { type: 'text', agent_scope: 'main' }),
+    ]
+
+    const entries = groupByAgent(messages)
+    const agentIndex = entries.findIndex((entry) => entry.kind === 'agent')
+    const reportIndex = entries.findIndex(
+      (entry) => entry.kind === 'single' && entry.message.content === '# Sub-agent joke report'
+    )
+
+    expect(agentIndex).toBeGreaterThanOrEqual(0)
+    expect(reportIndex).toBeGreaterThan(agentIndex)
+  })
+
+  it('repairs persisted Codex output that was incorrectly scoped to the root as a child', () => {
+    const mistakenRootScope = {
+      agent_scope: 'subagent',
+      agent_parent_tool_use_id: 'interaction-call',
+      agent_task_id: 'root-thread',
+      agent_subagent_type: 'root',
+      codex_agent_path: '/root',
+      codex_agent_thread_id: 'root-thread',
+      codex_parent_thread_id: 'child-thread',
+    }
+    const messages = [
+      msg('assistant', 'Wait for agent', { type: 'tool_call', id: 'wait-call', name: 'Agent', agent_scope: 'main' }),
+      msg('assistant', '**Subagent interacted with:** /root', { type: 'thinking', source: 'codex_subagent', task_event: 'interacted', ...mistakenRootScope }),
+      msg('assistant', 'done', { type: 'tool_result', tool_use_id: 'wait-call', ...mistakenRootScope }),
+      msg('assistant', 'Final consolidated report', mistakenRootScope),
+      msg('assistant', '**Subagent completed:** /root', { type: 'thinking', source: 'codex_subagent', task_event: 'notification', status: 'completed', ...mistakenRootScope }),
+    ]
+
+    const entries = groupByAgent(messages)
+    const waitEntry = entries.find(
+      (entry) => entry.kind === 'single' && entry.metadata?.id === 'wait-call'
+    )
+
+    expect(entries.some((entry) => entry.kind === 'agent' && entry.label === 'Root')).toBe(false)
+    expect(waitEntry).toMatchObject({
+      kind: 'single',
+      result: { content: 'done' },
+    })
+    expect(entries.some(
+      (entry) => entry.kind === 'single' && entry.message.content === 'Final consolidated report'
+    )).toBe(true)
+    expect(entries.some(
+      (entry) => entry.kind === 'single' && entry.metadata?.source === 'codex_subagent'
+    )).toBe(false)
   })
 
   it('surfaces sub-agent usage on the group and hides Subagent update bubbles', () => {

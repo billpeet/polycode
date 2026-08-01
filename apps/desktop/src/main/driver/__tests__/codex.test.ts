@@ -1159,6 +1159,231 @@ describe('CodexDriver app-server approvals', () => {
     expect(events).toEqual([])
   })
 
+  it('routes child-thread output into the spawning Codex agent group', () => {
+    const { local, events } = setupLocalDriver()
+    ;(local as any).codexThreadId = 'root-thread'
+    ;(local as any).activeTurnId = 'root-turn'
+    ;(local as any).outstandingTurnCount = 1
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/started',
+      params: {
+        threadId: 'root-thread',
+        turnId: 'root-turn',
+        item: {
+          id: 'spawn-call', type: 'dynamicToolCall', namespace: 'collaboration',
+          tool: 'spawn_agent', arguments: { task_name: 'reviewer' }, status: 'inProgress',
+          contentItems: [], success: null,
+        },
+      },
+    }))
+    const activityNotification = JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'root-thread',
+        turnId: 'root-turn',
+        item: {
+          id: 'spawn-call', type: 'subAgentActivity', kind: 'started',
+          agentThreadId: 'child-thread', agentPath: '/root/reviewer',
+        },
+      },
+    })
+    ;(local as any).handleLine(activityNotification)
+    ;(local as any).handleLine(activityNotification)
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'turn/started',
+      params: { threadId: 'child-thread', turn: { id: 'child-turn', status: 'inProgress', items: [] } },
+    }))
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 'child-thread', turnId: 'child-turn', itemId: 'message-1', delta: 'I found the bug.' },
+    }))
+
+    expect(events.at(-1)).toEqual({
+      type: 'text',
+      content: 'I found the bug.',
+      metadata: {
+        agent_scope: 'subagent',
+        agent_parent_tool_use_id: 'spawn-call',
+        agent_task_id: 'child-thread',
+        agent_status: 'running',
+        agent_description: '/root/reviewer',
+        agent_subagent_type: 'reviewer',
+        codex_agent_path: '/root/reviewer',
+        codex_agent_thread_id: 'child-thread',
+        codex_parent_thread_id: 'root-thread',
+      },
+    } satisfies OutputEvent)
+  })
+
+  it('synthesizes a main-stream spawn anchor when Multi-Agent V2 only reports activity', () => {
+    const { local, events } = setupLocalDriver()
+    ;(local as any).codexThreadId = 'root-thread'
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'root-thread',
+        turnId: 'root-turn',
+        item: {
+          id: 'spawn-call', type: 'subAgentActivity', kind: 'started',
+          agentThreadId: 'child-thread', agentPath: '/root/reviewer',
+        },
+      },
+    }))
+
+    expect(events[0]).toMatchObject({
+      type: 'tool_call',
+      metadata: {
+        id: 'spawn-call',
+        name: 'Agent',
+        agent_scope: 'main',
+      },
+    })
+    expect(events[1]).toMatchObject({
+      type: 'thinking',
+      metadata: {
+        source: 'codex_subagent',
+        agent_scope: 'subagent',
+        agent_parent_tool_use_id: 'spawn-call',
+      },
+    })
+    expect(events.filter((event) =>
+      event.type === 'tool_call' && event.metadata?.id === 'spawn-call'
+    )).toHaveLength(1)
+  })
+
+  it('does not register the root thread as a sub-agent when a child interacts with it', () => {
+    const { local, events } = setupLocalDriver()
+    ;(local as any).codexThreadId = 'root-thread'
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn',
+        item: {
+          id: 'spawn-call', type: 'subAgentActivity', kind: 'started',
+          agentThreadId: 'child-thread', agentPath: '/root/reviewer',
+        },
+      },
+    }))
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/started',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn',
+        item: {
+          id: 'wait-call', type: 'collabAgentToolCall', tool: 'wait', status: 'inProgress',
+          senderThreadId: 'root-thread', receiverThreadIds: ['child-thread'], prompt: null,
+          model: null, reasoningEffort: null, agentsStates: {},
+        },
+      },
+    }))
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'child-thread', turnId: 'child-turn',
+        item: {
+          id: 'interaction-call', type: 'subAgentActivity', kind: 'interacted',
+          agentThreadId: 'root-thread', agentPath: '/root',
+        },
+      },
+    }))
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn',
+        item: {
+          id: 'wait-call', type: 'collabAgentToolCall', tool: 'wait', status: 'completed',
+          senderThreadId: 'root-thread', receiverThreadIds: ['child-thread'], prompt: null,
+          model: null, reasoningEffort: null,
+          agentsStates: { 'child-thread': { status: 'completed', message: null } },
+        },
+      },
+    }))
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/agentMessage/delta',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn', itemId: 'report-message',
+        delta: 'Final consolidated report',
+      },
+    }))
+
+    const waitCall = events.find((event) => event.type === 'tool_call' && event.metadata?.id === 'wait-call')
+    const waitResult = events.find((event) => event.type === 'tool_result' && event.metadata?.tool_use_id === 'wait-call')
+    const report = events.find((event) => event.content === 'Final consolidated report')
+    expect(waitCall?.metadata?.agent_scope).toBe('main')
+    expect(waitResult?.metadata?.agent_scope).toBe('main')
+    expect(report?.metadata?.agent_scope).toBe('main')
+    expect(events.some((event) => event.metadata?.codex_agent_path === '/root')).toBe(false)
+  })
+
+  it('waits for running Codex sub-agents and ignores their turn boundary as the root boundary', () => {
+    const { local } = setupLocalDriver()
+    let doneCount = 0
+    ;(local as any).currentTurn.onDone = () => { doneCount += 1 }
+    ;(local as any).codexThreadId = 'root-thread'
+    ;(local as any).activeTurnId = 'root-turn'
+    ;(local as any).outstandingTurnCount = 1
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn',
+        item: {
+          id: 'spawn-call', type: 'subAgentActivity', kind: 'started',
+          agentThreadId: 'child-thread', agentPath: '/root/worker',
+        },
+      },
+    }))
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'turn/completed',
+      params: { threadId: 'root-thread', turn: { id: 'root-turn', status: 'completed', items: [] } },
+    }))
+
+    expect(doneCount).toBe(0)
+    expect((local as any).activeTurnId).toBeNull()
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'turn/completed',
+      params: {
+        threadId: 'child-thread',
+        turn: {
+          id: 'child-turn', status: 'completed', items: [],
+          usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 30 },
+        },
+      },
+    }))
+
+    expect(doneCount).toBe(1)
+  })
+
+  it('buffers early child output until the spawn notification supplies its anchor', () => {
+    const { local, events } = setupLocalDriver()
+    ;(local as any).codexThreadId = 'root-thread'
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/agentMessage/delta',
+      params: { threadId: 'child-thread', turnId: 'child-turn', itemId: 'message-1', delta: 'early output' },
+    }))
+    expect(events).toEqual([])
+
+    ;(local as any).handleLine(JSON.stringify({
+      method: 'item/completed',
+      params: {
+        threadId: 'root-thread', turnId: 'root-turn',
+        item: {
+          id: 'spawn-call', type: 'collabAgentToolCall', tool: 'spawnAgent', status: 'completed',
+          senderThreadId: 'root-thread', receiverThreadIds: ['child-thread'], prompt: 'Investigate',
+          model: null, reasoningEffort: null,
+          agentsStates: { 'child-thread': { status: 'running', message: null } },
+        },
+      },
+    }))
+
+    expect(events.some((event) => event.content === 'early output'
+      && event.metadata?.agent_parent_tool_use_id === 'spawn-call')).toBe(true)
+  })
+
   it('clears server requests resolved by Codex and emits a resolution event', () => {
     const { local, events } = setupLocalDriver()
     ;(local as any).handleServerRequest(45, 'item/tool/requestUserInput', {

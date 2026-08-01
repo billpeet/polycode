@@ -20,6 +20,60 @@ function thinkingMessage(id: string, content: string, itemId: string, summaryInd
 }
 
 describe('message compaction', () => {
+  it('combines Codex main-agent text deltas after a sub-agent returns', () => {
+    const messages: Message[] = [
+      {
+        id: '1',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'The French joke',
+        metadata: JSON.stringify({
+          type: 'text',
+          agent_scope: 'subagent',
+          agent_task_id: 'agent-1',
+        }),
+        created_at: '2026-08-01T00:00:01.000Z',
+      },
+      {
+        id: '2',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: 'One agent',
+        metadata: JSON.stringify({ type: 'text', agent_scope: 'main' }),
+        created_at: '2026-08-01T00:00:02.000Z',
+      },
+      {
+        id: '3',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: ' has',
+        metadata: JSON.stringify({ type: 'text', agent_scope: 'main' }),
+        created_at: '2026-08-01T00:00:03.000Z',
+      },
+      {
+        id: '4',
+        thread_id: 'thread-1',
+        session_id: 'session-1',
+        role: 'assistant',
+        content: ' completed',
+        metadata: JSON.stringify({ type: 'text', agent_scope: 'main' }),
+        created_at: '2026-08-01T00:00:04.000Z',
+      },
+    ]
+
+    const compacted = foldMessages(messages)
+
+    expect(compacted).toHaveLength(2)
+    expect(compacted[1]).toMatchObject({
+      id: '2',
+      content: 'One agent has completed',
+      created_at: '2026-08-01T00:00:04.000Z',
+    })
+  })
+
   it('keeps consecutive assistant messages from different agent scopes separate', () => {
     const messages: Message[] = [
       {

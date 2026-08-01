@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
-import { canonicalToolName } from '@polycode/shared'
+import { canonicalToolName, foldMessages } from '@polycode/shared'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
@@ -184,6 +184,10 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
 /** The parent Task tool_use id that groups a sub-agent's messages, or null for main scope. */
 function messageParentKey(metadata: Record<string, unknown> | null): string | null {
   if (!metadata || metadata.agent_scope !== 'subagent') return null
+  // Older Codex tracking could mistake an `interacted` activity targeting the
+  // existing root thread for a newly spawned child. Genuine child paths are
+  // below /root (for example /root/reviewer), never /root itself.
+  if (metadata.codex_agent_path === '/root') return null
   const parent = metadata.agent_parent_tool_use_id
   return typeof parent === 'string' && parent ? parent : null
 }
@@ -196,10 +200,12 @@ function messageParentKey(metadata: Record<string, unknown> | null): string | nu
  */
 function isAgentStatusBubble(metadata: Record<string, unknown> | null): boolean {
   return (
-    metadata?.source === 'claude_task' &&
+    (metadata?.source === 'claude_task' || metadata?.source === 'codex_subagent') &&
     (metadata.task_event === 'started' ||
       metadata.task_event === 'progress' ||
-      metadata.task_event === 'notification')
+      metadata.task_event === 'notification' ||
+      metadata.task_event === 'interacted' ||
+      metadata.task_event === 'interrupted')
   )
 }
 
@@ -274,9 +280,12 @@ function deriveAgentMeta(bucketMessages: Message[]): {
 export function groupByAgent(messages: Message[]): StreamEntry[] {
   const buckets = new Map<string, Message[]>()
   const bucketOrder: string[] = []
+  const bucketFirstPosition = new Map<string, number>()
+  const messagePosition = new Map<string, number>()
   const mainMessages: Message[] = []
 
-  for (const msg of messages) {
+  for (const [position, msg] of messages.entries()) {
+    messagePosition.set(msg.id, position)
     const meta = safeParseJson(msg.metadata)
     const parentKey = messageParentKey(meta)
     if (parentKey) {
@@ -285,6 +294,7 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
         bucket = []
         buckets.set(parentKey, bucket)
         bucketOrder.push(parentKey)
+        bucketFirstPosition.set(parentKey, position)
       }
       bucket.push(msg)
     } else {
@@ -294,7 +304,10 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
 
   // No sub-agents at all → plain paired list.
   if (buckets.size === 0) {
-    return pairMessages(mainMessages)
+    const visible = foldMessages(
+      mainMessages.filter((message) => !isAgentStatusBubble(safeParseJson(message.metadata)))
+    )
+    return pairMessages(visible)
   }
 
   const groupCache = new Map<string, AgentGroup>()
@@ -309,7 +322,11 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
     building.delete(parentKey)
     const { label, description, taskId, status, usage, lastToolName } = deriveAgentMeta(bucketMessages)
     // The full prompt sent to the sub-agent lives on the spawning Task tool_call's input.
-    const prompt = typeof anchorInput?.prompt === 'string' ? anchorInput.prompt : undefined
+    const prompt = typeof anchorInput?.prompt === 'string'
+      ? anchorInput.prompt
+      : typeof anchorInput?.message === 'string'
+        ? anchorInput.message
+        : undefined
     const group: AgentGroup = {
       kind: 'agent',
       key: `agent-${parentKey}`,
@@ -330,7 +347,11 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
   // Splice child AgentGroups into a scope's paired entries at their anchor Task tool_call.
   const assemble = (scopeMessages: Message[]): StreamEntry[] => {
     // Hide redundant "Subagent started/completed" status bubbles — the group header shows status.
-    const visible = scopeMessages.filter((m) => !isAgentStatusBubble(safeParseJson(m.metadata)))
+    // Compact again after bucketing: concurrent agents can interleave their raw
+    // deltas, breaking global adjacency even when this agent produced one stream.
+    const visible = foldMessages(
+      scopeMessages.filter((m) => !isAgentStatusBubble(safeParseJson(m.metadata)))
+    )
     const paired = pairMessages(visible)
     const result: StreamEntry[] = []
     for (const entry of paired) {
@@ -358,10 +379,26 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
 
   const result = assemble(mainMessages)
 
-  // Append any groups whose anchor Task tool_call wasn't found (backward compat / race).
+  const entryPosition = (entry: StreamEntry): number => {
+    if (entry.kind === 'single') return messagePosition.get(entry.message.id) ?? Number.MAX_SAFE_INTEGER
+    if (entry.kind === 'group') {
+      return entry.entries.length > 0
+        ? messagePosition.get(entry.entries[0].message.id) ?? Number.MAX_SAFE_INTEGER
+        : Number.MAX_SAFE_INTEGER
+    }
+    return bucketFirstPosition.get(entry.parentToolUseId) ?? Number.MAX_SAFE_INTEGER
+  }
+
+  // If an anchor is absent (restored history, protocol race, or older data),
+  // keep the group at the position of its first child event instead of moving
+  // it below later main-agent output.
   for (const parentKey of bucketOrder) {
     if (!groupCache.has(parentKey)) {
-      result.push(makeGroup(parentKey))
+      const group = makeGroup(parentKey)
+      const position = bucketFirstPosition.get(parentKey) ?? Number.MAX_SAFE_INTEGER
+      const insertionIndex = result.findIndex((entry) => entryPosition(entry) > position)
+      if (insertionIndex === -1) result.push(group)
+      else result.splice(insertionIndex, 0, group)
     }
   }
 
