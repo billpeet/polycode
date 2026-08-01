@@ -46,4 +46,10 @@ describe('markdown link renderer', () => {
     expect(html).toContain('data-file-path="C%3A%5Ctmp%5Cmain.ts"')
     expect(html).toContain('>main.ts</a>')
   })
+
+  it('renders the line selector separately from a Codex-style file path', () => {
+    const html = parse('open [event-writes.ts](/C:/repo/event-writes.ts:1847)')
+    expect(html).toContain('data-file-path="C%3A%5Crepo%5Cevent-writes.ts"')
+    expect(html).toContain('data-line-number="1847"')
+  })
 })

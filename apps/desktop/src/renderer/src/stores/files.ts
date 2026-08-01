@@ -30,9 +30,11 @@ interface FilesStore {
 
   // Selected file preview (scoped by location; legacy fields mirror the current location)
   selectedFilePath: string | null
+  selectedFileLine: number | null
   fileContent: FileContent | null
   loadingContent: boolean
   selectedFilePathByLocation: Record<string, string | null>
+  selectedFileLineByLocation: Record<string, number | null>
   fileContentByLocation: Record<string, FileContent | null>
   loadingContentByLocation: Record<string, boolean>
 
@@ -46,7 +48,7 @@ interface FilesStore {
   fetchDirectory: (dirPath: string) => Promise<void>
   refreshDirectory: (dirPath: string) => Promise<void>
   toggleExpanded: (dirPath: string) => void
-  selectFile: (filePath: string | null) => void
+  selectFile: (filePath: string | null, lineNumber?: number | null) => void
   fetchFileContent: (filePath: string) => Promise<void>
   clearSelection: () => void
   refreshSelectedFile: () => Promise<void>
@@ -73,9 +75,11 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
   expandedPaths: new Set<string>(),
   loadingPaths: new Set<string>(),
   selectedFilePath: null,
+  selectedFileLine: null,
   fileContent: null,
   loadingContent: false,
   selectedFilePathByLocation: {},
+  selectedFileLineByLocation: {},
   fileContentByLocation: {},
   loadingContentByLocation: {},
   diffView: null,
@@ -145,22 +149,27 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     set({ expandedPaths: newExpanded })
   },
 
-  selectFile: (filePath: string | null) => {
+  selectFile: (filePath: string | null, lineNumber = null) => {
     const locationId = getCurrentLocationId()
     if (!filePath) {
       set((s) => ({
         selectedFilePath: null,
+        selectedFileLine: null,
         fileContent: null,
         selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+        selectedFileLineByLocation: locationId ? { ...s.selectedFileLineByLocation, [locationId]: null } : s.selectedFileLineByLocation,
         fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
       }))
       return
     }
+    const targetLine = Number.isSafeInteger(lineNumber) && (lineNumber ?? 0) > 0 ? lineNumber : null
     set((s) => ({
       selectedFilePath: filePath,
+      selectedFileLine: targetLine,
       fileContent: null,
       diffView: null,
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: filePath } : s.selectedFilePathByLocation,
+      selectedFileLineByLocation: locationId ? { ...s.selectedFileLineByLocation, [locationId]: targetLine } : s.selectedFileLineByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
       diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
     }))
@@ -198,9 +207,11 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     const locationId = getCurrentLocationId()
     set((s) => ({
       selectedFilePath: null,
+      selectedFileLine: null,
       fileContent: null,
       diffView: null,
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      selectedFileLineByLocation: locationId ? { ...s.selectedFileLineByLocation, [locationId]: null } : s.selectedFileLineByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
       diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
     }))
@@ -215,10 +226,11 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
 
   selectDiff: async (repoPath: string, filePath: string, staged: boolean) => {
     const locationId = getCurrentLocationId()
-    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null,
+    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, selectedFileLine: null, fileContent: null,
       diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
       loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation,
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      selectedFileLineByLocation: locationId ? { ...s.selectedFileLineByLocation, [locationId]: null } : s.selectedFileLineByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
     }))
     if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
@@ -233,10 +245,11 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
 
   selectCompareDiffToMain: async (repoPath, filePath) => {
     const locationId = getCurrentLocationId()
-    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null,
+    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, selectedFileLine: null, fileContent: null,
       diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
       loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation,
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      selectedFileLineByLocation: locationId ? { ...s.selectedFileLineByLocation, [locationId]: null } : s.selectedFileLineByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
     }))
     if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
@@ -251,10 +264,11 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
 
   selectCommitDiff: async (repoPath, commitSha, commitShortSha, filePath) => {
     const locationId = getCurrentLocationId()
-    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, fileContent: null,
+    set((s) => ({ diffView: null, loadingDiff: true, selectedFilePath: null, selectedFileLine: null, fileContent: null,
       diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: null } : s.diffViewByLocation,
       loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: true } : s.loadingDiffByLocation,
       selectedFilePathByLocation: locationId ? { ...s.selectedFilePathByLocation, [locationId]: null } : s.selectedFilePathByLocation,
+      selectedFileLineByLocation: locationId ? { ...s.selectedFileLineByLocation, [locationId]: null } : s.selectedFileLineByLocation,
       fileContentByLocation: locationId ? { ...s.fileContentByLocation, [locationId]: null } : s.fileContentByLocation,
     }))
     if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')

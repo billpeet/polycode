@@ -80,7 +80,7 @@ export default function MarkdownContent({ content, className = '' }: Props) {
     const startedAt = performance.now()
     const raw = marked.parse(content) as string
     const clean = DOMPurify.sanitize(raw, {
-      ADD_ATTR: ['data-code', 'data-file-path', 'style', 'tabindex'],
+      ADD_ATTR: ['data-code', 'data-file-path', 'data-line-number', 'style', 'tabindex'],
       ADD_TAGS: ['button']
     })
     ref.current.innerHTML = clean

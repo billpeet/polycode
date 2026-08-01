@@ -4,7 +4,7 @@ interface MarkdownClickEvent {
 }
 
 interface MarkdownFileLinkActions {
-  selectFile: (path: string) => void
+  selectFile: (path: string, lineNumber?: number | null) => void
   setRightPanelTab: (tab: 'files') => void
 }
 
@@ -14,6 +14,11 @@ interface ClosestTarget {
 
 interface AttributeTarget {
   getAttribute: (name: string) => string | null
+}
+
+export interface MarkdownFileTarget {
+  filePath: string
+  lineNumber: number | null
 }
 
 export function filePathFromMarkdownCopyTarget(target: unknown): string | null {
@@ -26,6 +31,10 @@ export function filePathFromMarkdownCopyTarget(target: unknown): string | null {
 }
 
 export function markdownFilePathFromHref(href: string): string | null {
+  return markdownFileTargetFromHref(href)?.filePath ?? null
+}
+
+export function markdownFileTargetFromHref(href: string): MarkdownFileTarget | null {
   let decoded: string
   try {
     decoded = decodeURIComponent(href)
@@ -33,17 +42,33 @@ export function markdownFilePathFromHref(href: string): string | null {
     return null
   }
 
-  if (/^[A-Za-z]:[\\/]/.test(decoded)) {
-    return decoded
+  const lineSuffix = decoded.match(/:(\d+)$/)
+  const parsedLineNumber = lineSuffix ? Number(lineSuffix[1]) : null
+  const lineNumber = parsedLineNumber !== null && Number.isSafeInteger(parsedLineNumber) && parsedLineNumber > 0
+    ? parsedLineNumber
+    : null
+  const path = lineNumber === null ? decoded : decoded.slice(0, -lineSuffix![0].length)
+
+  if (/^[A-Za-z]:[\\/]/.test(path)) {
+    return { filePath: path, lineNumber }
   }
 
-  if (decoded.startsWith('file:///')) {
-    const filePath = decoded.slice('file:///'.length)
-    return /^[A-Za-z]:\//.test(filePath) ? filePath.replace(/\//g, '\\') : `/${filePath}`
+  // Codex commonly renders Windows paths as `/C:/...` so they work as
+  // markdown hrefs. Strip that markdown-only leading slash before previewing.
+  if (/^\/[A-Za-z]:[\\/]/.test(path)) {
+    return { filePath: path.slice(1).replace(/\//g, '\\'), lineNumber }
   }
 
-  if (decoded.startsWith('/') && !decoded.startsWith('//')) {
-    return decoded
+  if (path.startsWith('file:///')) {
+    const filePath = path.slice('file:///'.length)
+    return {
+      filePath: /^[A-Za-z]:\//.test(filePath) ? filePath.replace(/\//g, '\\') : `/${filePath}`,
+      lineNumber,
+    }
+  }
+
+  if (path.startsWith('/') && !path.startsWith('//')) {
+    return { filePath: path, lineNumber }
   }
 
   return null
@@ -58,11 +83,23 @@ export function handleMarkdownFileLinkClick(
   const href = anchor?.getAttribute?.('data-file-path') ?? anchor?.getAttribute?.('href')
   if (!href) return false
 
-  const filePath = markdownFilePathFromHref(href)
-  if (!filePath) return false
+  const fileTarget = markdownFileTargetFromHref(href)
+  if (!fileTarget) return false
+
+  const lineNumberAttr = anchor?.getAttribute?.('data-line-number')
+  const lineNumberFromAttr = lineNumberAttr ? Number(lineNumberAttr) : null
+  const lineNumber = lineNumberFromAttr !== null
+    && Number.isSafeInteger(lineNumberFromAttr)
+    && lineNumberFromAttr > 0
+    ? lineNumberFromAttr
+    : fileTarget.lineNumber
 
   event.preventDefault()
-  actions.selectFile(filePath)
+  if (lineNumber === null) {
+    actions.selectFile(fileTarget.filePath)
+  } else {
+    actions.selectFile(fileTarget.filePath, lineNumber)
+  }
   actions.setRightPanelTab('files')
   return true
 }

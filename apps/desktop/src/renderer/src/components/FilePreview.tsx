@@ -74,8 +74,17 @@ function toPreviewPath(repoPath: string, relativePath: string): string {
   return `${trimmedRepo}/${trimmedRelative}`
 }
 
-function CodePreview({ content, language }: { content: string; language: string }) {
+function CodePreview({
+  content,
+  language,
+  targetLine,
+}: {
+  content: string
+  language: string
+  targetLine: number | null
+}) {
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   useEffect(() => onReady(() => setShikiReady(true)), [])
 
   const tokenLines = useMemo(() => {
@@ -93,8 +102,17 @@ function CodePreview({ content, language }: { content: string; language: string 
   const lineCount = tokenLines ? tokenLines.length : plainLines.length
   const lineNumberWidth = String(lineCount).length
 
+  useEffect(() => {
+    if (targetLine === null) return
+    const target = scrollContainerRef.current?.querySelector<HTMLElement>(
+      `[data-line-number="${targetLine}"]`
+    )
+    target?.scrollIntoView({ block: 'center' })
+  }, [content, targetLine, tokenLines])
+
   return (
     <div
+      ref={scrollContainerRef}
       className="overflow-auto text-xs leading-relaxed"
       style={{
         background: 'var(--color-surface)',
@@ -111,6 +129,7 @@ function CodePreview({ content, language }: { content: string; language: string 
               tokens={tokenLines ? (line as ThemedToken[]) : null}
               plainText={tokenLines ? null : (line as string)}
               lineNumberWidth={lineNumberWidth}
+              isTarget={targetLine === i + 1}
             />
           ))}
         </tbody>
@@ -124,19 +143,24 @@ function LineRow({
   tokens,
   plainText,
   lineNumberWidth,
+  isTarget,
 }: {
   lineNumber: number
   tokens: ThemedToken[] | null
   plainText: string | null
   lineNumberWidth: number
+  isTarget: boolean
 }) {
   return (
-    <tr style={{ background: 'transparent' }}>
+    <tr
+      data-line-number={lineNumber}
+      style={{ background: isTarget ? 'rgba(232, 123, 95, 0.16)' : 'transparent' }}
+    >
       <td
         className="select-none text-right pr-3 pl-3"
         style={{
-          color: 'var(--color-text-muted)',
-          opacity: 0.5,
+          color: isTarget ? 'var(--color-accent, #e87b5f)' : 'var(--color-text-muted)',
+          opacity: isTarget ? 1 : 0.5,
           verticalAlign: 'top',
           width: `${lineNumberWidth + 2}ch`,
           minWidth: `${lineNumberWidth + 2}ch`,
@@ -652,6 +676,7 @@ export function DiffPane() {
 export function FilePane() {
   const currentLocationId = useCurrentLocationId()
   const selectedFilePath = useFilesStore((s) => currentLocationId ? (s.selectedFilePathByLocation[currentLocationId] ?? null) : s.selectedFilePath)
+  const selectedFileLine = useFilesStore((s) => currentLocationId ? (s.selectedFileLineByLocation[currentLocationId] ?? null) : s.selectedFileLine)
   const fileContent = useFilesStore((s) => currentLocationId ? (s.fileContentByLocation[currentLocationId] ?? null) : s.fileContent)
   const loadingContent = useFilesStore((s) => currentLocationId ? (s.loadingContentByLocation[currentLocationId] ?? false) : s.loadingContent)
   const clearSelection = useFilesStore((s) => s.clearSelection)
@@ -696,6 +721,7 @@ export function FilePane() {
   const language = getLanguageFromPath(selectedFilePath)
   const showMarkdown = isMarkdown(selectedFilePath)
   const showImage = fileContent?.mimeType?.startsWith('image/') && !!fileContent.dataUrl
+  const renderMarkdown = showMarkdown && selectedFileLine === null
   const fileName = basename(selectedFilePath)
 
   return (
@@ -720,7 +746,7 @@ export function FilePane() {
             Truncated
           </span>
         )}
-        {!showMarkdown && !showImage && (
+        {!renderMarkdown && !showImage && (
           <span
             className="text-[10px] px-1.5 py-0.5 rounded uppercase"
             style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }}
@@ -761,10 +787,10 @@ export function FilePane() {
           </div>
         ) : showImage ? (
           <ImagePreview dataUrl={fileContent.dataUrl!} fileName={fileName} />
-        ) : showMarkdown ? (
+        ) : renderMarkdown ? (
           <MarkdownPreview content={fileContent.content} />
         ) : (
-          <CodePreview content={fileContent.content} language={language} />
+          <CodePreview content={fileContent.content} language={language} targetLine={selectedFileLine} />
         )}
       </div>
     </>
