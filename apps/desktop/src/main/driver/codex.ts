@@ -2105,14 +2105,14 @@ class CodexAppServerDriver implements CLIDriver {
       } else {
         this.outstandingTurnCount = Math.max(0, this.outstandingTurnCount - 1)
         this.rootTurnCompleted = this.outstandingTurnCount === 0
-        this.finishSuccessfulTurnWhenIdle()
+        this.finishSuccessfulRootTurn()
       }
     } else if (isRootThread && method === 'error' && params?.willRetry !== true) {
       const error = params?.error as Record<string, unknown> | undefined
       this.outstandingTurnCount = 0
       this.finishTurn(new Error(String(error?.message ?? 'Codex app-server error')))
     } else {
-      this.finishSuccessfulTurnWhenIdle()
+      this.finishSuccessfulRootTurn()
     }
 
     for (const registeredThreadId of new Set(observation.registeredThreadIds)) {
@@ -2139,10 +2139,15 @@ class CodexAppServerDriver implements CLIDriver {
     }
   }
 
-  private finishSuccessfulTurnWhenIdle(): void {
-    if (this.rootTurnCompleted && !this.agentTracker.hasRunningAgents()) {
-      this.finishTurn()
-    }
+  private finishSuccessfulRootTurn(): void {
+    if (!this.rootTurnCompleted) return
+
+    // The root turn/completed notification is Codex's authoritative boundary.
+    // Child-thread notifications can be lost, so do not let stale agent state
+    // keep the root thread running forever. Mark those agents stopped for the
+    // UI; Session.handleDone() cancels any unmatched tool calls in persistence.
+    for (const event of this.agentTracker.stopRunningAgents()) this.emit(event)
+    this.finishTurn()
   }
 
   private handleResponse(response: JsonRpcResponse): void {

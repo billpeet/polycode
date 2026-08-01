@@ -1,5 +1,4 @@
 import { createHash } from 'crypto'
-import { simpleQuery } from './claude-sdk'
 
 export interface CommitMessageContext {
   branch: string | null
@@ -361,7 +360,7 @@ export function getPullRequestTextContextHash(context: PullRequestTextContext): 
 
 export async function generateCommitMessageFromContext(
   context: CommitMessageContext,
-  query: (prompt: string) => Promise<string> = simpleQuery,
+  query: (prompt: string) => Promise<string>,
 ): Promise<string> {
   const raw = await query(buildCommitMessagePrompt(context))
   return formatCommitMessage(parseCommitMessageResponse(raw))
@@ -369,7 +368,7 @@ export async function generateCommitMessageFromContext(
 
 export async function generatePullRequestTextFromContext(
   context: PullRequestTextContext,
-  query: (prompt: string) => Promise<string> = simpleQuery,
+  query: (prompt: string) => Promise<string>,
 ): Promise<GeneratedPullRequestText> {
   const raw = await query(buildPullRequestTextPrompt(context))
   return formatPullRequestText(parsePullRequestTextResponse(raw))
@@ -377,7 +376,7 @@ export async function generatePullRequestTextFromContext(
 
 export async function generateBranchNameFromContext(
   context: CommitMessageContext,
-  query: (prompt: string) => Promise<string> = simpleQuery,
+  query: (prompt: string) => Promise<string>,
 ): Promise<string> {
   const raw = await query(buildBranchNamePrompt(context))
   return sanitizeBranchName(parseBranchNameResponse(raw))

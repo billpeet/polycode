@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { PatchDiff } from '@pierre/diffs/react'
+import { PatchDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
+import type { WorkerInitializationRenderOptions, WorkerPoolOptions } from '@pierre/diffs/react'
 import { useBackdropClose } from '../../hooks/useBackdropClose'
 import { useToastStore } from '../../stores/toast'
 import { useGitStore } from '../../stores/git'
@@ -76,6 +77,14 @@ function statusColor(status: GitFileChange['status']): string {
 }
 
 const EMPTY_FILES: GitFileChange[] = []
+const DIFF_WORKER_POOL_OPTIONS: WorkerPoolOptions = {
+  workerFactory: () => new Worker(new URL('@pierre/diffs/worker/worker.js', import.meta.url), { type: 'module' }),
+  poolSize: 2,
+}
+const DIFF_WORKER_HIGHLIGHTER_OPTIONS: WorkerInitializationRenderOptions = {
+  theme: 'pierre-dark',
+  tokenizeMaxLineLength: 500,
+}
 
 export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget, onClose, onCreated }: Props) {
   const backdropClose = useBackdropClose(onClose)
@@ -87,8 +96,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
   const fetchGit = useGitStore((s) => s.fetch)
 
   const [target, setTarget] = useState(defaultTarget)
-  const [title, setTitle] = useState(`Merge ${sourceBranch} into ${defaultTarget}`)
-  const [titleEdited, setTitleEdited] = useState(false)
+  const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
   const [newBranchName, setNewBranchName] = useState('')
   const [commitMessage, setCommitMessage] = useState('')
@@ -129,11 +137,6 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     void fetchGit(projectPath)
   }, [projectPath, fetchGit])
 
-  // Default title tracks "Merge <source> into <target>" until the user edits it.
-  useEffect(() => {
-    if (!titleEdited) queueMicrotask(() => setTitle(`Merge ${effectiveSource} into ${target}`))
-  }, [effectiveSource, target, titleEdited])
-
   // Load the branch list for the target dropdown.
   useEffect(() => {
     let cancelled = false
@@ -149,6 +152,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
   const loadDiff = useCallback(async () => {
     if (!target.trim()) return
     const reqId = ++diffReqId.current
+    setCollapsedFiles(new Set())
     setDiffLoading(true)
     try {
       const result = await window.api.invoke('git:compareDiffToBranch', projectPath, target.trim())
@@ -248,7 +252,6 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
       }
       if (generated.title.trim()) {
         setTitle((current) => (current === startingTitle ? generated.title : current))
-        setTitleEdited(true)
       }
       if (generated.description.trim()) {
         setDescription((current) => (current === startingDescription ? generated.description : current))
@@ -333,17 +336,16 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     await Promise.allSettled(tasks)
   }
 
-  async function handleCreate() {
-    if (!canCreate) return
+  async function publishPullRequest(values: { title: string; description: string; branchName: string; commitMessage: string }) {
     setCreating(true)
     try {
       const result = await window.api.invoke('git:publishBranch', {
         repoPath: projectPath,
         targetBranch: target.trim(),
-        title: title.trim(),
-        description: description.trim() || undefined,
-        newBranchName: onDefaultBranch ? newBranchName.trim() : undefined,
-        commitMessage: dirty ? commitMessage.trim() : undefined,
+        title: values.title.trim(),
+        description: values.description.trim() || undefined,
+        newBranchName: onDefaultBranch ? values.branchName.trim() : undefined,
+        commitMessage: dirty ? values.commitMessage.trim() : undefined,
       })
       if (!result.ok) {
         const error = new Error(result.message) as Error & {
@@ -373,7 +375,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
           projectPath,
           source: effectiveSource,
           target: target.trim(),
-          title: title.trim(),
+          title: values.title.trim(),
           branchCreated: publishError.effects?.branchCreated,
           commitCreated: publishError.effects?.commitCreated,
           pushed: publishError.effects?.pushed,
@@ -385,6 +387,64 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     }
   }
 
+  async function handleCreate() {
+    if (!canSubmit) return
+
+    const values = { title, description, branchName: newBranchName, commitMessage }
+
+    if (hasMissingGeneratedFields) {
+      const needsPrText = !values.title.trim() || !values.description.trim()
+      const needsCommitMessage = dirty && !values.commitMessage.trim()
+      const needsBranchName = onDefaultBranch && !values.branchName.trim()
+
+      setGenerating(needsPrText)
+      setGeneratingCommit(needsCommitMessage)
+      setGeneratingBranch(needsBranchName)
+      try {
+        const [prText, generatedCommitMessage, generatedBranchName] = await Promise.all([
+          needsPrText ? window.api.invoke('git:generatePullRequestText', projectPath, target.trim()) : Promise.resolve(null),
+          needsCommitMessage ? window.api.invoke('git:generateCommitMessage', projectPath) : Promise.resolve(null),
+          needsBranchName ? window.api.invoke('git:generateBranchName', projectPath) : Promise.resolve(null),
+        ])
+
+        if (!values.title.trim() && prText?.title.trim()) values.title = prText.title
+        if (!values.description.trim() && prText?.description.trim()) values.description = prText.description
+        if (!values.commitMessage.trim() && generatedCommitMessage?.trim()) values.commitMessage = generatedCommitMessage
+        if (!values.branchName.trim() && generatedBranchName?.trim()) values.branchName = generatedBranchName
+
+        setTitle(values.title)
+        setDescription(values.description)
+        setCommitMessage(values.commitMessage)
+        setNewBranchName(values.branchName)
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Generate PR Details Failed',
+          message: err instanceof Error ? err.message : 'Failed to generate the missing pull request details',
+          details: formatErrorDetails({ action: 'git:generateMissingPullRequestDetails', projectPath, target: target.trim() }, err),
+          duration: 0,
+        })
+        return
+      } finally {
+        setGenerating(false)
+        setGeneratingCommit(false)
+        setGeneratingBranch(false)
+      }
+
+      if (!values.title.trim() || (dirty && !values.commitMessage.trim()) || (onDefaultBranch && !values.branchName.trim())) {
+        addToast({
+          type: 'error',
+          title: 'Generate PR Details Failed',
+          message: 'One or more required pull request details could not be generated',
+          duration: 3000,
+        })
+        return
+      }
+    }
+
+    await publishPullRequest(values)
+  }
+
   const inputStyle: React.CSSProperties = { background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }
   const anyGenerating = generating || generatingCommit || generatingBranch
 
@@ -394,19 +454,22 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
   const hasWork = dirty || diffFiles.length > 0 || ahead > 0
   const nothingToDo = changesLoaded && !diffLoading && !hasWork
 
-  const canCreate =
+  const hasMissingGeneratedFields =
+    !title.trim() ||
+    !description.trim() ||
+    (onDefaultBranch && !newBranchName.trim()) ||
+    (dirty && !commitMessage.trim())
+
+  const canSubmit =
     !busy &&
-    !!title.trim() &&
     !!target.trim() &&
     hasWork &&
-    !diffLoading &&
-    (onDefaultBranch ? !!newBranchName.trim() : true) &&
-    (dirty ? !!commitMessage.trim() : true)
+    !diffLoading
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.6)' }}
+      style={{ background: 'rgba(0,0,0,0.6)', paddingTop: 48, paddingBottom: 16 }}
       onClick={backdropClose.onClick}
       onPointerDown={backdropClose.onPointerDown}
     >
@@ -536,7 +599,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                 <div className="relative">
                   <input
                     value={title}
-                    onChange={(e) => { setTitle(e.target.value); setTitleEdited(true) }}
+                    onChange={(e) => setTitle(e.target.value)}
                     disabled={busy}
                     placeholder="PR title"
                     className="w-full rounded px-2 py-1.5 pr-8 text-sm outline-none"
@@ -593,11 +656,19 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
               <div className="flex gap-2">
                 <button
                   onClick={() => void handleCreate()}
-                  disabled={!canCreate}
+                  disabled={!canSubmit}
                   className="flex-1 rounded py-2 text-xs font-medium transition-opacity disabled:opacity-40"
                   style={{ background: 'var(--color-claude)', color: '#fff' }}
                 >
-                  {creating ? 'Creating…' : dirty || onDefaultBranch ? 'Commit & Create PR' : 'Create Pull Request'}
+                  {anyGenerating
+                    ? 'Generating…'
+                    : creating
+                      ? 'Creating…'
+                    : hasMissingGeneratedFields
+                      ? 'Generate + Create PR'
+                      : dirty || onDefaultBranch
+                        ? 'Commit & Create PR'
+                        : 'Create Pull Request'}
                 </button>
                 <button
                   onClick={onClose}
@@ -674,8 +745,12 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                 </div>
                 {/* Diffs */}
                 <div ref={diffScrollRef} onScroll={handleDiffScroll} className="flex-1 overflow-auto" style={{ background: 'var(--color-surface)' }}>
-                  <div className="flex flex-col">
-                    {diffFiles.map((file, i) => {
+                  <WorkerPoolContextProvider
+                    poolOptions={DIFF_WORKER_POOL_OPTIONS}
+                    highlighterOptions={DIFF_WORKER_HIGHLIGHTER_OPTIONS}
+                  >
+                    <div className="flex flex-col">
+                      {diffFiles.map((file, i) => {
                       const collapsed = collapsedFiles.has(file.path)
                       return (
                         <div
@@ -698,14 +773,15 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                             <div style={{ fontSize: '0.72rem' }}>
                               <PatchDiff
                                 patch={file.patch}
-                                options={{ theme: 'pierre-dark', diffStyle: 'unified', disableFileHeader: true, overflow: 'wrap' }}
+                                options={{ theme: 'pierre-dark', diffStyle: 'unified', disableFileHeader: true, overflow: 'wrap', collapsed: false }}
                               />
                             </div>
                           )}
                         </div>
                       )
-                    })}
-                  </div>
+                      })}
+                    </div>
+                  </WorkerPoolContextProvider>
                 </div>
               </div>
             )}

@@ -23,6 +23,7 @@ import './stores/plans' // Initialize plan file watcher listener
 import { reportReactCommit } from './lib/perf'
 import { getCurrentLocationId } from './lib/currentLocation'
 import UiErrorBoundary from './components/UiErrorBoundary'
+import { useDatabaseSync } from './hooks/useDatabaseSync'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
@@ -34,6 +35,8 @@ function isEditableTarget(target: EventTarget | null): boolean {
 }
 
 export default function App() {
+  useDatabaseSync()
+
   const fetchProjects = useProjectStore((s) => s.fetch)
   const projects = useProjectStore((s) => s.projects)
   const projectsLoading = useProjectStore((s) => s.loading)

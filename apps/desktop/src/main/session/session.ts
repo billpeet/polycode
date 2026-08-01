@@ -32,7 +32,7 @@ import {
   updateThreadUsage,
   cancelPendingToolCalls
 } from '../db/queries'
-import { generateTitle } from '../claude-sdk'
+import { generateTitle } from '../codex-text'
 import { emitAppEvent } from '../app-events'
 
 export class Session {
@@ -1003,8 +1003,7 @@ export class Session {
   }
 
   private triggerAutoTitle(seed: string): void {
-    // Use Claude Agent SDK with Haiku for fast, lightweight title generation
-    generateTitle(seed)
+    generateTitle(seed, this.workingDir, this.sshConfig, this.wslConfig)
       .then((title) => {
         if (!title) return
         updateThreadName(this.threadId, title)

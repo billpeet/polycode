@@ -68,6 +68,7 @@ export default function TitleBar() {
         borderBottom: '1px solid var(--color-border)',
         flexShrink: 0,
         position: 'relative',
+        zIndex: 2147483647,
         WebkitAppRegion: 'drag',
       } as React.CSSProperties}
     >

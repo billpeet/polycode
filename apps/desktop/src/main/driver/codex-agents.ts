@@ -132,11 +132,28 @@ export class CodexAgentTracker {
     return this.agents.has(threadId)
   }
 
-  hasRunningAgents(): boolean {
+  stopRunningAgents(): OutputEvent[] {
+    const events: OutputEvent[] = []
     for (const agent of this.agents.values()) {
-      if (agent.status === 'running') return true
+      if (agent.status !== 'running') continue
+      agent.status = 'stopped'
+      events.push({
+        type: 'thinking',
+        content: `**Subagent stopped:** ${agent.path ?? agent.threadId}`,
+        metadata: {
+          type: 'thinking',
+          source: 'codex_subagent',
+          task_event: 'notification',
+          status: 'stopped',
+          usage: {
+            total_tokens: agent.totalTokens,
+            tool_uses: agent.toolUses,
+          },
+          ...this.metadataForAgent(agent),
+        },
+      })
     }
-    return false
+    return events
   }
 
   markTurnStarted(threadId: string): void {

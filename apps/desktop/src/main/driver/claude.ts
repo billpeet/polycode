@@ -443,7 +443,7 @@ export class ClaudeDriver implements CLIDriver {
           if (error) {
             this.finishTurn(error)
           } else {
-            this.handleSuccessfulTurnBoundary()
+            this.handleSuccessfulResult()
           }
         } else if (this.isIdleStateMessage(message) && this.currentTurn) {
           // Claude Code's session_state_changed:idle is emitted after held-back
@@ -834,6 +834,21 @@ export class ClaudeDriver implements CLIDriver {
       return
     }
 
+    this.finishTurn()
+  }
+
+  private handleSuccessfulResult(): void {
+    if (this.queuedTurnCount > 0) {
+      this.queuedTurnCount -= 1
+      return
+    }
+
+    // A successful result is Claude's authoritative end-of-turn signal. Task
+    // lifecycle notifications are best-effort and can be lost (notably for
+    // local shell tasks), so stale bookkeeping must not keep the thread running
+    // forever. Session.handleDone() will synthesize cancelled tool results for
+    // any calls that remain unmatched when the turn closes.
+    this.activeBackgroundTaskIds.clear()
     this.finishTurn()
   }
 

@@ -304,7 +304,7 @@ describe('ClaudeDriver live input', () => {
     expect(done).toHaveBeenCalledTimes(1)
   })
 
-  it('keeps the turn open after a result while Claude background tasks are active', async () => {
+  it('treats a successful result as authoritative when a background task is orphaned', async () => {
     const driver = makeDriver()
     const events: OutputEvent[] = []
     const done = vi.fn(() => {})
@@ -333,42 +333,7 @@ describe('ClaudeDriver live input', () => {
           session_id: 'sdk-session',
           uuid: 'result-1',
         }
-        expect(done).not.toHaveBeenCalled()
-
-        yield {
-          type: 'system',
-          subtype: 'task_progress',
-          task_id: 'task-1',
-          tool_use_id: 'tool-task-1',
-          description: 'Security audit',
-          summary: 'Still checking IPC.',
-          usage: { total_tokens: 123, tool_uses: 4, duration_ms: 987 },
-          last_tool_name: 'Read',
-          session_id: 'sdk-session',
-          uuid: 'task-progress-1',
-        }
-        expect(done).not.toHaveBeenCalled()
-
-        yield {
-          type: 'system',
-          subtype: 'task_notification',
-          task_id: 'task-1',
-          tool_use_id: 'tool-task-1',
-          status: 'completed',
-          output_file: 'task-1.md',
-          summary: 'Security audit complete.',
-          session_id: 'sdk-session',
-          uuid: 'task-notification-1',
-        }
-        expect(done).not.toHaveBeenCalled()
-
-        yield {
-          type: 'system',
-          subtype: 'session_state_changed',
-          state: 'idle',
-          session_id: 'sdk-session',
-          uuid: 'idle-1',
-        }
+        expect(done).toHaveBeenCalledTimes(1)
       },
     }
 
@@ -376,8 +341,7 @@ describe('ClaudeDriver live input', () => {
 
     expect(done).toHaveBeenCalledTimes(1)
     expect(done.mock.calls[0]?.[0]).toBeUndefined()
-    expect(events.some((event) => event.content.includes('Still checking IPC.'))).toBe(true)
-    expect(events.some((event) => event.content.includes('Security audit complete.'))).toBe(true)
+    expect((driver as any).activeBackgroundTaskIds.size).toBe(0)
   })
 
   it('completes a turn on Claude idle state when no result frame arrives', async () => {

@@ -1317,8 +1317,8 @@ describe('CodexDriver app-server approvals', () => {
     expect(events.some((event) => event.metadata?.codex_agent_path === '/root')).toBe(false)
   })
 
-  it('waits for running Codex sub-agents and ignores their turn boundary as the root boundary', () => {
-    const { local } = setupLocalDriver()
+  it('treats the completed root turn as authoritative and stops orphaned sub-agents', () => {
+    const { local, events } = setupLocalDriver()
     let doneCount = 0
     ;(local as any).currentTurn.onDone = () => { doneCount += 1 }
     ;(local as any).codexThreadId = 'root-thread'
@@ -1340,21 +1340,17 @@ describe('CodexDriver app-server approvals', () => {
       params: { threadId: 'root-thread', turn: { id: 'root-turn', status: 'completed', items: [] } },
     }))
 
-    expect(doneCount).toBe(0)
-    expect((local as any).activeTurnId).toBeNull()
-
-    ;(local as any).handleLine(JSON.stringify({
-      method: 'turn/completed',
-      params: {
-        threadId: 'child-thread',
-        turn: {
-          id: 'child-turn', status: 'completed', items: [],
-          usage: { inputTokens: 100, cachedInputTokens: 20, outputTokens: 30 },
-        },
-      },
-    }))
-
     expect(doneCount).toBe(1)
+    expect((local as any).activeTurnId).toBeNull()
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'thinking',
+      metadata: expect.objectContaining({
+        source: 'codex_subagent',
+        task_event: 'notification',
+        status: 'stopped',
+        agent_task_id: 'child-thread',
+      }),
+    }))
   })
 
   it('buffers early child output until the spawn notification supplies its anchor', () => {
