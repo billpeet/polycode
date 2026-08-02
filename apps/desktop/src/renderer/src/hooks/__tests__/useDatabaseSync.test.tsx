@@ -1,6 +1,5 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useMessageStore } from '../../stores/messages'
 import { useProjectStore } from '../../stores/projects'
 import { useSessionStore } from '../../stores/sessions'
 import { useThreadStore } from '../../stores/threads'
