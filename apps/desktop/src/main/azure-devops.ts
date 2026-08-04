@@ -83,6 +83,41 @@ async function runAzDevOps(repoPath: string, args: string[], ssh?: SshConfig | n
   return result.stdout.trim()
 }
 
+async function enrichPullRequest(
+  repoPath: string,
+  ctx: AzureRepoContext,
+  pr: PullRequest,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<PullRequest> {
+  const args = ['pr', 'comments', '--repo', ctx.repo, '--id', String(pr.id), '--unresolved', '--format', 'json']
+  if (ctx.project) args.splice(4, 0, '--project', ctx.project)
+  try {
+    const output = await runAzDevOps(repoPath, args, ssh, wsl)
+    const threads = JSON.parse(output) as unknown
+    return { ...pr, unresolvedCommentCount: Array.isArray(threads) ? threads.length : undefined }
+  } catch {
+    // Older CLI releases do not support `pr comments`; keep the base PR usable.
+    return pr
+  }
+}
+
+async function enrichPullRequests(
+  repoPath: string,
+  ctx: AzureRepoContext,
+  prs: PullRequest[],
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<PullRequest[]> {
+  const enriched: PullRequest[] = []
+  for (let index = 0; index < prs.length; index += 5) {
+    enriched.push(...await Promise.all(
+      prs.slice(index, index + 5).map((pr) => enrichPullRequest(repoPath, ctx, pr, ssh, wsl)),
+    ))
+  }
+  return enriched
+}
+
 async function resolveRepoContext(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<AzureRepoContext> {
   const remoteNamesRaw = await git(repoPath, ['remote'], ssh, wsl)
   const remoteNames = remoteNamesRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
@@ -142,9 +177,10 @@ export async function listOpenPullRequests(
 
   if (!Array.isArray(raw)) return []
 
-  return raw
+  const prs = raw
     .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
     .filter((pr) => pr.id > 0)
+  return enrichPullRequests(repoPath, ctx, prs, ssh, wsl)
 }
 
 async function listPullRequestsByStatus(
@@ -175,9 +211,10 @@ async function listPullRequestsByStatus(
 
   if (!Array.isArray(raw)) return []
 
-  return raw
+  const prs = raw
     .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
     .filter((pr) => pr.id > 0)
+  return enrichPullRequests(repoPath, ctx, prs, ssh, wsl)
 }
 
 export async function getPullRequestsWebUrl(

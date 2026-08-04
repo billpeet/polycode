@@ -28,6 +28,33 @@ describe('GitHub parsers', () => {
       authorName: 'ada',
     })
   })
+
+  it('summarizes merge readiness, checks, and unresolved review comments', () => {
+    expect(mapGitHubPr({
+      number: 8,
+      mergeable: 'MERGEABLE',
+      mergeStateStatus: 'CLEAN',
+      statusCheckRollup: [
+        { status: 'COMPLETED', conclusion: 'SUCCESS' },
+        { status: 'COMPLETED', conclusion: 'NEUTRAL' },
+      ],
+      reviewThreads: [{ isResolved: false }, { isResolved: true }],
+    })).toMatchObject({
+      mergeStatus: 'ready',
+      checkStatus: 'passed',
+      unresolvedCommentCount: 1,
+    })
+
+    expect(mapGitHubPr({
+      mergeable: 'CONFLICTING',
+      statusCheckRollup: [{ status: 'COMPLETED', conclusion: 'FAILURE' }],
+    })).toMatchObject({ mergeStatus: 'conflicting', checkStatus: 'failed' })
+
+    expect(mapGitHubPr({
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ status: 'IN_PROGRESS', conclusion: null }],
+    })).toMatchObject({ mergeStatus: 'blocked', checkStatus: 'processing' })
+  })
 })
 
 describe('Azure DevOps parsers', () => {
@@ -61,5 +88,16 @@ describe('Azure DevOps parsers', () => {
       authorName: 'Ada',
       url: 'https://dev.azure.com/org/project/_git/repo/pullrequest/42',
     })
+  })
+
+  it('maps Azure merge status when the CLI includes it', () => {
+    expect(mapAzurePr({ mergeStatus: 'conflicts' })).toMatchObject({ mergeStatus: 'conflicting' })
+    expect(mapAzurePr({ mergeStatus: 'succeeded' })).toMatchObject({ mergeStatus: 'ready' })
+  })
+
+  it('summarizes Azure reviewer votes', () => {
+    expect(mapAzurePr({ reviewers: [{ vote: 10 }, { vote: 5 }] })).toMatchObject({ reviewStatus: 'approved' })
+    expect(mapAzurePr({ reviewers: [{ vote: 10 }, { vote: 0 }] })).toMatchObject({ reviewStatus: 'waiting' })
+    expect(mapAzurePr({ reviewers: [{ vote: -10 }] })).toMatchObject({ reviewStatus: 'changes-requested' })
   })
 })

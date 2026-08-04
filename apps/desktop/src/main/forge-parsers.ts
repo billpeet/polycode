@@ -21,6 +21,10 @@ export interface GitHubPrInput {
   author?: { login?: string; name?: string }
   url?: string
   createdAt?: string
+  mergeStateStatus?: string
+  mergeable?: string
+  statusCheckRollup?: Array<{ status?: string; conclusion?: string | null }> | null
+  reviewThreads?: Array<{ isResolved?: boolean }> | null
 }
 
 export interface AzurePrInput {
@@ -32,6 +36,25 @@ export interface AzurePrInput {
   createdBy?: { displayName?: string }
   url?: string
   creationDate?: string
+  mergeStatus?: string
+  hasMultipleMergeBases?: boolean
+  reviewers?: Array<{ vote?: number }>
+}
+
+function mapGitHubMergeStatus(pr: GitHubPrInput): PullRequest['mergeStatus'] {
+  if (pr.mergeable?.toUpperCase() === 'CONFLICTING') return 'conflicting'
+  const status = pr.mergeStateStatus?.toUpperCase()
+  if (status === 'CLEAN' || status === 'HAS_HOOKS' || status === 'UNSTABLE') return 'ready'
+  if (status === 'BLOCKED' || status === 'BEHIND' || status === 'DIRTY' || pr.mergeable?.toUpperCase() === 'UNKNOWN') return 'blocked'
+  return 'unknown'
+}
+
+function mapGitHubCheckStatus(checks: GitHubPrInput['statusCheckRollup']): PullRequest['checkStatus'] {
+  if (!checks?.length) return 'none'
+  const failed = new Set(['FAILURE', 'ERROR', 'CANCELLED', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE'])
+  if (checks.some((check) => failed.has(check.conclusion?.toUpperCase() ?? ''))) return 'failed'
+  if (checks.some((check) => check.status?.toUpperCase() !== 'COMPLETED' || !check.conclusion)) return 'processing'
+  return 'passed'
 }
 
 export function parseGitHubRemote(remoteUrl: string): GitHubRemote | null {
@@ -52,6 +75,9 @@ export function mapGitHubPr(pr: GitHubPrInput): PullRequest {
     authorName: pr.author?.name ?? pr.author?.login ?? 'Unknown',
     url: pr.url ?? '',
     creationDate: pr.createdAt ?? '',
+    mergeStatus: mapGitHubMergeStatus(pr),
+    checkStatus: mapGitHubCheckStatus(pr.statusCheckRollup),
+    unresolvedCommentCount: pr.reviewThreads?.filter((thread) => !thread.isResolved).length,
   }
 }
 
@@ -89,6 +115,7 @@ export function buildAzureRepoUrl(remoteUrl: string): string {
 
 export function mapAzurePr(pr: AzurePrInput, remoteUrl?: string): PullRequest {
   const id = pr.pullRequestId ?? 0
+  const reviewerVotes = pr.reviewers?.map((reviewer) => reviewer.vote ?? 0) ?? []
   return {
     id,
     title: pr.title ?? '(untitled)',
@@ -98,6 +125,16 @@ export function mapAzurePr(pr: AzurePrInput, remoteUrl?: string): PullRequest {
     authorName: pr.createdBy?.displayName ?? 'Unknown',
     url: remoteUrl && id ? buildAzurePullRequestUrl(remoteUrl, id) : (pr.url ?? ''),
     creationDate: pr.creationDate ?? '',
+    mergeStatus: pr.mergeStatus
+      ? (/conflict/i.test(pr.mergeStatus) ? 'conflicting' : /succeed|ready/i.test(pr.mergeStatus) ? 'ready' : /reject|fail|block/i.test(pr.mergeStatus) ? 'blocked' : 'unknown')
+      : pr.hasMultipleMergeBases ? 'blocked' : undefined,
+    reviewStatus: reviewerVotes.some((vote) => vote <= -10)
+      ? 'changes-requested'
+      : reviewerVotes.some((vote) => vote === -5)
+        ? 'waiting'
+        : reviewerVotes.length > 0 && reviewerVotes.every((vote) => vote > 0)
+          ? 'approved'
+          : reviewerVotes.length > 0 ? 'waiting' : 'none',
   }
 }
 

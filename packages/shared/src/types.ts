@@ -467,6 +467,10 @@ export interface PullRequest {
   authorName: string
   url: string
   creationDate: string
+  mergeStatus?: 'ready' | 'blocked' | 'conflicting' | 'unknown'
+  checkStatus?: 'passed' | 'processing' | 'failed' | 'none'
+  unresolvedCommentCount?: number
+  reviewStatus?: 'approved' | 'waiting' | 'changes-requested' | 'none'
 }
 
 export type PublishStep = 'inspect' | 'branch' | 'stage' | 'commit' | 'push' | 'pull-request'

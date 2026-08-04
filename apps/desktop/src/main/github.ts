@@ -14,6 +14,8 @@ interface GitHubRepoContext {
   repo: string
 }
 
+const prJsonFields = 'number,title,state,headRefName,baseRefName,author,url,createdAt,mergeStateStatus,mergeable,statusCheckRollup,reviewThreads'
+
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)
 }
@@ -82,7 +84,7 @@ export async function listOpenGitHubPullRequests(
     '--repo', repo,
     '--state', 'open',
     '--limit', '50',
-    '--json', 'number,title,state,headRefName,baseRefName,author,url,createdAt',
+    '--json', prJsonFields,
   ], ssh, wsl)
 
   const raw = parseJson<unknown>(output, 'Failed to parse pull request list from gh CLI')
@@ -108,7 +110,7 @@ async function listGitHubPullRequestsForBranch(
     '--state', state,
     '--head', branch,
     '--limit', '10',
-    '--json', 'number,title,state,headRefName,baseRefName,author,url,createdAt',
+    '--json', prJsonFields,
   ], ssh, wsl)
 
   const raw = parseJson<unknown>(output, 'Failed to parse pull request list from gh CLI')
@@ -203,7 +205,7 @@ export async function createGitHubPullRequest(
     'pr', 'view',
     String(prNumber),
     '--repo', repo,
-    '--json', 'number,title,state,headRefName,baseRefName,author,url,createdAt',
+    '--json', prJsonFields,
   ], ssh, wsl)
 
   const raw = parseJson<GhPullRequest>(viewOutput, 'Failed to parse created pull request details from gh CLI')

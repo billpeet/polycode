@@ -105,6 +105,40 @@ function PullRequestProviderIcon({ provider }: { provider: 'azure' | 'github' })
   )
 }
 
+function PullRequestDetails({ pr }: { pr: PullRequest }) {
+  const badges: Array<{ label: string; title: string; color: string }> = []
+  if (pr.mergeStatus && pr.mergeStatus !== 'unknown') {
+    badges.push({
+      label: pr.mergeStatus === 'ready' ? 'Merge ready' : pr.mergeStatus === 'conflicting' ? 'Conflicts' : 'Merge blocked',
+      title: `Merge status: ${pr.mergeStatus}`,
+      color: pr.mergeStatus === 'ready' ? '#4ade80' : pr.mergeStatus === 'conflicting' ? '#f87171' : '#fbbf24',
+    })
+  }
+  if (pr.checkStatus && pr.checkStatus !== 'none') {
+    badges.push({
+      label: pr.checkStatus === 'passed' ? 'Checks passed' : pr.checkStatus === 'processing' ? 'Checks running' : 'Checks failed',
+      title: `CI checks: ${pr.checkStatus}`,
+      color: pr.checkStatus === 'passed' ? '#4ade80' : pr.checkStatus === 'processing' ? '#60a5fa' : '#f87171',
+    })
+  }
+  if (pr.unresolvedCommentCount !== undefined) {
+    badges.push({
+      label: `${pr.unresolvedCommentCount} open comment${pr.unresolvedCommentCount === 1 ? '' : 's'}`,
+      title: `${pr.unresolvedCommentCount} unresolved review comment${pr.unresolvedCommentCount === 1 ? '' : 's'}`,
+      color: pr.unresolvedCommentCount > 0 ? '#fbbf24' : 'var(--color-text-muted)',
+    })
+  }
+  if (pr.reviewStatus && pr.reviewStatus !== 'none') {
+    badges.push({
+      label: pr.reviewStatus === 'approved' ? 'Approved' : pr.reviewStatus === 'changes-requested' ? 'Changes requested' : 'Review pending',
+      title: `Review status: ${pr.reviewStatus}`,
+      color: pr.reviewStatus === 'approved' ? '#4ade80' : pr.reviewStatus === 'changes-requested' ? '#f87171' : '#fbbf24',
+    })
+  }
+  if (badges.length === 0) return null
+  return <div className="mt-1 flex flex-wrap gap-1">{badges.map((badge) => <span key={badge.title} className="rounded px-1.5 py-0.5 text-[9px]" title={badge.title} style={{ background: 'rgba(255,255,255,0.06)', color: badge.color }}>{badge.label}</span>)}</div>
+}
+
 function FileGroup({
   label,
   files,
@@ -1286,11 +1320,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                   <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase" style={{ background: currentPrIsMerged ? 'rgba(74, 222, 128, 0.12)' : 'rgba(255, 255, 255, 0.08)', color: currentPrIsMerged ? '#4ade80' : 'var(--color-text-muted)' }}>{currentPr.status}</span>
                 </div>
                 <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{currentPr.sourceBranch} → {currentPr.targetBranch}</p>
+                <PullRequestDetails pr={currentPr} />
                 {currentPrIsMerged && postPrActionButton}
               </div> : <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>No open PR for <code>{gitStatus.branch}</code>.</p>}
             </div>
             {otherOpenPrsAll.length > 5 && <input type="text" value={prSearch} onChange={(e) => setPrSearch(e.target.value)} placeholder={`Search ${otherOpenPrsAll.length} pull requests…`} className="mb-2 w-full rounded px-2 py-1 text-[11px] outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />}
-            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p></div><div className="flex shrink-0 overflow-hidden rounded" style={{ background: 'var(--color-claude)' }}><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : checkingOutPrWorktreeId === pr.id ? 'Creating…' : 'C/O'}</button><button onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setPrCheckoutMenu({ pr, x: rect.right - 180, y: rect.bottom }) }} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-1 py-1 text-[10px] transition-opacity disabled:opacity-40 hover:bg-black/10" style={{ borderLeft: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} title="More checkout options" aria-label={`More checkout options for PR #${pr.id}`} aria-haspopup="menu"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true"><path d="M0 2l4 4 4-4z" /></svg></button></div></div>)}</div>
+            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p><PullRequestDetails pr={pr} /></div><div className="flex shrink-0 overflow-hidden rounded" style={{ background: 'var(--color-claude)' }}><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : checkingOutPrWorktreeId === pr.id ? 'Creating…' : 'C/O'}</button><button onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setPrCheckoutMenu({ pr, x: rect.right - 180, y: rect.bottom }) }} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-1 py-1 text-[10px] transition-opacity disabled:opacity-40 hover:bg-black/10" style={{ borderLeft: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} title="More checkout options" aria-label={`More checkout options for PR #${pr.id}`} aria-haspopup="menu"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true"><path d="M0 2l4 4 4-4z" /></svg></button></div></div>)}</div>
             {prCheckoutMenu && <ContextMenu x={prCheckoutMenu.x} y={prCheckoutMenu.y} onClose={() => setPrCheckoutMenu(null)} items={[{ id: 'checkout-worktree', label: 'Checkout in worktree', onSelect: () => handleCheckoutPrInWorktree(prCheckoutMenu.pr) }]} />}
             <button onClick={() => setShowCreatePr(true)} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
             {!currentPrIsMerged && postPrActionButton}
