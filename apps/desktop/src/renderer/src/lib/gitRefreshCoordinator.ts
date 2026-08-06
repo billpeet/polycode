@@ -1,6 +1,6 @@
 import { useGitStore } from '../stores/git'
 
-const STATUS_INTERVAL_MS = 10_000
+const STATUS_INTERVAL_MS = 60_000
 const REMOTE_INTERVAL_MS = 60_000
 
 type Subscriber = { includeRemote: boolean }

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { GitStatus, GitBranches, LastCommitInfo, StashEntry, PullResult } from '../types/ipc'
 import { useFilesStore } from './files'
+import { invalidateSidebarBranch } from '../lib/sidebarBranchRefresh'
 
 const gitFetches = new Map<string, Promise<void>>()
 
@@ -118,10 +119,12 @@ export const useGitStore = create<GitStore>((set, get) => ({
           }))
           return
         }
-        const [status, lastCommit] = await Promise.all([
-          window.api.invoke('git:status', repoPath),
-          window.api.invoke('git:lastCommit', repoPath),
-        ])
+        const status = await window.api.invoke('git:status', repoPath)
+        const previousStatus = get().statusByPath[repoPath]
+        const needsLastCommit = !!status && (!previousStatus || previousStatus.branch !== status.branch)
+        const lastCommit = needsLastCommit
+          ? await window.api.invoke('git:lastCommit', repoPath)
+          : get().lastCommitByPath[repoPath] ?? null
         set((s) => ({
           statusByPath: { ...s.statusByPath, [repoPath]: status },
           lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit },
@@ -154,6 +157,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set((s) => ({ initializingByPath: { ...s.initializingByPath, [repoPath]: true } }))
     try {
       await window.api.invoke('git:init', repoPath)
+      invalidateSidebarBranch(repoPath)
       set((s) => ({ notRepoByPath: { ...s.notRepoByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
     } finally {
@@ -163,6 +167,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   commit: async (repoPath, message) => {
     await window.api.invoke('git:commit', repoPath, message)
+    invalidateSidebarBranch(repoPath)
     // Clear commit message and refresh status after commit
     set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: '' } }))
     await get().fetch(repoPath)
@@ -173,6 +178,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set((s) => ({ amendingByPath: { ...s.amendingByPath, [repoPath]: true } }))
     try {
       await window.api.invoke('git:amendCommit', repoPath, message ?? null)
+      invalidateSidebarBranch(repoPath)
       set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: '' } }))
       await get().fetch(repoPath)
     } finally {
@@ -185,6 +191,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     set((s) => ({ undoingCommitByPath: { ...s.undoingCommitByPath, [repoPath]: true } }))
     try {
       await window.api.invoke('git:undoLastCommit', repoPath)
+      invalidateSidebarBranch(repoPath)
       await get().fetch(repoPath)
     } finally {
       set((s) => ({ undoingCommitByPath: { ...s.undoingCommitByPath, [repoPath]: false } }))
@@ -439,18 +446,21 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   checkout: async (repoPath, branch) => {
     await window.api.invoke('git:checkout', repoPath, branch)
+    invalidateSidebarBranch(repoPath)
     await get().fetch(repoPath)
     await get().fetchBranches(repoPath)
   },
 
   createBranch: async (repoPath, name, base, pullFirst) => {
     await window.api.invoke('git:createBranch', repoPath, name, base, pullFirst)
+    invalidateSidebarBranch(repoPath)
     await get().fetch(repoPath)
     await get().fetchBranches(repoPath)
   },
 
   merge: async (repoPath, source) => {
     const result = await window.api.invoke('git:merge', repoPath, source)
+    invalidateSidebarBranch(repoPath)
     await get().fetch(repoPath) // always refresh — conflict markers show up as modified files
     if (result.conflicts.length > 0) {
       const err = new Error(`Merge conflicts in ${result.conflicts.length} file${result.conflicts.length !== 1 ? 's' : ''}`)
@@ -465,6 +475,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   deleteBranches: async (repoPath, branches) => {
     const result = await window.api.invoke('git:deleteBranches', repoPath, branches)
+    invalidateSidebarBranch(repoPath)
     await get().fetchBranches(repoPath)
     return result
   },

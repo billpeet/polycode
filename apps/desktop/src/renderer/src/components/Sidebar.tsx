@@ -7,6 +7,7 @@ import { useToastStore } from '../stores/toast'
 import { useYouTrackStore } from '../stores/youtrack'
 import { Project, RepoLocation, Thread, ThreadStatus } from '../types/ipc'
 import { formatErrorDetails } from '../lib/errorDetails'
+import { subscribeToSidebarBranches } from '../lib/sidebarBranchRefresh'
 import CollapsedSidebar from './sidebar/CollapsedSidebar'
 import ExpandedSidebar from './sidebar/ExpandedSidebar'
 import SidebarDialogs, {
@@ -243,43 +244,14 @@ export default function Sidebar() {
   }, [fetchThreads, touchProject])
 
   useEffect(() => {
-    let cancelled = false
-
-    async function refreshBranches() {
-      const locationPairs: Array<{ id: string; path: string }> = []
-
-      for (const projectId of expandedProjectIds) {
-        const locations = locationsByProject[projectId] ?? []
-        for (const location of locations) {
-          locationPairs.push({ id: location.id, path: location.path })
-        }
-      }
-
-      if (locationPairs.length === 0) return
-
-      const results: Array<{ id: string; branch: string | null }> = []
-      const queue = [...locationPairs]
-      const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
-        while (!cancelled) {
-          const pair = queue.shift()
-          if (!pair) return
-          const { id, path } = pair
-          try {
-            const branch = await window.api.invoke('git:branch', path)
-            results.push({ id, branch: branch || null })
-          } catch {
-            results.push({ id, branch: null })
-          }
-        }
-      })
-      await Promise.all(workers)
-
-      if (cancelled) return
-
+    const visibleLocations = Array.from(expandedProjectIds).flatMap(
+      (projectId) => locationsByProject[projectId] ?? [],
+    )
+    return subscribeToSidebarBranches(visibleLocations, (branches) => {
       setBranchByLocation((prev) => {
         let changed = false
         const next = { ...prev }
-        for (const { id, branch } of results) {
+        for (const [id, branch] of branches) {
           if (!branch) continue
           if (next[id] === branch) continue
           next[id] = branch
@@ -287,17 +259,7 @@ export default function Sidebar() {
         }
         return changed ? next : prev
       })
-    }
-
-    void refreshBranches()
-    const interval = setInterval(() => {
-      if (document.visibilityState === 'visible') void refreshBranches()
-    }, 10000)
-
-    return () => {
-      cancelled = true
-      clearInterval(interval)
-    }
+    })
   }, [expandedProjectIds, locationsByProject])
 
   useEffect(() => {
