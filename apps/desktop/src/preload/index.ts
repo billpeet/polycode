@@ -19,7 +19,18 @@ const api = {
         new Error(`Blocked IPC channel "${channel}" — not declared local in CHANNEL_REGISTRY`),
       )
     }
-    return ipcRenderer.invoke(channel, ...args)
+    const startedAt = performance.now()
+    return ipcRenderer.invoke(channel, ...args).finally(() => {
+      const durationMs = performance.now() - startedAt
+      if (durationMs >= 50) {
+        ipcRenderer.send('log:write', {
+          source: 'renderer',
+          level: durationMs >= 250 ? 'warn' : 'debug',
+          timestamp: new Date().toISOString(),
+          messages: [`[perf][renderer-ipc] ${channel} ${durationMs.toFixed(1)}ms`],
+        })
+      }
+    })
   },
 
   on(channel: string, callback: IpcListener): () => void {

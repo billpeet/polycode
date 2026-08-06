@@ -4,6 +4,8 @@ const DEFAULT_MIN_INTERVAL_MS = 5000
 const LONG_TASK_THRESHOLD_MS = 50
 const REACT_COMMIT_THRESHOLD_MS = 20
 const FRAME_JANK_THRESHOLD_MS = 250
+const HEARTBEAT_SAMPLE_MS = 100
+const HEARTBEAT_STALL_THRESHOLD_MS = 200
 
 const lastSentAtByKey = new Map<string, number>()
 
@@ -123,4 +125,19 @@ export function installRendererPerfObservers(): void {
   }
 
   window.requestAnimationFrame(tick)
+
+  let expectedHeartbeatAt = performance.now() + HEARTBEAT_SAMPLE_MS
+  window.setInterval(() => {
+    const now = performance.now()
+    const driftMs = now - expectedHeartbeatAt
+    expectedHeartbeatAt = now + HEARTBEAT_SAMPLE_MS
+    if (document.visibilityState === 'visible' && driftMs >= HEARTBEAT_STALL_THRESHOLD_MS) {
+      reportPerf(
+        'event-loop-stall',
+        driftMs,
+        {},
+        { thresholdMs: HEARTBEAT_STALL_THRESHOLD_MS, minIntervalMs: 1000 }
+      )
+    }
+  }, HEARTBEAT_SAMPLE_MS)
 }

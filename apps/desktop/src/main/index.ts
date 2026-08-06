@@ -18,7 +18,7 @@ import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
-import { installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
+import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
@@ -266,4 +266,5 @@ app.on('before-quit', () => {
   ptyManager.killAll()
   cleanupAllAttachments()
   closeDb()
+  flushAppLogs()
 })

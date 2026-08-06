@@ -5,6 +5,46 @@ const DEFAULT_IPC_THRESHOLD_MS = 50
 const HOT_IPC_THRESHOLD_MS = 16
 const MAIN_THREAD_STALL_THRESHOLD_MS = 250
 const MAIN_THREAD_STALL_SAMPLE_MS = 1000
+const IPC_SUMMARY_INTERVAL_MS = 10_000
+
+interface ChannelStats {
+  count: number
+  errors: number
+  totalMs: number
+  maxMs: number
+  active: number
+  maxActive: number
+}
+
+const channelStats = new Map<string, ChannelStats>()
+
+function getChannelStats(channel: string): ChannelStats {
+  let stats = channelStats.get(channel)
+  if (!stats) {
+    stats = { count: 0, errors: 0, totalMs: 0, maxMs: 0, active: 0, maxActive: 0 }
+    channelStats.set(channel, stats)
+  }
+  return stats
+}
+
+function installIpcSummaryReporter(): void {
+  setInterval(() => {
+    const busiest = [...channelStats.entries()]
+      .filter(([, stats]) => stats.count > 0)
+      .sort((a, b) => b[1].totalMs - a[1].totalMs)
+      .slice(0, 10)
+
+    if (busiest.length > 0) {
+      const summary = busiest.map(([channel, stats]) => {
+        const averageMs = stats.totalMs / stats.count
+        return `${channel}{count=${stats.count},avg=${averageMs.toFixed(1)}ms,max=${stats.maxMs.toFixed(1)}ms,errors=${stats.errors},concurrency=${stats.maxActive}}`
+      }).join(' ')
+      console.info(`[perf][ipc-summary] window=${IPC_SUMMARY_INTERVAL_MS}ms ${summary}`)
+    }
+
+    channelStats.clear()
+  }, IPC_SUMMARY_INTERVAL_MS).unref()
+}
 
 type ProfiledIpcMain = typeof ipcMain & {
   [IPC_PROFILING_PATCHED]?: boolean
@@ -59,6 +99,7 @@ export function installIpcProfiling(): void {
   const profiledIpcMain = ipcMain as ProfiledIpcMain
   if (profiledIpcMain[IPC_PROFILING_PATCHED]) return
   profiledIpcMain[IPC_PROFILING_PATCHED] = true
+  installIpcSummaryReporter()
 
   const originalHandle = ipcMain.handle.bind(ipcMain)
 
@@ -66,14 +107,22 @@ export function installIpcProfiling(): void {
     return originalHandle(channel, async (event, ...args) => {
       const startedAt = performance.now()
       let outcome = 'ok'
+      const stats = getChannelStats(channel)
+      stats.active += 1
+      stats.maxActive = Math.max(stats.maxActive, stats.active)
 
       try {
         return await listener(event, ...args)
       } catch (error) {
         outcome = 'error'
+        stats.errors += 1
         throw error
       } finally {
         const durationMs = performance.now() - startedAt
+        stats.active -= 1
+        stats.count += 1
+        stats.totalMs += durationMs
+        stats.maxMs = Math.max(stats.maxMs, durationMs)
         const thresholdMs = getIpcThresholdMs(channel)
         if (durationMs >= thresholdMs) {
           console.warn(
