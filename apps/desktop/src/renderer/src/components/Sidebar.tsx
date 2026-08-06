@@ -257,16 +257,22 @@ export default function Sidebar() {
 
       if (locationPairs.length === 0) return
 
-      const results = await Promise.all(
-        locationPairs.map(async ({ id, path }) => {
+      const results: Array<{ id: string; branch: string | null }> = []
+      const queue = [...locationPairs]
+      const workers = Array.from({ length: Math.min(2, queue.length) }, async () => {
+        while (!cancelled) {
+          const pair = queue.shift()
+          if (!pair) return
+          const { id, path } = pair
           try {
             const branch = await window.api.invoke('git:branch', path)
-            return { id, branch: branch || null }
+            results.push({ id, branch: branch || null })
           } catch {
-            return { id, branch: null }
+            results.push({ id, branch: null })
           }
-        })
-      )
+        }
+      })
+      await Promise.all(workers)
 
       if (cancelled) return
 
@@ -285,7 +291,7 @@ export default function Sidebar() {
 
     void refreshBranches()
     const interval = setInterval(() => {
-      void refreshBranches()
+      if (document.visibilityState === 'visible') void refreshBranches()
     }, 10000)
 
     return () => {

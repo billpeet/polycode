@@ -2,6 +2,13 @@ import { create } from 'zustand'
 import { GitStatus, GitBranches, LastCommitInfo, StashEntry, PullResult } from '../types/ipc'
 import { useFilesStore } from './files'
 
+const gitFetches = new Map<string, Promise<void>>()
+
+function repositoryKey(repoPath: string): string {
+  const normalized = repoPath.replace(/\\/g, '/').replace(/\/+$/, '')
+  return navigator.platform.startsWith('Win') ? normalized.toLowerCase() : normalized
+}
+
 type DiscardTarget = { path: string; oldPath?: string | null }
 
 /** Close the diff panel if it's currently showing one of the discarded paths. */
@@ -94,31 +101,42 @@ export const useGitStore = create<GitStore>((set, get) => ({
   modifiedFilesByThread: {},
 
   fetch: async (repoPath) => {
-    if (get().loadingByPath[repoPath]) return
-    set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: true } }))
-    try {
-      const isRepo = await window.api.invoke('git:isRepo', repoPath)
-      if (!isRepo) {
+    const key = repositoryKey(repoPath)
+    const existing = gitFetches.get(key)
+    if (existing) return existing
+
+    const request = (async () => {
+      set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: true } }))
+      try {
+        const isRepo = await window.api.invoke('git:isRepo', repoPath)
+        if (!isRepo) {
+          set((s) => ({
+            statusByPath: { ...s.statusByPath, [repoPath]: null },
+            lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: null },
+            notRepoByPath: { ...s.notRepoByPath, [repoPath]: true },
+            loadingByPath: { ...s.loadingByPath, [repoPath]: false },
+          }))
+          return
+        }
+        const [status, lastCommit] = await Promise.all([
+          window.api.invoke('git:status', repoPath),
+          window.api.invoke('git:lastCommit', repoPath),
+        ])
         set((s) => ({
-          statusByPath: { ...s.statusByPath, [repoPath]: null },
-          lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: null },
-          notRepoByPath: { ...s.notRepoByPath, [repoPath]: true },
+          statusByPath: { ...s.statusByPath, [repoPath]: status },
+          lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit },
+          notRepoByPath: { ...s.notRepoByPath, [repoPath]: false },
           loadingByPath: { ...s.loadingByPath, [repoPath]: false },
         }))
-        return
+      } catch {
+        set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: false } }))
       }
-      const [status, lastCommit] = await Promise.all([
-        window.api.invoke('git:status', repoPath),
-        window.api.invoke('git:lastCommit', repoPath),
-      ])
-      set((s) => ({
-        statusByPath: { ...s.statusByPath, [repoPath]: status },
-        lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit },
-        notRepoByPath: { ...s.notRepoByPath, [repoPath]: false },
-        loadingByPath: { ...s.loadingByPath, [repoPath]: false },
-      }))
-    } catch {
-      set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: false } }))
+    })()
+    gitFetches.set(key, request)
+    try {
+      await request
+    } finally {
+      if (gitFetches.get(key) === request) gitFetches.delete(key)
     }
   },
 

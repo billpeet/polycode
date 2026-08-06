@@ -153,9 +153,9 @@ They are not all proven contributors to the observed freezes.
 | --- | --- | --- | --- |
 | P0 | Cache and deduplicate favicon requests | Monitoring | One discovery per project; repeated calls below 10 ms |
 | P0 | Remove synchronous recursive favicon scan from main thread | Monitoring | No main-thread stall correlated with `projects:favicon` |
-| P0 | Introduce a shared per-repository refresh coordinator | Not started | One in-flight status refresh per repository |
-| P0 | Remove duplicate component-owned git polling | Not started | No duplicate status/last-commit refresh window |
-| P0 | Stagger and limit sidebar branch refreshes | Not started | `git:branch` peak concurrency at or below configured limit |
+| P0 | Introduce a shared per-repository refresh coordinator | Monitoring | One in-flight status refresh per repository |
+| P0 | Remove duplicate component-owned git polling | Monitoring | No duplicate status/last-commit refresh window |
+| P0 | Stagger and limit sidebar branch refreshes | Monitoring | `git:branch` peak concurrency at or below configured limit |
 | P1 | Add forge caching and failure backoff | Not started | Failing forge calls do not recur every refresh cycle |
 | P1 | Add visibility/focus-aware polling | Not started | No periodic git/forge work from hidden views |
 | P1 | Add per-command timing within composite git operations | Not started | Slow outer IPC calls identify their slow child command |
@@ -191,6 +191,7 @@ Suggested initial targets:
 | --- | --- | --- | --- | --- | --- |
 | 2026-08-06 | Added renderer/main/IPC instrumentation and buffered app logging | Normal use with project switching, messages, and git panel activity | No attributable measurements | Main and renderer stalls correlated with favicon and git/forge bursts | Baseline established |
 | 2026-08-06 | Made favicon discovery asynchronous; cached positive/negative results and deduplicated in-flight requests by project path | Automated favicon discovery and concurrency tests | 2,125-2,457 ms IPC calls with 1,818-1,899 ms main stalls | Awaiting five-minute profiling session | Implementation complete; monitoring required |
+| 2026-08-06 | Centralized visible git status/remote polling by repository; shared in-flight status promises; limited sidebar branch refreshes to two workers | Automated type checking, linting, and tests | Duplicate component timers and branch concurrency up to four | Awaiting five-minute profiling session | Implementation complete; monitoring required |
 
 ## Open questions
 

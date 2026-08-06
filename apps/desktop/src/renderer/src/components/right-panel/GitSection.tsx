@@ -12,6 +12,7 @@ import { StashSection } from './StashSection'
 import { CommitLogSection } from './CommitLogSection'
 import CreatePrModal from './CreatePrModal'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
+import { subscribeToGitRefresh } from '../../lib/gitRefreshCoordinator'
 import { formatErrorDetails } from '../../lib/errorDetails'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
@@ -786,11 +787,8 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
 
   useEffect(() => {
     if (!projectPath || collapsed) return
-    const timeoutId = window.setTimeout(() => {
-      fetchGit(projectPath)
-    }, 150)
-    return () => window.clearTimeout(timeoutId)
-  }, [projectPath, collapsed, fetchGit])
+    return subscribeToGitRefresh(projectPath)
+  }, [projectPath, collapsed])
 
   const threadStatus = thread?.status
   useEffect(() => {

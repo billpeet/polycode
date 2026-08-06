@@ -5,6 +5,7 @@ import { useLocationStore } from '../stores/locations'
 import { useGitStore } from '../stores/git'
 import { useToastStore } from '../stores/toast'
 import { useGitErrorReporter } from '../lib/gitErrorToast'
+import { subscribeToGitRefresh } from '../lib/gitRefreshCoordinator'
 import { useTerminalStore } from '../stores/terminal'
 import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, resolveEffectiveModel } from '../types/ipc'
 import { usePlanStore } from '../stores/plans'
@@ -188,8 +189,6 @@ export default function ThreadHeader({ threadId }: Props) {
   const usage = useThreadStore((s) => s.usageByThread[threadId])
   const isTerminalOpen = useTerminalStore((s) => locationId ? (s.visibleByLocation[locationId] ?? false) : false)
 
-  const fetchGit = useGitStore((s) => s.fetch)
-  const refreshRemoteGit = useGitStore((s) => s.refreshRemote)
   const gitStatus = useGitStore((s) =>
     locationPath ? (s.statusByPath[locationPath] ?? null) : null
   )
@@ -235,24 +234,12 @@ export default function ThreadHeader({ threadId }: Props) {
     }
   }, [editing])
 
-  // Poll git status for the thread's location
+  // Subscribe to the shared per-repository refresh coordinator.
   useEffect(() => {
     if (isPendingThread) return
     if (!locationPath) return
-    fetchGit(locationPath)
-    const lp = locationPath
-    const interval = setInterval(() => fetchGit(lp), 10_000)
-    return () => clearInterval(interval)
-  }, [locationPath, fetchGit, isPendingThread])
-
-  // Periodically fetch from remotes so ahead/behind indicators stay current.
-  useEffect(() => {
-    if (isPendingThread) return
-    if (!locationPath) return
-    const lp = locationPath
-    const interval = setInterval(() => { void refreshRemoteGit(lp) }, 60_000)
-    return () => clearInterval(interval)
-  }, [locationPath, refreshRemoteGit, isPendingThread])
+    return subscribeToGitRefresh(locationPath, { includeRemote: true })
+  }, [locationPath, isPendingThread])
 
   const statusColor =
     status === 'running'
