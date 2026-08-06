@@ -1,5 +1,6 @@
-import * as fs from 'node:fs'
+import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
+import type { Dirent } from 'node:fs'
 
 const FAVICON_CANDIDATES = [
   'favicon.svg', 'favicon.ico', 'favicon.png',
@@ -32,18 +33,26 @@ const MAX_SEARCH_ENTRIES = 5000
 const LINK_ICON_HTML_RE = /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i
 const LINK_ICON_OBJ_RE = /(?=[^}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/i
 
-function existingFile(root: string, relativePath: string): string | null {
+const faviconCache = new Map<string, string | null>()
+const faviconRequests = new Map<string, Promise<string | null>>()
+
+function cacheKey(root: string): string {
+  const resolved = path.resolve(root)
+  return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+async function existingFile(root: string, relativePath: string): Promise<string | null> {
   const resolvedRoot = path.resolve(root)
   const candidate = path.resolve(resolvedRoot, relativePath)
   if (candidate !== resolvedRoot && !candidate.startsWith(`${resolvedRoot}${path.sep}`)) return null
   try {
-    return fs.statSync(candidate).isFile() ? candidate : null
+    return (await fs.stat(candidate)).isFile() ? candidate : null
   } catch {
     return null
   }
 }
 
-function findNestedProjectIcon(root: string): string | null {
+async function findNestedProjectIcon(root: string): Promise<string | null> {
   let directories = [path.resolve(root)]
   const fallbackIcons: string[] = []
   let visited = 0
@@ -52,9 +61,9 @@ function findNestedProjectIcon(root: string): string | null {
     const nextDirectories: string[] = []
     const favicons: string[] = []
     for (const directory of directories.sort()) {
-      let entries: fs.Dirent[]
+      let entries: Dirent[]
       try {
-        entries = fs.readdirSync(directory, { withFileTypes: true })
+        entries = await fs.readdir(directory, { withFileTypes: true })
       } catch {
         continue
       }
@@ -80,18 +89,18 @@ function findNestedProjectIcon(root: string): string | null {
   return fallbackIcons.sort()[0] ?? null
 }
 
-export function resolveProjectFaviconPath(root: string): string | null {
+export async function resolveProjectFaviconPath(root: string): Promise<string | null> {
   for (const candidate of FAVICON_CANDIDATES) {
-    const found = existingFile(root, candidate)
+    const found = await existingFile(root, candidate)
     if (found) return found
   }
 
   for (const sourceFile of ICON_SOURCE_FILES) {
-    const sourcePath = existingFile(root, sourceFile)
+    const sourcePath = await existingFile(root, sourceFile)
     if (!sourcePath) continue
     let source: string
     try {
-      source = fs.readFileSync(sourcePath, 'utf8')
+      source = await fs.readFile(sourcePath, 'utf8')
     } catch {
       continue
     }
@@ -99,21 +108,43 @@ export function resolveProjectFaviconPath(root: string): string | null {
     if (!href || /^(?:[a-z]+:|\/\/)/i.test(href)) continue
     const cleanHref = href.replace(/^\//, '')
     for (const candidate of [`public/${cleanHref}`, cleanHref]) {
-      const found = existingFile(root, candidate)
+      const found = await existingFile(root, candidate)
       if (found) return found
     }
   }
   return findNestedProjectIcon(root)
 }
 
-export function projectFaviconDataUrl(root: string): string | null {
-  const faviconPath = resolveProjectFaviconPath(root)
+async function discoverProjectFaviconDataUrl(root: string): Promise<string | null> {
+  const faviconPath = await resolveProjectFaviconPath(root)
   if (!faviconPath) return null
   const mimeType = MIME_TYPES[path.extname(faviconPath).toLowerCase()]
   if (!mimeType) return null
   try {
-    return `data:${mimeType};base64,${fs.readFileSync(faviconPath).toString('base64')}`
+    return `data:${mimeType};base64,${(await fs.readFile(faviconPath)).toString('base64')}`
   } catch {
     return null
   }
+}
+
+export function projectFaviconDataUrl(root: string): Promise<string | null> {
+  const key = cacheKey(root)
+  if (faviconCache.has(key)) return Promise.resolve(faviconCache.get(key) ?? null)
+
+  const pending = faviconRequests.get(key)
+  if (pending) return pending
+
+  const request = discoverProjectFaviconDataUrl(root).then((result) => {
+    faviconCache.set(key, result)
+    return result
+  }).finally(() => {
+    faviconRequests.delete(key)
+  })
+  faviconRequests.set(key, request)
+  return request
+}
+
+export function clearProjectFaviconCache(): void {
+  faviconCache.clear()
+  faviconRequests.clear()
 }
