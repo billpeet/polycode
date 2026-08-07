@@ -304,7 +304,7 @@ describe('ClaudeDriver live input', () => {
     expect(done).toHaveBeenCalledTimes(1)
   })
 
-  it('treats a successful result as authoritative when a background task is orphaned', async () => {
+  it('keeps the turn running when Claude returns success while subagents are still running', async () => {
     const driver = makeDriver()
     const events: OutputEvent[] = []
     const done = vi.fn(() => {})
@@ -333,7 +333,25 @@ describe('ClaudeDriver live input', () => {
           session_id: 'sdk-session',
           uuid: 'result-1',
         }
-        expect(done).toHaveBeenCalledTimes(1)
+        expect(done).not.toHaveBeenCalled()
+        yield {
+          type: 'system',
+          subtype: 'task_notification',
+          task_id: 'task-1',
+          tool_use_id: 'tool-task-1',
+          status: 'completed',
+          summary: 'Security audit complete',
+          session_id: 'sdk-session',
+          uuid: 'task-completed-1',
+        }
+        expect(done).not.toHaveBeenCalled()
+        yield {
+          type: 'system',
+          subtype: 'session_state_changed',
+          state: 'idle',
+          session_id: 'sdk-session',
+          uuid: 'idle-1',
+        }
       },
     }
 

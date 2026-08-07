@@ -843,12 +843,15 @@ export class ClaudeDriver implements CLIDriver {
       return
     }
 
-    // A successful result is Claude's authoritative end-of-turn signal. Task
-    // lifecycle notifications are best-effort and can be lost (notably for
-    // local shell tasks), so stale bookkeeping must not keep the thread running
-    // forever. Session.handleDone() will synthesize cancelled tool results for
-    // any calls that remain unmatched when the turn closes.
-    this.activeBackgroundTaskIds.clear()
+    // Claude can emit a successful main-agent result while background subagents
+    // are still running. In that case the result is only the main agent pausing;
+    // task notifications followed by session_state_changed:idle mark the actual
+    // end of the turn. Completing here would cancel the still-live Agent calls
+    // and make PolyCode report the thread as finished prematurely.
+    if (this.activeBackgroundTaskIds.size > 0) {
+      return
+    }
+
     this.finishTurn()
   }
 
