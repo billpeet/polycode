@@ -4,6 +4,7 @@ import { useFilesStore } from './files'
 import { invalidateSidebarBranch } from '../lib/sidebarBranchRefresh'
 
 const gitFetches = new Map<string, Promise<void>>()
+const lastCommitHeads = new Map<string, string>()
 
 function repositoryKey(repoPath: string): string {
   const normalized = repoPath.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -120,11 +121,12 @@ export const useGitStore = create<GitStore>((set, get) => ({
           return
         }
         const status = await window.api.invoke('git:status', repoPath)
-        const previousStatus = get().statusByPath[repoPath]
-        const needsLastCommit = !!status && (!previousStatus || previousStatus.branch !== status.branch)
+        const head = status ? await window.api.invoke('git:head', repoPath) : null
+        const needsLastCommit = !!head && lastCommitHeads.get(key) !== head
         const lastCommit = needsLastCommit
           ? await window.api.invoke('git:lastCommit', repoPath)
           : get().lastCommitByPath[repoPath] ?? null
+        if (head) lastCommitHeads.set(key, head)
         set((s) => ({
           statusByPath: { ...s.statusByPath, [repoPath]: status },
           lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit },
@@ -145,7 +147,11 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   fetchLastCommit: async (repoPath) => {
     try {
-      const lastCommit = await window.api.invoke('git:lastCommit', repoPath)
+      const [head, lastCommit] = await Promise.all([
+        window.api.invoke('git:head', repoPath),
+        window.api.invoke('git:lastCommit', repoPath),
+      ])
+      if (head) lastCommitHeads.set(repositoryKey(repoPath), head)
       set((s) => ({ lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit } }))
     } catch {
       // Silently ignore — not fatal

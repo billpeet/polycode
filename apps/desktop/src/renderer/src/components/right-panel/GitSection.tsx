@@ -14,6 +14,7 @@ import CreatePrModal from './CreatePrModal'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../../lib/gitRefreshCoordinator'
 import { formatErrorDetails } from '../../lib/errorDetails'
+import { refreshForge } from '../../lib/forgeRefresh'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
 function joinRepoPath(repoPath: string, relPath: string): string {
@@ -799,28 +800,23 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     return () => window.clearTimeout(timeoutId)
   }, [threadId, threadStatus, collapsed, fetchModifiedFiles])
 
-  const refreshPullRequests = useCallback(async () => {
+  const refreshPullRequests = useCallback(async (opts?: { force?: boolean }) => {
     if (!projectPath || !gitStatus || isNotRepo) return
     setLoadingPrs(true)
     setPrError(null)
     try {
-      const [provider, resolvedDefaultBranch] = await Promise.all([
-        window.api.invoke('git:hostingProvider', projectPath),
-        window.api.invoke('git:defaultBranch', projectPath),
-      ])
+      const result = await refreshForge(projectPath, gitStatus.branch, opts)
+      setDefaultBranch(result.defaultBranch)
 
-      setDefaultBranch(resolvedDefaultBranch)
-
-      if (provider) {
-        const [prs, current, pageUrl] = await Promise.all([window.api.invoke('forge:pr:list', projectPath), window.api.invoke('forge:pr:current', projectPath, gitStatus.branch), window.api.invoke('forge:pr:webUrl', projectPath)])
+      if (result.provider) {
         setPrCacheByPath((cache) => ({
           ...cache,
           [projectPath]: {
-            provider,
-            pageUrl,
-            openPrs: prs,
-            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: current },
-            defaultBranch: resolvedDefaultBranch,
+            provider: result.provider,
+            pageUrl: result.pageUrl,
+            openPrs: result.openPrs,
+            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: result.current },
+            defaultBranch: result.defaultBranch,
             loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
           },
         }))
@@ -834,10 +830,12 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           pageUrl: null,
           openPrs: [],
           currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: null },
-          defaultBranch: resolvedDefaultBranch,
+          defaultBranch: result.defaultBranch,
           loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
         },
       }))
+    } catch (error) {
+      setPrError(error instanceof Error ? error.message : 'Failed to refresh pull requests')
     } finally {
       setLoadingPrs(false)
     }
@@ -1165,7 +1163,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
       onClick={() => {
         if (!projectPath) return
         void refreshRemoteGit(projectPath)
-        void refreshPullRequests()
+        void refreshPullRequests({ force: true })
         void refreshCompareToMain({ force: true })
       }}
       className="rounded p-1 hover:bg-white/10 transition-colors mr-1"
@@ -1182,7 +1180,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     try {
       const result = await window.api.invoke('forge:pr:checkout', projectPath, prId)
       await fetchGit(projectPath)
-      await refreshPullRequests()
+      await refreshPullRequests({ force: true })
       addToast({ type: 'success', message: `Checked out ${result.branch}`, duration: 3000 })
       refreshCompareAfterGitOperation()
     } catch (err) {
@@ -1236,7 +1234,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     try {
       await checkoutGit(projectPath, effectiveDefaultBranch)
       await pullGit(projectPath)
-      await refreshPullRequests()
+      await refreshPullRequests({ force: true })
       addToast({ type: 'success', message: `Switched to ${effectiveDefaultBranch} and pulled latest changes`, duration: 3000 })
       refreshCompareAfterGitOperation()
     } catch (err) {
@@ -1306,7 +1304,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             </button>
             <div className="flex shrink-0 items-center gap-1">
               {prPageUrl && <a href={prPageUrl} target="_blank" rel="noreferrer" className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors" style={{ color: 'var(--color-text-muted)' }} title="Open pull requests page">Open</a>}
-              <button onClick={() => void refreshPullRequests()} disabled={loadingPrs} className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Refresh pull requests">{loadingPrs ? 'Refreshing…' : 'Refresh'}</button>
+              <button onClick={() => void refreshPullRequests({ force: true })} disabled={loadingPrs} className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Retry pull request refresh now">{loadingPrs ? 'Refreshing…' : 'Retry'}</button>
             </div>
           </div>
           {!prsCollapsed && (prError ? <p className="text-[11px] leading-relaxed" style={{ color: '#f87171' }}>{prError}</p> : <>
@@ -1419,7 +1417,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
           sourceBranch={gitStatus.branch}
           defaultTarget={effectiveDefaultBranch}
           onClose={() => setShowCreatePr(false)}
-          onCreated={() => { void refreshPullRequests() }}
+          onCreated={() => { void refreshPullRequests({ force: true }) }}
         />
       )}
       {fileMenu && (() => {

@@ -440,6 +440,14 @@ export function getCachedLastCommit(repoPath: string, ssh?: SshConfig | null, ws
   return readWithCache('lastCommit', repoPath, () => getLastCommit(repoPath, ssh, wsl), ssh, wsl)
 }
 
+export async function getGitHead(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
+  try {
+    return (await git(repoPath, ['rev-parse', 'HEAD'], ssh, wsl)).trim() || null
+  } catch {
+    return null
+  }
+}
+
 /**
  * Amend the last commit. Pass a new message to replace the existing one, or
  * `null`/`undefined` to keep the current message (equivalent to `--no-edit`).

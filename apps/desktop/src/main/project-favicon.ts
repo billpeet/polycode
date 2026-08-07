@@ -1,6 +1,7 @@
 import * as fs from 'node:fs/promises'
 import * as path from 'node:path'
 import type { Dirent } from 'node:fs'
+import { app } from 'electron'
 
 const FAVICON_CANDIDATES = [
   'favicon.svg', 'favicon.ico', 'favicon.png',
@@ -27,18 +28,77 @@ const SEARCH_IGNORED_DIRS = new Set([
   '.git', '.next', '.svelte-kit', '.vite', 'bin', 'build', 'coverage', 'dist',
   'node_modules', 'obj', 'out', 'test-results',
 ])
-const MAX_SEARCH_DEPTH = 5
-const MAX_SEARCH_ENTRIES = 5000
+const MAX_SEARCH_DEPTH = 4
+const MAX_SEARCH_ENTRIES = 1500
+const CACHE_VERSION = 1
+const NEGATIVE_CACHE_TTL_MS = 24 * 60 * 60_000
 
 const LINK_ICON_HTML_RE = /<link\b(?=[^>]*\brel=["'](?:icon|shortcut icon)["'])(?=[^>]*\bhref=["']([^"'?]+))[^>]*>/i
 const LINK_ICON_OBJ_RE = /(?=[^}]*\brel\s*:\s*["'](?:icon|shortcut icon)["'])(?=[^}]*\bhref\s*:\s*["']([^"'?]+))[^}]*/i
 
 const faviconCache = new Map<string, string | null>()
 const faviconRequests = new Map<string, Promise<string | null>>()
+type PersistentEntry = { iconPath: string | null; iconModifiedAt: number | null; discoveredAt: number }
+type PersistentCache = { version: number; entries: Record<string, PersistentEntry> }
+let persistentCache: PersistentCache | null = null
+let persistenceQueue = Promise.resolve()
+let discoveryQueue = Promise.resolve()
 
 function cacheKey(root: string): string {
   const resolved = path.resolve(root)
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved
+}
+
+function persistentCachePath(): string {
+  return path.join(app.getPath('userData'), 'favicon-cache.json')
+}
+
+async function loadPersistentCache(): Promise<PersistentCache> {
+  if (persistentCache) return persistentCache
+  try {
+    const parsed = JSON.parse(await fs.readFile(persistentCachePath(), 'utf8')) as PersistentCache
+    persistentCache = parsed.version === CACHE_VERSION && parsed.entries
+      ? parsed
+      : { version: CACHE_VERSION, entries: {} }
+  } catch {
+    persistentCache = { version: CACHE_VERSION, entries: {} }
+  }
+  return persistentCache
+}
+
+function persistCache(cache: PersistentCache): void {
+  persistenceQueue = persistenceQueue.then(async () => {
+    const cachePath = persistentCachePath()
+    await fs.mkdir(path.dirname(cachePath), { recursive: true })
+    const temporaryPath = `${cachePath}.tmp`
+    await fs.writeFile(temporaryPath, JSON.stringify(cache), 'utf8')
+    await fs.rename(temporaryPath, cachePath)
+  }).catch(() => undefined)
+}
+
+async function readFaviconDataUrl(iconPath: string): Promise<{ dataUrl: string; modifiedAt: number } | null> {
+  const mimeType = MIME_TYPES[path.extname(iconPath).toLowerCase()]
+  if (!mimeType) return null
+  try {
+    const [contents, stats] = await Promise.all([fs.readFile(iconPath), fs.stat(iconPath)])
+    if (!stats.isFile()) return null
+    return { dataUrl: `data:${mimeType};base64,${contents.toString('base64')}`, modifiedAt: stats.mtimeMs }
+  } catch {
+    return null
+  }
+}
+
+async function readPersistentResult(root: string): Promise<string | null | undefined> {
+  const key = cacheKey(root)
+  const cache = await loadPersistentCache()
+  const entry = cache.entries[key]
+  if (!entry) return undefined
+  if (!entry.iconPath) {
+    return Date.now() - entry.discoveredAt < NEGATIVE_CACHE_TTL_MS ? null : undefined
+  }
+  const icon = await readFaviconDataUrl(entry.iconPath)
+  if (!icon || icon.modifiedAt !== entry.iconModifiedAt) return undefined
+  return icon.dataUrl
 }
 
 async function existingFile(root: string, relativePath: string): Promise<string | null> {
@@ -115,16 +175,19 @@ export async function resolveProjectFaviconPath(root: string): Promise<string | 
   return findNestedProjectIcon(root)
 }
 
-async function discoverProjectFaviconDataUrl(root: string): Promise<string | null> {
+async function discoverProjectFavicon(root: string): Promise<{ dataUrl: string | null; entry: PersistentEntry }> {
   const faviconPath = await resolveProjectFaviconPath(root)
-  if (!faviconPath) return null
-  const mimeType = MIME_TYPES[path.extname(faviconPath).toLowerCase()]
-  if (!mimeType) return null
-  try {
-    return `data:${mimeType};base64,${(await fs.readFile(faviconPath)).toString('base64')}`
-  } catch {
-    return null
-  }
+  if (!faviconPath) return { dataUrl: null, entry: { iconPath: null, iconModifiedAt: null, discoveredAt: Date.now() } }
+  const icon = await readFaviconDataUrl(faviconPath)
+  return icon
+    ? { dataUrl: icon.dataUrl, entry: { iconPath: faviconPath, iconModifiedAt: icon.modifiedAt, discoveredAt: Date.now() } }
+    : { dataUrl: null, entry: { iconPath: null, iconModifiedAt: null, discoveredAt: Date.now() } }
+}
+
+function enqueueDiscovery<T>(task: () => Promise<T>): Promise<T> {
+  const result = discoveryQueue.then(task, task)
+  discoveryQueue = result.then(() => undefined, () => undefined)
+  return result
 }
 
 export function projectFaviconDataUrl(root: string): Promise<string | null> {
@@ -134,9 +197,18 @@ export function projectFaviconDataUrl(root: string): Promise<string | null> {
   const pending = faviconRequests.get(key)
   if (pending) return pending
 
-  const request = discoverProjectFaviconDataUrl(root).then((result) => {
-    faviconCache.set(key, result)
-    return result
+  const request = readPersistentResult(root).then((persisted) => {
+    if (persisted !== undefined) return persisted
+    return enqueueDiscovery(async () => {
+      const result = await discoverProjectFavicon(root)
+      const cache = await loadPersistentCache()
+      cache.entries[key] = result.entry
+      persistCache(cache)
+      return result.dataUrl
+    })
+  }).then((dataUrl) => {
+    faviconCache.set(key, dataUrl)
+    return dataUrl
   }).finally(() => {
     faviconRequests.delete(key)
   })
@@ -147,4 +219,12 @@ export function projectFaviconDataUrl(root: string): Promise<string | null> {
 export function clearProjectFaviconCache(): void {
   faviconCache.clear()
   faviconRequests.clear()
+  persistentCache = null
+  discoveryQueue = Promise.resolve()
+  persistenceQueue = Promise.resolve()
+}
+
+/** Wait for the latest atomic cache write; primarily useful for orderly shutdown and tests. */
+export function flushProjectFaviconCache(): Promise<void> {
+  return persistenceQueue
 }

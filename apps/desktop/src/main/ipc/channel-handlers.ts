@@ -187,6 +187,7 @@ import {
   getCachedGitBranch,
   getCachedGitStatus,
   getCachedLastCommit,
+  getGitHead,
   getCommitFileDiff,
   getCompareToBranchChanges,
   getCompareToBranchDiff,
@@ -929,6 +930,11 @@ export const channelHandlers = {
   'git:status': (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedGitStatus(repoPath, ssh, wsl)
+  },
+
+  'git:head': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getGitHead(repoPath, ssh, wsl)
   },
 
   'git:lastCommit': (_ctx, repoPath) => {

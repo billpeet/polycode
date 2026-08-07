@@ -14,7 +14,9 @@ interface GitHubRepoContext {
   repo: string
 }
 
-const prJsonFields = 'number,title,state,headRefName,baseRefName,author,url,createdAt,mergeStateStatus,mergeable,statusCheckRollup,reviewThreads'
+// `reviewThreads` is not supported by the widely installed gh CLI releases. It is optional
+// in our parser, so omit it rather than making every PR refresh fail for compatibility.
+const prJsonFields = 'number,title,state,headRefName,baseRefName,author,url,createdAt,mergeStateStatus,mergeable,statusCheckRollup'
 
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)

@@ -12,7 +12,7 @@ function ProjectFaviconContent({ projectId, className = '' }: { projectId: strin
     let cancelled = false
     void window.api.invoke('projects:favicon', projectId).then((value) => {
       if (cancelled) return
-      if (value) loadedFavicons.set(projectId, value)
+      loadedFavicons.set(projectId, value)
       setSrc(value)
     }).catch(() => {
       if (!cancelled) setSrc(null)

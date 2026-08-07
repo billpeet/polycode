@@ -1,9 +1,13 @@
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const cacheRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'polycode-favicon-cache-'))
+vi.mock('electron', () => ({ app: { getPath: () => cacheRoot } }))
 import {
   clearProjectFaviconCache,
+  flushProjectFaviconCache,
   projectFaviconDataUrl,
   resolveProjectFaviconPath,
 } from '../project-favicon'
@@ -17,6 +21,8 @@ function tempRoot(): string {
 
 afterEach(() => {
   clearProjectFaviconCache()
+  fs.rmSync(path.join(cacheRoot, 'favicon-cache.json'), { force: true })
+  fs.rmSync(path.join(cacheRoot, 'favicon-cache.json.tmp'), { force: true })
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true })
 })
 
@@ -80,5 +86,25 @@ describe('project favicon discovery', () => {
       expect.stringMatching(/^data:image\/svg\+xml;base64,/),
       expect.stringMatching(/^data:image\/svg\+xml;base64,/),
     ])
+  })
+
+  it('persists positive results across in-memory cache resets', async () => {
+    const root = tempRoot()
+    fs.writeFileSync(path.join(root, 'favicon.svg'), '<svg>persisted</svg>')
+    const first = await projectFaviconDataUrl(root)
+    await flushProjectFaviconCache()
+    clearProjectFaviconCache()
+
+    await expect(projectFaviconDataUrl(root)).resolves.toBe(first)
+  })
+
+  it('persists negative results across in-memory cache resets', async () => {
+    const root = tempRoot()
+    await expect(projectFaviconDataUrl(root)).resolves.toBeNull()
+    await flushProjectFaviconCache()
+    clearProjectFaviconCache()
+    fs.writeFileSync(path.join(root, 'favicon.png'), 'added after negative discovery')
+
+    await expect(projectFaviconDataUrl(root)).resolves.toBeNull()
   })
 })

@@ -137,6 +137,7 @@ export interface ChannelContract {
   'dialog:open-directory': [[], string | null]
   'git:branch': [[repoPath: string], string | null]
   'git:status': [[repoPath: string], GitStatus | null]
+  'git:head': [[repoPath: string], string | null]
   'git:commit': [[repoPath: string, message: string], void]
   'git:lastCommit': [[repoPath: string], LastCommitInfo | null]
   'git:amendCommit': [[repoPath: string, message?: string | null], void]
