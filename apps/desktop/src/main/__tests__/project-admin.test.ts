@@ -1,5 +1,21 @@
 import { describe, expect, it } from 'vitest'
-import { isWorktreeDirectoryCleanupError } from '../project-admin'
+import { isWorktreeDirectoryCleanupError, parseGitWorktreeList } from '../project-admin'
+
+describe('parseGitWorktreeList', () => {
+  it('parses normal and prunable records from nul-delimited porcelain output', () => {
+    const output = [
+      'worktree C:/repo', 'HEAD abc', 'branch refs/heads/main', '',
+      'worktree C:/repo-worktrees/feature', 'HEAD def', 'branch refs/heads/feature', '',
+      'worktree C:/repo-worktrees/stale', 'HEAD 000', 'prunable gitdir file points to non-existent location', '',
+    ].join('\0')
+
+    expect(parseGitWorktreeList(output)).toEqual([
+      { path: 'C:/repo', prunable: false },
+      { path: 'C:/repo-worktrees/feature', prunable: false },
+      { path: 'C:/repo-worktrees/stale', prunable: true },
+    ])
+  })
+})
 
 describe('isWorktreeDirectoryCleanupError', () => {
   it('recognizes Windows filename-too-long failures from git worktree removal', () => {

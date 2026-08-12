@@ -482,7 +482,9 @@ vi.mock('../cursor-models', () => H.autoModule('cursorModels', {
   listCursorAvailableModels: H.settlesLate('models.listCursorAvailableModels', [{ id: 'cursor' }]),
 }))
 
-vi.mock('../project-admin', () => H.autoModule('projectAdmin'))
+vi.mock('../project-admin', () => H.autoModule('projectAdmin', {
+  listSyncedLocations: H.stub('projectAdmin.listSyncedLocations', () => (H.state.location ? [H.state.location] : [])),
+}))
 
 vi.mock('../git', () => H.autoModule('git', {
   getCachedGitStatus: H.stub('git.getCachedGitStatus', () => {
@@ -1033,7 +1035,7 @@ describe('locations:* — both transports agree', () => {
     const rpc = await viaControlRpc('locations:list', ['p1'])
 
     expect(rpc).toEqual(ipc)
-    expect(ipc).toEqual(['db.listLocations(["p1"])'])
+    expect(ipc).toEqual(['projectAdmin.listSyncedLocations(["p1"])'])
   })
 
   it('locations:create forwards every argument in order', async () => {

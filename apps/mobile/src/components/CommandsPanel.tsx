@@ -173,7 +173,7 @@ export function CommandsPanel(props: { projectId: string | null; onClose: () => 
                 {locations.map((location) => (
                   <Chip
                     key={location.id}
-                    label={`${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`}
+                    label={`${location.is_worktree && location.worktree_valid === false ? '⚠ ' : ''}${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`}
                     active={locationId === location.id}
                     onPress={() => setLocationId(location.id)}
                   />

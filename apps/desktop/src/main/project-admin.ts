@@ -4,7 +4,7 @@
  */
 import { existsSync, mkdirSync, rmSync } from 'fs'
 import { homedir } from 'os'
-import { basename, dirname, join } from 'path'
+import { basename, dirname, join, resolve } from 'path'
 import {
   archiveThread,
   createLocation,
@@ -16,6 +16,7 @@ import {
   getSetting,
   listActiveThreadsForLocation,
   listCommands,
+  listLocations,
 } from './db/queries'
 import { gitInit, getRemoteUrl } from './git'
 import { createRunner } from './driver/runner'
@@ -58,6 +59,80 @@ function sanitizeWorktreeSegment(value: string): string {
 
 function runGit(args: string[], cwd: string): Promise<string> {
   return executeGit(createRunner({}), cwd, args)
+}
+
+interface GitWorktreeRecord {
+  path: string
+  prunable: boolean
+}
+
+/** Parse the stable, NUL-delimited output of `git worktree list --porcelain -z`. */
+export function parseGitWorktreeList(output: string): GitWorktreeRecord[] {
+  return output.split('\0\0').flatMap((record) => {
+    const fields = record.split('\0').filter(Boolean)
+    const worktree = fields.find((field) => field.startsWith('worktree '))
+    if (!worktree) return []
+    return [{
+      path: worktree.slice('worktree '.length),
+      prunable: fields.some((field) => field === 'prunable' || field.startsWith('prunable ')),
+    }]
+  })
+}
+
+function comparablePath(path: string): string {
+  const normalized = resolve(path).replace(/[\\/]+$/, '')
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized
+}
+
+/**
+ * Reconcile PolyCode's local worktree locations with Git's authoritative registry.
+ * External worktrees are persisted; stale PolyCode rows remain visible and are marked invalid.
+ */
+export async function listSyncedLocations(projectId: string): Promise<RepoLocation[]> {
+  const locations = listLocations(projectId)
+  const validPathsByParent = new Map<string, Set<string>>()
+  const localParentIds = new Set(
+    locations
+      .filter((location) => location.connection_type === 'local' && !location.is_worktree)
+      .map((location) => location.id)
+  )
+
+  for (const parent of locations.filter((location) =>
+    location.connection_type === 'local' && !location.is_worktree
+  )) {
+    try {
+      const records = parseGitWorktreeList(await runGit(['worktree', 'list', '--porcelain', '-z'], parent.path))
+      const validPaths = new Set<string>()
+      validPathsByParent.set(parent.id, validPaths)
+      const registeredForParent = new Set(
+        locations
+          .filter((location) => location.is_worktree && location.parent_location_id === parent.id)
+          .map((location) => comparablePath(location.path))
+      )
+
+      for (const record of records) {
+        const pathKey = comparablePath(record.path)
+        if (record.prunable || !existsSync(record.path) || pathKey === comparablePath(parent.path)) continue
+        validPaths.add(pathKey)
+        if (!registeredForParent.has(pathKey)) {
+          const imported = createWorktreeLocation(parent, basename(record.path), record.path)
+          locations.push(imported)
+          registeredForParent.add(pathKey)
+        }
+      }
+    } catch (error) {
+      console.warn(`[worktree] Could not reconcile worktrees for "${parent.path}":`, error)
+    }
+  }
+
+  return locations.map((location) => ({
+    ...location,
+    worktree_valid: !location.is_worktree
+      ? null
+      : !location.parent_location_id || !localParentIds.has(location.parent_location_id)
+        ? false
+        : validPathsByParent.get(location.parent_location_id)?.has(comparablePath(location.path)) ?? null,
+  }))
 }
 
 async function resolveWorktreeBaseRef(repoPath: string): Promise<string> {

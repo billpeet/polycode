@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronRight, GitBranchPlus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, GitBranchPlus, Trash2 } from 'lucide-react'
 import { RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import ThreadRow from './ThreadRow'
 import { ConnectionBadge } from './shared'
@@ -51,6 +51,7 @@ export default function LocationSection({
   const locationThreads = projectThreads.filter((thread) => thread.location_id === location.id)
   const isCheckedOut = !location.pool_id || location.checked_out
   const pathMissing = location.connection_type === 'local' && pathExistsByLocation[location.id] === false
+  const invalidWorktree = location.is_worktree && location.worktree_valid === false
   const projectCommands = useCommandStore((s) => s.byProject[projectId] ?? EMPTY_COMMANDS)
   const commandStatusMap = useCommandStore((s) => s.statusMap)
   const activeCommandCount = projectCommands.reduce((count, command) => {
@@ -64,8 +65,12 @@ export default function LocationSection({
         <button
           onClick={() => onToggleLocationCollapsed(location.id)}
           className="flex w-full items-center pl-6 pr-2 py-0.5 text-left text-xs transition-colors min-w-0"
-          style={{ color: pathMissing ? '#f87171' : 'var(--color-text-muted)' }}
-          title={pathMissing ? `Directory not found: ${location.path}` : undefined}
+          style={{ color: pathMissing || invalidWorktree ? '#f87171' : 'var(--color-text-muted)' }}
+          title={pathMissing
+            ? `Directory not found: ${location.path}`
+            : invalidWorktree
+              ? `Git no longer recognizes this as a valid worktree: ${location.path}`
+              : undefined}
         >
           {isLocationExpanded
             ? <ChevronDown size={10} className="mr-1 flex-shrink-0 opacity-50" />
@@ -113,6 +118,14 @@ export default function LocationSection({
               style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
             >
               not found
+            </span>
+          )}
+          {invalidWorktree && !pathMissing && (
+            <span
+              className="ml-1 inline-flex flex-shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
+              style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
+            >
+              <AlertTriangle size={9} /> invalid
             </span>
           )}
         </button>

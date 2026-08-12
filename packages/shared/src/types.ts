@@ -18,6 +18,8 @@ export interface RepoLocation {
   checked_out: boolean
   parent_location_id: string | null
   is_worktree: boolean
+  /** Whether Git still reports this worktree. Null for non-worktree locations. */
+  worktree_valid?: boolean | null
   worktree_id: number | null
   label: string
   connection_type: ConnectionType

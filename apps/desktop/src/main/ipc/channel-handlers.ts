@@ -159,6 +159,7 @@ import {
   cloneLocation,
   createFullProject,
   createLocalWorktree,
+  listSyncedLocations,
   removeWorktreeLocation,
   suggestUniquePath,
 } from '../project-admin'
@@ -541,7 +542,7 @@ export const channelHandlers = {
 
   'projects:unarchive': (_ctx, id) => unarchiveProject(id),
 
-  'locations:list': (_ctx, projectId) => listLocations(projectId),
+  'locations:list': (_ctx, projectId) => listSyncedLocations(projectId),
 
   'locations:pathExists': (_ctx, path) => existsSync(path),
 

@@ -29,6 +29,11 @@ import { RenameThreadModal } from './ThreadModals'
 const SIDEBAR_WIDTH = Math.min(320, Dimensions.get('window').width * 0.85)
 const EMPTY_THREADS: Thread[] = []
 
+function locationLabel(location: RepoLocation): string {
+  const warning = location.is_worktree && location.worktree_valid === false ? '⚠ ' : ''
+  return `${warning}${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`
+}
+
 function ConnectionBadge() {
   const [state, setState] = useState<ConnectionState>(sseManager.state)
   useEffect(() => sseManager.onStateChange(setState), [])
@@ -217,7 +222,7 @@ function ProjectSection(props: {
                   <View style={styles.locationHeader}>
                     <Text style={styles.locationLabel} numberOfLines={1}>
                       {section.location
-                        ? `${section.location.is_worktree ? '⎇ ' : ''}${section.location.label || section.location.path}`
+                        ? locationLabel(section.location)
                         : 'Other'}
                     </Text>
                   </View>
@@ -426,7 +431,7 @@ export function Sidebar() {
           options={
             locationPicker
               ? locationPicker.locations.map((location) => ({
-                  label: `${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`,
+                  label: locationLabel(location),
                   onPress: () => void quickCreateThread(locationPicker.projectId, location.id),
                 }))
               : []
@@ -672,7 +677,7 @@ export function Sidebar() {
         options={
           locationPicker
             ? locationPicker.locations.map((location) => ({
-                label: `${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`,
+                label: locationLabel(location),
                 onPress: () => void quickCreateThread(locationPicker.projectId, location.id),
               }))
             : []
