@@ -58,7 +58,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
   const [time, setTime] = useState('08:00')
   const [weekday, setWeekday] = useState(1)
   const [customCron, setCustomCron] = useState(routine?.trigger_type === 'cron' ? routine.schedule ?? '' : '')
-  const [onceAt, setOnceAt] = useState(
+  const [onceAt, setOnceAt] = useState(() =>
     routine?.trigger_type === 'once' && routine.schedule
       ? inputLocalDateTime(new Date(routine.schedule))
       : inputLocalDateTime(new Date(Date.now() + 60 * 60 * 1000))
@@ -86,8 +86,8 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
   // for its current catalog and fall back to the static list when it is
   // unavailable or unauthenticated. `null` threadId = default (local) probing.
   const [liveModels, setLiveModels] = useState<ModelOption[]>([])
+  const isCreating = routine === null
   useEffect(() => {
-    setLiveModels([])
     const channel = (
       {
         'claude-code': 'models:claudeAvailable',
@@ -105,7 +105,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
         setLiveModels(discovered)
         // New routines snap their default onto the live catalog; an edited
         // routine keeps its saved model even if the catalog moved on.
-        if (!routine) {
+        if (isCreating) {
           setModel((current) => (discovered.some((m) => m.id === current) ? current : discovered[0].id))
         }
       })
@@ -113,7 +113,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
         // Keep static fallback models when the provider CLI is unavailable.
       })
     return () => { cancelled = true }
-  }, [provider])
+  }, [provider, isCreating])
 
   const models = useMemo<ModelOption[]>(
     () => (liveModels.length > 0 ? liveModels : [...getModelsForProvider(provider)]),
@@ -231,6 +231,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
                 value={provider}
                 onChange={(e) => {
                   const next = e.target.value as Provider
+                  setLiveModels([])
                   setProvider(next)
                   setModel(getDefaultModelForProvider(next))
                 }}

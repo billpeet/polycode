@@ -41,9 +41,22 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
   }, [projectId])
 
   useEffect(() => {
-    void refresh()
-    return window.api.on('routines:changed', () => void refresh())
-  }, [refresh])
+    let cancelled = false
+    void window.api.invoke('routines:list', projectId).then(async (list) => {
+      const runs: Record<string, Thread[]> = {}
+      await Promise.all(list.map(async (routine) => {
+        runs[routine.id] = await window.api.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
+      }))
+      if (cancelled) return
+      setRoutines(list)
+      setRunsByRoutine(runs)
+    })
+    const unsubscribe = window.api.on('routines:changed', () => void refresh())
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [projectId, refresh])
 
   const toggleRoutine = (id: string) => {
     setExpandedRoutineIds((prev) => {
