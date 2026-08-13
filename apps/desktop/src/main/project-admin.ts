@@ -224,8 +224,13 @@ export async function cloneLocation(projectId: string, label: string, gitUrl: st
   return createLocation(projectId, label, 'local', clonePath, null, null, null)
 }
 
-/** Create a git worktree next to the parent checkout and register it. */
-export async function createLocalWorktree(parentLocationId: string, label?: string | null): Promise<RepoLocation> {
+/**
+ * Create a git worktree next to the parent checkout and register it.
+ * `baseRefOverride` pins the ref the worktree branches from (e.g. a Routine
+ * run branching off origin/<default>); otherwise the conventional default
+ * branch is resolved.
+ */
+export async function createLocalWorktree(parentLocationId: string, label?: string | null, baseRefOverride?: string): Promise<RepoLocation> {
   const parent = getLocationById(parentLocationId)
   if (!parent) throw new Error('Parent location not found')
   if (parent.connection_type !== 'local') throw new Error('Worktree creation is currently supported for local locations only.')
@@ -246,7 +251,7 @@ export async function createLocalWorktree(parentLocationId: string, label?: stri
   }
 
   const branchName = `polycode/${baseName}-${Date.now().toString(36)}`
-  const baseRef = await resolveWorktreeBaseRef(parent.path)
+  const baseRef = baseRefOverride ?? await resolveWorktreeBaseRef(parent.path)
   await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
   const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
 

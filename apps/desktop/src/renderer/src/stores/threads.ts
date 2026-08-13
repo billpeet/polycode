@@ -198,6 +198,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       use_wsl: sourceThread?.use_wsl ?? false,
       wsl_distro: sourceThread?.wsl_distro ?? null,
       git_branch: null,
+      routine_id: null,
+      run_state: null,
+      run_detail: null,
       created_at: now,
       updated_at: now,
     }

@@ -51,6 +51,8 @@ import type {
   RemoteHostInput,
   RemoteConnectionStatus,
   RemotePairingInfo,
+  Routine,
+  RoutineDraft,
 } from './types'
 import type { Channel } from './channels'
 
@@ -239,6 +241,15 @@ export interface ChannelContract {
   'youtrack:servers:delete': [[id: string], void]
   'youtrack:search': [[url: string, token: string, query: string], YouTrackIssue[]]
   'youtrack:test': [[url: string, token: string], { ok: boolean; error?: string }]
+  'routines:list': [[projectId: string], Routine[]]
+  'routines:create': [[projectId: string, draft: RoutineDraft], Routine]
+  'routines:update': [[id: string, patch: Partial<RoutineDraft>], Routine | null]
+  'routines:delete': [[id: string], void]
+  'routines:setEnabled': [[id: string, enabled: boolean], void]
+  'routines:runNow': [[id: string], string]
+  'routines:listRuns': [[routineId: string, limit?: number], Thread[]]
+  'routines:dismissRun': [[threadId: string], void]
+  'routines:runHasUnshippedWork': [[threadId: string], boolean]
   'slash-commands:list': [[projectId?: string | null], SlashCommand[]]
   'skills:list': [[provider: Provider, cwd?: string | null], SlashCommand[]]
   'slash-commands:create': [[projectId: string | null, name: string, description: string | null, prompt: string], SlashCommand]

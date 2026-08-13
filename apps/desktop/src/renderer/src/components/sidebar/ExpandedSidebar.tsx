@@ -2,6 +2,7 @@ import { type ReactNode, useState, useEffect } from 'react'
 import { Archive, ArchiveRestore, ArrowDownAZ, ChevronDown, ChevronRight, History, PanelLeft, Pencil, Plus, Settings, X } from 'lucide-react'
 import { LocationPool, Project, ProjectSortMode, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import LocationSection from './LocationSection'
+import RoutinesSection from './RoutinesSection'
 import ThreadRow from './ThreadRow'
 import ProjectFavicon from '../ProjectFavicon'
 
@@ -534,6 +535,8 @@ export default function ExpandedSidebar({
                       + Add a location to get started
                     </button>
                   )}
+
+                  <RoutinesSection projectId={project.id} onSelectThread={onSelectThread} />
 
                   {(projectArchivedCount > 0 || isArchivedExpanded) && (
                     <button

@@ -76,6 +76,7 @@ import {
   createLocation,
   createLocationPool,
   createProject,
+  createRoutine,
   createSlashCommand,
   createThread,
   createYouTrackServer,
@@ -83,6 +84,7 @@ import {
   deleteLocation,
   deleteLocationPool,
   deleteProject,
+  deleteRoutine,
   deleteSlashCommand,
   deleteThread,
   deleteYouTrackServer,
@@ -90,7 +92,11 @@ import {
   getImportedSessionIds,
   getLastUsedProviderAndModel,
   getLocationForThread,
+  getRoutine,
   getSetting,
+  getThreadById,
+  hasActiveRun,
+  hasEscalatedRun,
   getThreadModifiedFiles,
   importThread,
   listArchivedProjects,
@@ -101,11 +107,14 @@ import {
   listMessages,
   listMessagesBySession,
   listProjects,
+  listRoutines,
+  listRuns,
   listSessions,
   listSlashCommands,
   listThreads,
   listYouTrackServers,
   returnLocationToPool,
+  setRoutineEnabled,
   setSetting,
   setThreadGitBranchIfUnset,
   threadExists,
@@ -116,6 +125,7 @@ import {
   updateLocation,
   updateLocationPool,
   updateProject,
+  updateRoutine,
   updateSlashCommand,
   updateYouTrackServer,
   updateThreadCodexPersonality,
@@ -133,6 +143,23 @@ import {
   updateThreadYoloMode,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
+import { routineManager } from '../routines/manager'
+import { isValidCron } from '../routines/cron'
+
+/** Trigger/schedule invariants shared by routine create and update. */
+function validateRoutineDraft(draft: { trigger_type: string; schedule: string | null }): void {
+  if (draft.trigger_type === 'cron') {
+    if (!draft.schedule || !isValidCron(draft.schedule)) {
+      throw new Error('A cron routine needs a valid cron expression (minute hour day month weekday).')
+    }
+  } else if (draft.trigger_type === 'once') {
+    if (!draft.schedule || Number.isNaN(Date.parse(draft.schedule))) {
+      throw new Error('A one-off routine needs a valid date and time.')
+    }
+  } else if (draft.trigger_type !== 'manual') {
+    throw new Error(`Unknown trigger type "${draft.trigger_type}".`)
+  }
+}
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
 import {
@@ -1538,6 +1565,51 @@ export const channelHandlers = {
   'youtrack:test': (_ctx, url, token) => testYouTrackConnection(url, token),
 
   'youtrack:search': (_ctx, url, token, query) => searchYouTrack(url, token, query),
+
+  // ── Routines ──────────────────────────────────────────────────────────────
+
+  'routines:list': (_ctx, projectId) => listRoutines(projectId),
+
+  'routines:create': (_ctx, projectId, draft) => {
+    validateRoutineDraft(draft)
+    return createRoutine({ project_id: projectId, ...draft })
+  },
+
+  'routines:update': (_ctx, id, patch) => {
+    if (patch.trigger_type !== undefined || patch.schedule !== undefined) {
+      const existing = getRoutine(id)
+      if (!existing) throw new Error('Routine not found')
+      validateRoutineDraft({
+        trigger_type: patch.trigger_type ?? existing.trigger_type,
+        schedule: patch.schedule !== undefined ? patch.schedule : existing.schedule,
+      })
+    }
+    return updateRoutine(id, patch)
+  },
+
+  // Deletion never destroys work silently: it is blocked while a run is
+  // active or escalated, and detached runs join the normal Archived section.
+  'routines:delete': (_ctx, id) => {
+    if (hasActiveRun(id)) throw new Error('This routine has a run in progress. Wait for it to finish or stop it first.')
+    if (hasEscalatedRun(id)) throw new Error('This routine has an escalated run. Resolve or dismiss it first.')
+    deleteRoutine(id)
+  },
+
+  'routines:setEnabled': (_ctx, id, enabled) => setRoutineEnabled(id, enabled),
+
+  'routines:runNow': (_ctx, id) => routineManager.runNow(id),
+
+  'routines:listRuns': (_ctx, routineId, limit) => listRuns(routineId, limit),
+
+  // The renderer asks runHasUnshippedWork first and confirms destruction with
+  // the user when needed — this channel executes unconditionally.
+  'routines:dismissRun': (_ctx, threadId) => {
+    const thread = getThreadById(threadId)
+    if (!thread?.routine_id) throw new Error('Thread is not a routine run.')
+    return routineManager.dismissRun(threadId)
+  },
+
+  'routines:runHasUnshippedWork': (_ctx, threadId) => routineManager.runHasUnshippedWork(threadId),
 
   // ── Slash commands ────────────────────────────────────────────────────────
 

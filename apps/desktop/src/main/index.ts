@@ -17,6 +17,7 @@ import { stopRemoteControlClient } from './remote/client'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
 import { sessionManager } from './session/manager'
+import { routineManager } from './routines/manager'
 import { commandManager } from './commands/manager'
 import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
@@ -234,6 +235,7 @@ app.whenReady().then(() => {
   registerIpcHandlers(win)
   startPlanWatcher(win)
 
+  routineManager.start(win)
   startWebhookServer(readWebhookConfig(), win)
   startRemoteControlServer(readRemoteServerConfig(), win)
 
@@ -256,6 +258,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
+  routineManager.stop()
   sessionManager.stopAll()
   commandManager.stopAll()
   stopWebhookServer()

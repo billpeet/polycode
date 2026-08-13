@@ -69,6 +69,26 @@ export interface ThreadRow {
   use_wsl: number
   wsl_distro: string | null
   git_branch: string | null
+  routine_id: string | null
+  run_state: string | null
+  run_detail: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface RoutineRow {
+  id: string
+  project_id: string
+  location_id: string
+  name: string
+  prompt: string
+  trigger_type: string
+  schedule: string | null
+  provider: string
+  model: string
+  permission_mode: string
+  enabled: number
+  last_fired_at: string | null
   created_at: string
   updated_at: string
 }

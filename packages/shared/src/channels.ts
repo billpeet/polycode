@@ -178,6 +178,17 @@ export const CHANNEL_REGISTRY = {
   'models:opencodeAvailable': { local: true, remote: true },
   'models:piAvailable': { local: true, remote: true },
   'models:cursorAvailable': { local: true, remote: true },
+  // Routine management is desktop-only in v1; escalated runs surface through
+  // the normal thread channels, so mobile sees them with no extra plumbing.
+  'routines:list': { local: true, remote: false },
+  'routines:create': { local: true, remote: false },
+  'routines:update': { local: true, remote: false },
+  'routines:delete': { local: true, remote: false },
+  'routines:setEnabled': { local: true, remote: false },
+  'routines:runNow': { local: true, remote: false },
+  'routines:listRuns': { local: true, remote: false },
+  'routines:dismissRun': { local: true, remote: false },
+  'routines:runHasUnshippedWork': { local: true, remote: false },
   'slash-commands:list': { local: true, remote: true },
   'skills:list': { local: true, remote: true },
   'slash-commands:create': { local: true, remote: true },

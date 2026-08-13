@@ -245,8 +245,64 @@ export interface Thread {
   wsl_distro: string | null
   /** Branch that was active when this thread was created */
   git_branch: string | null
+  /** Set when this thread is a Run spawned by a Routine; null for user threads. */
+  routine_id: string | null
+  /** Run lifecycle outcome; null for user threads. */
+  run_state: RunState | null
+  /** Human-readable detail for the current run_state (e.g. escalation reason). */
+  run_detail: string | null
   created_at: string
   updated_at: string
+}
+
+/** How a Routine fires: on a cron schedule, once at a fixed time, or only manually. */
+export type RoutineTriggerType = 'cron' | 'once' | 'manual'
+
+/**
+ * Lifecycle of a Run (a Thread spawned by a Routine).
+ * - active: run in progress (session running or awaiting evaluation)
+ * - success: session went idle with a clean worktree and nothing unpushed; worktree destroyed
+ * - escalated: needs the user (error, pending prompt, unshipped work, interrupted)
+ * - dismissed: user dismissed an escalated run; worktree destroyed on explicit confirmation
+ */
+export type RunState = 'active' | 'success' | 'escalated' | 'dismissed'
+
+/**
+ * A standing definition of automated work on a Project. A Routine never runs
+ * itself; each firing spawns a Run (a hidden Thread on a fresh worktree).
+ */
+export interface Routine {
+  id: string
+  project_id: string
+  /** Parent (non-worktree, local) location whose repo hosts run worktrees. */
+  location_id: string
+  name: string
+  prompt: string
+  trigger_type: RoutineTriggerType
+  /** Cron expression for 'cron', ISO datetime for 'once', null for 'manual'. */
+  schedule: string | null
+  provider: string
+  model: string
+  /** Execution mode runs launch with (e.g. 'yolo'). */
+  permission_mode: PermissionMode
+  enabled: boolean
+  /** Start time of the most recent run — used for overlap skip and catch-up. */
+  last_fired_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+/** Input for creating a Routine (and, partially, for updating one). */
+export interface RoutineDraft {
+  location_id: string
+  name: string
+  prompt: string
+  trigger_type: RoutineTriggerType
+  schedule: string | null
+  provider: string
+  model: string
+  permission_mode: PermissionMode
+  enabled: boolean
 }
 
 export interface Message {

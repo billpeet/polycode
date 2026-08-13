@@ -1,8 +1,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
-import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow } from './models'
+import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
 import { foldMessages } from '@polycode/shared'
-import { CodexPersonality, CodexReasoningSummary, Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool } from '../../shared/types'
+import { CodexPersonality, CodexReasoningSummary, Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -433,15 +433,25 @@ function rowToThread(r: ThreadRow): Thread {
     use_wsl: r.use_wsl === 1,
     wsl_distro: r.wsl_distro ?? null,
     git_branch: r.git_branch ?? null,
+    routine_id: r.routine_id ?? null,
+    run_state: (r.run_state as Thread['run_state']) ?? null,
+    run_detail: r.run_detail ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }
 }
 
+/**
+ * Runs (threads with routine_id) are hidden from the default thread list —
+ * except escalated runs, which surface alongside user threads so failures
+ * are never silent.
+ */
+const THREAD_VISIBILITY_FILTER = "(t.routine_id IS NULL OR t.run_state = 'escalated')"
+
 export function listThreads(projectId: string): Thread[] {
   const rows = getDb()
     .prepare(
-      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 ORDER BY t.updated_at DESC'
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY t.updated_at DESC'
     )
     .all(projectId) as ThreadRow[]
   return rows.map(rowToThread)
@@ -450,7 +460,7 @@ export function listThreads(projectId: string): Thread[] {
 export function listActiveThreadsForLocation(locationId: string): Thread[] {
   const rows = getDb()
     .prepare(
-      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.location_id = ? AND t.archived = 0 ORDER BY t.updated_at DESC'
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.location_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY t.updated_at DESC'
     )
     .all(locationId) as ThreadRow[]
   return rows.map(rowToThread)
@@ -491,8 +501,15 @@ export function unarchiveThread(id: string): void {
     .run(new Date().toISOString(), id)
 }
 
-export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-8', gitBranch: string | null = null): Thread {
+export interface CreateThreadOptions {
+  /** Marks the thread as a Run of this Routine (hidden from default lists). */
+  routineId?: string
+  permissionMode?: PermissionMode
+}
+
+export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-8', gitBranch: string | null = null, opts: CreateThreadOptions = {}): Thread {
   const now = new Date().toISOString()
+  const permissionMode = normalizePermissionMode(opts.permissionMode ?? 'ask')
   const thread: ThreadRow = {
     id: uuidv4(),
     project_id: projectId,
@@ -512,17 +529,20 @@ export function createThread(projectId: string, name: string, locationId: string
     context_window: 0,
     unread: 0,
     has_messages: 0,
-    permission_mode: 'ask',
-    yolo_mode: 0,
+    permission_mode: permissionMode,
+    yolo_mode: permissionMode === 'yolo' ? 1 : 0,
     use_wsl: 0,
     wsl_distro: null,
     git_branch: gitBranch,
+    routine_id: opts.routineId ?? null,
+    run_state: opts.routineId ? 'active' : null,
+    run_detail: null,
     created_at: now,
     updated_at: now
   }
   getDb()
     .prepare(
-      'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, permission_mode, yolo_mode, git_branch, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, permission_mode, yolo_mode, git_branch, routine_id, run_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(
       thread.id,
@@ -536,10 +556,175 @@ export function createThread(projectId: string, name: string, locationId: string
       thread.permission_mode,
       thread.yolo_mode,
       thread.git_branch,
+      thread.routine_id,
+      thread.run_state,
       thread.created_at,
       thread.updated_at
     )
   return rowToThread(thread)
+}
+
+// ── Routines ─────────────────────────────────────────────────────────────────
+
+const VALID_TRIGGER_TYPES: RoutineTriggerType[] = ['cron', 'once', 'manual']
+
+function rowToRoutine(r: RoutineRow): Routine {
+  return {
+    id: r.id,
+    project_id: r.project_id,
+    location_id: r.location_id,
+    name: r.name,
+    prompt: r.prompt,
+    trigger_type: VALID_TRIGGER_TYPES.includes(r.trigger_type as RoutineTriggerType) ? (r.trigger_type as RoutineTriggerType) : 'manual',
+    schedule: r.schedule ?? null,
+    provider: r.provider,
+    model: r.model,
+    permission_mode: normalizePermissionMode(r.permission_mode),
+    enabled: r.enabled === 1,
+    last_fired_at: r.last_fired_at ?? null,
+    created_at: r.created_at,
+    updated_at: r.updated_at,
+  }
+}
+
+export function listRoutines(projectId: string): Routine[] {
+  const rows = getDb()
+    .prepare('SELECT * FROM routines WHERE project_id = ? ORDER BY created_at ASC')
+    .all(projectId) as RoutineRow[]
+  return rows.map(rowToRoutine)
+}
+
+export function listAllRoutines(): Routine[] {
+  const rows = getDb().prepare('SELECT * FROM routines').all() as RoutineRow[]
+  return rows.map(rowToRoutine)
+}
+
+export function getRoutine(id: string): Routine | null {
+  const row = getDb().prepare('SELECT * FROM routines WHERE id = ?').get(id) as RoutineRow | undefined
+  return row ? rowToRoutine(row) : null
+}
+
+export interface RoutineInput {
+  project_id: string
+  location_id: string
+  name: string
+  prompt: string
+  trigger_type: RoutineTriggerType
+  schedule: string | null
+  provider: string
+  model: string
+  permission_mode: PermissionMode
+  enabled: boolean
+}
+
+export function createRoutine(input: RoutineInput): Routine {
+  const now = new Date().toISOString()
+  const row: RoutineRow = {
+    id: uuidv4(),
+    project_id: input.project_id,
+    location_id: input.location_id,
+    name: input.name,
+    prompt: input.prompt,
+    trigger_type: input.trigger_type,
+    schedule: input.schedule,
+    provider: input.provider,
+    model: input.model,
+    permission_mode: input.permission_mode,
+    enabled: input.enabled ? 1 : 0,
+    last_fired_at: null,
+    created_at: now,
+    updated_at: now,
+  }
+  getDb()
+    .prepare(
+      'INSERT INTO routines (id, project_id, location_id, name, prompt, trigger_type, schedule, provider, model, permission_mode, enabled, last_fired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+    .run(row.id, row.project_id, row.location_id, row.name, row.prompt, row.trigger_type, row.schedule, row.provider, row.model, row.permission_mode, row.enabled, row.last_fired_at, row.created_at, row.updated_at)
+  return rowToRoutine(row)
+}
+
+export function updateRoutine(id: string, patch: Partial<Omit<RoutineInput, 'project_id'>>): Routine | null {
+  const existing = getRoutine(id)
+  if (!existing) return null
+  const merged = {
+    location_id: patch.location_id ?? existing.location_id,
+    name: patch.name ?? existing.name,
+    prompt: patch.prompt ?? existing.prompt,
+    trigger_type: patch.trigger_type ?? existing.trigger_type,
+    schedule: patch.schedule !== undefined ? patch.schedule : existing.schedule,
+    provider: patch.provider ?? existing.provider,
+    model: patch.model ?? existing.model,
+    permission_mode: patch.permission_mode ?? existing.permission_mode,
+    enabled: patch.enabled ?? existing.enabled,
+  }
+  getDb()
+    .prepare('UPDATE routines SET location_id = ?, name = ?, prompt = ?, trigger_type = ?, schedule = ?, provider = ?, model = ?, permission_mode = ?, enabled = ?, updated_at = ? WHERE id = ?')
+    .run(merged.location_id, merged.name, merged.prompt, merged.trigger_type, merged.schedule, merged.provider, merged.model, merged.permission_mode, merged.enabled ? 1 : 0, new Date().toISOString(), id)
+  return getRoutine(id)
+}
+
+export function setRoutineEnabled(id: string, enabled: boolean): void {
+  getDb()
+    .prepare('UPDATE routines SET enabled = ?, updated_at = ? WHERE id = ?')
+    .run(enabled ? 1 : 0, new Date().toISOString(), id)
+}
+
+export function markRoutineFired(id: string, firedAt: string): void {
+  getDb()
+    .prepare('UPDATE routines SET last_fired_at = ?, updated_at = ? WHERE id = ?')
+    .run(firedAt, new Date().toISOString(), id)
+}
+
+/**
+ * Deleting a routine detaches its runs: they are archived and become plain
+ * threads (routine_id cleared) so they join the normal Archived section.
+ */
+export function deleteRoutine(id: string): void {
+  const db = getDb()
+  db.transaction(() => {
+    db.prepare("UPDATE threads SET archived = 1, routine_id = NULL, run_state = NULL, run_detail = NULL, updated_at = ? WHERE routine_id = ?")
+      .run(new Date().toISOString(), id)
+    db.prepare('DELETE FROM routines WHERE id = ?').run(id)
+  })()
+}
+
+// ── Runs (threads spawned by routines) ───────────────────────────────────────
+
+export function listRuns(routineId: string, limit?: number): Thread[] {
+  const rows = getDb()
+    .prepare(
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.routine_id = ? ORDER BY t.created_at DESC LIMIT ?'
+    )
+    .all(routineId, limit ?? -1) as ThreadRow[]
+  return rows.map(rowToThread)
+}
+
+/** Runs still marked active — used at startup to escalate interrupted runs. */
+export function listActiveRuns(): Thread[] {
+  const rows = getDb()
+    .prepare("SELECT t.*, 1 AS has_messages FROM threads t WHERE t.routine_id IS NOT NULL AND t.run_state = 'active'")
+    .all() as ThreadRow[]
+  return rows.map(rowToThread)
+}
+
+export function hasActiveRun(routineId: string): boolean {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS count FROM threads WHERE routine_id = ? AND run_state = 'active'")
+    .get(routineId) as { count: number }
+  return row.count > 0
+}
+
+export function hasEscalatedRun(routineId: string): boolean {
+  const row = getDb()
+    .prepare("SELECT COUNT(*) AS count FROM threads WHERE routine_id = ? AND run_state = 'escalated'")
+    .get(routineId) as { count: number }
+  return row.count > 0
+}
+
+export function setRunState(threadId: string, state: RunState, detail: string | null = null): void {
+  getDb()
+    .prepare('UPDATE threads SET run_state = ?, run_detail = ?, updated_at = ? WHERE id = ?')
+    .run(state, detail, new Date().toISOString(), threadId)
 }
 
 export function updateThreadModel(id: string, model: string): void {
@@ -598,8 +783,21 @@ export function updateThreadPermissionMode(id: string, permissionMode: string): 
     .run(normalized, normalized === 'yolo' ? 1 : 0, new Date().toISOString(), id)
 }
 
+export function updateThreadLocationId(id: string, locationId: string | null): void {
+  getDb()
+    .prepare('UPDATE threads SET location_id = ?, updated_at = ? WHERE id = ?')
+    .run(locationId, new Date().toISOString(), id)
+}
+
 export function deleteThread(id: string): void {
   getDb().prepare('DELETE FROM threads WHERE id = ?').run(id)
+}
+
+export function getThreadById(id: string): Thread | null {
+  const row = getDb()
+    .prepare('SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.id = ?')
+    .get(id) as ThreadRow | undefined
+  return row ? rowToThread(row) : null
 }
 
 export function threadExists(id: string): boolean {
@@ -1217,6 +1415,9 @@ export function importThread(
     use_wsl: 0,
     wsl_distro: null,
     git_branch: null,
+    routine_id: null,
+    run_state: null,
+    run_detail: null,
     created_at: now,
     updated_at: now
   }

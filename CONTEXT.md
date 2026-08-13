@@ -20,6 +20,24 @@ A proposed merge from a source branch into a target branch on a Forge.
 
 A named request that a PolyCode client can send to a Remote Host or its own desktop.
 
+## Thread
+
+A single conversation with a Provider about a Project, conducted at a Project
+Location. A Thread is either created by the user or spawned as a Run.
+
+## Routine
+
+A standing definition of automated work on a Project: a prompt, a trigger
+(schedule or manual), an execution mode, and a Provider/model. A Routine never
+runs itself; each firing spawns a Run.
+
+## Run
+
+One execution of a Routine: a Thread spawned on an isolated worktree, hidden
+from the default Thread list. A Run cleans up its worktree on successful
+completion; a Run that fails or ends with unshipped work escalates to the user
+instead of cleaning up.
+
 ## Driver
 
 The Provider-specific participant that conducts a Session.

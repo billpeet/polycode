@@ -7,6 +7,7 @@ interface Migration {
 
 const migrations: Migration[] = [
   { version: 1, up: adoptLegacySchema },
+  { version: 2, up: addRoutines },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -24,6 +25,45 @@ export function runMigrations(database: Database.Database): void {
       database.pragma(`user_version = ${migration.version}`)
     })()
   }
+}
+
+/**
+ * Version 2 — Routines & Runs.
+ * A Routine is a standing definition of automated work; each firing spawns a
+ * Run: a Thread with routine_id set, hidden from the default thread list.
+ */
+function addRoutines(database: Database.Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS routines (
+      id TEXT PRIMARY KEY,
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      location_id TEXT NOT NULL REFERENCES repo_locations(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      prompt TEXT NOT NULL,
+      trigger_type TEXT NOT NULL DEFAULT 'manual',
+      schedule TEXT,
+      provider TEXT NOT NULL DEFAULT 'claude-code',
+      model TEXT NOT NULL DEFAULT 'claude-opus-4-8',
+      permission_mode TEXT NOT NULL DEFAULT 'yolo',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      last_fired_at TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+  `)
+
+  const threadCols = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadCols.some((c) => c.name === 'routine_id')) {
+    database.exec('ALTER TABLE threads ADD COLUMN routine_id TEXT REFERENCES routines(id) ON DELETE SET NULL')
+    database.exec('ALTER TABLE threads ADD COLUMN run_state TEXT')
+    database.exec('ALTER TABLE threads ADD COLUMN run_detail TEXT')
+  }
+
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_threads_routine_created
+      ON threads(routine_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_routines_project ON routines(project_id);
+  `)
 }
 
 /**
