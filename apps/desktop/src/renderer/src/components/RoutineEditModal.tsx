@@ -95,6 +95,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
         opencode: 'models:opencodeAvailable',
         pi: 'models:piAvailable',
         cursor: 'models:cursorAvailable',
+        grok: 'models:grokAvailable',
       } as const
     )[provider]
     if (!channel) return

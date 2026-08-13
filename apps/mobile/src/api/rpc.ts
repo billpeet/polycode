@@ -99,6 +99,7 @@ export const MOBILE_RPC_CHANNELS = [
   'models:opencodeAvailable',
   'models:piAvailable',
   'models:cursorAvailable',
+  'models:grokAvailable',
 ] as const satisfies readonly RemoteChannel[]
 
 export type RpcChannel = (typeof MOBILE_RPC_CHANNELS)[number]

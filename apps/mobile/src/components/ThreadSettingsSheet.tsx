@@ -28,6 +28,7 @@ type ModelsChannel =
   | 'models:opencodeAvailable'
   | 'models:piAvailable'
   | 'models:cursorAvailable'
+  | 'models:grokAvailable'
 
 const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
   'claude-code': 'models:claudeAvailable',
@@ -35,6 +36,7 @@ const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
   opencode: 'models:opencodeAvailable',
   pi: 'models:piAvailable',
   cursor: 'models:cursorAvailable',
+  grok: 'models:grokAvailable',
 }
 
 const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']

@@ -256,6 +256,10 @@ const PROVIDER_INFO: Record<Provider, {
   'opencode':    { cmd: 'opencode', package: 'opencode-ai',              updatePkg: 'opencode-ai@latest' },
   'pi':          { cmd: 'pi',      package: '@mariozechner/pi-coding-agent', updatePkg: '@mariozechner/pi-coding-agent@latest' },
   'cursor':      { cmd: 'cursor-agent',   package: '@cursor/agent',              updateCmd: ['cursor-agent', 'update'] },
+  // Grok Build CLI installs from https://x.ai/cli, not npm — the registry
+  // lookup 404s (latest stays null, so no update nag) and updates go through
+  // the CLI's own updater like Claude Code and Cursor.
+  'grok':        { cmd: 'grok',    package: '@xai/grok-cli',             updateCmd: ['grok', 'update'] },
 }
 
 async function runVersionCheckUncached(

@@ -178,6 +178,7 @@ export const CHANNEL_REGISTRY = {
   'models:opencodeAvailable': { local: true, remote: true },
   'models:piAvailable': { local: true, remote: true },
   'models:cursorAvailable': { local: true, remote: true },
+  'models:grokAvailable': { local: true, remote: true },
   // Routine management is desktop-only in v1; escalated runs surface through
   // the normal thread channels, so mobile sees them with no extra plumbing.
   'routines:list': { local: true, remote: false },

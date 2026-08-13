@@ -46,9 +46,10 @@ export class LocalRunner implements Runner {
   }
 
   spawn(cmd: SpawnCommand): ChildProcess {
-    const { binary, args, workDir, stdinContent, keepStdinOpen } = cmd
+    const { binary, args, workDir, stdinContent, keepStdinOpen, extraEnv } = cmd
     const isWindows = process.platform === 'win32'
-    const env = isWindows ? augmentWindowsPath() : undefined
+    const baseEnv = isWindows ? augmentWindowsPath() : undefined
+    const env = extraEnv ? { ...(baseEnv ?? process.env), ...extraEnv } : baseEnv
 
     if (!workDir || !existsSync(workDir)) {
       throw new Error(`Working directory does not exist: "${workDir}"`)

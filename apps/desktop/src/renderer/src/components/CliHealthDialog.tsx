@@ -40,6 +40,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   'opencode': 'OpenCode',
   'pi': 'Pi',
   'cursor': 'Cursor',
+  'grok': 'Grok Build',
 }
 
 interface PanelProps {

@@ -262,6 +262,7 @@ export interface ChannelContract {
   'models:opencodeAvailable': [[threadId?: string | null], ModelOption[]]
   'models:piAvailable': [[threadId?: string | null], ModelOption[]]
   'models:cursorAvailable': [[threadId?: string | null], ModelOption[]]
+  'models:grokAvailable': [[threadId?: string | null], ModelOption[]]
   'terminal:spawn': [[threadId: string, cols: number, rows: number], string]
   'terminal:kill': [[terminalId: string], void]
   'terminal:getBuffer': [[terminalId: string], string]

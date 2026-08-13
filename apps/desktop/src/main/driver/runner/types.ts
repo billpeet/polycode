@@ -14,6 +14,10 @@ export interface SpawnCommand {
   /** If true, stdin is NOT closed after writing stdinContent — kept open for
    *  interactive protocol messages (e.g. Claude Code permission control_response). */
   keepStdinOpen?: boolean
+  /** Extra environment merged over the inherited environment. Local runner only —
+   *  wsl/ssh spawn a local client whose env does not reach the remote shell, so
+   *  remote env vars must travel in `preamble` instead. */
+  extraEnv?: Record<string, string>
 }
 
 export interface RunCommand extends SpawnCommand {

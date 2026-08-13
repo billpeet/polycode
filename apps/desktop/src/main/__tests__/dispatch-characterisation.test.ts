@@ -481,6 +481,9 @@ vi.mock('../pi-models', () => H.autoModule('piModels', {
 vi.mock('../cursor-models', () => H.autoModule('cursorModels', {
   listCursorAvailableModels: H.settlesLate('models.listCursorAvailableModels', [{ id: 'cursor' }]),
 }))
+vi.mock('../grok-models', () => H.autoModule('grokModels', {
+  listGrokAvailableModels: H.settlesLate('models.listGrokAvailableModels', [{ id: 'grok-build' }]),
+}))
 
 vi.mock('../project-admin', () => H.autoModule('projectAdmin', {
   listSyncedLocations: H.stub('projectAdmin.listSyncedLocations', () => (H.state.location ? [H.state.location] : [])),
@@ -3366,7 +3369,7 @@ describe('slash-commands:* — both transports agree', () => {
 })
 
 /**
- * `models:*` is where a transposition would be hardest to see: the five channels each build
+ * `models:*` is where a transposition would be hardest to see: the six channels each build
  * one `{cwd, ssh, wsl}` options object from the thread, so ssh and wsl travel *together*
  * rather than one-per-branch, and the default fixture nulls both.
  */
@@ -3377,6 +3380,7 @@ describe('models:* — both transports agree', () => {
     ['models:opencodeAvailable', 'models.listOpenCodeAvailableModels', [{ id: 'oc' }]],
     ['models:piAvailable', 'models.listPiAvailableModels', [{ id: 'pi' }]],
     ['models:cursorAvailable', 'models.listCursorAvailableModels', [{ id: 'cursor' }]],
+    ['models:grokAvailable', 'models.listGrokAvailableModels', [{ id: 'grok-build' }]],
   ]
 
   const hosted = (): void => {

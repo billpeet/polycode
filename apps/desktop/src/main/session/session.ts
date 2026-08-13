@@ -6,6 +6,7 @@ import { CodexDriver } from '../driver/codex'
 import { OpenCodeDriver } from '../driver/opencode'
 import { PiDriver } from '../driver/pi'
 import { CursorDriver } from '../driver/cursor'
+import { GrokDriver } from '../driver/grok'
 import { CLIDriver } from '../driver/types'
 import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
@@ -107,6 +108,8 @@ export class Session {
       ? new PiDriver(options)
       : provider === 'cursor'
       ? new CursorDriver(options)
+      : provider === 'grok'
+      ? new GrokDriver(options)
       : new ClaudeDriver(options)
     this.drivers.set(sessionId, driver)
     return driver

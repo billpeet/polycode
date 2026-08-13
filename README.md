@@ -12,7 +12,7 @@ Node.js.
 ## Features
 
 - **Multi-session management** — run and switch between multiple agent threads per project.
-- **Multi-provider support** — Claude Code, Codex, OpenCode, and Pi.
+- **Multi-provider support** — Claude Code, Codex, OpenCode, Pi, Cursor, and Grok Build.
 - **Provider/model selection** — choose supported models per thread and preserve recent choices.
 - **Session persistence** — stores projects, threads, sessions, messages, token usage, and settings in SQLite.
 - **Streaming output** — real-time assistant output with structured tool-call, thinking, question, and permission blocks.
@@ -37,6 +37,8 @@ Install one or more of these and make sure they are available on your `PATH` in 
 | Codex | `codex` | [`@openai/codex`](https://github.com/openai/codex) |
 | OpenCode | `opencode` | [`opencode-ai`](https://opencode.ai/) |
 | Pi | `pi` | [`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) |
+| Cursor | `cursor-agent` | [Cursor CLI](https://cursor.com/cli) |
+| Grok Build | `grok` | [Grok Build CLI](https://x.ai/cli) — authenticate with `grok login` or `XAI_API_KEY` |
 
 PolyCode can also check and update these CLIs from the app for local, SSH, and WSL locations.
 

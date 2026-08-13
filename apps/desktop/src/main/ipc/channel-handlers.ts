@@ -257,6 +257,7 @@ import { listCodexAvailableModels } from '../codex-models'
 import { listOpenCodeAvailableModels } from '../opencode-models'
 import { listPiAvailableModels } from '../pi-models'
 import { listCursorAvailableModels } from '../cursor-models'
+import { listGrokAvailableModels } from '../grok-models'
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
@@ -1650,6 +1651,8 @@ export const channelHandlers = {
 
   'models:cursorAvailable': (_ctx, threadId) =>
     listCursorAvailableModels(modelQueryOptions(threadId)),
+
+  'models:grokAvailable': (_ctx, threadId) => listGrokAvailableModels(modelQueryOptions(threadId)),
 
   // ── Sessions and messages ─────────────────────────────────────────────────
 

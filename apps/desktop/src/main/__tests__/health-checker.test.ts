@@ -91,6 +91,17 @@ describe('checkCliHealth — transport selection', () => {
 
     expect(runner.runCommands[0].args).toEqual(['about', '--format', 'json'])
   })
+
+  it('probes grok with a plain --version', async () => {
+    const runner = fakeFor('local', { stdout: 'grok 0.3.1\n' })
+    const { checkCliHealth } = await loadChecker()
+
+    const result = await checkCliHealth('grok', 'local', null, null)
+
+    expect(runner.runCommands[0]).toMatchObject({ binary: 'grok', args: ['--version'] })
+    expect(result.currentVersion).toBe('0.3.1')
+    expect(result.installed).toBe(true)
+  })
 })
 
 describe('checkCliHealth — remote probe contents', () => {
@@ -174,6 +185,16 @@ describe('updateCli', () => {
       binary: 'npm',
       args: ['install', '-g', '@openai/codex@latest'],
     })
+  })
+
+  it('runs grok through its own updater — it installs from x.ai/cli, not npm', async () => {
+    const runner = fakeFor('local', { stdout: 'updated', exitCode: 0 })
+    const { updateCli } = await loadChecker()
+
+    const result = await updateCli('grok', 'local', null, null)
+
+    expect(runner.runCommands[0]).toMatchObject({ binary: 'grok', args: ['update'] })
+    expect(result.success).toBe(true)
   })
 
   it('bootstraps HOME and the node managers before updating over ssh', async () => {

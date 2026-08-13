@@ -187,7 +187,15 @@ export const CURSOR_MODELS = [
 
 export type CursorModelId = typeof CURSOR_MODELS[number]['id']
 
-export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor'
+// Grok Build CLI's ACP session reports the live catalog; `grok-build` is the
+// product's default model slug (mirrors t3code's GROK_BUILT_IN_MODELS floor).
+export const GROK_MODELS = [
+  { id: 'grok-build', label: 'Grok Build' },
+] as const satisfies readonly ModelOption[]
+
+export type GrokModelId = typeof GROK_MODELS[number]['id']
+
+export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok'
 export type PermissionMode = 'ask' | 'workspace' | 'yolo'
 
 export const PROVIDERS = [
@@ -196,6 +204,7 @@ export const PROVIDERS = [
   { id: 'opencode' as Provider, label: 'OpenCode' },
   { id: 'pi' as Provider, label: 'Pi' },
   { id: 'cursor' as Provider, label: 'Cursor' },
+  { id: 'grok' as Provider, label: 'Grok Build' },
 ] as const
 
 export function getModelsForProvider(provider: Provider) {
@@ -203,6 +212,7 @@ export function getModelsForProvider(provider: Provider) {
   if (provider === 'opencode') return OPENCODE_MODELS
   if (provider === 'pi') return PI_MODELS
   if (provider === 'cursor') return CURSOR_MODELS
+  if (provider === 'grok') return GROK_MODELS
   return ANTHROPIC_MODELS
 }
 
@@ -211,6 +221,7 @@ export function getDefaultModelForProvider(provider: Provider): string {
   if (provider === 'opencode') return OPENCODE_MODELS[0].id
   if (provider === 'pi') return PI_MODELS[0].id
   if (provider === 'cursor') return CURSOR_MODELS[0].id
+  if (provider === 'grok') return GROK_MODELS[0].id
   return ANTHROPIC_MODELS[0].id
 }
 
@@ -370,6 +381,8 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'opencode/kimi-k2.5-free': 131_072,
   'default': 200_000,
   'auto': 200_000,
+  // xAI's coding models run a 256k context window.
+  'grok-build': 256_000,
 }
 
 export const DEFAULT_CONTEXT_LIMIT = 200_000

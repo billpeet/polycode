@@ -20,6 +20,7 @@ type ModelsChannel =
   | 'models:opencodeAvailable'
   | 'models:piAvailable'
   | 'models:cursorAvailable'
+  | 'models:grokAvailable'
 
 const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
   'claude-code': 'models:claudeAvailable',
@@ -27,6 +28,7 @@ const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
   opencode: 'models:opencodeAvailable',
   pi: 'models:piAvailable',
   cursor: 'models:cursorAvailable',
+  grok: 'models:grokAvailable',
 }
 
 function isProvider(value: string): value is Provider {

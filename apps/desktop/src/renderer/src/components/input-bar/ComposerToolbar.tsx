@@ -69,7 +69,7 @@ export default function ComposerToolbar({
         { mode: 'yolo', label: 'Yolo', title: 'Bypass Codex approvals and sandbox' },
       ]
     }
-    if (currentThread?.provider === 'claude-code' || currentThread?.provider === 'cursor') {
+    if (currentThread?.provider === 'claude-code' || currentThread?.provider === 'cursor' || currentThread?.provider === 'grok') {
       return [
         { mode: 'ask', label: 'Ask', title: 'Ask before privileged provider actions' },
         { mode: 'yolo', label: 'Yolo', title: 'Bypass provider approval checks where supported' },
@@ -83,6 +83,7 @@ export default function ComposerToolbar({
   const [liveOpenCodeModels, setLiveOpenCodeModels] = useState<ModelOption[]>([])
   const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
   const [liveCursorModels, setLiveCursorModels] = useState<ModelOption[]>([])
+  const [liveGrokModels, setLiveGrokModels] = useState<ModelOption[]>([])
 
   useEffect(() => {
     if (currentProvider !== 'claude-code') return
@@ -159,6 +160,21 @@ export default function ComposerToolbar({
     return () => { cancelled = true }
   }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
 
+  useEffect(() => {
+    if (currentProvider !== 'grok') return
+
+    let cancelled = false
+    window.api.invoke('models:grokAvailable', threadId)
+      .then((models) => {
+        if (!cancelled && models.length > 0) setLiveGrokModels(models)
+      })
+      .catch(() => {
+        // Keep static fallback models when Grok is unavailable or unauthenticated.
+      })
+
+    return () => { cancelled = true }
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
+
   const modelOptions = useMemo(() => {
     const staticModels = getModelsForProvider(currentProvider)
     const baseModels = currentProvider === 'claude-code' && liveClaudeModels.length > 0
@@ -171,11 +187,13 @@ export default function ComposerToolbar({
             ? livePiModels
             : currentProvider === 'cursor' && liveCursorModels.length > 0
               ? liveCursorModels
-              : staticModels
+              : currentProvider === 'grok' && liveGrokModels.length > 0
+                ? liveGrokModels
+                : staticModels
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]
-  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels])
+  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels, liveGrokModels])
 
   const selectedModel = useMemo<ModelOption | undefined>(
     () => modelOptions.find((model) => model.id === currentThread?.model),
@@ -203,7 +221,7 @@ export default function ComposerToolbar({
 
   const handleProviderChange = (provider: Provider): void => {
     const staticDefault = getDefaultModelForProvider(provider)
-    const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : []
+    const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : provider === 'grok' ? liveGrokModels : []
     const defaultModel = liveModels.length > 0
       ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
       : staticDefault
