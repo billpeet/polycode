@@ -36,6 +36,10 @@ function ThreadViewContent({ threadId }: Props) {
   const appendEventToSession = useMessageStore((s) => s.appendEventToSession)
   const setStatus = useThreadStore((s) => s.setStatus)
   const setName = useThreadStore((s) => s.setName)
+  const fetchThreads = useThreadStore((s) => s.fetch)
+  const threadProjectId = useThreadStore((s) =>
+    Object.entries(s.byProject).find(([, threads]) => threads.some((thread) => thread.id === threadId))?.[0] ?? null
+  )
 
   const fetchSessions = useSessionStore((s) => s.fetch)
   const setActiveSession = useSessionStore((s) => s.setActiveSession)
@@ -58,6 +62,13 @@ function ThreadViewContent({ threadId }: Props) {
     if (isPendingThread) return
     fetchSessions(threadId)
   }, [threadId, fetchSessions, isPendingThread])
+
+  // Reconcile canonical status when a thread view mounts. Per-thread push
+  // events can be missed while another thread is selected.
+  useEffect(() => {
+    if (isPendingThread || !threadProjectId) return
+    void fetchThreads(threadProjectId)
+  }, [fetchThreads, isPendingThread, threadProjectId])
 
   // Fetch messages when active session changes, and sync todos from persisted messages
   useEffect(() => {

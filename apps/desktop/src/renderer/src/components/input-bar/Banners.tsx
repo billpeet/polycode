@@ -28,9 +28,13 @@ export function MissingLocationBanner({ location }: { location: RepoLocation }) 
 export function CliUnavailableBanner({
   status,
   error,
+  checking,
+  onRetry,
 }: {
   status?: 'unavailable' | 'error'
   error?: string
+  checking?: boolean
+  onRetry?: () => void
 }) {
   return (
     <div
@@ -46,11 +50,22 @@ export function CliUnavailableBanner({
         <line x1="12" y1="8" x2="12" y2="12" />
         <line x1="12" y1="16" x2="12.01" y2="16" />
       </svg>
-      <span>
+      <span className="flex-1">
         {status === 'error'
           ? `CLI health check failed: ${error ?? 'unknown error'}`
           : 'CLI not found for this provider - install it or switch to a different provider.'}
       </span>
+      {onRetry && (
+        <button
+          type="button"
+          onClick={onRetry}
+          disabled={checking}
+          className="shrink-0 rounded px-2 py-1 font-medium disabled:opacity-50"
+          style={{ border: '1px solid currentColor' }}
+        >
+          {checking ? 'Checking…' : 'Retry'}
+        </button>
+      )}
     </div>
   )
 }

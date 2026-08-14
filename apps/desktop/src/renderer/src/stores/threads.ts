@@ -742,6 +742,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   send: async (threadId, content, options) => {
+    const previousStatus = get().statusMap[threadId] ?? 'idle'
+    const previousRunStartedAt = get().runStartedAtByThread[threadId]
+    const previousHasMessages = Object.values(get().byProject).flat().find((thread) => thread.id === threadId)?.has_messages ?? false
+    const startedAt = Date.now()
     // Optimistically set status + mark thread as having messages
     set((s) => {
       const updated = { ...s.byProject }
@@ -753,18 +757,48 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       return {
         statusMap: { ...s.statusMap, [threadId]: 'running' },
         byProject: updated,
-        runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+        runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
       }
     })
-    await window.api.invoke('threads:send', threadId, content, options)
+    try {
+      await window.api.invoke('threads:send', threadId, content, options)
+    } catch (error) {
+      set((s) => {
+        if (s.runStartedAtByThread[threadId] !== startedAt) return s
+        const runStartedAtByThread = { ...s.runStartedAtByThread }
+        if (previousRunStartedAt) runStartedAtByThread[threadId] = previousRunStartedAt
+        else delete runStartedAtByThread[threadId]
+        return {
+          statusMap: { ...s.statusMap, [threadId]: previousStatus },
+          runStartedAtByThread,
+          byProject: Object.fromEntries(Object.entries(s.byProject).map(([projectId, threads]) => [
+            projectId,
+            threads.map((thread) => thread.id === threadId ? { ...thread, has_messages: previousHasMessages } : thread),
+          ])),
+        }
+      })
+      throw error
+    }
   },
 
   approvePlan: async (threadId) => {
+    const previousStatus = get().statusMap[threadId] ?? 'plan_pending'
+    const startedAt = Date.now()
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'running' },
-      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
     }))
-    await window.api.invoke('threads:approvePlan', threadId)
+    try {
+      await window.api.invoke('threads:approvePlan', threadId)
+    } catch (error) {
+      set((s) => {
+        if (s.runStartedAtByThread[threadId] !== startedAt) return s
+        const runStartedAtByThread = { ...s.runStartedAtByThread }
+        delete runStartedAtByThread[threadId]
+        return { statusMap: { ...s.statusMap, [threadId]: previousStatus }, runStartedAtByThread }
+      })
+      throw error
+    }
   },
 
   rejectPlan: async (threadId) => {
@@ -777,11 +811,23 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   answerQuestion: async (threadId, answers, questionComments, generalComment) => {
+    const previousStatus = get().statusMap[threadId] ?? 'question_pending'
+    const startedAt = Date.now()
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'running' },
-      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
     }))
-    await window.api.invoke('threads:answerQuestion', threadId, answers, questionComments, generalComment)
+    try {
+      await window.api.invoke('threads:answerQuestion', threadId, answers, questionComments, generalComment)
+    } catch (error) {
+      set((s) => {
+        if (s.runStartedAtByThread[threadId] !== startedAt) return s
+        const runStartedAtByThread = { ...s.runStartedAtByThread }
+        delete runStartedAtByThread[threadId]
+        return { statusMap: { ...s.statusMap, [threadId]: previousStatus }, runStartedAtByThread }
+      })
+      throw error
+    }
   },
 
   getPermissions: async (threadId) => {
@@ -789,11 +835,23 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   approvePermissions: async (threadId, requestId) => {
+    const previousStatus = get().statusMap[threadId] ?? 'permission_pending'
+    const startedAt = Date.now()
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'running' },
-      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: Date.now() },
+      runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
     }))
-    await window.api.invoke('threads:approvePermissions', threadId, requestId)
+    try {
+      await window.api.invoke('threads:approvePermissions', threadId, requestId)
+    } catch (error) {
+      set((s) => {
+        if (s.runStartedAtByThread[threadId] !== startedAt) return s
+        const runStartedAtByThread = { ...s.runStartedAtByThread }
+        delete runStartedAtByThread[threadId]
+        return { statusMap: { ...s.statusMap, [threadId]: previousStatus }, runStartedAtByThread }
+      })
+      throw error
+    }
   },
 
   denyPermissions: async (threadId, requestId) => {

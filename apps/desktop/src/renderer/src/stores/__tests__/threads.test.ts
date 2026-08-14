@@ -74,3 +74,37 @@ describe('thread store creation defaults', () => {
     expect(useThreadStore.getState().byProject['project-1'][0].permission_mode).toBe('workspace')
   })
 })
+
+describe('thread action rollback', () => {
+  const invoke = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('window', { api: { invoke } })
+    useThreadStore.setState({
+      byProject: { 'project-1': [makeThread({})] },
+      statusMap: { 'thread-main': 'idle' },
+      runStartedAtByThread: {},
+    })
+  })
+
+  it('restores idle status when sending fails before the main process accepts it', async () => {
+    invoke.mockRejectedValueOnce(new Error('IPC unavailable'))
+
+    await expect(useThreadStore.getState().send('thread-main', 'hello')).rejects.toThrow('IPC unavailable')
+
+    expect(useThreadStore.getState().statusMap['thread-main']).toBe('idle')
+    expect(useThreadStore.getState().runStartedAtByThread['thread-main']).toBeUndefined()
+    expect(useThreadStore.getState().byProject['project-1'][0].has_messages).toBe(false)
+  })
+
+  it('restores the permission prompt when approval fails', async () => {
+    useThreadStore.setState({ statusMap: { 'thread-main': 'permission_pending' } })
+    invoke.mockRejectedValueOnce(new Error('IPC unavailable'))
+
+    await expect(useThreadStore.getState().approvePermissions('thread-main', 'request-1')).rejects.toThrow('IPC unavailable')
+
+    expect(useThreadStore.getState().statusMap['thread-main']).toBe('permission_pending')
+    expect(useThreadStore.getState().runStartedAtByThread['thread-main']).toBeUndefined()
+  })
+})

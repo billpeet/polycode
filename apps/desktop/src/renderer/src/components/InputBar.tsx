@@ -127,6 +127,21 @@ function InputBarContent({ threadId }: Props) {
 
   const [availableDistros, setAvailableDistros] = useState<string[]>([])
   const isLocalLocation = location?.connection_type === 'local'
+  const checkCliHealth = useCliHealthStore((s) => s.check)
+  const clearCliHealth = useCliHealthStore((s) => s.clear)
+
+  const retryCliHealth = useCallback(() => {
+    if (!currentThread || !location) return
+    const provider = (currentThread.provider ?? 'claude-code') as Provider
+    const connectionType = location.connection_type
+    const effectiveConnectionType = (connectionType === 'local' && currentThread.use_wsl) ? 'wsl' : connectionType
+    const wslConfig = connectionType === 'wsl'
+      ? (location.wsl ?? null)
+      : (connectionType === 'local' && currentThread.use_wsl && currentThread.wsl_distro)
+        ? { distro: currentThread.wsl_distro }
+        : null
+    void checkCliHealth(threadId, provider, effectiveConnectionType, location.ssh ?? null, wslConfig)
+  }, [checkCliHealth, currentThread, location, threadId])
 
   useEffect(() => {
     if (isPendingThread) return
@@ -138,8 +153,6 @@ function InputBarContent({ threadId }: Props) {
   }, [isLocalLocation, isPendingThread])
 
   // Run a CLI health check whenever the effective provider/connection configuration changes
-  const checkCliHealth = useCliHealthStore((s) => s.check)
-  const clearCliHealth = useCliHealthStore((s) => s.clear)
   useEffect(() => {
     if (isPendingThread) {
       clearCliHealth(threadId)
@@ -337,6 +350,17 @@ function InputBarContent({ threadId }: Props) {
       }
       await send(threadId, finalContent, sendOptions)
       if (currentPlanMode) setPlanMode(threadId, false)
+    } catch (error) {
+      setDraft(threadId, trimmed)
+      setAttachments(currentAttachments)
+      setSelectedSkills(currentSkills)
+      addToast({
+        type: 'error',
+        title: 'Message Not Sent',
+        message: error instanceof Error ? error.message : 'The message could not be sent.',
+        details: formatErrorDetails({ action: 'thread:send', threadId }, error),
+        duration: 0,
+      })
     } finally {
       sendingRef.current = false
     }
@@ -660,7 +684,12 @@ function InputBarContent({ threadId }: Props) {
       )}
 
       {cliUnavailable && (
-        <CliUnavailableBanner status={cliHealth?.status === 'error' ? 'error' : 'unavailable'} error={cliHealth?.error ?? undefined} />
+        <CliUnavailableBanner
+          status={cliHealth?.status === 'error' ? 'error' : 'unavailable'}
+          error={cliHealth?.error ?? undefined}
+          checking={cliHealth?.status === 'checking'}
+          onRetry={retryCliHealth}
+        />
       )}
 
       {status === 'error' && (
