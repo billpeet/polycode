@@ -38,6 +38,14 @@ from the default Thread list. A Run cleans up its worktree on successful
 completion; a Run that fails or ends with unshipped work escalates to the user
 instead of cleaning up.
 
+## Outcome
+
+The three-valued result of mechanically evaluating a Run's worktree, per
+ADR-0001: **clean** (nothing uncommitted, nothing unpushed), **unshipped**
+(work that would be lost), or **unknown** (git state could not be read). An
+unknown Outcome is never treated as clean: the Run lifecycle escalates on it,
+and the unshipped-work check warns as if work exists.
+
 ## Driver
 
 The Provider-specific participant that conducts a Session.

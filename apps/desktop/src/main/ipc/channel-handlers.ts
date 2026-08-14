@@ -143,8 +143,11 @@ import {
   updateThreadYoloMode,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
-import { routineManager } from '../routines/manager'
-import { isValidCron } from '../routines/cron'
+// `import type` on purpose: the lifecycle instance reaches the map through the
+// context (see LocalHandlerContext) — the composition root in main/index.ts is
+// the only place that constructs one.
+import type { RunLifecycle } from '../runs/lifecycle'
+import { isValidCron } from '../runs/cron'
 
 /** Trigger/schedule invariants shared by routine create and update. */
 function validateRoutineDraft(draft: { trigger_type: string; schedule: string | null }): void {
@@ -434,6 +437,12 @@ export interface HandlerContext {
 export interface LocalHandlerContext extends HandlerContext {
   origin: 'local'
   remoteClient: RemoteControlClient
+  /**
+   * The Run lifecycle instance, constructed at the composition root
+   * (main/index.ts) with its production adapters. The `routines:*` channels
+   * are `{ remote: false }`, so only this transport ever needs it.
+   */
+  runLifecycle: RunLifecycle
   /**
    * Restart this desktop's remote-control HTTP server with `config`.
    *
@@ -1598,19 +1607,19 @@ export const channelHandlers = {
 
   'routines:setEnabled': (_ctx, id, enabled) => setRoutineEnabled(id, enabled),
 
-  'routines:runNow': (_ctx, id) => routineManager.runNow(id),
+  'routines:runNow': (ctx, id) => ctx.runLifecycle.runNow(id),
 
   'routines:listRuns': (_ctx, routineId, limit) => listRuns(routineId, limit),
 
   // The renderer asks runHasUnshippedWork first and confirms destruction with
   // the user when needed — this channel executes unconditionally.
-  'routines:dismissRun': (_ctx, threadId) => {
+  'routines:dismissRun': (ctx, threadId) => {
     const thread = getThreadById(threadId)
     if (!thread?.routine_id) throw new Error('Thread is not a routine run.')
-    return routineManager.dismissRun(threadId)
+    return ctx.runLifecycle.dismissRun(threadId)
   },
 
-  'routines:runHasUnshippedWork': (_ctx, threadId) => routineManager.runHasUnshippedWork(threadId),
+  'routines:runHasUnshippedWork': (ctx, threadId) => ctx.runLifecycle.runHasUnshippedWork(threadId),
 
   // ── Slash commands ────────────────────────────────────────────────────────
 

@@ -75,7 +75,7 @@ send(channel, ...args): void             // one-way fire-and-forget
 - `thread:output:{threadId}` — `OutputEvent`
 - `thread:status:{threadId}` — `ThreadStatus`
 - `thread:title:{threadId}` — `string`
-- `thread:complete:{threadId}` — (no payload)
+- `thread:complete:{threadId}` — `ThreadStatus` (the turn's terminal status)
 
 ---
 

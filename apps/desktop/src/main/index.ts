@@ -1,4 +1,4 @@
-import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain } from 'electron'
+import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain, powerMonitor } from 'electron'
 import { join } from 'path'
 import { pathToFileURL } from 'url'
 import * as Sentry from '@sentry/electron/main'
@@ -17,7 +17,13 @@ import { stopRemoteControlClient } from './remote/client'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
 import { sessionManager } from './session/manager'
-import { routineManager } from './routines/manager'
+import { RunLifecycle } from './runs/lifecycle'
+import { sqliteRunStore } from './runs/adapters/store'
+import { createRunGit } from './runs/adapters/git'
+import { createRunWorktrees } from './runs/adapters/worktrees'
+import { createRunSessions } from './runs/adapters/sessions'
+import { electronRunNotifier } from './runs/adapters/notifier'
+import { emitAppEvent } from './app-events'
 import { commandManager } from './commands/manager'
 import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
@@ -103,6 +109,7 @@ if (!isDev) {
 }
 
 let isQuitting = false
+let runLifecycle: RunLifecycle | null = null
 
 // Register custom protocol for serving attachment files
 protocol.registerSchemesAsPrivileged([
@@ -232,10 +239,27 @@ app.whenReady().then(() => {
   resetRunningThreads()
 
   const win = createWindow()
-  registerIpcHandlers(win)
+
+  // Composition root for the Run lifecycle: the module accepts its
+  // dependencies as role interfaces; everything Electron- or storage-shaped
+  // is bound here and only here.
+  runLifecycle = new RunLifecycle({
+    store: sqliteRunStore,
+    git: createRunGit(),
+    worktrees: createRunWorktrees(),
+    sessions: createRunSessions(() => win),
+    notifier: electronRunNotifier,
+    clock: { now: () => new Date() },
+    onChange: () => {
+      if (!win.isDestroyed()) emitAppEvent(win, 'routines:changed')
+    },
+  })
+
+  registerIpcHandlers(win, runLifecycle)
   startPlanWatcher(win)
 
-  routineManager.start(win)
+  runLifecycle.start()
+  powerMonitor.on('resume', () => void runLifecycle?.tick())
   startWebhookServer(readWebhookConfig(), win)
   startRemoteControlServer(readRemoteServerConfig(), win)
 
@@ -258,7 +282,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   isQuitting = true
-  routineManager.stop()
+  runLifecycle?.stop()
   sessionManager.stopAll()
   commandManager.stopAll()
   stopWebhookServer()

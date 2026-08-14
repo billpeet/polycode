@@ -18,7 +18,7 @@ import {
   listCommands,
   listLocations,
 } from './db/queries'
-import { gitInit, getRemoteUrl } from './git'
+import { gitInit, getRemoteUrl, resolveDefaultBranchRef } from './git'
 import { createRunner } from './driver/runner'
 import { runGit as executeGit } from './git-runner'
 import { sessionManager } from './session/manager'
@@ -135,17 +135,13 @@ export async function listSyncedLocations(projectId: string): Promise<RepoLocati
   }))
 }
 
-async function resolveWorktreeBaseRef(repoPath: string): Promise<string> {
-  for (const ref of ['main', 'master', 'origin/main', 'origin/master']) {
-    try {
-      await runGit(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], repoPath)
-      return ref
-    } catch {
-      // Try the next conventional default branch ref.
-    }
-  }
-
-  throw new Error('Could not find a main or master branch to create the worktree from.')
+/**
+ * Default branch for the interactive worktree path: local `main`/`master`
+ * first (repos without a remote must keep working), then the shared remote
+ * resolution. Delegates to git.ts — the single default-branch policy.
+ */
+function resolveWorktreeBaseRef(repoPath: string): Promise<string> {
+  return resolveDefaultBranchRef(repoPath, { includeLocal: true })
 }
 
 function isNotRegisteredWorktreeError(error: unknown): boolean {

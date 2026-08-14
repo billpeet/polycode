@@ -12,8 +12,9 @@ import { registerRemoteControlIpcHandlers } from '../remote/client'
 import { restartRemoteControlServer } from '../remote/server'
 import { MIGRATED_CHANNELS, filePathToDataUrl, invokeChannelHandler } from './channel-handlers'
 import type { LocalHandlerContext } from './channel-handlers'
+import type { RunLifecycle } from '../runs/lifecycle'
 
-export function registerIpcHandlers(window: BrowserWindow): void {
+export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLifecycle): void {
   commandManager.init(window)
   ptyManager.init(window)
   const remoteClient = registerRemoteControlIpcHandlers(window)
@@ -32,6 +33,7 @@ export function registerIpcHandlers(window: BrowserWindow): void {
     origin: 'local',
     remoteClient,
     restartServer: (config) => restartRemoteControlServer(config, window),
+    runLifecycle,
   }
   const proxyable = <T extends unknown[]>(
     channel: string,

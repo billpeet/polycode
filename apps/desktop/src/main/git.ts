@@ -189,6 +189,47 @@ async function git(cwd: string, args: string[], ssh?: SshConfig | null, wsl?: Ws
 }
 
 /**
+ * Resolve the repository's default branch ref — the single default-branch
+ * policy. Remote resolution follows origin/HEAD → origin/main → origin/master;
+ * with `includeLocal`, local `main`/`master` are preferred first (the
+ * interactive worktree-creation path, which must keep working in repos that
+ * have no remote). Run provisioning uses `includeLocal: false`: Runs branch
+ * off the remote default by design (see runs/lifecycle.ts).
+ */
+export async function resolveDefaultBranchRef(
+  repoPath: string,
+  opts: { includeLocal?: boolean } = {},
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null
+): Promise<string> {
+  if (opts.includeLocal) {
+    for (const ref of ['main', 'master']) {
+      try {
+        await git(repoPath, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], ssh, wsl)
+        return ref
+      } catch {
+        // Try the next candidate.
+      }
+    }
+  }
+  try {
+    const head = (await git(repoPath, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD'], ssh, wsl)).trim()
+    if (head.startsWith('refs/remotes/')) return head.slice('refs/remotes/'.length)
+  } catch {
+    // origin/HEAD not set locally — fall back to conventional names.
+  }
+  for (const ref of ['origin/main', 'origin/master']) {
+    try {
+      await git(repoPath, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], ssh, wsl)
+      return ref
+    } catch {
+      // Try the next conventional default branch ref.
+    }
+  }
+  throw new Error('Could not resolve the default branch on origin.')
+}
+
+/**
  * Well-known lock files that sit directly in `.git/`. Loose-ref locks under `refs/` are handled separately.
  */
 const TOP_LEVEL_LOCK_FILES = ['index.lock', 'HEAD.lock', 'config.lock', 'shallow.lock', 'packed-refs.lock'] as const

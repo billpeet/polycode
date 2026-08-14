@@ -60,6 +60,8 @@ export class Session {
   private stopped = false
   private abandoned = false
   private shellProcess: ChildProcess | null = null
+  /** Resolvers awaiting the current turn's terminal status (see runToCompletion). */
+  private completionWaiters: Array<(status: ThreadStatus) => void> = []
 
   constructor(threadId: string, workingDir: string, window: BrowserWindow, sshConfig?: SshConfig | null, wslConfig?: WslConfig | null) {
     this.threadId = threadId
@@ -196,6 +198,37 @@ export class Session {
     }
   }
 
+  /**
+   * Send a message and resolve with the turn's terminal status
+   * (`thread:complete` payload). Unlike sendMessage — whose refusal paths are
+   * silent by design for fire-and-forget UI callers — this REJECTS when the
+   * session cannot accept the message, so programmatic callers (the Run
+   * lifecycle) can never be left waiting on a turn that was never started.
+   */
+  runToCompletion(content: string, options?: SendOptions): Promise<ThreadStatus> {
+    if (!this.activeSessionId) {
+      return Promise.reject(new Error('No active session for this thread.'))
+    }
+    const driver = this.drivers.get(this.activeSessionId)
+    if (!driver) {
+      return Promise.reject(new Error('No driver available for the active session.'))
+    }
+    if (driver.isRunning()) {
+      return Promise.reject(new Error('The session is already running a turn.'))
+    }
+    return new Promise((resolve) => {
+      this.completionWaiters.push(resolve)
+      this.sendMessage(content, options)
+    })
+  }
+
+  private flushCompletionWaiters(status: ThreadStatus): void {
+    if (this.completionWaiters.length === 0) return
+    const waiters = this.completionWaiters
+    this.completionWaiters = []
+    for (const resolve of waiters) resolve(status)
+  }
+
   sendMessage(content: string, options?: SendOptions): void {
     if (!this.activeSessionId) return
 
@@ -325,6 +358,9 @@ export class Session {
   forceReset(): void {
     this.abandoned = true
     this.stopped = false
+    // handleDone early-returns for abandoned sessions — resolve any waiter
+    // here or it would hang forever.
+    this.flushCompletionWaiters('stopped')
     if (this.activeSessionId) {
       const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
       for (const msg of cancelled) {
@@ -909,6 +945,7 @@ export class Session {
       }
       this.setStatus('stopped')
       this.emit(`thread:complete:${this.threadId}`, 'stopped')
+      this.flushCompletionWaiters('stopped')
       return
     }
 
@@ -952,6 +989,7 @@ export class Session {
     // Include final status in complete event so the renderer doesn't depend
     // on the separate thread:status event having been processed first
     this.emit(`thread:complete:${this.threadId}`, finalStatus)
+    this.flushCompletionWaiters(finalStatus)
   }
 
   private setStatus(status: ThreadStatus): void {
