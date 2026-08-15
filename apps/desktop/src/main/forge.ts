@@ -5,6 +5,7 @@ import {
   getCurrentBranchPullRequest as getCurrentAzurePullRequest,
   getPullRequestsWebUrl as getAzurePullRequestsWebUrl,
   getRepoWebUrl as getAzureRepoWebUrl,
+  enrichOpenPullRequests as enrichAzurePullRequests,
   listOpenPullRequests as listAzurePullRequests,
 } from './azure-devops'
 import { detectGitHostingProviderCached } from './git'
@@ -14,11 +15,13 @@ import {
   getCurrentBranchGitHubPullRequest,
   getGitHubPullRequestsWebUrl,
   getGitHubRepoWebUrl,
+  enrichOpenGitHubPullRequests as enrichGitHubPullRequests,
   listOpenGitHubPullRequests,
 } from './github'
 
 export interface Forge {
   listPullRequests(): Promise<PullRequest[]>
+  enrichPullRequests(prs: PullRequest[]): Promise<PullRequest[]>
   getCurrentBranchPullRequest(branch: string): Promise<PullRequest | null>
   createPullRequest(payload: {
     target: string
@@ -33,6 +36,12 @@ export interface Forge {
 interface ForgeAdapter {
   listPullRequests(
     repoPath: string,
+    ssh?: SshConfig | null,
+    wsl?: WslConfig | null,
+  ): Promise<PullRequest[]>
+  enrichPullRequests(
+    repoPath: string,
+    prs: PullRequest[],
     ssh?: SshConfig | null,
     wsl?: WslConfig | null,
   ): Promise<PullRequest[]>
@@ -79,6 +88,7 @@ const defaultDependencies: ForgeDependencies = {
   detectProvider: detectGitHostingProviderCached,
   azure: {
     listPullRequests: listAzurePullRequests,
+    enrichPullRequests: enrichAzurePullRequests,
     getCurrentBranchPullRequest: getCurrentAzurePullRequest,
     createPullRequest: createAzurePullRequest,
     checkoutPullRequest: checkoutAzurePullRequest,
@@ -87,6 +97,7 @@ const defaultDependencies: ForgeDependencies = {
   },
   github: {
     listPullRequests: listOpenGitHubPullRequests,
+    enrichPullRequests: enrichGitHubPullRequests,
     getCurrentBranchPullRequest: getCurrentBranchGitHubPullRequest,
     createPullRequest: createGitHubPullRequest,
     checkoutPullRequest: checkoutGitHubPullRequest,
@@ -103,6 +114,7 @@ function bindForge(
 ): Forge {
   return {
     listPullRequests: () => adapter.listPullRequests(repoPath, ssh, wsl),
+    enrichPullRequests: (prs) => adapter.enrichPullRequests(repoPath, prs, ssh, wsl),
     getCurrentBranchPullRequest: (branch) => adapter.getCurrentBranchPullRequest(repoPath, branch, ssh, wsl),
     createPullRequest: (payload) => adapter.createPullRequest(repoPath, payload, ssh, wsl),
     checkoutPullRequest: (prId) => adapter.checkoutPullRequest(repoPath, prId, ssh, wsl),

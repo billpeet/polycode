@@ -14,7 +14,7 @@ import CreatePrModal from './CreatePrModal'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../../lib/gitRefreshCoordinator'
 import { formatErrorDetails } from '../../lib/errorDetails'
-import { refreshForge } from '../../lib/forgeRefresh'
+import { getCachedForge, refreshForge, type ForgeRefreshResult } from '../../lib/forgeRefresh'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
 function joinRepoPath(repoPath: string, relPath: string): string {
@@ -769,6 +769,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const [compareLoadingByPath, setCompareLoadingByPath] = useState<Record<string, boolean>>({})
   const prCache = projectPath ? (prCacheByPath[projectPath] ?? null) : null
   const compareCache = projectPath ? (compareCacheByPath[projectPath] ?? null) : null
+  const currentBranch = gitStatus?.branch
   const openPrs = prCache?.openPrs ?? []
   const currentPr = gitStatus ? (prCache?.currentByBranch[gitStatus.branch] ?? null) : null
   const prProvider = prCache?.provider ?? null
@@ -800,46 +801,45 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     return () => window.clearTimeout(timeoutId)
   }, [threadId, threadStatus, collapsed, fetchModifiedFiles])
 
+  const applyPullRequestResult = useCallback((result: ForgeRefreshResult, loaded = true) => {
+    if (!projectPath || !currentBranch) return
+    setDefaultBranch(result.defaultBranch)
+    setPrCacheByPath((cache) => ({
+      ...cache,
+      [projectPath]: {
+        provider: result.provider,
+        pageUrl: result.pageUrl,
+        openPrs: result.openPrs,
+        currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [currentBranch]: result.current },
+        defaultBranch: result.defaultBranch,
+        loadedBranches: loaded
+          ? { ...(cache[projectPath]?.loadedBranches ?? {}), [currentBranch]: true }
+          : {},
+      },
+    }))
+  }, [projectPath, currentBranch])
+
+  useEffect(() => {
+    if (!projectPath || !currentBranch) return
+    const cached = getCachedForge(projectPath, currentBranch)
+    if (!cached) return
+    const timeoutId = window.setTimeout(() => applyPullRequestResult(cached, false), 0)
+    return () => window.clearTimeout(timeoutId)
+  }, [projectPath, currentBranch, applyPullRequestResult])
+
   const refreshPullRequests = useCallback(async (opts?: { force?: boolean }) => {
     if (!projectPath || !gitStatus || isNotRepo) return
-    setLoadingPrs(true)
+    if (opts?.force || !getCachedForge(projectPath, gitStatus.branch)) setLoadingPrs(true)
     setPrError(null)
     try {
-      const result = await refreshForge(projectPath, gitStatus.branch, opts)
-      setDefaultBranch(result.defaultBranch)
-
-      if (result.provider) {
-        setPrCacheByPath((cache) => ({
-          ...cache,
-          [projectPath]: {
-            provider: result.provider,
-            pageUrl: result.pageUrl,
-            openPrs: result.openPrs,
-            currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: result.current },
-            defaultBranch: result.defaultBranch,
-            loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
-          },
-        }))
-        return
-      }
-
-      setPrCacheByPath((cache) => ({
-        ...cache,
-        [projectPath]: {
-          provider: null,
-          pageUrl: null,
-          openPrs: [],
-          currentByBranch: { ...(cache[projectPath]?.currentByBranch ?? {}), [gitStatus.branch]: null },
-          defaultBranch: result.defaultBranch,
-          loadedBranches: { ...(cache[projectPath]?.loadedBranches ?? {}), [gitStatus.branch]: true },
-        },
-      }))
+      const result = await refreshForge(projectPath, gitStatus.branch, { ...opts, onList: applyPullRequestResult })
+      applyPullRequestResult(result)
     } catch (error) {
       setPrError(error instanceof Error ? error.message : 'Failed to refresh pull requests')
     } finally {
       setLoadingPrs(false)
     }
-  }, [projectPath, gitStatus, isNotRepo])
+  }, [projectPath, gitStatus, isNotRepo, applyPullRequestResult])
 
   const refreshCompareToMain = useCallback(async (opts?: { force?: boolean }) => {
     if (!projectPath || !gitStatus || isNotRepo) return

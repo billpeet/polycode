@@ -1453,13 +1453,18 @@ export const channelHandlers = {
 
   // ── Forge: provider-neutral pull requests ─────────────────────────────────
   //
-  // All six resolve the repo's host config from repo_locations and hand it to
+  // All Forge channels resolve the repo's host config from repo_locations and hand it to
   // `createForge`, which is what selects the GitHub or Azure DevOps adapter — so the
   // lookup is not decoration, it is how a PR listed over SSH reaches the right API.
 
   'forge:pr:list': async (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return (await createForge(repoPath, ssh, wsl)).listPullRequests()
+  },
+
+  'forge:pr:enrich': async (_ctx, repoPath, prs) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return (await createForge(repoPath, ssh, wsl)).enrichPullRequests(prs)
   },
 
   'forge:pr:current': async (_ctx, repoPath, branch) => {

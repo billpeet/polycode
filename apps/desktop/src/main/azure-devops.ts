@@ -177,9 +177,18 @@ export async function listOpenPullRequests(
 
   if (!Array.isArray(raw)) return []
 
-  const prs = raw
+  return raw
     .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
     .filter((pr) => pr.id > 0)
+}
+
+export async function enrichOpenPullRequests(
+  repoPath: string,
+  prs: PullRequest[],
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<PullRequest[]> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   return enrichPullRequests(repoPath, ctx, prs, ssh, wsl)
 }
 
@@ -211,10 +220,9 @@ async function listPullRequestsByStatus(
 
   if (!Array.isArray(raw)) return []
 
-  const prs = raw
+  return raw
     .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
     .filter((pr) => pr.id > 0)
-  return enrichPullRequests(repoPath, ctx, prs, ssh, wsl)
 }
 
 export async function getPullRequestsWebUrl(
@@ -243,10 +251,12 @@ export async function getCurrentBranchPullRequest(
 ): Promise<PullRequest | null> {
   const openPrs = await listPullRequestsByStatus(repoPath, 'active', ssh, wsl)
   const openPr = openPrs.find((pr) => pr.sourceBranch === branch)
-  if (openPr) return openPr
+  if (openPr) return (await enrichOpenPullRequests(repoPath, [openPr], ssh, wsl))[0] ?? openPr
 
   const completedPrs = await listPullRequestsByStatus(repoPath, 'completed', ssh, wsl)
-  return completedPrs.find((pr) => pr.sourceBranch === branch) ?? null
+  const completedPr = completedPrs.find((pr) => pr.sourceBranch === branch)
+  if (!completedPr) return null
+  return (await enrichOpenPullRequests(repoPath, [completedPr], ssh, wsl))[0] ?? completedPr
 }
 
 export async function createPullRequest(

@@ -16,7 +16,8 @@ interface GitHubRepoContext {
 
 // `reviewThreads` is not supported by the widely installed gh CLI releases. It is optional
 // in our parser, so omit it rather than making every PR refresh fail for compatibility.
-const prJsonFields = 'number,title,state,headRefName,baseRefName,author,url,createdAt,mergeStateStatus,mergeable,statusCheckRollup'
+const basePrJsonFields = 'number,title,state,headRefName,baseRefName,author,url,createdAt'
+const detailedPrJsonFields = `${basePrJsonFields},mergeStateStatus,mergeable,statusCheckRollup`
 
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)
@@ -86,7 +87,7 @@ export async function listOpenGitHubPullRequests(
     '--repo', repo,
     '--state', 'open',
     '--limit', '50',
-    '--json', prJsonFields,
+    '--json', basePrJsonFields,
   ], ssh, wsl)
 
   const raw = parseJson<unknown>(output, 'Failed to parse pull request list from gh CLI')
@@ -95,6 +96,22 @@ export async function listOpenGitHubPullRequests(
   return raw
     .map((pr) => mapPr(pr as GhPullRequest))
     .filter((pr) => pr.id > 0)
+}
+
+export async function enrichOpenGitHubPullRequests(
+  repoPath: string,
+  _prs: PullRequest[],
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<PullRequest[]> {
+  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
+  const output = await runGh(repoPath, [
+    'pr', 'list', '--repo', `${ctx.owner}/${ctx.repo}`, '--state', 'open', '--limit', '50',
+    '--json', detailedPrJsonFields,
+  ], ssh, wsl)
+  const raw = parseJson<unknown>(output, 'Failed to parse pull request details from gh CLI')
+  if (!Array.isArray(raw)) return []
+  return raw.map((pr) => mapPr(pr as GhPullRequest)).filter((pr) => pr.id > 0)
 }
 
 async function listGitHubPullRequestsForBranch(
@@ -112,7 +129,7 @@ async function listGitHubPullRequestsForBranch(
     '--state', state,
     '--head', branch,
     '--limit', '10',
-    '--json', prJsonFields,
+    '--json', detailedPrJsonFields,
   ], ssh, wsl)
 
   const raw = parseJson<unknown>(output, 'Failed to parse pull request list from gh CLI')
@@ -207,7 +224,7 @@ export async function createGitHubPullRequest(
     'pr', 'view',
     String(prNumber),
     '--repo', repo,
-    '--json', prJsonFields,
+    '--json', detailedPrJsonFields,
   ], ssh, wsl)
 
   const raw = parseJson<GhPullRequest>(viewOutput, 'Failed to parse created pull request details from gh CLI')

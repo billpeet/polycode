@@ -192,6 +192,7 @@ export interface ChannelContract {
   'forge:pr:list': [[repoPath: string], PullRequest[]]
   'forge:pr:current': [[repoPath: string, branch: string], PullRequest | null]
   'forge:pr:create': [[repoPath: string, payload: { target: string; title: string; description?: string }], PullRequest]
+  'forge:pr:enrich': [[repoPath: string, pullRequests: PullRequest[]], PullRequest[]]
   'forge:pr:checkout': [[repoPath: string, prId: number], { branch: string }]
   'forge:pr:webUrl': [[repoPath: string], string]
   'forge:repo:webUrl': [[repoPath: string], string]

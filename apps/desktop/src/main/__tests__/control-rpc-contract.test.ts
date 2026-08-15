@@ -107,6 +107,7 @@ describe('remote control RPC channel contract', () => {
     const forgeChannels = Object.keys(CHANNEL_REGISTRY).filter((channel) => channel.startsWith('forge:'))
     expect(forgeChannels).toEqual([
       'forge:pr:list',
+      'forge:pr:enrich',
       'forge:pr:current',
       'forge:pr:create',
       'forge:pr:checkout',

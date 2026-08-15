@@ -18,6 +18,7 @@ type Failure = { attempts: number; retryAt: number; deterministic: boolean; mess
 const metadataByPath = new Map<string, Metadata>()
 const failureByPath = new Map<string, Failure>()
 const inFlightByPath = new Map<string, Promise<ForgeRefreshResult>>()
+const resultByPath = new Map<string, ForgeRefreshResult & { branch: string }>()
 
 function keyFor(repoPath: string): string {
   const normalized = repoPath.replace(/\\/g, '/').replace(/\/+$/, '')
@@ -36,6 +37,13 @@ export function getForgeRetryState(repoPath: string): Failure | null {
   return failureByPath.get(keyFor(repoPath)) ?? null
 }
 
+/** Return project-scoped PR data synchronously so remounts can paint before refreshing. */
+export function getCachedForge(repoPath: string, branch: string): ForgeRefreshResult | null {
+  const cached = resultByPath.get(keyFor(repoPath))
+  if (!cached) return null
+  return { ...cached, current: cached.branch === branch ? cached.current : null }
+}
+
 async function getMetadata(repoPath: string, force: boolean): Promise<Metadata> {
   const key = keyFor(repoPath)
   const cached = metadataByPath.get(key)
@@ -52,14 +60,19 @@ async function getMetadata(repoPath: string, force: boolean): Promise<Metadata> 
 }
 
 /** Refresh PR data. Automatic calls honor backoff; a manual call forces an immediate retry. */
-export function refreshForge(repoPath: string, branch: string, options?: { force?: boolean }): Promise<ForgeRefreshResult> {
+export function refreshForge(
+  repoPath: string,
+  branch: string,
+  options?: { force?: boolean; onList?: (result: ForgeRefreshResult) => void },
+): Promise<ForgeRefreshResult> {
   const key = keyFor(repoPath)
+  const requestKey = `${key}::${branch}`
   const force = options?.force ?? false
   const failure = failureByPath.get(key)
   if (!force && failure && (failure.deterministic || failure.retryAt > Date.now())) {
     return Promise.reject(new Error(failure.message))
   }
-  const existing = inFlightByPath.get(key)
+  const existing = inFlightByPath.get(requestKey)
   if (existing) return existing
 
   const request = (async () => {
@@ -67,14 +80,33 @@ export function refreshForge(repoPath: string, branch: string, options?: { force
       const metadata = await getMetadata(repoPath, force)
       if (!metadata.provider) {
         failureByPath.delete(key)
-        return { ...metadata, openPrs: [], current: null }
+        const result = { ...metadata, openPrs: [], current: null }
+        resultByPath.set(key, { ...result, branch })
+        options?.onList?.(result)
+        return result
       }
-      const [openPrs, current] = await Promise.all([
-        window.api.invoke('forge:pr:list', repoPath),
-        window.api.invoke('forge:pr:current', repoPath, branch),
-      ])
+      const openPrs = await window.api.invoke('forge:pr:list', repoPath)
+      const previous = resultByPath.get(key)
+      const listed = {
+        ...metadata,
+        openPrs,
+        current: previous?.branch === branch ? previous.current : null,
+      }
+      resultByPath.set(key, { ...listed, branch })
+      options?.onList?.(listed)
+
+      // Merge/check/comment state and the current-branch lookup are deliberately
+      // second-phase work: neither can delay rendering the newly fetched list.
+      const enrichment = window.api.invoke('forge:pr:enrich', repoPath, openPrs).catch(() => openPrs)
+      const hasOpenCurrent = openPrs.some((pr) => pr.sourceBranch === branch)
+      const currentRequest = hasOpenCurrent
+        ? enrichment.then((prs) => prs.find((pr) => pr.sourceBranch === branch) ?? listed.current)
+        : window.api.invoke('forge:pr:current', repoPath, branch).catch(() => listed.current)
+      const [enrichedPrs, current] = await Promise.all([enrichment, currentRequest])
       failureByPath.delete(key)
-      return { ...metadata, openPrs, current }
+      const result = { ...metadata, openPrs: enrichedPrs, current }
+      resultByPath.set(key, { ...result, branch })
+      return result
     } catch (error) {
       const previousAttempts = failureByPath.get(key)?.attempts ?? 0
       const attempts = previousAttempts + 1
@@ -89,9 +121,9 @@ export function refreshForge(repoPath: string, branch: string, options?: { force
       throw error
     }
   })()
-  inFlightByPath.set(key, request)
+  inFlightByPath.set(requestKey, request)
   void request.finally(() => {
-    if (inFlightByPath.get(key) === request) inFlightByPath.delete(key)
+    if (inFlightByPath.get(requestKey) === request) inFlightByPath.delete(requestKey)
   }).catch(() => undefined)
   return request
 }

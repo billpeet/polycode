@@ -17,6 +17,7 @@ function dependencies(provider: 'azure' | 'github' | null): ForgeDependencies {
     detectProvider: vi.fn(async () => provider),
     azure: {
       listPullRequests: vi.fn(async () => [pullRequest]),
+      enrichPullRequests: vi.fn(async (_repoPath, prs) => prs),
       getCurrentBranchPullRequest: vi.fn(async () => pullRequest),
       createPullRequest: vi.fn(async () => pullRequest),
       checkoutPullRequest: vi.fn(async () => ({ branch: 'feature/ship-it' })),
@@ -25,6 +26,7 @@ function dependencies(provider: 'azure' | 'github' | null): ForgeDependencies {
     },
     github: {
       listPullRequests: vi.fn(async () => [pullRequest]),
+      enrichPullRequests: vi.fn(async (_repoPath, prs) => prs),
       getCurrentBranchPullRequest: vi.fn(async () => pullRequest),
       createPullRequest: vi.fn(async () => pullRequest),
       checkoutPullRequest: vi.fn(async () => ({ branch: 'feature/ship-it' })),
@@ -35,12 +37,13 @@ function dependencies(provider: 'azure' | 'github' | null): ForgeDependencies {
 }
 
 describe('createForge', () => {
-  it('binds one GitHub repository and exposes all six operations', async () => {
+  it('binds one GitHub repository and exposes every operation', async () => {
     const deps = dependencies('github')
     const forge = await createForge('C:/repo', undefined, undefined, deps)
     const payload = { target: 'main', title: 'Ship it' }
 
     await expect(forge.listPullRequests()).resolves.toEqual([pullRequest])
+    await expect(forge.enrichPullRequests([pullRequest])).resolves.toEqual([pullRequest])
     await expect(forge.getCurrentBranchPullRequest('feature/ship-it')).resolves.toEqual(pullRequest)
     await expect(forge.createPullRequest(payload)).resolves.toEqual(pullRequest)
     await expect(forge.checkoutPullRequest(42)).resolves.toEqual({ branch: 'feature/ship-it' })
@@ -50,6 +53,7 @@ describe('createForge', () => {
     expect(deps.detectProvider).toHaveBeenCalledOnce()
     expect(deps.detectProvider).toHaveBeenCalledWith('C:/repo', undefined, undefined)
     expect(deps.github.listPullRequests).toHaveBeenCalledWith('C:/repo', undefined, undefined)
+    expect(deps.github.enrichPullRequests).toHaveBeenCalledWith('C:/repo', [pullRequest], undefined, undefined)
     expect(deps.github.getCurrentBranchPullRequest).toHaveBeenCalledWith('C:/repo', 'feature/ship-it', undefined, undefined)
     expect(deps.github.createPullRequest).toHaveBeenCalledWith('C:/repo', payload, undefined, undefined)
     expect(deps.github.checkoutPullRequest).toHaveBeenCalledWith('C:/repo', 42, undefined, undefined)

@@ -130,6 +130,7 @@ export const CHANNEL_REGISTRY = {
   'git:hostingProvider': { local: true, remote: true },
   'git:defaultBranch': { local: true, remote: true },
   'forge:pr:list': { local: true, remote: true },
+  'forge:pr:enrich': { local: true, remote: true },
   'forge:pr:current': { local: true, remote: true },
   'forge:pr:create': { local: true, remote: true },
   'forge:pr:checkout': { local: true, remote: true },

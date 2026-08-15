@@ -12,6 +12,7 @@ describe('forge refresh backoff', () => {
       if (channel === 'git:defaultBranch') return 'main'
       if (channel === 'forge:pr:webUrl') return 'https://github.test/pulls'
       if (channel === 'forge:pr:list') return []
+      if (channel === 'forge:pr:enrich') return []
       if (channel === 'forge:pr:current') return null
       return null
     })
@@ -28,6 +29,27 @@ describe('forge refresh backoff', () => {
     expect(invoke.mock.calls.filter(([channel]) => channel === 'git:hostingProvider')).toHaveLength(1)
     expect(invoke.mock.calls.filter(([channel]) => channel === 'git:defaultBranch')).toHaveLength(1)
     expect(invoke.mock.calls.filter(([channel]) => channel === 'forge:pr:webUrl')).toHaveLength(1)
+  })
+
+  it('publishes and caches the base list before enrichment completes', async () => {
+    let finishEnrichment!: (value: Array<{ id: number; title: string }>) => void
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'git:hostingProvider') return 'github'
+      if (channel === 'git:defaultBranch') return 'main'
+      if (channel === 'forge:pr:webUrl') return 'https://github.test/pulls'
+      if (channel === 'forge:pr:list') return [{ id: 1, title: 'Base' }]
+      if (channel === 'forge:pr:enrich') return new Promise((resolve) => { finishEnrichment = resolve })
+      if (channel === 'forge:pr:current') return null
+      return null
+    })
+    const { getCachedForge, refreshForge } = await import('../forgeRefresh')
+    const onList = vi.fn()
+    const refreshing = refreshForge('C:/repo', 'main', { onList })
+    await vi.waitFor(() => expect(onList).toHaveBeenCalledOnce())
+
+    expect(getCachedForge('C:/repo', 'main')?.openPrs).toEqual([{ id: 1, title: 'Base' }])
+    finishEnrichment([{ id: 1, title: 'Enriched' }])
+    await expect(refreshing).resolves.toMatchObject({ openPrs: [{ id: 1, title: 'Enriched' }] })
   })
 
   it('suppresses automatic retries after deterministic failures but permits manual retry', async () => {
