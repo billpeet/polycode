@@ -219,7 +219,12 @@ export default function ComposerToolbar({
   // surfaces it on models that support the opt-in 1M window (Opus 4.6, Sonnet 4.6).
   const contextWindows = selectedModel?.contextWindows ?? EMPTY_CONTEXT_WINDOWS
 
+  // Once a thread has messages, its conversation history lives with one
+  // provider — models can change, the provider cannot.
+  const providerLocked = !!currentThread?.has_messages
+
   const handleProviderChange = (provider: Provider): void => {
+    if (providerLocked && provider !== currentProvider) return
     const staticDefault = getDefaultModelForProvider(provider)
     const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : provider === 'grok' ? liveGrokModels : []
     const defaultModel = liveModels.length > 0
@@ -237,6 +242,7 @@ export default function ComposerToolbar({
   }
 
   const handleApplyFavourite = (fav: Favourite): void => {
+    if (providerLocked && fav.provider !== currentProvider) return
     setProviderAndModel(threadId, fav.provider, fav.model)
     setReasoningLevel(threadId, fav.reasoningLevel)
   }
@@ -400,6 +406,7 @@ export default function ComposerToolbar({
         <CliHealthIndicator threadId={threadId} />
         <ModelSelectorMenu
           isProcessing={isProcessing}
+          providerLocked={providerLocked}
           currentThread={currentThread}
           modelOptions={modelOptions}
           reasoningOptions={reasoningOptions}

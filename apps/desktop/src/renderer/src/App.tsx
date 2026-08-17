@@ -135,6 +135,12 @@ export default function App() {
             useToastStore.getState().add({ type: 'info', message: `Favourite ${slot} is empty (Ctrl+Shift+${slot} to save)` })
             return
           }
+          // Provider is locked once a thread has messages — other providers
+          // have no access to this conversation history.
+          if (thread.has_messages && fav.provider !== thread.provider) {
+            useToastStore.getState().add({ type: 'info', message: `Favourite ${slot} uses ${fav.provider} — the provider can't change once a thread has messages` })
+            return
+          }
           await threadStore.setProviderAndModel(thread.id, fav.provider, fav.model)
           await threadStore.setReasoningLevel(thread.id, fav.reasoningLevel)
           useToastStore.getState().add({ type: 'success', message: `Loaded favourite ${slot}: ${formatFavourite(fav)}` })
@@ -236,6 +242,9 @@ export default function App() {
         runStartedAtByThread: {},
         pidByThread: {},
         pendingThreadIdByLocation: {},
+        queueThreads: [],
+        draftNewThreadId: null,
+        draftNewWorktree: false,
       })
       useLocationStore.setState({
         byProject: {},

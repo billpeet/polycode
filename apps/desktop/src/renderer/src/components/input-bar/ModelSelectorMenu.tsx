@@ -5,6 +5,9 @@ import { useToastStore } from '../../stores/toast'
 
 interface ModelSelectorMenuProps {
   isProcessing: boolean
+  /** Once a thread has messages, its history lives with one provider — models
+   * can change, the provider cannot. */
+  providerLocked: boolean
   currentThread: Thread | undefined
   modelOptions: readonly ModelOption[]
   reasoningOptions: readonly ReasoningLevel[]
@@ -54,6 +57,7 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
  */
 export default function ModelSelectorMenu({
   isProcessing,
+  providerLocked,
   currentThread,
   modelOptions,
   reasoningOptions,
@@ -129,15 +133,24 @@ export default function ModelSelectorMenu({
             return (
               <div key={slot} className="flex items-center gap-1 rounded px-1 py-0.5 hover:bg-[rgba(255,255,255,0.05)]">
                 <span className="w-4 text-center" style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>{slot}</span>
-                <button
-                  onClick={() => { if (fav) { applyFavourite(fav); setOpen(false) } }}
-                  disabled={!fav || isProcessing}
-                  className="flex-1 truncate text-left disabled:opacity-40"
-                  style={{ color: fav ? 'var(--color-text)' : 'var(--color-text-muted)' }}
-                  title={fav ? `Load: ${formatFavourite(fav)}` : 'Empty slot'}
-                >
-                  {fav ? formatFavourite(fav) : 'Empty'}
-                </button>
+                {(() => {
+                  const crossProvider = !!fav && providerLocked && fav.provider !== currentProvider
+                  return (
+                    <button
+                      onClick={() => { if (fav && !crossProvider) { applyFavourite(fav); setOpen(false) } }}
+                      disabled={!fav || isProcessing || crossProvider}
+                      className="flex-1 truncate text-left disabled:opacity-40"
+                      style={{ color: fav ? 'var(--color-text)' : 'var(--color-text-muted)' }}
+                      title={!fav
+                        ? 'Empty slot'
+                        : crossProvider
+                          ? `${formatFavourite(fav)} — different provider; the provider is locked once a thread has messages`
+                          : `Load: ${formatFavourite(fav)}`}
+                    >
+                      {fav ? formatFavourite(fav) : 'Empty'}
+                    </button>
+                  )
+                })()}
                 <button
                   onClick={() => {
                     if (!current) return
@@ -171,10 +184,12 @@ export default function ModelSelectorMenu({
             <select
               value={currentProvider}
               onChange={(e) => onSelectProvider(e.target.value as Provider)}
-              disabled={isProcessing}
+              disabled={isProcessing || providerLocked}
               className={selectClassName}
               style={selectStyle}
-              title="Select provider"
+              title={providerLocked
+                ? 'Provider is locked once a thread has messages — other providers have no access to this conversation history'
+                : 'Select provider'}
             >
               {PROVIDERS.map((p) => (
                 <option key={p.id} value={p.id} style={optionStyle}>{p.label}</option>

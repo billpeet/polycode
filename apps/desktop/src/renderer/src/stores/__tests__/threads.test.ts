@@ -110,3 +110,52 @@ describe('thread action rollback', () => {
     expect(useThreadStore.getState().runStartedAtByThread['thread-main']).toBeUndefined()
   })
 })
+
+describe('create-on-send draft survival', () => {
+  const invoke = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('window', { api: { invoke } })
+    useThreadStore.setState({
+      byProject: {},
+      selectedThreadId: null,
+      statusMap: {},
+      unreadByThread: {},
+      draftNewThreadId: null,
+      draftNewWorktree: false,
+    })
+  })
+
+  it('keeps the draft at the head when the project thread list refreshes from the DB', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'threads:list') return [makeThread({ id: 'db-thread' })]
+      if (channel === 'threads:archivedCount') return 0
+      return null
+    })
+
+    useThreadStore.getState().openDraftThread('project-1', 'location-main')
+    const draftId = useThreadStore.getState().draftNewThreadId
+    expect(draftId).not.toBeNull()
+
+    await useThreadStore.getState().fetch('project-1')
+
+    const ids = (useThreadStore.getState().byProject['project-1'] ?? []).map((t) => t.id)
+    expect(ids[0]).toBe(draftId)
+    expect(ids).toContain('db-thread')
+  })
+
+  it('does not resurrect the draft into other projects on refresh', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'threads:list') return []
+      if (channel === 'threads:archivedCount') return 0
+      return null
+    })
+
+    useThreadStore.getState().openDraftThread('project-1', 'location-main')
+
+    await useThreadStore.getState().fetch('project-2')
+
+    expect(useThreadStore.getState().byProject['project-2']).toEqual([])
+  })
+})

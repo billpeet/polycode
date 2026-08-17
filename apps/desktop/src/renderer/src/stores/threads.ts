@@ -378,8 +378,18 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       window.api.invoke('threads:list', projectId),
       window.api.invoke('threads:archivedCount', projectId),
     ])
-    set((s) => ({
-      byProject: { ...s.byProject, [projectId]: threads },
+    set((s) => {
+      // The create-on-send draft has no DB row, so a wholesale refresh from
+      // the DB would silently evict it — re-seat it at the head.
+      let nextThreads: Thread[] = threads
+      if (s.draftNewThreadId) {
+        const draft = Object.values(s.byProject).flat().find((t) => t.id === s.draftNewThreadId)
+        if (draft && draft.project_id === projectId) {
+          nextThreads = [draft, ...threads]
+        }
+      }
+      return {
+      byProject: { ...s.byProject, [projectId]: nextThreads },
       archivedCountByProject: { ...s.archivedCountByProject, [projectId]: count },
       statusMap: {
         ...s.statusMap,
@@ -397,7 +407,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
             .map((t: Thread) => [t.id, { input_tokens: t.input_tokens, output_tokens: t.output_tokens, context_window: t.context_window }])
         )
       }
-    }))
+      }
+    })
   },
 
   fetchArchived: async (projectId, page) => {
