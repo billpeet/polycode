@@ -264,6 +264,7 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
   if (!location) return
   if (!location.is_worktree) throw new Error('Location is not a worktree.')
   if (location.connection_type !== 'local') throw new Error('Worktree removal is currently supported for local locations only.')
+  await commandManager.stopAllForLocation(location.id)
   for (const thread of listActiveThreadsForLocation(location.id)) {
     sessionManager.remove(thread.id)
     if (thread.has_messages) {

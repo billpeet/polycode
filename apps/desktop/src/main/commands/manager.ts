@@ -338,12 +338,25 @@ class CommandManager {
   }
 
   /** Stop all running instances for a given commandId (used when deleting a command). */
-  stopAllInstances(commandId: string): void {
+  async stopAllInstances(commandId: string): Promise<void> {
+    const stops: Promise<void>[] = []
     for (const entry of this.running.values()) {
       if (entry.commandId === commandId) {
-        void this.stop(commandId, entry.locationId)
+        stops.push(this.stop(commandId, entry.locationId))
       }
     }
+    await Promise.all(stops)
+  }
+
+  /** Stop every project command running at a location before that location is removed. */
+  async stopAllForLocation(locationId: string): Promise<void> {
+    const stops: Promise<void>[] = []
+    for (const entry of this.running.values()) {
+      if (entry.locationId === locationId) {
+        stops.push(this.stop(entry.commandId, locationId))
+      }
+    }
+    await Promise.all(stops)
   }
 
   hasRunning(): boolean {
@@ -353,10 +366,12 @@ class CommandManager {
     return false
   }
 
-  stopAll(): void {
+  async stopAll(): Promise<void> {
+    const stops: Promise<void>[] = []
     for (const entry of [...this.running.values()]) {
-      void this.stop(entry.commandId, entry.locationId)
+      stops.push(this.stop(entry.commandId, entry.locationId))
     }
+    await Promise.all(stops)
   }
 
   /** Get statuses for all commands of a project at a given location. */
