@@ -1,5 +1,15 @@
 import { describe, expect, it } from 'vitest'
-import { isWorktreeDirectoryCleanupError, parseGitWorktreeList } from '../project-admin'
+import {
+  createWorktreeBranchName,
+  isWorktreeDirectoryCleanupError,
+  parseGitWorktreeList,
+} from '../project-admin'
+
+describe('createWorktreeBranchName', () => {
+  it('uses only the opaque worktree id under the polycode namespace', () => {
+    expect(createWorktreeBranchName(1_234_567_890)).toBe('polycode/kf12oi')
+  })
+})
 
 describe('parseGitWorktreeList', () => {
   it('parses normal and prunable records from nul-delimited porcelain output', () => {

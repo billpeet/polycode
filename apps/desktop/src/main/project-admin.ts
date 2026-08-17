@@ -57,6 +57,11 @@ function sanitizeWorktreeSegment(value: string): string {
   return cleaned || `worktree-${Date.now()}`
 }
 
+/** Worktree branches are intentionally opaque: their label does not describe their base. */
+export function createWorktreeBranchName(timestamp: number = Date.now()): string {
+  return `polycode/${timestamp.toString(36)}`
+}
+
 function runGit(args: string[], cwd: string): Promise<string> {
   return executeGit(createRunner({}), cwd, args)
 }
@@ -246,7 +251,7 @@ export async function createLocalWorktree(parentLocationId: string, label?: stri
     suffix += 1
   }
 
-  const branchName = `polycode/${baseName}-${Date.now().toString(36)}`
+  const branchName = createWorktreeBranchName()
   const baseRef = baseRefOverride ?? await resolveWorktreeBaseRef(parent.path)
   await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
   const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
