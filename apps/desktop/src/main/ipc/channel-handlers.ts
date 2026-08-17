@@ -632,8 +632,8 @@ export const channelHandlers = {
   'commands:update': (_ctx, id, name, command, cwd, shell, runOnWorktreeCreate) =>
     updateCommand(id, name, command, cwd, shell, runOnWorktreeCreate ?? false),
 
-  'commands:delete': (_ctx, id) => {
-    commandManager.stopAllInstances(id)
+  'commands:delete': async (_ctx, id) => {
+    await commandManager.stopAllInstances(id)
     return deleteCommand(id)
   },
 

@@ -57,6 +57,11 @@ function sanitizeWorktreeSegment(value: string): string {
   return cleaned || `worktree-${Date.now()}`
 }
 
+/** Worktree branches are intentionally opaque: their label does not describe their base. */
+export function createWorktreeBranchName(timestamp: number = Date.now()): string {
+  return `polycode/${timestamp.toString(36)}`
+}
+
 function runGit(args: string[], cwd: string): Promise<string> {
   return executeGit(createRunner({}), cwd, args)
 }
@@ -246,7 +251,7 @@ export async function createLocalWorktree(parentLocationId: string, label?: stri
     suffix += 1
   }
 
-  const branchName = `polycode/${baseName}-${Date.now().toString(36)}`
+  const branchName = createWorktreeBranchName()
   const baseRef = baseRefOverride ?? await resolveWorktreeBaseRef(parent.path)
   await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
   const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
@@ -264,6 +269,7 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
   if (!location) return
   if (!location.is_worktree) throw new Error('Location is not a worktree.')
   if (location.connection_type !== 'local') throw new Error('Worktree removal is currently supported for local locations only.')
+  await commandManager.stopAllForLocation(location.id)
   for (const thread of listActiveThreadsForLocation(location.id)) {
     sessionManager.remove(thread.id)
     if (thread.has_messages) {

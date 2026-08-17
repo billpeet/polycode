@@ -55,6 +55,25 @@ function fakeRunner(type: 'local' | 'wsl' | 'ssh'): FakeRunner {
   return runner
 }
 
+function activeFakeRunner(type: 'local' | 'wsl' | 'ssh'): { runner: FakeRunner; proc: ChildProcess } {
+  const runner = new FakeRunner(type)
+  const emitter = new EventEmitter()
+  const proc = Object.assign(emitter, {
+    pid: 4321,
+    exitCode: null,
+    signalCode: null,
+    stdout: new EventEmitter(),
+    stderr: new EventEmitter(),
+    kill: vi.fn(() => true),
+  }) as unknown as ChildProcess
+  runner.spawnScript = ((cmd) => {
+    runner.spawnedScripts.push(cmd)
+    return proc
+  }) as FakeRunner['spawnScript']
+  createRunnerMock.mockReturnValue(runner)
+  return { runner, proc }
+}
+
 async function loadManager(): Promise<typeof import('../commands/manager')> {
   vi.resetModules()
   return import('../commands/manager')
@@ -203,5 +222,45 @@ describe('CommandManager.start — shell and working directory', () => {
     await commandManager.start('c1', 'l1')
 
     expect(runner.spawnedScripts[0].workDir).toBe('/srv/app/packages/api')
+  })
+})
+
+describe('CommandManager cleanup', () => {
+  it('lets callers await all commands at a location exiting', async () => {
+    givenCommand('npm run dev')
+    getLocationById.mockReturnValue({ id: 'l1', connection_type: 'local', path: process.cwd() })
+    const { proc } = activeFakeRunner('local')
+    const { commandManager } = await loadManager()
+    await commandManager.start('c1', 'l1')
+
+    let settled = false
+    const stopped = commandManager.stopAllForLocation('l1').then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    Object.assign(proc, { exitCode: 0 })
+    proc.emit('close', 0)
+    await stopped
+
+    expect(commandManager.getStatus('c1', 'l1')).toBe('stopped')
+  })
+
+  it('lets app shutdown await every command exiting', async () => {
+    givenCommand('npm run dev')
+    getLocationById.mockReturnValue({ id: 'l1', connection_type: 'local', path: process.cwd() })
+    const { proc } = activeFakeRunner('local')
+    const { commandManager } = await loadManager()
+    await commandManager.start('c1', 'l1')
+
+    let settled = false
+    const stopped = commandManager.stopAll().then(() => { settled = true })
+    await Promise.resolve()
+    expect(settled).toBe(false)
+
+    Object.assign(proc, { exitCode: 0 })
+    proc.emit('close', 0)
+    await stopped
+
+    expect(commandManager.hasRunning()).toBe(false)
   })
 })

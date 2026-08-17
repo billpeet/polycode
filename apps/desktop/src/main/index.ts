@@ -190,7 +190,7 @@ function createWindow(): BrowserWindow {
       if (response !== 0) return
 
       sessionManager.stopAll()
-      commandManager.stopAll()
+      await commandManager.stopAll()
       isQuitting = true
       win.close()
     }
@@ -280,11 +280,18 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', () => {
+let commandShutdown: Promise<void> | null = null
+
+app.on('before-quit', (event) => {
+  if (!commandShutdown) {
+    event.preventDefault()
+    commandShutdown = commandManager.stopAll().finally(() => app.quit())
+    return
+  }
+
   isQuitting = true
   runLifecycle?.stop()
   sessionManager.stopAll()
-  commandManager.stopAll()
   stopWebhookServer()
   stopRemoteControlClient()
   stopRemoteControlServer()
