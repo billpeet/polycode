@@ -33,6 +33,7 @@ import ComposerEditor, { ComposerTrigger } from './input-bar/ComposerEditor'
 import FormatToolbar from './input-bar/FormatToolbar'
 import { composerHighlightPluginKey } from './input-bar/composerHighlight'
 import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PermissionBanner, PlanBanner, QuestionBanner } from './input-bar/Banners'
+import DestinationPicker from './input-bar/DestinationPicker'
 import { PaperclipIcon, QueueIcon, SendIcon, StopIcon } from './input-bar/icons'
 import { formatErrorDetails } from '../lib/errorDetails'
 
@@ -93,6 +94,9 @@ function InputBarContent({ threadId }: Props) {
   const projectThreads = useThreadStore((s) => threadProjectId ? (s.byProject[threadProjectId] ?? EMPTY_THREADS) : EMPTY_THREADS)
   const currentThread = projectThreads.find((t) => t.id === threadId)
   const isPendingThread = !!currentThread?.is_pending
+  // The create-on-send draft: pending (no DB row) but fully composable — the
+  // thread (and any requested worktree) materializes on first send.
+  const isDraftThread = useThreadStore((s) => s.draftNewThreadId === threadId)
   const projectLocations = useLocationStore((s) => threadProjectId ? (s.byProject[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS)
   const location = currentThread?.location_id ? projectLocations.find((l) => l.id === currentThread.location_id) : null
   const addToast = useToastStore((s) => s.add)
@@ -191,7 +195,7 @@ function InputBarContent({ threadId }: Props) {
   const supportsLiveInput = currentThread?.provider === 'claude-code' || currentThread?.provider === 'codex' || currentThread?.provider === 'pi'
   const hasContent = value.trim().length > 0 || attachments.length > 0
   // Can send when idle and has content, location path exists, and CLI is available
-  const canSend = !isPendingThread && !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
+  const canSend = (!isPendingThread || isDraftThread) && !isProcessing && !isPlanPending && !isQuestionPending && !isPermissionPending && hasContent && !locationPathMissing && !cliUnavailable
   // Can queue only when actively running (not while stopping) and no existing queue
   const canQueue = !isPendingThread && status === 'running' && !queuedMessage && hasContent && !locationPathMissing && !cliUnavailable
   const canInject = !isPendingThread && status === 'running' && supportsLiveInput && hasContent && !locationPathMissing && !cliUnavailable
@@ -269,7 +273,9 @@ function InputBarContent({ threadId }: Props) {
 
   async function handleSend(): Promise<void> {
     // Guard against concurrent sends (e.g. rapid Enter presses before React re-renders)
-    if (sendingRef.current || isPendingThread) return
+    // Pending threads can't send — except the create-on-send draft, which
+    // materializes below.
+    if (sendingRef.current || (isPendingThread && !isDraftThread)) return
 
     const trimmed = value.trim()
     if ((!trimmed && attachments.length === 0) || !project) return
@@ -288,7 +294,15 @@ function InputBarContent({ threadId }: Props) {
     setAttachments([])
     setSelectedSkills([])
 
+    // Create-on-send: the draft's Thread (and worktree, if picked) come into
+    // existence with this first message. Everything after this line targets
+    // the real thread id.
+    let targetThreadId = threadId
     try {
+      if (isDraftThread) {
+        targetThreadId = await useThreadStore.getState().materializeDraftThread(threadId)
+      }
+
       // Save attachments to temp and build @ mentions
       const savedAttachments: Array<{ path: string; type: PendingAttachment['type'] }> = []
       for (const att of currentAttachments) {
@@ -297,7 +311,7 @@ function InputBarContent({ threadId }: Props) {
             'attachments:save',
             att.dataUrl,
             att.name,
-            threadId
+            targetThreadId
           )
           savedAttachments.push({ path: tempPath, type: att.type })
         } else if (att.tempPath) {
@@ -323,42 +337,42 @@ function InputBarContent({ threadId }: Props) {
 
       // Claude, Codex, and Pi support live input while the provider is still running.
       if (canInject) {
-        const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
+        const activeSessionId = useSessionStore.getState().activeSessionByThread[targetThreadId]
         if (activeSessionId) {
-          useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent, clientUserMessageId)
+          useMessageStore.getState().appendUserMessageToSession(activeSessionId, targetThreadId, finalContent, clientUserMessageId)
         } else {
-          appendUserMessage(threadId, finalContent, clientUserMessageId)
+          appendUserMessage(targetThreadId, finalContent, clientUserMessageId)
         }
-        await send(threadId, finalContent, sendOptions)
-        if (currentPlanMode) setPlanMode(threadId, false)
+        await send(targetThreadId, finalContent, sendOptions)
+        if (currentPlanMode) setPlanMode(targetThreadId, false)
         return
       }
 
       // Providers without live input support still queue the message.
       if (isProcessing) {
-        queueMessage(threadId, finalContent, sendOptions)
-        if (currentPlanMode) setPlanMode(threadId, false)
+        queueMessage(targetThreadId, finalContent, sendOptions)
+        if (currentPlanMode) setPlanMode(targetThreadId, false)
         return
       }
 
       // Append optimistic user message to the correct store based on active session
-      const activeSessionId = useSessionStore.getState().activeSessionByThread[threadId]
+      const activeSessionId = useSessionStore.getState().activeSessionByThread[targetThreadId]
       if (activeSessionId) {
-        useMessageStore.getState().appendUserMessageToSession(activeSessionId, threadId, finalContent, clientUserMessageId)
+        useMessageStore.getState().appendUserMessageToSession(activeSessionId, targetThreadId, finalContent, clientUserMessageId)
       } else {
-        appendUserMessage(threadId, finalContent, clientUserMessageId)
+        appendUserMessage(targetThreadId, finalContent, clientUserMessageId)
       }
-      await send(threadId, finalContent, sendOptions)
-      if (currentPlanMode) setPlanMode(threadId, false)
+      await send(targetThreadId, finalContent, sendOptions)
+      if (currentPlanMode) setPlanMode(targetThreadId, false)
     } catch (error) {
-      setDraft(threadId, trimmed)
+      setDraft(targetThreadId, trimmed)
       setAttachments(currentAttachments)
       setSelectedSkills(currentSkills)
       addToast({
         type: 'error',
         title: 'Message Not Sent',
         message: error instanceof Error ? error.message : 'The message could not be sent.',
-        details: formatErrorDetails({ action: 'thread:send', threadId }, error),
+        details: formatErrorDetails({ action: 'thread:send', threadId: targetThreadId }, error),
         duration: 0,
       })
     } finally {
@@ -819,7 +833,9 @@ function InputBarContent({ threadId }: Props) {
             onEditorReady={setEditor}
             getKnownCommands={getKnownCommands}
             placeholder={
-              isPendingThread
+              isDraftThread
+                ? 'Ask Claude... the thread is created when you send'
+                : isPendingThread
                 ? 'Creating thread... you can type while it loads'
                 : cliUnavailable
                 ? 'CLI not available — input disabled'
@@ -831,6 +847,11 @@ function InputBarContent({ threadId }: Props) {
             }
             disabled={isPlanPending || isQuestionPending || isPermissionPending || cliUnavailable}
           />
+
+          {/* Destination for the create-on-send draft, beside the send button */}
+          {isDraftThread && currentThread && (
+            <DestinationPicker draftThread={currentThread} />
+          )}
 
           {/* Send / Queue / Stop buttons */}
           {isProcessing ? (

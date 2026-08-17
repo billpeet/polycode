@@ -72,6 +72,10 @@ export interface ThreadRow {
   routine_id: string | null
   run_state: string | null
   run_detail: string | null
+  /** When the latest Turn started (thread entered `running`). Null before first turn. */
+  last_turn_started_at: string | null
+  /** When the latest Turn completed (provider finished or paused for input). */
+  last_turn_completed_at: string | null
   created_at: string
   updated_at: string
 }

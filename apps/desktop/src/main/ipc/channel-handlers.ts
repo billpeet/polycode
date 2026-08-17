@@ -111,6 +111,8 @@ import {
   listRuns,
   listSessions,
   listSlashCommands,
+  listArchivedQueueThreads,
+  listQueueThreads,
   listThreads,
   listYouTrackServers,
   returnLocationToPool,
@@ -813,6 +815,14 @@ export const channelHandlers = {
   // deliberate absence included.
 
   'threads:list': (_ctx, projectId) => listThreads(projectId),
+
+  // The Queue: cross-project attention list. Visibility rules (unarchived
+  // projects, unarchived threads, escalated runs only) live in the query.
+  'threads:listQueue': (_ctx) => listQueueThreads(),
+
+  // The Queue's collapsed Archived section: cross-project, searchable, paged.
+  'threads:listQueueArchived': (_ctx, search, limit, offset) =>
+    listArchivedQueueThreads(search, limit, offset),
 
   // The provider/model lookup is load-bearing, not decoration: `createThread` declares
   // `provider = 'claude-code', model = 'claude-opus-4-8'` parameter defaults, so dropping

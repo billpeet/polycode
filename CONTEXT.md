@@ -20,10 +20,30 @@ A proposed merge from a source branch into a target branch on a Forge.
 
 A named request that a PolyCode client can send to a Remote Host or its own desktop.
 
+## Project Location
+
+A place where a Project's repository is checked out and Threads can be
+conducted: a directory on the local machine, over SSH, or in WSL. A worktree is
+a Project Location whose working copy is a Git worktree of a parent Location —
+not a separate kind of thing.
+
 ## Thread
 
 A single conversation with a Provider about a Project, conducted at a Project
 Location. A Thread is either created by the user or spawned as a Run.
+
+## Turn
+
+One Provider execution within a Thread: it starts when the user's input is
+submitted to the Provider and completes when the Provider finishes or pauses
+for user input (a question, plan, or permission request).
+
+## Queue
+
+The cross-project list of Threads ordered by need for attention: Threads
+awaiting the user come first (most recent completed Turn at top), then running
+Threads. Archived Projects are excluded; escalated Runs are included; archived
+Threads appear only in a collapsed section apart from the ordered list.
 
 ## Routine
 

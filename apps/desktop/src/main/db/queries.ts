@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
 import { foldMessages } from '@polycode/shared'
-import { CodexPersonality, CodexReasoningSummary, Project, Thread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState } from '../../shared/types'
+import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -19,9 +19,13 @@ function rowToProject(row: ProjectRow): Project {
   }
 }
 
-/** Most recent thread activity per project (max thread updated_at), used for "last message" sorting. */
+/**
+ * Most recent thread activity per project, used for "last message" sorting.
+ * "Activity" means Turn completion (falling back to creation for threads that
+ * have never run) — consistent with thread and Queue ordering.
+ */
 const PROJECT_LAST_ACTIVITY_SELECT =
-  'SELECT p.*, (SELECT MAX(t.updated_at) FROM threads t WHERE t.project_id = p.id) AS last_activity_at FROM projects p'
+  'SELECT p.*, (SELECT MAX(COALESCE(t.last_turn_completed_at, t.created_at)) FROM threads t WHERE t.project_id = p.id) AS last_activity_at FROM projects p'
 
 export function listProjects(): Project[] {
   const rows = getDb()
@@ -436,6 +440,8 @@ function rowToThread(r: ThreadRow): Thread {
     routine_id: r.routine_id ?? null,
     run_state: (r.run_state as Thread['run_state']) ?? null,
     run_detail: r.run_detail ?? null,
+    last_turn_started_at: r.last_turn_started_at ?? null,
+    last_turn_completed_at: r.last_turn_completed_at ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }
@@ -448,10 +454,19 @@ function rowToThread(r: ThreadRow): Thread {
  */
 const THREAD_VISIBILITY_FILTER = "(t.routine_id IS NULL OR t.run_state = 'escalated')"
 
+/**
+ * Latest Turn event on a thread — completion or start, whichever is newer —
+ * falling back to creation time for threads that have never run. Scalar
+ * `MAX()` returns NULL when any argument is NULL, so the COALESCE chain
+ * handles partially-stamped threads.
+ */
+const THREAD_TURN_ACTIVITY =
+  'COALESCE(MAX(t.last_turn_completed_at, t.last_turn_started_at), t.last_turn_completed_at, t.last_turn_started_at, t.created_at)'
+
 export function listThreads(projectId: string): Thread[] {
   const rows = getDb()
     .prepare(
-      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY t.updated_at DESC'
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY ' + THREAD_TURN_ACTIVITY + ' DESC'
     )
     .all(projectId) as ThreadRow[]
   return rows.map(rowToThread)
@@ -460,10 +475,72 @@ export function listThreads(projectId: string): Thread[] {
 export function listActiveThreadsForLocation(locationId: string): Thread[] {
   const rows = getDb()
     .prepare(
-      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.location_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY t.updated_at DESC'
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.location_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY ' + THREAD_TURN_ACTIVITY + ' DESC'
     )
     .all(locationId) as ThreadRow[]
   return rows.map(rowToThread)
+}
+
+/**
+ * The Queue: every attention-relevant thread across unarchived projects.
+ * Archived threads and archived projects are excluded; Runs appear only when
+ * escalated (the standard visibility rule). Rows carry denormalized project
+ * and location context so the renderer needs no per-project store loads.
+ * Bucketing (needs-attention vs running) happens in the renderer, where live
+ * push-driven status overrides the persisted snapshot.
+ */
+export function listQueueThreads(): QueueThread[] {
+  const rows = getDb()
+    .prepare(
+      `SELECT t.*,
+              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
+              p.name AS project_name,
+              l.label AS location_label,
+              COALESCE(l.is_worktree, 0) AS location_is_worktree
+       FROM threads t
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN repo_locations l ON l.id = t.location_id
+       WHERE t.archived = 0 AND p.archived_at IS NULL AND ${THREAD_VISIBILITY_FILTER}
+       ORDER BY ${THREAD_TURN_ACTIVITY} DESC`
+    )
+    .all() as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
+  return rows.map((r) => ({
+    ...rowToThread(r),
+    project_name: r.project_name,
+    location_label: r.location_label ?? null,
+    location_is_worktree: r.location_is_worktree === 1,
+  }))
+}
+
+/**
+ * Archived threads for the Queue's collapsed Archived section: cross-project
+ * (unarchived projects only), newest turn activity first, with optional
+ * name search and paging. Mirrors the tree's archived list, which applies no
+ * Run-visibility filter.
+ */
+export function listArchivedQueueThreads(search: string | null, limit: number, offset: number): QueueThread[] {
+  const query = search?.trim()
+  const rows = getDb()
+    .prepare(
+      `SELECT t.*,
+              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
+              p.name AS project_name,
+              l.label AS location_label,
+              COALESCE(l.is_worktree, 0) AS location_is_worktree
+       FROM threads t
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN repo_locations l ON l.id = t.location_id
+       WHERE t.archived = 1 AND p.archived_at IS NULL${query ? ' AND t.name LIKE ?' : ''}
+       ORDER BY ${THREAD_TURN_ACTIVITY} DESC
+       LIMIT ? OFFSET ?`
+    )
+    .all(...(query ? [`%${query}%`, limit, offset] : [limit, offset])) as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
+  return rows.map((r) => ({
+    ...rowToThread(r),
+    project_name: r.project_name,
+    location_label: r.location_label ?? null,
+    location_is_worktree: r.location_is_worktree === 1,
+  }))
 }
 
 export function archivedThreadCount(projectId: string): number {
@@ -537,6 +614,8 @@ export function createThread(projectId: string, name: string, locationId: string
     routine_id: opts.routineId ?? null,
     run_state: opts.routineId ? 'active' : null,
     run_detail: null,
+    last_turn_started_at: null,
+    last_turn_completed_at: null,
     created_at: now,
     updated_at: now
   }
@@ -722,9 +801,18 @@ export function hasEscalatedRun(routineId: string): boolean {
 }
 
 export function setRunState(threadId: string, state: RunState, detail: string | null = null): void {
-  getDb()
-    .prepare('UPDATE threads SET run_state = ?, run_detail = ?, updated_at = ? WHERE id = ?')
-    .run(state, detail, new Date().toISOString(), threadId)
+  const now = new Date().toISOString()
+  if (state === 'escalated') {
+    // Escalation is the Run's turn-completion-equivalent: it enters the
+    // Queue's attention bucket ordered by when it escalated.
+    getDb()
+      .prepare('UPDATE threads SET run_state = ?, run_detail = ?, last_turn_completed_at = ?, updated_at = ? WHERE id = ?')
+      .run(state, detail, now, now, threadId)
+  } else {
+    getDb()
+      .prepare('UPDATE threads SET run_state = ?, run_detail = ?, updated_at = ? WHERE id = ?')
+      .run(state, detail, now, threadId)
+  }
 }
 
 export function updateThreadModel(id: string, model: string): void {
@@ -807,10 +895,29 @@ export function threadExists(id: string): boolean {
   return !!row
 }
 
+/** Statuses that complete a Turn when reached from `running`/`stopping`: the
+ * provider finished, errored, was stopped, or paused for user input. */
+const TURN_COMPLETING_STATUSES = ['idle', 'error', 'stopped', 'plan_pending', 'question_pending', 'permission_pending']
+
 export function updateThreadStatus(id: string, status: string): void {
-  getDb()
-    .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
-    .run(status, new Date().toISOString(), id)
+  const now = new Date().toISOString()
+  const current = getDb().prepare('SELECT status FROM threads WHERE id = ?').get(id) as { status: string } | undefined
+  const prev = current?.status
+  const startsTurn = status === 'running' && prev !== 'running'
+  const completesTurn = (prev === 'running' || prev === 'stopping') && TURN_COMPLETING_STATUSES.includes(status)
+  if (startsTurn) {
+    getDb()
+      .prepare('UPDATE threads SET status = ?, last_turn_started_at = ?, updated_at = ? WHERE id = ?')
+      .run(status, now, now, id)
+  } else if (completesTurn) {
+    getDb()
+      .prepare('UPDATE threads SET status = ?, last_turn_completed_at = ?, updated_at = ? WHERE id = ?')
+      .run(status, now, now, id)
+  } else {
+    getDb()
+      .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
+      .run(status, now, id)
+  }
 }
 
 export function updateThreadUnread(id: string, unread: boolean): void {
@@ -827,11 +934,14 @@ export function hasRunningThreads(): boolean {
   return row.count > 0
 }
 
-/** Reset any threads left in 'running' state from a previous crash/restart. */
+/** Reset any threads left in 'running' state from a previous crash/restart.
+ * The interrupted turn is stamped as completed so these threads surface in the
+ * Queue's attention bucket rather than sorting on a stale timestamp. */
 export function resetRunningThreads(): void {
+  const now = new Date().toISOString()
   getDb()
-    .prepare("UPDATE threads SET status = 'idle', updated_at = ? WHERE status = 'running'")
-    .run(new Date().toISOString())
+    .prepare("UPDATE threads SET status = 'idle', last_turn_completed_at = ?, updated_at = ? WHERE status = 'running'")
+    .run(now, now)
 }
 
 export function getThreadWsl(id: string): { use_wsl: boolean; wsl_distro: string | null } {
@@ -1403,6 +1513,8 @@ export function importThread(
     codex_reasoning_summary: 'auto',
     cursor_thinking: null,
     cursor_context: null,
+    last_turn_started_at: null,
+    last_turn_completed_at: null,
     status: 'idle',
     archived: 0,
     input_tokens: 0,

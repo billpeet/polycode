@@ -8,6 +8,7 @@ interface Migration {
 const migrations: Migration[] = [
   { version: 1, up: adoptLegacySchema },
   { version: 2, up: addRoutines },
+  { version: 3, up: addTurnTimestamps },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -63,6 +64,29 @@ function addRoutines(database: Database.Database): void {
     CREATE INDEX IF NOT EXISTS idx_threads_routine_created
       ON threads(routine_id, created_at DESC);
     CREATE INDEX IF NOT EXISTS idx_routines_project ON routines(project_id);
+  `)
+}
+
+/**
+ * Version 3 — Turn timestamps.
+ * A Turn starts when the user's input is submitted to the Provider and
+ * completes when the Provider finishes or pauses for user input. The Queue
+ * view and thread ordering sort on these, decoupled from incidental
+ * `updated_at` bumps (renames, model changes, …).
+ *
+ * Backfill seeds `last_turn_completed_at` from `updated_at` so day-one
+ * ordering matches the previous behaviour instead of being undefined.
+ */
+function addTurnTimestamps(database: Database.Database): void {
+  const threadCols = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadCols.some((c) => c.name === 'last_turn_started_at')) {
+    database.exec('ALTER TABLE threads ADD COLUMN last_turn_started_at TEXT')
+    database.exec('ALTER TABLE threads ADD COLUMN last_turn_completed_at TEXT')
+    database.exec('UPDATE threads SET last_turn_completed_at = updated_at')
+  }
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_threads_archived_turn_completed
+      ON threads(archived, last_turn_completed_at DESC);
   `)
 }
 

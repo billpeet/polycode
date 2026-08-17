@@ -36,6 +36,8 @@ export const CHANNEL_REGISTRY = {
   'wsl:test': { local: true, remote: true },
   'wsl:list-distros': { local: true, remote: true },
   'threads:list': { local: true, remote: true },
+  'threads:listQueue': { local: true, remote: true },
+  'threads:listQueueArchived': { local: true, remote: true },
   'threads:create': { local: true, remote: true },
   'threads:delete': { local: true, remote: true },
   'threads:archivedCount': { local: true, remote: true },

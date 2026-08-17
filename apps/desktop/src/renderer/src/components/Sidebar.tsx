@@ -4,12 +4,14 @@ import { useLocationStore } from '../stores/locations'
 import { useProjectStore, sortProjects } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useToastStore } from '../stores/toast'
+import { useUiStore } from '../stores/ui'
 import { useYouTrackStore } from '../stores/youtrack'
-import { Project, RepoLocation, Thread, ThreadStatus } from '../types/ipc'
+import { Project, QueueThread, RepoLocation, Thread, ThreadStatus } from '../types/ipc'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { subscribeToSidebarBranches } from '../lib/sidebarBranchRefresh'
 import CollapsedSidebar from './sidebar/CollapsedSidebar'
 import ExpandedSidebar from './sidebar/ExpandedSidebar'
+import QueueSidebar from './sidebar/QueueSidebar'
 import SidebarDialogs, {
   SidebarConfirmDeleteState,
   SidebarLocationDialogState,
@@ -70,7 +72,7 @@ export default function Sidebar() {
   const archivedCountByProject = useThreadStore((s) => s.archivedCountByProject)
   const archivedPageByProject = useThreadStore((s) => s.archivedPageByProject)
   const fetchThreads = useThreadStore((s) => s.fetch)
-  const createThread = useThreadStore((s) => s.create)
+  const openDraftThread = useThreadStore((s) => s.openDraftThread)
   const removeThread = useThreadStore((s) => s.remove)
   const archiveThread = useThreadStore((s) => s.archive)
   const unarchiveThread = useThreadStore((s) => s.unarchive)
@@ -81,6 +83,15 @@ export default function Sidebar() {
   const setName = useThreadStore((s) => s.setName)
   const setUnread = useThreadStore((s) => s.setUnread)
   const setStatus = useThreadStore((s) => s.setStatus)
+  const queueThreads = useThreadStore((s) => s.queueThreads)
+  const fetchQueue = useThreadStore((s) => s.fetchQueue)
+
+  const sidebarViewMode = useUiStore((s) => s.sidebarViewMode)
+  const setSidebarViewMode = useUiStore((s) => s.setSidebarViewMode)
+  const loadSidebarViewMode = useUiStore((s) => s.loadSidebarViewMode)
+  const sidebarWidth = useUiStore((s) => s.sidebarWidth)
+  const sidebarResizing = useUiStore((s) => s.sidebarResizing)
+  const loadSidebarWidth = useUiStore((s) => s.loadSidebarWidth)
 
   const locationsByProject = useLocationStore((s) => s.byProject)
   const poolsByProject = useLocationStore((s) => s.poolsByProject)
@@ -89,7 +100,6 @@ export default function Sidebar() {
   const fetchPools = useLocationStore((s) => s.fetchPools)
   const checkoutLocation = useLocationStore((s) => s.checkout)
   const returnLocationToPool = useLocationStore((s) => s.returnToPool)
-  const createWorktreeLocation = useLocationStore((s) => s.createWorktree)
   const removeWorktreeLocation = useLocationStore((s) => s.removeWorktree)
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
@@ -134,6 +144,19 @@ export default function Sidebar() {
         projectByThread.set(thread.id, projectId)
       }
     }
+    // Queue threads span projects that may not be loaded into byProject —
+    // subscribe to their events too so the Queue stays live.
+    for (const thread of queueThreads) {
+      if (!projectByThread.has(thread.id)) {
+        projectByThread.set(thread.id, thread.project_id)
+      }
+    }
+
+    const refreshQueueIfActive = () => {
+      if (useUiStore.getState().sidebarViewMode === 'queue') {
+        void useThreadStore.getState().fetchQueue()
+      }
+    }
 
     for (const [threadId, projectId] of projectByThread) {
       if (!subsRef.current.has(threadId)) {
@@ -144,6 +167,7 @@ export default function Sidebar() {
           const status = args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
           setStatus(threadId, status)
           if (status === 'running') touchProject(projectId)
+          refreshQueueIfActive()
         })
         const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
           const currentStatus = useThreadStore.getState().statusMap[threadId]
@@ -158,6 +182,7 @@ export default function Sidebar() {
             setUnread(threadId, true)
             playChime()
           }
+          refreshQueueIfActive()
         })
         subsRef.current.set(threadId, [unsubTitle, unsubStatus, unsubComplete])
       }
@@ -169,7 +194,7 @@ export default function Sidebar() {
         subsRef.current.delete(threadId)
       }
     }
-  }, [byProject, setName, setStatus, setUnread, touchProject])
+  }, [byProject, queueThreads, setName, setStatus, setUnread, touchProject])
 
   useEffect(() => {
     const threadSubscriptions = subsRef.current
@@ -231,7 +256,14 @@ export default function Sidebar() {
 
   useEffect(() => {
     void loadSortMode()
-  }, [loadSortMode])
+    void loadSidebarViewMode()
+    void loadSidebarWidth()
+  }, [loadSortMode, loadSidebarViewMode, loadSidebarWidth])
+
+  // The Queue needs its cross-project list whenever the queue view is active.
+  useEffect(() => {
+    if (sidebarViewMode === 'queue') void fetchQueue()
+  }, [sidebarViewMode, fetchQueue])
 
   // Refresh thread list when a webhook creates a thread in this project
   useEffect(() => {
@@ -239,9 +271,10 @@ export default function Sidebar() {
       const { projectId } = args[0] as { projectId: string; threadId: string }
       fetchThreads(projectId)
       touchProject(projectId)
+      if (useUiStore.getState().sidebarViewMode === 'queue') void fetchQueue()
     })
     return unsub
-  }, [fetchThreads, touchProject])
+  }, [fetchThreads, fetchQueue, touchProject])
 
   useEffect(() => {
     const visibleLocations = Array.from(expandedProjectIds).flatMap(
@@ -287,11 +320,69 @@ export default function Sidebar() {
     if (!poolsByProject[projectId]) fetchPools(projectId)
   }
 
-  async function handleNewThread(projectId: string, locationId: string): Promise<void> {
-    await createThread(projectId, 'New thread', locationId)
-    touchProject(projectId)
+  /**
+   * Opens the create-on-send composer prefilled with this destination. The
+   * Thread only materializes when the first message is sent.
+   */
+  function handleNewThread(projectId: string, locationId: string): void {
+    openDraftThread(projectId, locationId)
     selectProject(projectId)
     window.dispatchEvent(new Event('focus-input'))
+  }
+
+  /** Queue rows select like tree rows, loading the project's data on demand. */
+  function handleQueueSelectThread(thread: QueueThread): void {
+    selectProject(thread.project_id)
+    if (!byProject[thread.project_id]) fetchThreads(thread.project_id)
+    if (!locationsByProject[thread.project_id]) fetchLocations(thread.project_id)
+    if (!poolsByProject[thread.project_id]) fetchPools(thread.project_id)
+    selectThread(thread.id)
+  }
+
+  /** Archiving is the Queue's "done with it" gesture. */
+  async function handleQueueArchiveThread(thread: QueueThread): Promise<void> {
+    if (useThreadStore.getState().selectedThreadId === thread.id) {
+      selectThread(null)
+    }
+    await archiveThread(thread.id, thread.project_id)
+    void fetchQueue()
+  }
+
+  async function handleQueueUnarchiveThread(thread: QueueThread): Promise<void> {
+    await unarchiveThread(thread.id, thread.project_id)
+    // The tree's per-project list only learns about the revived thread on refetch.
+    if (byProject[thread.project_id]) void fetchThreads(thread.project_id)
+    void fetchQueue()
+  }
+
+  /**
+   * Opens the new-thread composer from anywhere, defaulting to the most
+   * relevant destination: the selected thread's, else the newest Queue
+   * thread's, else the first project's first active location.
+   */
+  async function handleOpenNewThreadComposer(): Promise<void> {
+    const threadState = useThreadStore.getState()
+    const selectedThread = Object.values(threadState.byProject).flat()
+      .find((t) => t.id === threadState.selectedThreadId)
+    const seed = selectedThread?.location_id
+      ? selectedThread
+      : threadState.queueThreads.find((t) => t.location_id)
+    if (seed?.location_id) {
+      handleNewThread(seed.project_id, seed.location_id)
+      return
+    }
+
+    const project = sortedProjects[0]
+    if (!project) {
+      setProjectDialog({ mode: 'create' })
+      return
+    }
+    const locations = locationsByProject[project.id]
+      ?? await window.api.invoke('locations:list', project.id) as RepoLocation[]
+    const activeLocation = locations.find((location) => !location.pool_id || location.checked_out)
+    if (activeLocation) {
+      handleNewThread(project.id, activeLocation.id)
+    }
   }
 
   // After a project is created, reveal it and drop the user straight into a fresh thread.
@@ -303,22 +394,17 @@ export default function Sidebar() {
     const locations = await window.api.invoke('locations:list', project.id) as RepoLocation[]
     const activeLocation = locations.find((location) => !location.pool_id || location.checked_out)
     if (!activeLocation) return
-    await handleNewThread(project.id, activeLocation.id)
+    handleNewThread(project.id, activeLocation.id)
   }
 
-  async function handleNewWorktreeThread(projectId: string, parentLocationId: string): Promise<void> {
-    try {
-      const location = await createWorktreeLocation(parentLocationId, projectId)
-      await handleNewThread(projectId, location.id)
-    } catch (err) {
-      addToast({
-        type: 'error',
-        title: 'Create Worktree Failed',
-        message: err instanceof Error ? err.message : 'Failed to create worktree',
-        details: formatErrorDetails({ action: 'locations:createWorktree', projectId, parentLocationId }, err),
-        duration: 0,
-      })
-    }
+  /**
+   * Opens the composer with "new worktree of this location" intent. The
+   * worktree, like the Thread, is only created when the first message is sent.
+   */
+  function handleNewWorktreeThread(projectId: string, parentLocationId: string): void {
+    openDraftThread(projectId, parentLocationId, { newWorktree: true })
+    selectProject(projectId)
+    window.dispatchEvent(new Event('focus-input'))
   }
 
   async function handleRemoveWorktree(location: RepoLocation, projectId: string): Promise<void> {
@@ -362,6 +448,12 @@ export default function Sidebar() {
   }
 
   async function handleArchiveThread(thread: Thread, projectId: string): Promise<void> {
+    // The create-on-send draft has no DB row — archiving it just discards it.
+    if (thread.is_pending) {
+      useThreadStore.getState().discardDraftThread()
+      return
+    }
+
     const currentThreads = useThreadStore.getState().byProject[projectId] ?? []
     const remainingThreads = currentThreads.filter((candidate) => candidate.id !== thread.id)
     const latestThreadInLocation = thread.location_id
@@ -374,7 +466,7 @@ export default function Sidebar() {
     if (latestThreadInLocation) {
       selectThread(latestThreadInLocation.id)
     } else if (thread.location_id) {
-      void createThread(projectId, 'New thread', thread.location_id)
+      openDraftThread(projectId, thread.location_id)
     } else {
       const latestThread = remainingThreads
         .slice()
@@ -394,7 +486,7 @@ export default function Sidebar() {
         }
 
         if (locationId) {
-          void createThread(projectId, 'New thread', locationId)
+          openDraftThread(projectId, locationId)
         } else {
           selectThread(null)
         }
@@ -463,6 +555,27 @@ export default function Sidebar() {
     )
   }
 
+  if (sidebarViewMode === 'queue') {
+    return (
+      <QueueSidebar
+        queueThreads={queueThreads}
+        statusMap={statusMap}
+        unreadByThread={unreadByThread}
+        selectedThreadId={selectedThreadId}
+        sidebarWidth={sidebarWidth}
+        sidebarResizing={sidebarResizing}
+        onToggleSidebar={toggle}
+        onSetViewMode={setSidebarViewMode}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onNewThread={handleOpenNewThreadComposer}
+        onSelectThread={handleQueueSelectThread}
+        onArchiveThread={handleQueueArchiveThread}
+        onUnarchiveThread={handleQueueUnarchiveThread}
+        dialogs={dialogs}
+      />
+    )
+  }
+
   return (
     <ExpandedSidebar
       projects={sortedProjects}
@@ -470,6 +583,9 @@ export default function Sidebar() {
       projectsLoading={projectsLoading}
       sortMode={sortMode}
       onToggleSortMode={() => setSortMode(sortMode === 'alphabetical' ? 'lastMessage' : 'alphabetical')}
+      onSetViewMode={setSidebarViewMode}
+      sidebarWidth={sidebarWidth}
+      sidebarResizing={sidebarResizing}
       selectedThreadId={selectedThreadId}
       expandedProjectIds={expandedProjectIds}
       archivedSectionExpanded={archivedSectionExpanded}

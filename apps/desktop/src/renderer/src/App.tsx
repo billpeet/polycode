@@ -153,7 +153,10 @@ export default function App() {
             locations,
           )
           if (locationId) {
-            threadState.create(selectedProjectId, 'New thread', locationId)
+            // Create-on-send: opens the draft composer prefilled with the
+            // current destination; the Thread materializes on first send.
+            threadState.openDraftThread(selectedProjectId, locationId)
+            window.dispatchEvent(new CustomEvent('focus-input'))
           }
         }
       } else if ((e.key === 'w' || e.key === 'W') && !e.altKey && !e.shiftKey) {
@@ -165,6 +168,12 @@ export default function App() {
           .find((thread) => thread.id === threadState.selectedThreadId)
         if (!currentThread) return
 
+        // Closing the create-on-send draft just discards it — no DB row exists.
+        if (currentThread.is_pending && threadState.draftNewThreadId === currentThread.id) {
+          threadState.discardDraftThread()
+          return
+        }
+
         const remainingThreads = (threadState.byProject[selectedProjectId] ?? [])
           .filter((thread) => thread.id !== currentThread.id)
         const replacementThread = remainingThreads
@@ -175,7 +184,7 @@ export default function App() {
         if (replacementThread) {
           threadState.select(replacementThread.id)
         } else if (currentThread.location_id) {
-          void threadState.create(selectedProjectId, 'New thread', currentThread.location_id)
+          threadState.openDraftThread(selectedProjectId, currentThread.location_id)
         } else {
           threadState.select(null)
         }

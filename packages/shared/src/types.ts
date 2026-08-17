@@ -262,8 +262,23 @@ export interface Thread {
   run_state: RunState | null
   /** Human-readable detail for the current run_state (e.g. escalation reason). */
   run_detail: string | null
+  /** When the latest Turn started (thread entered `running`). Null before first turn. */
+  last_turn_started_at: string | null
+  /** When the latest Turn completed (provider finished or paused for input). */
+  last_turn_completed_at: string | null
   created_at: string
   updated_at: string
+}
+
+/**
+ * A Thread as it appears in the Queue: the cross-project attention-ordered
+ * list. Carries denormalized project/location context so queue rows render
+ * without loading every project's location store.
+ */
+export interface QueueThread extends Thread {
+  project_name: string
+  location_label: string | null
+  location_is_worktree: boolean
 }
 
 /** How a Routine fires: on a cron schedule, once at a fixed time, or only manually. */

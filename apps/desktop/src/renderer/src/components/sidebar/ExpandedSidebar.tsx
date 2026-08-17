@@ -1,8 +1,10 @@
 import { type ReactNode, useState, useEffect } from 'react'
 import { Archive, ArchiveRestore, ArrowDownAZ, ChevronDown, ChevronRight, History, PanelLeft, Pencil, Plus, Settings, X } from 'lucide-react'
+import { SidebarViewMode } from '../../stores/ui'
 import { LocationPool, Project, ProjectSortMode, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import LocationSection from './LocationSection'
 import RoutinesSection from './RoutinesSection'
+import { SidebarResizeHandle, ViewModeSwitch } from './shared'
 import ThreadRow from './ThreadRow'
 import ProjectFavicon from '../ProjectFavicon'
 
@@ -15,6 +17,9 @@ interface ExpandedSidebarProps {
   projectsLoading: boolean
   sortMode: ProjectSortMode
   onToggleSortMode: () => void
+  onSetViewMode: (mode: SidebarViewMode) => void
+  sidebarWidth: number
+  sidebarResizing: boolean
   selectedThreadId: string | null
   expandedProjectIds: Set<string>
   archivedSectionExpanded: boolean
@@ -65,6 +70,9 @@ export default function ExpandedSidebar({
   projectsLoading,
   sortMode,
   onToggleSortMode,
+  onSetViewMode,
+  sidebarWidth,
+  sidebarResizing,
   selectedThreadId,
   expandedProjectIds,
   archivedSectionExpanded,
@@ -115,9 +123,10 @@ export default function ExpandedSidebar({
 
   return (
     <aside
-      className="sidebar-transition flex flex-shrink-0 flex-col overflow-hidden border-r"
+      className="sidebar-transition relative flex flex-shrink-0 flex-col overflow-hidden border-r"
       style={{
-        width: '240px',
+        width: `${sidebarWidth}px`,
+        transition: sidebarResizing ? 'none' : undefined,
         background: 'var(--color-surface)',
         borderColor: 'var(--color-border)',
       }}
@@ -171,6 +180,8 @@ export default function ExpandedSidebar({
           </button>
         </div>
       </div>
+
+      <ViewModeSwitch mode="tree" onSetMode={onSetViewMode} />
 
       <div className="border-b px-3 py-1.5 flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
         <input
@@ -668,6 +679,7 @@ export default function ExpandedSidebar({
       </div>
 
       {dialogs}
+      <SidebarResizeHandle />
     </aside>
   )
 }

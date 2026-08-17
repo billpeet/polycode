@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary } from '../types/ipc'
+import { Thread, QueueThread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary } from '../types/ipc'
 import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 
@@ -50,6 +50,23 @@ interface ThreadStore {
   pidByThread: Record<string, number | null>
   /** temporary thread ID currently being created per location */
   pendingThreadIdByLocation: Record<string, string | undefined>
+  /** The Queue: cross-project attention list (see threads:listQueue). */
+  queueThreads: QueueThread[]
+  fetchQueue: () => Promise<void>
+  /** The one-slot create-on-send draft: an is_pending thread with no DB row yet. */
+  draftNewThreadId: string | null
+  /** When true, the draft's location_id is a parent location; a worktree is forked from it at send time. */
+  draftNewWorktree: boolean
+  /**
+   * Opens the new-thread draft (or re-homes the existing one — one slot only).
+   * Nothing materializes until the first message is sent.
+   */
+  openDraftThread: (projectId: string, locationId: string, opts?: { newWorktree?: boolean }) => void
+  /** Re-points the draft at a different project/location (keeps typed text). */
+  setDraftThreadDestination: (projectId: string, locationId: string, opts?: { newWorktree?: boolean }) => void
+  discardDraftThread: () => void
+  /** Creates the real Thread (and worktree, if requested) for the draft. Returns the real thread id. */
+  materializeDraftThread: (draftId: string) => Promise<string>
   fetch: (projectId: string) => Promise<void>
   fetchArchived: (projectId: string, page?: number) => Promise<void>
   create: (projectId: string, name: string, locationId: string) => Promise<void>
@@ -113,6 +130,248 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   runStartedAtByThread: {},
   pidByThread: {},
   pendingThreadIdByLocation: {},
+  queueThreads: [],
+  draftNewThreadId: null,
+  draftNewWorktree: false,
+
+  openDraftThread: (projectId, locationId, opts) => {
+    const existingId = get().draftNewThreadId
+    if (existingId) {
+      get().setDraftThreadDestination(projectId, locationId, opts)
+      set({ selectedThreadId: existingId })
+      return
+    }
+
+    const projectThreads = get().byProject[projectId] ?? []
+    const selectedThread = Object.values(get().byProject).flat().find((t) => t.id === get().selectedThreadId) ?? null
+    const sourceThread =
+      projectThreads.find((t) => t.location_id === locationId && t.id === selectedThread?.id)
+        ?? projectThreads.find((t) => t.location_id === locationId)
+        ?? selectedThread
+
+    const optimisticId = makeOptimisticThreadId()
+    const now = new Date().toISOString()
+    const draftThread: Thread = {
+      id: optimisticId,
+      project_id: projectId,
+      location_id: locationId,
+      name: 'New thread',
+      is_pending: true,
+      provider: sourceThread?.provider ?? 'claude-code',
+      model: sourceThread?.model ?? 'claude-opus-4-8',
+      reasoning_level: sourceThread?.reasoning_level ?? 'off',
+      codex_personality: sourceThread?.codex_personality ?? 'none',
+      codex_reasoning_summary: sourceThread?.codex_reasoning_summary ?? 'auto',
+      cursor_thinking: sourceThread?.cursor_thinking ?? null,
+      cursor_context: sourceThread?.cursor_context ?? null,
+      status: 'idle',
+      archived: false,
+      input_tokens: 0,
+      output_tokens: 0,
+      context_window: 0,
+      unread: false,
+      has_messages: false,
+      permission_mode: sourceThread?.permission_mode ?? (sourceThread?.yolo_mode ? 'yolo' : 'ask'),
+      yolo_mode: sourceThread?.permission_mode === 'yolo' || sourceThread?.yolo_mode === true,
+      use_wsl: sourceThread?.use_wsl ?? false,
+      wsl_distro: sourceThread?.wsl_distro ?? null,
+      git_branch: null,
+      routine_id: null,
+      run_state: null,
+      run_detail: null,
+      last_turn_started_at: null,
+      last_turn_completed_at: null,
+      created_at: now,
+      updated_at: now,
+    }
+
+    set((s) => ({
+      byProject: {
+        ...s.byProject,
+        [projectId]: [draftThread, ...(s.byProject[projectId] ?? [])]
+      },
+      statusMap: { ...s.statusMap, [optimisticId]: 'idle' },
+      unreadByThread: { ...s.unreadByThread, [optimisticId]: false },
+      draftNewThreadId: optimisticId,
+      draftNewWorktree: !!opts?.newWorktree,
+      selectedThreadId: optimisticId,
+    }))
+  },
+
+  setDraftThreadDestination: (projectId, locationId, opts) => set((s) => {
+    const id = s.draftNewThreadId
+    if (!id) return s
+    let draft: Thread | undefined
+    let fromProjectId: string | undefined
+    for (const [pid, threads] of Object.entries(s.byProject)) {
+      const found = threads.find((t) => t.id === id)
+      if (found) {
+        draft = found
+        fromProjectId = pid
+        break
+      }
+    }
+    if (!draft || !fromProjectId) return s
+
+    const updated: Thread = { ...draft, project_id: projectId, location_id: locationId }
+    const byProject = { ...s.byProject }
+    byProject[fromProjectId] = removeThreadFromList(byProject[fromProjectId] ?? [], id)
+    byProject[projectId] = [updated, ...(byProject[projectId] ?? [])]
+    return { byProject, draftNewWorktree: !!opts?.newWorktree }
+  }),
+
+  discardDraftThread: () => set((s) => {
+    const id = s.draftNewThreadId
+    if (!id) return s
+    const byProject = Object.fromEntries(
+      Object.entries(s.byProject).map(([pid, threads]) => [pid, removeThreadFromList(threads, id)])
+    )
+    const draftByThread = { ...s.draftByThread }
+    delete draftByThread[id]
+    const statusMap = { ...s.statusMap }
+    delete statusMap[id]
+    const unreadByThread = { ...s.unreadByThread }
+    delete unreadByThread[id]
+    return {
+      byProject,
+      draftByThread,
+      statusMap,
+      unreadByThread,
+      draftNewThreadId: null,
+      draftNewWorktree: false,
+      selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
+    }
+  }),
+
+  materializeDraftThread: async (draftId) => {
+    const state = get()
+    if (state.draftNewThreadId !== draftId) return draftId
+    const draft = Object.values(state.byProject).flat().find((t) => t.id === draftId)
+    if (!draft || !draft.location_id) {
+      throw new Error('New thread draft is missing a destination')
+    }
+    const projectId = draft.project_id
+
+    try {
+      let locationId = draft.location_id
+      if (state.draftNewWorktree) {
+        // The worktree is part of the same create-on-send commitment: nothing
+        // exists on disk until the first message is sent.
+        const { useLocationStore } = await import('./locations')
+        const location = await useLocationStore.getState().createWorktree(locationId, projectId)
+        locationId = location.id
+      }
+
+      let thread = await window.api.invoke('threads:create', projectId, draft.name, locationId)
+
+      // The draft carries settings inherited (or adjusted) before materializing.
+      if (
+        thread.use_wsl !== draft.use_wsl ||
+        thread.wsl_distro !== draft.wsl_distro ||
+        thread.permission_mode !== draft.permission_mode ||
+        thread.reasoning_level !== draft.reasoning_level ||
+        thread.codex_personality !== draft.codex_personality ||
+        thread.codex_reasoning_summary !== draft.codex_reasoning_summary
+      ) {
+        await window.api.invoke('threads:setWsl', thread.id, draft.use_wsl, draft.wsl_distro)
+        await window.api.invoke('threads:setPermissionMode', thread.id, draft.permission_mode)
+        await window.api.invoke('threads:updateReasoningLevel', thread.id, draft.reasoning_level)
+        await window.api.invoke('threads:updateCodexPersonality', thread.id, draft.codex_personality)
+        await window.api.invoke('threads:updateCodexReasoningSummary', thread.id, draft.codex_reasoning_summary)
+        thread = {
+          ...thread,
+          use_wsl: draft.use_wsl,
+          wsl_distro: draft.wsl_distro,
+          permission_mode: draft.permission_mode,
+          yolo_mode: draft.permission_mode === 'yolo',
+          reasoning_level: draft.reasoning_level,
+          codex_personality: draft.codex_personality,
+          codex_reasoning_summary: draft.codex_reasoning_summary,
+        }
+      }
+      if (thread.provider !== draft.provider || thread.model !== draft.model) {
+        await window.api.invoke('threads:updateProviderAndModel', thread.id, draft.provider, draft.model)
+        thread = { ...thread, provider: draft.provider, model: draft.model }
+      }
+
+      set((s) => {
+        const draftText = s.draftByThread[draftId]
+        const planMode = s.planModeByThread[draftId]
+        const fastMode = s.fastModeByThread[draftId]
+
+        const nextDraftByThread = { ...s.draftByThread }
+        if (draftText !== undefined) nextDraftByThread[thread.id] = draftText
+        delete nextDraftByThread[draftId]
+
+        const nextPlanModeByThread = { ...s.planModeByThread }
+        if (planMode !== undefined) nextPlanModeByThread[thread.id] = planMode
+        delete nextPlanModeByThread[draftId]
+
+        const nextFastModeByThread = { ...s.fastModeByThread }
+        if (fastMode !== undefined) nextFastModeByThread[thread.id] = fastMode
+        delete nextFastModeByThread[draftId]
+
+        const nextStatusMap: Record<string, ThreadStatus> = { ...s.statusMap, [thread.id]: 'idle' }
+        delete nextStatusMap[draftId]
+
+        const nextUnreadByThread = { ...s.unreadByThread, [thread.id]: false }
+        delete nextUnreadByThread[draftId]
+
+        return {
+          byProject: {
+            ...s.byProject,
+            [projectId]: replaceThreadInList(s.byProject[projectId] ?? [], draftId, thread)
+          },
+          statusMap: nextStatusMap,
+          unreadByThread: nextUnreadByThread,
+          draftByThread: nextDraftByThread,
+          planModeByThread: nextPlanModeByThread,
+          fastModeByThread: nextFastModeByThread,
+          draftNewThreadId: null,
+          draftNewWorktree: false,
+          selectedThreadId: s.selectedThreadId === draftId ? thread.id : s.selectedThreadId,
+        }
+      })
+
+      return thread.id
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      useToastStore.getState().add({
+        type: 'error',
+        title: 'Create Thread Failed',
+        message: 'Failed to create the new thread',
+        details: formatErrorDetails({
+          action: 'threads:create',
+          projectId,
+          locationId: draft.location_id,
+          newWorktree: state.draftNewWorktree,
+          draftThreadId: draftId,
+          message,
+        }, error),
+        duration: 0,
+      })
+      throw error
+    }
+  },
+
+  fetchQueue: async () => {
+    try {
+      const threads = await window.api.invoke('threads:listQueue')
+      set((s) => ({
+        queueThreads: threads,
+        statusMap: {
+          ...s.statusMap,
+          ...Object.fromEntries(threads.map((t) => [t.id, t.status]))
+        },
+        unreadByThread: {
+          ...s.unreadByThread,
+          ...Object.fromEntries(threads.map((t) => [t.id, !!t.unread]))
+        },
+      }))
+    } catch (err) {
+      console.error('Failed to fetch queue threads', err)
+    }
+  },
 
   fetch: async (projectId) => {
     const [threads, count] = await Promise.all([
@@ -201,6 +460,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       routine_id: null,
       run_state: null,
       run_detail: null,
+      last_turn_started_at: null,
+      last_turn_completed_at: null,
       created_at: now,
       updated_at: now,
     }

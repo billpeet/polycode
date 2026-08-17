@@ -2,6 +2,7 @@ import type {
   BackgroundTerminal,
   Project,
   Thread,
+  QueueThread,
   Message,
   GitStatus,
   GitFileChange,
@@ -95,6 +96,8 @@ export interface ChannelContract {
   'wsl:test': [[wsl: WslConfig, wslPath: string], { ok: boolean; error?: string }]
   'wsl:list-distros': [[], string[]]
   'threads:list': [[projectId: string], Thread[]]
+  'threads:listQueue': [[], QueueThread[]]
+  'threads:listQueueArchived': [[search: string | null, limit: number, offset: number], QueueThread[]]
   'threads:create': [[projectId: string, name: string, locationId: string], Thread]
   'threads:delete': [[id: string], void]
   'threads:start': [[threadId: string], void]
