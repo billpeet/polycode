@@ -40,10 +40,32 @@ for user input (a question, plan, or permission request).
 
 ## Queue
 
-The cross-project list of Threads ordered by need for attention: Threads
-awaiting the user come first (most recent completed Turn at top), then running
-Threads. Archived Projects are excluded; escalated Runs are included; archived
-Threads appear only in a collapsed section apart from the ordered list.
+The cross-project list of Threads ordered by need for attention: woken Threads
+lead, then Threads awaiting the user (most recent completed Turn at top), then
+running Threads. Archived Projects are excluded; escalated Runs are included;
+snoozed and archived Threads appear only in collapsed sections apart from the
+ordered list.
+
+## Snooze
+
+Deferring a Thread's claim on the user's attention until a chosen moment, its
+wake time. A snoozed Thread is not awaiting the user: it is absent from the
+ordered Queue and from attention signals such as unread counts, and appears
+only in a collapsed Snoozed section. Snoozing says a Thread is not yet due,
+where Archiving says it is done — a Thread is never both, and Archiving
+discards a snooze.
+
+Time is the only thing that ends a snooze; activity on the Thread does not.
+Snoozing is never a lifecycle judgement: a snoozed Thread's work is live, and
+nothing may be cleaned up on the grounds that a Thread is snoozed.
+
+## Woken
+
+A Thread whose wake time has passed and on which the user has not since taken a
+Turn. A woken Thread leads the Queue ahead of every section and is marked as
+such; it stops being woken as soon as the user submits a Turn, and Turns started
+by anything other than the user do not discharge it. Woken is a Queue
+distinction only — other views show a woken Thread as ordinary.
 
 ## Routine
 

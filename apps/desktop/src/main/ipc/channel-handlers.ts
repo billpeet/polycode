@@ -33,7 +33,7 @@
  *
  * `channelHandlers` is checked against `ChannelHandlerMap` — not `Partial<>`. Through the
  * migration it was `Partial<`, and the completion criterion was "drop the `Partial<` and
- * see what the compiler lists". All 207 channels are folded, so that criterion has been
+ * see what the compiler lists". Every channel is folded, so that criterion has been
  * met and retired: the total form is now the permanent invariant.
  *
  * What that buys, and it is the whole point of the exercise:
@@ -113,16 +113,21 @@ import {
   listSlashCommands,
   listArchivedQueueThreads,
   listQueueThreads,
+  listSnoozedQueueThreads,
+  listSnoozedThreads,
   listThreads,
   listYouTrackServers,
   returnLocationToPool,
   setRoutineEnabled,
   setSetting,
   setThreadGitBranchIfUnset,
+  snoozeThread,
+  snoozedThreadCount,
   threadExists,
   threadHasMessages,
   unarchiveProject,
   unarchiveThread,
+  unsnoozeThread,
   updateCommand,
   updateLocation,
   updateLocationPool,
@@ -537,8 +542,8 @@ export type ChannelHandler<C extends Channel> = (
 export type ChannelHandlerMap = { [C in Channel]: ChannelHandler<C> }
 
 /**
- * The implementation of every channel in `CHANNEL_REGISTRY` — all 207 of them, checked
- * against `ChannelHandlerMap` below, which is total.
+ * The implementation of every channel in `CHANNEL_REGISTRY`, checked against
+ * `ChannelHandlerMap` below, which is total.
  *
  * Handlers that need neither context nor arguments simply declare fewer parameters —
  * a uniform `ctx` first parameter costs nothing at the call sites that ignore it.
@@ -726,6 +731,17 @@ export const channelHandlers = {
     }
     const pathError = getLocalPathError(threadId)
     if (pathError) throw new Error(pathError)
+
+    // A user-submitted Turn ends any snooze — pending or already woken. This
+    // channel is the *only* user-turn boundary: Runs reach the session via
+    // `sessions.runToCompletion` and webhooks via `session.sendMessage`, so
+    // neither discharges a snooze. That asymmetry is the point (ADR-0002) —
+    // autonomous activity must not clear a reminder the user asked for.
+    //
+    // Cleared before the send rather than after, so a driver refusal still
+    // leaves the thread un-snoozed: the user has engaged either way.
+    unsnoozeThread(threadId)
+
     const session = sessionManager.getOrCreate(
       threadId,
       getEffectiveWorkingDir(threadId),
@@ -824,6 +840,11 @@ export const channelHandlers = {
   'threads:listQueueArchived': (_ctx, search, limit, offset) =>
     listArchivedQueueThreads(search, limit, offset),
 
+  // The Queue's collapsed Snoozed section. Same shape as the archived list, but
+  // ordered by wake time — soonest to return first.
+  'threads:listQueueSnoozed': (_ctx, search, limit, offset) =>
+    listSnoozedQueueThreads(search, limit, offset),
+
   // The provider/model lookup is load-bearing, not decoration: `createThread` declares
   // `provider = 'claude-code', model = 'claude-opus-4-8'` parameter defaults, so dropping
   // it would still produce a valid-looking thread that had silently stopped inheriting
@@ -864,6 +885,20 @@ export const channelHandlers = {
   },
 
   'threads:unarchive': (_ctx, id) => unarchiveThread(id),
+
+  'threads:snoozedCount': (_ctx, projectId) => snoozedThreadCount(projectId),
+
+  // Same raw `limit`/`offset` pass-through rationale as `threads:listArchived`
+  // above: `listSnoozedThreads` coalesces in its own body.
+  'threads:listSnoozed': (_ctx, projectId, limit, offset) =>
+    listSnoozedThreads(projectId, limit, offset),
+
+  // Unlike `threads:archive`, snoozing has no delete branch and no session
+  // teardown. A snoozed thread's work is live — deferring attention must never
+  // destroy anything, and a running thread keeps running while snoozed.
+  'threads:snooze': (_ctx, id, until) => snoozeThread(id, until),
+
+  'threads:unsnooze': (_ctx, id) => unsnoozeThread(id),
 
   'threads:updateName': (_ctx, id, name) => updateThreadName(id, name),
 

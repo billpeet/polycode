@@ -32,6 +32,7 @@ describe('database migrations', () => {
       'idx_repo_locations_project_created',
       'idx_routines_project',
       'idx_sessions_thread_active',
+      'idx_threads_archived_snoozed',
       'idx_threads_archived_turn_completed',
       'idx_threads_project_archived_updated',
       'idx_threads_routine_created',
@@ -72,6 +73,8 @@ describe('database migrations', () => {
     // v3 seeds turn ordering from the pre-existing updated_at.
     expect(database.prepare('SELECT last_turn_completed_at FROM threads WHERE id = ?').pluck().get('thread')).toBe('now')
     expect(database.prepare('SELECT last_turn_started_at FROM threads WHERE id = ?').pluck().get('thread')).toBeNull()
+    // v4 deliberately does not backfill: NULL already means "never snoozed".
+    expect(database.prepare('SELECT snoozed_until FROM threads WHERE id = ?').pluck().get('thread')).toBeNull()
     expect(database.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION)
   })
 

@@ -17,6 +17,15 @@ interface ThreadsState {
   reset: (threadId: string) => Promise<void>
   listArchived: (projectId: string) => Promise<Thread[]>
   archivedCount: (projectId: string) => Promise<number>
+  /**
+   * Snooze/wake. Mobile shares `threads:list` with the desktop, so snoozed
+   * threads drop out of its lists too — hence the Snoozed section, without
+   * which they would simply vanish with no way to find them.
+   */
+  snooze: (projectId: string, threadId: string, untilIso: string) => Promise<void>
+  wake: (projectId: string, threadId: string) => Promise<void>
+  listSnoozed: (projectId: string) => Promise<Thread[]>
+  snoozedCount: (projectId: string) => Promise<number>
   send: (threadId: string, content: string, options?: SendOptions) => Promise<void>
   stop: (threadId: string) => Promise<void>
   setUnread: (projectId: string, threadId: string, unread: boolean) => Promise<void>
@@ -116,6 +125,29 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
 
   archivedCount: async (projectId) => {
     return rpc(requireConnection(), 'threads:archivedCount', projectId)
+  },
+
+  snooze: async (projectId, threadId, untilIso) => {
+    await rpc(requireConnection(), 'threads:snooze', threadId, untilIso)
+    set((s) => ({
+      threadsByProject: {
+        ...s.threadsByProject,
+        [projectId]: (s.threadsByProject[projectId] ?? []).filter((t) => t.id !== threadId),
+      },
+    }))
+  },
+
+  wake: async (projectId, threadId) => {
+    await rpc(requireConnection(), 'threads:unsnooze', threadId)
+    await get().fetch(projectId)
+  },
+
+  listSnoozed: async (projectId) => {
+    return rpc(requireConnection(), 'threads:listSnoozed', projectId)
+  },
+
+  snoozedCount: async (projectId) => {
+    return rpc(requireConnection(), 'threads:snoozedCount', projectId)
   },
 
   send: async (threadId, content, options) => {

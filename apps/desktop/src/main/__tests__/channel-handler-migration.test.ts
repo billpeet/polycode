@@ -8,7 +8,7 @@
  * started with. These tests make that state fail the build.
  *
  * The migration is finished, so the assertions here now describe a *finished* state rather
- * than a shrinking one: all 207 channels are in the map, and none of the four sites they
+ * than a shrinking one: every channel is in the map, and none of the four sites they
  * came from — `ipc/handlers.ts`, `control/control-rpc.ts`, and latterly `remote/client.ts`
  * — registers or dispatches a channel of its own any more.
  *

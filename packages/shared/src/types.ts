@@ -266,6 +266,12 @@ export interface Thread {
   last_turn_started_at: string | null
   /** When the latest Turn completed (provider finished or paused for input). */
   last_turn_completed_at: string | null
+  /**
+   * Absolute ISO instant this thread's snooze expires; null means never
+   * snoozed. Future = snoozed, past = woken. Use `isSnoozed`/`isWoken` rather
+   * than comparing this directly. See ADR-0002.
+   */
+  snoozed_until: string | null
   created_at: string
   updated_at: string
 }

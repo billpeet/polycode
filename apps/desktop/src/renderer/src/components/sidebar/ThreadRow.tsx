@@ -1,10 +1,14 @@
-import { Archive, ArchiveRestore } from 'lucide-react'
+import { useState } from 'react'
+import { Archive, ArchiveRestore, BellRing, Clock } from 'lucide-react'
 import { Thread, ThreadStatus } from '../../types/ipc'
 import { getThreadStatusColor, relativeTime } from './shared'
+import SnoozeMenu, { timeUntil } from './SnoozeMenu'
 
 interface ThreadRowProps {
   thread: Thread
   isArchived: boolean
+  /** Row sits in a per-project Snoozed section: shows time-until and Wake now. */
+  isSnoozed?: boolean
   projectId: string
   indent?: string
   selectedThreadId: string | null
@@ -14,11 +18,14 @@ interface ThreadRowProps {
   onSelectThread: (threadId: string) => void
   onArchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
   onUnarchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
+  onSnoozeThread: (thread: Thread, projectId: string, untilIso: string) => void | Promise<void>
+  onWakeThread: (thread: Thread, projectId: string) => void | Promise<void>
 }
 
 export default function ThreadRow({
   thread,
   isArchived,
+  isSnoozed = false,
   projectId,
   indent = 'pl-10',
   selectedThreadId,
@@ -28,7 +35,10 @@ export default function ThreadRow({
   onSelectThread,
   onArchiveThread,
   onUnarchiveThread,
+  onSnoozeThread,
+  onWakeThread,
 }: ThreadRowProps) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const status = statusMap[thread.id] ?? 'idle'
   const isSelected = selectedThreadId === thread.id
 
@@ -83,8 +93,30 @@ export default function ThreadRow({
           className="px-1 text-[10px]"
           style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}
         >
-          {relativeTime(thread.updated_at)}
+          {isSnoozed && thread.snoozed_until
+            ? timeUntil(thread.snoozed_until)
+            : relativeTime(thread.updated_at)}
         </span>
+        {isSnoozed && (
+          <button
+            onClick={() => onWakeThread(thread, projectId)}
+            className="rounded p-1 transition-colors hover:bg-white/10"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Wake now"
+          >
+            <BellRing size={13} />
+          </button>
+        )}
+        {!isArchived && !isSnoozed && (
+          <button
+            onClick={() => setMenuOpen((value) => !value)}
+            className="rounded p-1 transition-colors hover:bg-white/10"
+            style={{ color: 'var(--color-text-muted)' }}
+            title="Snooze thread"
+          >
+            <Clock size={13} />
+          </button>
+        )}
         {isArchived ? (
           <button
             onClick={() => onUnarchiveThread(thread, projectId)}
@@ -103,6 +135,16 @@ export default function ThreadRow({
           >
             <Archive size={13} />
           </button>
+        )}
+
+        {menuOpen && (
+          <SnoozeMenu
+            onClose={() => setMenuOpen(false)}
+            onSnooze={(untilIso) => {
+              setMenuOpen(false)
+              void onSnoozeThread(thread, projectId, untilIso)
+            }}
+          />
         )}
       </div>
     </div>

@@ -24,6 +24,8 @@ interface LocationSectionProps {
   onSelectThread: (threadId: string) => void
   onArchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
   onUnarchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
+  onSnoozeThread: (thread: Thread, projectId: string, untilIso: string) => void | Promise<void>
+  onWakeThread: (thread: Thread, projectId: string) => void | Promise<void>
 }
 
 export default function LocationSection({
@@ -46,6 +48,8 @@ export default function LocationSection({
   onSelectThread,
   onArchiveThread,
   onUnarchiveThread,
+  onSnoozeThread,
+  onWakeThread,
 }: LocationSectionProps) {
   const isLocationExpanded = !collapsedLocationIds.has(location.id)
   const locationThreads = projectThreads.filter((thread) => thread.location_id === location.id)
@@ -214,6 +218,8 @@ export default function LocationSection({
                 onSelectThread={onSelectThread}
                 onArchiveThread={onArchiveThread}
                 onUnarchiveThread={onUnarchiveThread}
+                onSnoozeThread={onSnoozeThread}
+                onWakeThread={onWakeThread}
               />
             ))}
             {otherBranchThreads.length > 0 && (
@@ -239,6 +245,8 @@ export default function LocationSection({
                     onSelectThread={onSelectThread}
                     onArchiveThread={onArchiveThread}
                     onUnarchiveThread={onUnarchiveThread}
+                    onSnoozeThread={onSnoozeThread}
+                    onWakeThread={onWakeThread}
                   />
                 ))}
               </>

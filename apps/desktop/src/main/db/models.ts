@@ -76,6 +76,11 @@ export interface ThreadRow {
   last_turn_started_at: string | null
   /** When the latest Turn completed (provider finished or paused for input). */
   last_turn_completed_at: string | null
+  /**
+   * Absolute ISO instant a snooze expires. Null means never snoozed. In the
+   * future means snoozed; in the past means woken. See ADR-0002.
+   */
+  snoozed_until: string | null
   created_at: string
   updated_at: string
 }

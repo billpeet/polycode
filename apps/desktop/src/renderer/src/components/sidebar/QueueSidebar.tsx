@@ -1,9 +1,10 @@
-import { type ReactNode, useEffect, useState } from 'react'
-import { Archive, ArchiveRestore, ChevronDown, ChevronRight, Inbox, PanelLeft, Plus, Settings } from 'lucide-react'
+import { type ReactNode, useCallback, useEffect, useState } from 'react'
+import { Archive, ArchiveRestore, BellRing, ChevronDown, ChevronRight, Clock, Inbox, PanelLeft, Plus, Settings } from 'lucide-react'
 import { SidebarViewMode } from '../../stores/ui'
 import { QueueThread, ThreadStatus } from '../../types/ipc'
 import { bucketQueueThreads } from '../../lib/queueBuckets'
 import { getThreadStatusColor, relativeTime, SidebarResizeHandle, ViewModeSwitch } from './shared'
+import SnoozeMenu, { timeUntil } from './SnoozeMenu'
 import ProjectFavicon from '../ProjectFavicon'
 
 interface QueueSidebarProps {
@@ -20,6 +21,8 @@ interface QueueSidebarProps {
   onSelectThread: (thread: QueueThread) => void
   onArchiveThread: (thread: QueueThread) => void | Promise<void>
   onUnarchiveThread: (thread: QueueThread) => void | Promise<void>
+  onSnoozeThread: (thread: QueueThread, untilIso: string) => void | Promise<void>
+  onWakeThread: (thread: QueueThread) => void | Promise<void>
   dialogs: ReactNode
 }
 
@@ -42,8 +45,12 @@ function QueueRow({
   isSelected,
   sortTimestamp,
   isArchived = false,
+  isSnoozed = false,
+  isWokenRow = false,
   onSelect,
   onArchive,
+  onSnooze,
+  onWake,
 }: {
   thread: QueueThread
   statusMap: Record<string, ThreadStatus | undefined>
@@ -51,9 +58,16 @@ function QueueRow({
   isSelected: boolean
   sortTimestamp: string | null
   isArchived?: boolean
+  /** Row sits in the Snoozed section: shows time-until and a Wake now action. */
+  isSnoozed?: boolean
+  /** Row is a woken thread leading the Queue: shows the reminder marker. */
+  isWokenRow?: boolean
   onSelect: () => void
   onArchive: () => void
+  onSnooze?: (untilIso: string) => void
+  onWake?: () => void
 }) {
+  const [menuOpen, setMenuOpen] = useState(false)
   const status = statusMap[thread.id] ?? thread.status
   const isRunning = status === 'running' || status === 'stopping'
   const isEscalated = thread.run_state === 'escalated'
@@ -100,8 +114,26 @@ function QueueRow({
               escalated
             </span>
           )}
+          {isSnoozed && thread.snoozed_until && (
+            <span className="flex flex-shrink-0 items-center gap-1 rounded px-1" style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }} title={new Date(thread.snoozed_until).toLocaleString()}>
+              <Clock size={9} />
+              {timeUntil(thread.snoozed_until)}
+            </span>
+          )}
         </span>
       </button>
+
+      {/*
+        The woken marker. Woken threads lead the Queue above every section
+        header, so without a marker they'd look like an unexplained reordering —
+        this says "you asked to see this now".
+      */}
+      {isWokenRow && (
+        <span
+          className="pointer-events-none absolute left-0 top-0 bottom-0 w-0.5"
+          style={{ background: 'var(--color-claude)' }}
+        />
+      )}
 
       <div
         className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/thread:opacity-100"
@@ -110,6 +142,27 @@ function QueueRow({
         <span className="px-1 text-[10px]" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
           {relativeTime(sortTimestamp ?? thread.updated_at)}
         </span>
+        {isSnoozed
+          ? onWake && (
+            <button
+              onClick={onWake}
+              className="rounded p-1 transition-colors hover:bg-white/10"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Wake now"
+            >
+              <BellRing size={13} />
+            </button>
+          )
+          : onSnooze && !isArchived && (
+            <button
+              onClick={() => setMenuOpen((value) => !value)}
+              className="rounded p-1 transition-colors hover:bg-white/10"
+              style={{ color: 'var(--color-text-muted)' }}
+              title="Snooze thread"
+            >
+              <Clock size={13} />
+            </button>
+          )}
         <button
           onClick={onArchive}
           className="rounded p-1 transition-colors hover:bg-white/10"
@@ -118,6 +171,16 @@ function QueueRow({
         >
           {isArchived ? <ArchiveRestore size={13} /> : <Archive size={13} />}
         </button>
+
+        {menuOpen && onSnooze && (
+          <SnoozeMenu
+            onClose={() => setMenuOpen(false)}
+            onSnooze={(untilIso) => {
+              setMenuOpen(false)
+              onSnooze(untilIso)
+            }}
+          />
+        )}
       </div>
     </div>
   )
@@ -126,25 +189,38 @@ function QueueRow({
 const ARCHIVED_PAGE_SIZE = 30
 
 /**
- * Collapsed-by-default Archived section at the bottom of the Queue:
- * cross-project, searchable (server-side name filter), paged. Data is
- * fetched on expand and kept fresh when the live queue changes (archiving a
- * thread refreshes the queue, which re-triggers this fetch).
+ * A collapsed-by-default section at the bottom of the Queue for threads kept
+ * apart from the ordered list: cross-project, searchable (server-side name
+ * filter), paged. Data is fetched on expand and kept fresh when the live queue
+ * changes (archiving or snoozing refreshes the queue, re-triggering this fetch).
+ *
+ * Used for both Archived and Snoozed, which differ only in what they load and
+ * what the row actions do. Snoozed renders above Archived: a snooze is
+ * temporary and returning, so it sits closer to the live Queue than the
+ * terminal Archived list.
+ *
+ * `expanded` is deliberately ephemeral component state rather than persisted —
+ * both sections are "collapsed by default, peek in when curious". If sticky
+ * expansion is ever wanted it should be added to both at once.
  */
-function ArchivedSection({
-  statusMap,
-  unreadByThread,
-  selectedThreadId,
+function CollapsedQueueSection({
+  variant,
+  label,
+  emptyLabel,
   queueThreads,
-  onSelectThread,
-  onUnarchiveThread,
+  renderRow,
 }: {
-  statusMap: Record<string, ThreadStatus | undefined>
-  unreadByThread: Record<string, boolean | undefined>
-  selectedThreadId: string | null
+  /**
+   * Which list to load. A plain discriminator rather than a loader callback:
+   * an inline `load` prop would be a fresh closure every render and so could
+   * never safely appear in the effect's dependency array.
+   */
+  variant: 'archived' | 'snoozed'
+  label: string
+  /** Lowercased noun for the empty/search-miss copy, e.g. "archived threads". */
+  emptyLabel: string
   queueThreads: QueueThread[]
-  onSelectThread: (thread: QueueThread) => void
-  onUnarchiveThread: (thread: QueueThread) => void | Promise<void>
+  renderRow: (thread: QueueThread) => ReactNode
 }) {
   const [expanded, setExpanded] = useState(false)
   const [query, setQuery] = useState('')
@@ -152,30 +228,31 @@ function ArchivedSection({
   const [hasMore, setHasMore] = useState(false)
   const [loading, setLoading] = useState(false)
 
-  async function load(search: string, offset: number, append: boolean): Promise<void> {
-    setLoading(true)
-    try {
-      const rows = await window.api.invoke(
-        'threads:listQueueArchived',
-        search.trim() || null,
-        ARCHIVED_PAGE_SIZE,
-        offset
-      )
-      setThreads((prev) => append ? [...prev, ...rows] : rows)
-      setHasMore(rows.length === ARCHIVED_PAGE_SIZE)
-    } catch (err) {
-      console.error('Failed to fetch archived queue threads', err)
-    } finally {
-      setLoading(false)
-    }
-  }
+  const fetchPage = useCallback(
+    async (search: string, offset: number, append: boolean): Promise<void> => {
+      setLoading(true)
+      try {
+        const trimmed = search.trim() || null
+        const rows = variant === 'snoozed'
+          ? await window.api.invoke('threads:listQueueSnoozed', trimmed, ARCHIVED_PAGE_SIZE, offset)
+          : await window.api.invoke('threads:listQueueArchived', trimmed, ARCHIVED_PAGE_SIZE, offset)
+        setThreads((prev) => append ? [...prev, ...rows] : rows)
+        setHasMore(rows.length === ARCHIVED_PAGE_SIZE)
+      } catch (err) {
+        console.error(`Failed to fetch ${emptyLabel}`, err)
+      } finally {
+        setLoading(false)
+      }
+    },
+    [variant, emptyLabel]
+  )
 
   // Debounced (re)load on expand, search, or live-queue changes.
   useEffect(() => {
     if (!expanded) return
-    const timeoutId = window.setTimeout(() => void load(query, 0, false), 200)
+    const timeoutId = window.setTimeout(() => void fetchPage(query, 0, false), 200)
     return () => window.clearTimeout(timeoutId)
-  }, [expanded, query, queueThreads])
+  }, [expanded, query, queueThreads, fetchPage])
 
   return (
     <div className="border-t" style={{ borderColor: 'var(--color-border)' }}>
@@ -185,7 +262,7 @@ function ArchivedSection({
         style={{ color: 'var(--color-text-muted)' }}
       >
         {expanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-        <span>Archived</span>
+        <span>{label}</span>
       </button>
 
       {expanded && (
@@ -195,7 +272,7 @@ function ArchivedSection({
               type="text"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search archived…"
+              placeholder={`Search ${label.toLowerCase()}…`}
               className="w-full rounded px-2 py-1 text-xs outline-none"
               style={{
                 background: 'var(--color-surface-2)',
@@ -205,29 +282,17 @@ function ArchivedSection({
             />
           </div>
 
-          {threads.map((thread) => (
-            <QueueRow
-              key={thread.id}
-              thread={thread}
-              statusMap={statusMap}
-              unreadByThread={unreadByThread}
-              isSelected={selectedThreadId === thread.id}
-              sortTimestamp={thread.last_turn_completed_at}
-              isArchived
-              onSelect={() => onSelectThread(thread)}
-              onArchive={() => void onUnarchiveThread(thread)}
-            />
-          ))}
+          {threads.map(renderRow)}
 
           {!loading && threads.length === 0 && (
             <p className="px-3 pb-3 pt-1 text-center text-xs" style={{ color: 'var(--color-text-muted)' }}>
-              {query.trim() ? `No archived threads match "${query.trim()}"` : 'No archived threads'}
+              {query.trim() ? `No ${emptyLabel} match "${query.trim()}"` : `No ${emptyLabel}`}
             </p>
           )}
 
           {hasMore && (
             <button
-              onClick={() => void load(query, threads.length, true)}
+              onClick={() => void fetchPage(query, threads.length, true)}
               disabled={loading}
               className="w-full px-3 py-1.5 text-center text-[10px] transition-colors hover:bg-white/5 disabled:opacity-50"
               style={{ color: 'var(--color-text-muted)' }}
@@ -242,11 +307,11 @@ function ArchivedSection({
 }
 
 /**
- * The Queue: cross-project threads ordered by need for attention. Threads
- * awaiting the user come first (most recent completed Turn at top), then
+ * The Queue: cross-project threads ordered by need for attention. Woken threads
+ * lead, then threads awaiting the user (most recent completed Turn at top), then
  * running threads; never-run threads sink to the bottom. Everything else
- * (routines, per-location actions) lives in the tree view; archived threads
- * sit in the collapsed Archived section below.
+ * (routines, per-location actions) lives in the tree view; snoozed and archived
+ * threads sit in the collapsed sections below.
  */
 export default function QueueSidebar({
   queueThreads,
@@ -262,26 +327,37 @@ export default function QueueSidebar({
   onSelectThread,
   onArchiveThread,
   onUnarchiveThread,
+  onSnoozeThread,
+  onWakeThread,
   dialogs,
 }: QueueSidebarProps) {
-  const { attention, running, fresh } = bucketQueueThreads(queueThreads, statusMap)
-  const isEmpty = attention.length === 0 && running.length === 0 && fresh.length === 0
+  const { woken, attention, running, fresh } = bucketQueueThreads(queueThreads, statusMap)
+  const isEmpty = woken.length === 0 && attention.length === 0 && running.length === 0 && fresh.length === 0
 
   const [searchQuery, setSearchQuery] = useState('')
   const [archivedMatches, setArchivedMatches] = useState<QueueThread[]>([])
+  const [snoozedMatches, setSnoozedMatches] = useState<QueueThread[]>([])
   const trimmedQuery = searchQuery.trim()
 
-  // Search covers ALL threads: active matches filter client-side; archived
-  // matches come from the server (debounced), since they aren't loaded.
+  // Search covers ALL threads: active matches filter client-side; archived and
+  // snoozed matches come from the server (debounced), since neither is loaded.
+  // Search must never lie about existence — "I know I had a thread about X"
+  // has to find it whichever section it is sitting in.
   useEffect(() => {
     if (!trimmedQuery) {
-      queueMicrotask(() => setArchivedMatches([]))
+      queueMicrotask(() => {
+        setArchivedMatches([])
+        setSnoozedMatches([])
+      })
       return
     }
     const timeoutId = window.setTimeout(() => {
       window.api.invoke('threads:listQueueArchived', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
         .then(setArchivedMatches)
         .catch((err) => console.error('Failed to search archived queue threads', err))
+      window.api.invoke('threads:listQueueSnoozed', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
+        .then(setSnoozedMatches)
+        .catch((err) => console.error('Failed to search snoozed queue threads', err))
     }, 200)
     return () => window.clearTimeout(timeoutId)
   }, [trimmedQuery, queueThreads])
@@ -367,8 +443,28 @@ export default function QueueSidebar({
                 sortTimestamp={thread.last_turn_completed_at}
                 onSelect={() => onSelectThread(thread)}
                 onArchive={() => onArchiveThread(thread)}
+                onSnooze={(untilIso) => void onSnoozeThread(thread, untilIso)}
               />
             ))}
+            {snoozedMatches.length > 0 && (
+              <>
+                <SectionHeader label="Snoozed" count={snoozedMatches.length} />
+                {snoozedMatches.map((thread) => (
+                  <QueueRow
+                    key={thread.id}
+                    thread={thread}
+                    statusMap={statusMap}
+                    unreadByThread={unreadByThread}
+                    isSelected={selectedThreadId === thread.id}
+                    sortTimestamp={thread.last_turn_completed_at}
+                    isSnoozed
+                    onSelect={() => onSelectThread(thread)}
+                    onArchive={() => onArchiveThread(thread)}
+                    onWake={() => void onWakeThread(thread)}
+                  />
+                ))}
+              </>
+            )}
             {archivedMatches.length > 0 && (
               <>
                 <SectionHeader label="Archived" count={archivedMatches.length} />
@@ -387,7 +483,7 @@ export default function QueueSidebar({
                 ))}
               </>
             )}
-            {activeMatches.length === 0 && archivedMatches.length === 0 && (
+            {activeMatches.length === 0 && snoozedMatches.length === 0 && archivedMatches.length === 0 && (
               <p className="px-4 py-6 text-center text-xs" style={{ color: 'var(--color-text-muted)' }}>
                 No threads match &quot;{trimmedQuery}&quot;
               </p>
@@ -402,6 +498,26 @@ export default function QueueSidebar({
           </div>
         ) : (
           <>
+            {/*
+              Woken threads lead, above every section header and outside the
+              three status buckets. The user asked to be shown these at this
+              moment, which outranks bucket membership — and lifting them out
+              avoids burying a woken never-run thread under two sections.
+            */}
+            {woken.map((thread) => (
+              <QueueRow
+                key={thread.id}
+                thread={thread}
+                statusMap={statusMap}
+                unreadByThread={unreadByThread}
+                isSelected={selectedThreadId === thread.id}
+                sortTimestamp={thread.last_turn_completed_at}
+                isWokenRow
+                onSelect={() => onSelectThread(thread)}
+                onArchive={() => onArchiveThread(thread)}
+                onSnooze={(untilIso) => void onSnoozeThread(thread, untilIso)}
+              />
+            ))}
             {attention.length > 0 && (
               <>
                 <SectionHeader label="Needs attention" count={attention.length} />
@@ -415,6 +531,7 @@ export default function QueueSidebar({
                     sortTimestamp={thread.last_turn_completed_at}
                     onSelect={() => onSelectThread(thread)}
                     onArchive={() => onArchiveThread(thread)}
+                    onSnooze={(untilIso) => void onSnoozeThread(thread, untilIso)}
                   />
                 ))}
               </>
@@ -432,6 +549,7 @@ export default function QueueSidebar({
                     sortTimestamp={thread.last_turn_started_at}
                     onSelect={() => onSelectThread(thread)}
                     onArchive={() => onArchiveThread(thread)}
+                    onSnooze={(untilIso) => void onSnoozeThread(thread, untilIso)}
                   />
                 ))}
               </>
@@ -449,6 +567,7 @@ export default function QueueSidebar({
                     sortTimestamp={thread.created_at}
                     onSelect={() => onSelectThread(thread)}
                     onArchive={() => onArchiveThread(thread)}
+                    onSnooze={(untilIso) => void onSnoozeThread(thread, untilIso)}
                   />
                 ))}
               </>
@@ -457,14 +576,47 @@ export default function QueueSidebar({
         )}
 
         {!trimmedQuery && (
-          <ArchivedSection
-            statusMap={statusMap}
-            unreadByThread={unreadByThread}
-            selectedThreadId={selectedThreadId}
-            queueThreads={queueThreads}
-            onSelectThread={onSelectThread}
-            onUnarchiveThread={onUnarchiveThread}
-          />
+          <>
+            <CollapsedQueueSection
+              variant="snoozed"
+              label="Snoozed"
+              emptyLabel="snoozed threads"
+              queueThreads={queueThreads}
+              renderRow={(thread) => (
+                <QueueRow
+                  key={thread.id}
+                  thread={thread}
+                  statusMap={statusMap}
+                  unreadByThread={unreadByThread}
+                  isSelected={selectedThreadId === thread.id}
+                  sortTimestamp={thread.last_turn_completed_at}
+                  isSnoozed
+                  onSelect={() => onSelectThread(thread)}
+                  onArchive={() => onArchiveThread(thread)}
+                  onWake={() => void onWakeThread(thread)}
+                />
+              )}
+            />
+            <CollapsedQueueSection
+              variant="archived"
+              label="Archived"
+              emptyLabel="archived threads"
+              queueThreads={queueThreads}
+              renderRow={(thread) => (
+                <QueueRow
+                  key={thread.id}
+                  thread={thread}
+                  statusMap={statusMap}
+                  unreadByThread={unreadByThread}
+                  isSelected={selectedThreadId === thread.id}
+                  sortTimestamp={thread.last_turn_completed_at}
+                  isArchived
+                  onSelect={() => onSelectThread(thread)}
+                  onArchive={() => void onUnarchiveThread(thread)}
+                />
+              )}
+            />
+          </>
         )}
       </div>
 

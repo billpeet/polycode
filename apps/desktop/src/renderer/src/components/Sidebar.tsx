@@ -71,12 +71,20 @@ export default function Sidebar() {
   const expandedArchivedProjectId = useThreadStore((s) => s.expandedArchivedProjectId)
   const archivedCountByProject = useThreadStore((s) => s.archivedCountByProject)
   const archivedPageByProject = useThreadStore((s) => s.archivedPageByProject)
+  const snoozedByProject = useThreadStore((s) => s.snoozedByProject)
+  const expandedSnoozedProjectId = useThreadStore((s) => s.expandedSnoozedProjectId)
+  const snoozedCountByProject = useThreadStore((s) => s.snoozedCountByProject)
+  const snoozedPageByProject = useThreadStore((s) => s.snoozedPageByProject)
   const fetchThreads = useThreadStore((s) => s.fetch)
   const openDraftThread = useThreadStore((s) => s.openDraftThread)
   const removeThread = useThreadStore((s) => s.remove)
   const archiveThread = useThreadStore((s) => s.archive)
   const unarchiveThread = useThreadStore((s) => s.unarchive)
   const toggleShowArchived = useThreadStore((s) => s.toggleShowArchived)
+  const snoozeThread = useThreadStore((s) => s.snooze)
+  const wakeThread = useThreadStore((s) => s.wake)
+  const toggleShowSnoozed = useThreadStore((s) => s.toggleShowSnoozed)
+  const setSnoozedPage = useThreadStore((s) => s.setSnoozedPage)
   const addToast = useToastStore((s) => s.add)
   const setArchivedPage = useThreadStore((s) => s.setArchivedPage)
   const selectThread = useThreadStore((s) => s.select)
@@ -356,6 +364,24 @@ export default function Sidebar() {
   }
 
   /**
+   * Snoozing is the Queue's "not yet" gesture — the counterpart to archiving's
+   * "done with it". Deliberately does NOT deselect: archiving clears the main
+   * pane because you are finished, but you may well snooze a thread while still
+   * reading it, and yanking it away would be hostile.
+   */
+  async function handleQueueSnoozeThread(thread: QueueThread, untilIso: string): Promise<void> {
+    await snoozeThread(thread.id, thread.project_id, untilIso)
+    if (byProject[thread.project_id]) void fetchThreads(thread.project_id)
+    void fetchQueue()
+  }
+
+  async function handleQueueWakeThread(thread: QueueThread): Promise<void> {
+    await wakeThread(thread.id, thread.project_id)
+    if (byProject[thread.project_id]) void fetchThreads(thread.project_id)
+    void fetchQueue()
+  }
+
+  /**
    * Opens the new-thread composer from anywhere, defaulting to the most
    * relevant destination: the selected thread's, else the newest Queue
    * thread's, else the first project's first active location.
@@ -500,6 +526,20 @@ export default function Sidebar() {
     await unarchiveThread(thread.id, projectId)
   }
 
+  /**
+   * Tree-view snooze. Unlike `handleArchiveThread` above there is no selection
+   * juggling: a snoozed thread is still live work, so leaving it open is right.
+   */
+  async function handleSnoozeThread(thread: Thread, projectId: string, untilIso: string): Promise<void> {
+    await snoozeThread(thread.id, projectId, untilIso)
+    void fetchQueue()
+  }
+
+  async function handleWakeThread(thread: Thread, projectId: string): Promise<void> {
+    await wakeThread(thread.id, projectId)
+    void fetchQueue()
+  }
+
   function toggleLocationCollapsed(locationId: string): void {
     setCollapsedLocationIds((prev) => {
       const next = new Set(prev)
@@ -571,6 +611,8 @@ export default function Sidebar() {
         onSelectThread={handleQueueSelectThread}
         onArchiveThread={handleQueueArchiveThread}
         onUnarchiveThread={handleQueueUnarchiveThread}
+        onSnoozeThread={handleQueueSnoozeThread}
+        onWakeThread={handleQueueWakeThread}
         dialogs={dialogs}
       />
     )
@@ -595,6 +637,10 @@ export default function Sidebar() {
       archivedCountByProject={archivedCountByProject}
       expandedArchivedProjectId={expandedArchivedProjectId}
       archivedPageByProject={archivedPageByProject}
+      snoozedByProject={snoozedByProject}
+      snoozedCountByProject={snoozedCountByProject}
+      expandedSnoozedProjectId={expandedSnoozedProjectId}
+      snoozedPageByProject={snoozedPageByProject}
       statusMap={statusMap}
       unreadByThread={unreadByThread}
       locationsByProject={locationsByProject}
@@ -616,6 +662,8 @@ export default function Sidebar() {
       onToggleArchivedSection={() => setArchivedSectionExpanded((value) => !value)}
       onToggleShowArchived={toggleShowArchived}
       onSetArchivedPage={setArchivedPage}
+      onToggleShowSnoozed={toggleShowSnoozed}
+      onSetSnoozedPage={setSnoozedPage}
       onOpenLocationDialog={(projectId) => setLocationDialog({ mode: 'create', projectId })}
       onTogglePoolAvailableExpanded={togglePoolAvailableExpanded}
       onToggleLocationCollapsed={toggleLocationCollapsed}
@@ -627,6 +675,8 @@ export default function Sidebar() {
       onSelectThread={selectThread}
       onArchiveThread={handleArchiveThread}
       onUnarchiveThread={handleUnarchiveThread}
+      onSnoozeThread={handleSnoozeThread}
+      onWakeThread={handleWakeThread}
       dialogs={dialogs}
     />
   )

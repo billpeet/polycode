@@ -442,6 +442,7 @@ function rowToThread(r: ThreadRow): Thread {
     run_detail: r.run_detail ?? null,
     last_turn_started_at: r.last_turn_started_at ?? null,
     last_turn_completed_at: r.last_turn_completed_at ?? null,
+    snoozed_until: r.snoozed_until ?? null,
     created_at: r.created_at,
     updated_at: r.updated_at,
   }
@@ -463,15 +464,45 @@ const THREAD_VISIBILITY_FILTER = "(t.routine_id IS NULL OR t.run_state = 'escala
 const THREAD_TURN_ACTIVITY =
   'COALESCE(MAX(t.last_turn_completed_at, t.last_turn_started_at), t.last_turn_completed_at, t.last_turn_started_at, t.created_at)'
 
+/**
+ * Hides threads whose snooze has not yet expired. Woken threads (wake time in
+ * the past) pass, which is what lets them lead the Queue.
+ *
+ * Per ADR-0002 this is a *presentation* predicate: apply it where threads are
+ * listed for a human, never where they are counted to decide whether work can
+ * be destroyed. `listActiveThreadsForLocation` deliberately omits it — see the
+ * comment there.
+ *
+ * Callers must bind one `?` with the current ISO instant.
+ */
+const THREAD_NOT_SNOOZED = '(t.snoozed_until IS NULL OR t.snoozed_until <= ?)'
+
+/** Only the wake time is in the future — i.e. actively snoozed, not woken. */
+const THREAD_IS_SNOOZED = '(t.snoozed_until IS NOT NULL AND t.snoozed_until > ?)'
+
+function nowIso(): string {
+  return new Date().toISOString()
+}
+
 export function listThreads(projectId: string): Thread[] {
   const rows = getDb()
     .prepare(
-      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY ' + THREAD_TURN_ACTIVITY + ' DESC'
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' AND ' + THREAD_NOT_SNOOZED + ' ORDER BY ' + THREAD_TURN_ACTIVITY + ' DESC'
     )
-    .all(projectId) as ThreadRow[]
+    .all(projectId, nowIso()) as ThreadRow[]
   return rows.map(rowToThread)
 }
 
+/**
+ * Live threads at a location, used to decide whether a worktree still holds
+ * work and may be cleaned up.
+ *
+ * Deliberately does NOT filter snoozed threads. Snooze is a statement about the
+ * user's attention, not about a thread's lifecycle: a snoozed thread's work is
+ * live. Filtering here would make a location whose only thread is snoozed look
+ * empty and get its worktree destroyed with real work inside it. This omission
+ * is the whole point of ADR-0002 — do not "fix" it for consistency.
+ */
 export function listActiveThreadsForLocation(locationId: string): Thread[] {
   const rows = getDb()
     .prepare(
@@ -500,10 +531,43 @@ export function listQueueThreads(): QueueThread[] {
        FROM threads t
        JOIN projects p ON p.id = t.project_id
        LEFT JOIN repo_locations l ON l.id = t.location_id
-       WHERE t.archived = 0 AND p.archived_at IS NULL AND ${THREAD_VISIBILITY_FILTER}
+       WHERE t.archived = 0 AND p.archived_at IS NULL AND ${THREAD_VISIBILITY_FILTER} AND ${THREAD_NOT_SNOOZED}
        ORDER BY ${THREAD_TURN_ACTIVITY} DESC`
     )
-    .all() as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
+    .all(nowIso()) as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
+  return rows.map((r) => ({
+    ...rowToThread(r),
+    project_name: r.project_name,
+    location_label: r.location_label ?? null,
+    location_is_worktree: r.location_is_worktree === 1,
+  }))
+}
+
+/**
+ * Snoozed threads for the Queue's collapsed Snoozed section: cross-project
+ * (unarchived projects only), soonest to wake first, with optional name search
+ * and paging. Mirrors `listArchivedQueueThreads`.
+ *
+ * Ordered by wake time rather than turn activity because "what comes back next"
+ * is the only useful way to scan a list of deferred work.
+ */
+export function listSnoozedQueueThreads(search: string | null, limit: number, offset: number): QueueThread[] {
+  const query = search?.trim()
+  const rows = getDb()
+    .prepare(
+      `SELECT t.*,
+              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
+              p.name AS project_name,
+              l.label AS location_label,
+              COALESCE(l.is_worktree, 0) AS location_is_worktree
+       FROM threads t
+       JOIN projects p ON p.id = t.project_id
+       LEFT JOIN repo_locations l ON l.id = t.location_id
+       WHERE t.archived = 0 AND p.archived_at IS NULL AND ${THREAD_IS_SNOOZED}${query ? ' AND t.name LIKE ?' : ''}
+       ORDER BY t.snoozed_until ASC
+       LIMIT ? OFFSET ?`
+    )
+    .all(...(query ? [nowIso(), `%${query}%`, limit, offset] : [nowIso(), limit, offset])) as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
   return rows.map((r) => ({
     ...rowToThread(r),
     project_name: r.project_name,
@@ -559,6 +623,27 @@ export function listArchivedThreads(projectId: string, limit?: number, offset?: 
   return rows.map(rowToThread)
 }
 
+/**
+ * Snoozed threads for one project, for the tree view's per-project Snoozed
+ * section. Soonest to wake first, paged like the archived list. Counted by
+ * `snoozedThreadCount`, which must keep the same predicate or the pager drifts.
+ */
+export function listSnoozedThreads(projectId: string, limit?: number, offset?: number): Thread[] {
+  const rows = getDb()
+    .prepare(
+      'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_IS_SNOOZED + ' ORDER BY t.snoozed_until ASC LIMIT ? OFFSET ?'
+    )
+    .all(projectId, nowIso(), limit ?? -1, offset ?? 0) as ThreadRow[]
+  return rows.map(rowToThread)
+}
+
+export function snoozedThreadCount(projectId: string): number {
+  const row = getDb()
+    .prepare('SELECT COUNT(*) as count FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_IS_SNOOZED)
+    .get(projectId, nowIso()) as { count: number }
+  return row.count
+}
+
 export function threadHasMessages(id: string): boolean {
   const row = getDb()
     .prepare('SELECT COUNT(*) as count FROM messages WHERE thread_id = ?')
@@ -566,9 +651,33 @@ export function threadHasMessages(id: string): boolean {
   return row.count > 0
 }
 
+/**
+ * Defers a thread until `until` (an absolute ISO instant resolved by the
+ * client, so relative choices mean what they mean where the user is).
+ *
+ * Does not touch `updated_at`: snoozing is not activity on the thread, and
+ * bumping it would reorder lists that sort on it.
+ */
+export function snoozeThread(id: string, until: string): void {
+  getDb().prepare('UPDATE threads SET snoozed_until = ? WHERE id = ?').run(until, id)
+}
+
+/**
+ * Ends a snooze immediately, whether pending or already woken. Used both by the
+ * explicit "Wake now" action and by the user submitting a Turn, which is what
+ * discharges the woken state.
+ */
+export function unsnoozeThread(id: string): void {
+  getDb().prepare('UPDATE threads SET snoozed_until = NULL WHERE id = ?').run(id)
+}
+
+/**
+ * Archiving discards any snooze: a thread is never both snoozed and archived,
+ * and unarchiving returns it to active rather than back to snoozed.
+ */
 export function archiveThread(id: string): void {
   getDb()
-    .prepare('UPDATE threads SET archived = 1, updated_at = ? WHERE id = ?')
+    .prepare('UPDATE threads SET archived = 1, snoozed_until = NULL, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id)
 }
 
@@ -616,6 +725,7 @@ export function createThread(projectId: string, name: string, locationId: string
     run_detail: null,
     last_turn_started_at: null,
     last_turn_completed_at: null,
+    snoozed_until: null,
     created_at: now,
     updated_at: now
   }
@@ -1515,6 +1625,7 @@ export function importThread(
     cursor_context: null,
     last_turn_started_at: null,
     last_turn_completed_at: null,
+    snoozed_until: null,
     status: 'idle',
     archived: 0,
     input_tokens: 0,

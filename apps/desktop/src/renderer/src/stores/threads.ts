@@ -30,10 +30,17 @@ interface ThreadStore {
   /** count of archived threads keyed by project ID — populated on fetch, no full data load required */
   archivedCountByProject: Record<string, number>
   archivedPageByProject: Record<string, number>
+  /** snoozed threads keyed by project ID (tree view's per-project Snoozed section) */
+  snoozedByProject: Record<string, Thread[]>
+  /** count of snoozed threads keyed by project ID — populated on fetch */
+  snoozedCountByProject: Record<string, number>
+  snoozedPageByProject: Record<string, number>
   selectedThreadId: string | null
   statusMap: Record<string, ThreadStatus>
   unreadByThread: Record<string, boolean>
   expandedArchivedProjectId: string | null
+  /** Singleton like `expandedArchivedProjectId` — one project's snoozed list open at a time. */
+  expandedSnoozedProjectId: string | null
   /** draft input text keyed by thread ID */
   draftByThread: Record<string, string>
   /** plan mode toggle keyed by thread ID */
@@ -75,6 +82,13 @@ interface ThreadStore {
   unarchive: (id: string, projectId: string) => Promise<void>
   toggleShowArchived: (projectId: string) => void
   setArchivedPage: (projectId: string, page: number) => Promise<void>
+  fetchSnoozed: (projectId: string, page?: number) => Promise<void>
+  /** Defers a thread until `untilIso` (absolute, resolved by the caller). */
+  snooze: (id: string, projectId: string, untilIso: string) => Promise<void>
+  /** Ends a snooze immediately, whether pending or already woken. */
+  wake: (id: string, projectId: string) => Promise<void>
+  toggleShowSnoozed: (projectId: string) => void
+  setSnoozedPage: (projectId: string, page: number) => Promise<void>
   select: (id: string | null) => void
   setStatus: (threadId: string, status: ThreadStatus) => void
   setUnread: (threadId: string, unread: boolean) => void
@@ -118,10 +132,14 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   archivedByProject: {},
   archivedCountByProject: {},
   archivedPageByProject: {},
+  snoozedByProject: {},
+  snoozedCountByProject: {},
+  snoozedPageByProject: {},
   selectedThreadId: null,
   statusMap: {},
   unreadByThread: {},
   expandedArchivedProjectId: null,
+  expandedSnoozedProjectId: null,
   draftByThread: {},
   planModeByThread: {},
   fastModeByThread: {},
@@ -181,6 +199,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       run_detail: null,
       last_turn_started_at: null,
       last_turn_completed_at: null,
+      snoozed_until: null,
       created_at: now,
       updated_at: now,
     }
@@ -374,9 +393,10 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   fetch: async (projectId) => {
-    const [threads, count] = await Promise.all([
+    const [threads, count, snoozedCount] = await Promise.all([
       window.api.invoke('threads:list', projectId),
       window.api.invoke('threads:archivedCount', projectId),
+      window.api.invoke('threads:snoozedCount', projectId),
     ])
     set((s) => {
       // The create-on-send draft has no DB row, so a wholesale refresh from
@@ -391,6 +411,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       return {
       byProject: { ...s.byProject, [projectId]: nextThreads },
       archivedCountByProject: { ...s.archivedCountByProject, [projectId]: count },
+      snoozedCountByProject: { ...s.snoozedCountByProject, [projectId]: snoozedCount },
       statusMap: {
         ...s.statusMap,
         ...Object.fromEntries(threads.map((t: Thread) => [t.id, t.status]))
@@ -473,6 +494,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       run_detail: null,
       last_turn_started_at: null,
       last_turn_completed_at: null,
+      snoozed_until: null,
       created_at: now,
       updated_at: now,
     }
@@ -800,6 +822,97 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }
     set({ expandedArchivedProjectId: projectId })
     void get().fetchArchived(projectId, 0)
+  },
+
+  fetchSnoozed: async (projectId, page) => {
+    const nextPage = page ?? get().snoozedPageByProject[projectId] ?? 0
+    const threads = await window.api.invoke(
+      'threads:listSnoozed',
+      projectId,
+      ARCHIVED_THREADS_PAGE_SIZE,
+      nextPage * ARCHIVED_THREADS_PAGE_SIZE
+    )
+    set((s) => ({
+      snoozedByProject: { ...s.snoozedByProject, [projectId]: threads },
+      snoozedPageByProject: { ...s.snoozedPageByProject, [projectId]: nextPage },
+    }))
+  },
+
+  /**
+   * Optimistically moves a thread out of the active list and into the snoozed
+   * count. Unlike `archive`, no session teardown and no per-thread state is
+   * dropped: the thread's work is live and a running thread keeps running while
+   * snoozed. The selection is also left alone — snoozing the thread you are
+   * reading should not yank it out from under you.
+   */
+  snooze: async (id, projectId, untilIso) => {
+    const snapshot = get()
+    const wasSnoozedExpanded = get().expandedSnoozedProjectId === projectId
+    const currentSnoozedPage = get().snoozedPageByProject[projectId] ?? 0
+    set((s) => {
+      const thread = (s.byProject[projectId] ?? []).find((t) => t.id === id)
+      if (!thread) return s
+      const prevCount = s.snoozedCountByProject[projectId] ?? 0
+      return {
+        byProject: { ...s.byProject, [projectId]: removeThreadFromList(s.byProject[projectId] ?? [], id) },
+        snoozedCountByProject: { ...s.snoozedCountByProject, [projectId]: prevCount + 1 },
+      }
+    })
+
+    try {
+      await window.api.invoke('threads:snooze', id, untilIso)
+      if (wasSnoozedExpanded) await get().setSnoozedPage(projectId, currentSnoozedPage)
+    } catch (error) {
+      set({
+        byProject: snapshot.byProject,
+        snoozedCountByProject: snapshot.snoozedCountByProject,
+      })
+      throw error
+    }
+  },
+
+  wake: async (id, projectId) => {
+    const wasSnoozedExpanded = get().expandedSnoozedProjectId === projectId
+    const currentSnoozedPage = get().snoozedPageByProject[projectId] ?? 0
+    await window.api.invoke('threads:unsnooze', id)
+    set((s) => {
+      const thread = (s.snoozedByProject[projectId] ?? []).find((t) => t.id === id)
+      const prevCount = s.snoozedCountByProject[projectId] ?? 0
+      return {
+        snoozedByProject: {
+          ...s.snoozedByProject,
+          [projectId]: (s.snoozedByProject[projectId] ?? []).filter((t) => t.id !== id)
+        },
+        snoozedCountByProject: {
+          ...s.snoozedCountByProject,
+          [projectId]: Math.max(0, prevCount - 1)
+        },
+        byProject: {
+          ...s.byProject,
+          [projectId]: thread
+            ? [{ ...thread, snoozed_until: null }, ...(s.byProject[projectId] ?? [])]
+            : (s.byProject[projectId] ?? [])
+        },
+      }
+    })
+    if (wasSnoozedExpanded) await get().setSnoozedPage(projectId, currentSnoozedPage)
+  },
+
+  toggleShowSnoozed: (projectId) => {
+    const isExpanded = get().expandedSnoozedProjectId === projectId
+    if (isExpanded) {
+      set({ expandedSnoozedProjectId: null })
+      return
+    }
+    set({ expandedSnoozedProjectId: projectId })
+    void get().fetchSnoozed(projectId, 0)
+  },
+
+  setSnoozedPage: async (projectId, page) => {
+    const count = get().snoozedCountByProject[projectId] ?? 0
+    const maxPage = Math.max(0, Math.ceil(count / ARCHIVED_THREADS_PAGE_SIZE) - 1)
+    const nextPage = Math.min(Math.max(page, 0), maxPage)
+    await get().fetchSnoozed(projectId, nextPage)
   },
 
   setArchivedPage: async (projectId, page) => {

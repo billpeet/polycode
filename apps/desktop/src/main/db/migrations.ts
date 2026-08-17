@@ -9,6 +9,7 @@ const migrations: Migration[] = [
   { version: 1, up: adoptLegacySchema },
   { version: 2, up: addRoutines },
   { version: 3, up: addTurnTimestamps },
+  { version: 4, up: addSnooze },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -87,6 +88,29 @@ function addTurnTimestamps(database: Database.Database): void {
   database.exec(`
     CREATE INDEX IF NOT EXISTS idx_threads_archived_turn_completed
       ON threads(archived, last_turn_completed_at DESC);
+  `)
+}
+
+/**
+ * Version 4 — Snooze.
+ * `snoozed_until` is an absolute ISO instant and the whole of a snooze: a
+ * thread IS snoozed while that instant is in the future, and IS woken once it
+ * has passed. Nothing is written when a wake time arrives, so there is no wake
+ * event to miss while the app is closed — see ADR-0002.
+ *
+ * No backfill: a NULL column already means "never snoozed", which is correct
+ * for every existing thread.
+ */
+function addSnooze(database: Database.Database): void {
+  const threadCols = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!threadCols.some((c) => c.name === 'snoozed_until')) {
+    database.exec('ALTER TABLE threads ADD COLUMN snoozed_until TEXT')
+  }
+  // Leading `archived` matches the existing list predicates, which always
+  // filter on it before considering snooze state.
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_threads_archived_snoozed
+      ON threads(archived, snoozed_until);
   `)
 }
 

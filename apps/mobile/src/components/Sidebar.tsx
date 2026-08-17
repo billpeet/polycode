@@ -13,6 +13,7 @@ import {
 } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import type { Project, RepoLocation, Thread } from '@polycode/shared'
+import { formatWakeTime, resolveSnoozePreset, SNOOZE_PRESETS, timeUntil } from '@polycode/shared'
 import { rpc } from '@/api/rpc'
 import { sseManager, type ConnectionState } from '@/api/sse'
 import { useHostsStore } from '@/stores/hosts'
@@ -146,11 +147,83 @@ function ArchivedThreadsModal(props: { projectId: string | null; onClose: () => 
   )
 }
 
+/**
+ * Modal listing a project's snoozed threads, with wake/archive actions.
+ *
+ * Mobile shares `threads:list` with the desktop, so a snoozed thread drops out
+ * of the project list here too. Without this modal it would simply vanish with
+ * no affordance to get it back — which is why mobile gets a Snoozed surface even
+ * though it has no Queue view. Rows show the wake time, since "when does this
+ * come back" is the only thing worth knowing about deferred work.
+ */
+function SnoozedThreadsModal(props: { projectId: string | null; onClose: () => void }) {
+  const { projectId, onClose } = props
+  const [snoozed, setSnoozed] = useState<Thread[]>([])
+  const listSnoozed = useThreadsStore((s) => s.listSnoozed)
+  const wake = useThreadsStore((s) => s.wake)
+  const archive = useThreadsStore((s) => s.archive)
+
+  const reload = useCallback(() => {
+    if (!projectId) return
+    listSnoozed(projectId)
+      .then(setSnoozed)
+      .catch((error: unknown) => Alert.alert('Could not load snoozed threads', String(error)))
+  }, [projectId, listSnoozed])
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      setSnoozed([])
+      reload()
+    }, 0)
+    return () => clearTimeout(timeoutId)
+  }, [reload])
+
+  return (
+    <Modal visible={projectId !== null} transparent animationType="slide" onRequestClose={onClose}>
+      <Pressable style={styles.modalBackdrop} onPress={onClose}>
+        <Pressable style={styles.modalSheet} onPress={() => undefined}>
+          <Text style={styles.modalTitle}>Snoozed Threads</Text>
+          <ScrollView style={{ maxHeight: 420 }} contentContainerStyle={{ gap: 10 }}>
+            {snoozed.length === 0 ? <Text style={styles.emptyText}>No snoozed threads.</Text> : null}
+            {snoozed.map((thread) => (
+              <View key={thread.id} style={styles.archivedRow}>
+                <Text style={styles.archivedName} numberOfLines={1}>
+                  {thread.name}
+                  {thread.snoozed_until ? ` · ${timeUntil(thread.snoozed_until)}` : ''}
+                </Text>
+                <Pressable
+                  hitSlop={6}
+                  onPress={() => {
+                    if (!projectId) return
+                    void wake(projectId, thread.id).then(reload)
+                  }}
+                >
+                  <Text style={styles.archivedAction}>Wake</Text>
+                </Pressable>
+                <Pressable
+                  hitSlop={6}
+                  onPress={() => {
+                    if (!projectId) return
+                    void archive(projectId, thread.id).then(reload)
+                  }}
+                >
+                  <Text style={styles.archivedAction}>Archive</Text>
+                </Pressable>
+              </View>
+            ))}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  )
+}
+
 function ProjectSection(props: {
   project: Project
   onNewThread: (projectId: string) => void
   onThreadLongPress: (projectId: string, thread: Thread) => void
   onShowArchived: (projectId: string) => void
+  onShowSnoozed: (projectId: string) => void
   onShowCommands: (projectId: string) => void
   onProjectLongPress: (project: Project) => void
   onLocationLongPress: (projectId: string, location: RepoLocation) => void
@@ -161,9 +234,11 @@ function ProjectSection(props: {
   const threads = useThreadsStore((s) => s.threadsByProject[project.id] ?? EMPTY_THREADS)
   const fetchThreads = useThreadsStore((s) => s.fetch)
   const archivedCount = useThreadsStore((s) => s.archivedCount)
+  const snoozedCount = useThreadsStore((s) => s.snoozedCount)
   const locations = useProjectsStore((s) => s.locationsByProject[project.id])
   const fetchLocations = useProjectsStore((s) => s.fetchLocations)
   const [archivedTotal, setArchivedTotal] = useState(0)
+  const [snoozedTotal, setSnoozedTotal] = useState(0)
 
   useEffect(() => {
     if (expanded) {
@@ -172,8 +247,11 @@ function ProjectSection(props: {
       archivedCount(project.id)
         .then(setArchivedTotal)
         .catch(() => setArchivedTotal(0))
+      snoozedCount(project.id)
+        .then(setSnoozedTotal)
+        .catch(() => setSnoozedTotal(0))
     }
-  }, [expanded, project.id, fetchThreads, fetchLocations, archivedCount])
+  }, [expanded, project.id, fetchThreads, fetchLocations, archivedCount, snoozedCount])
 
   // Desktop parity: with multiple locations (e.g. worktrees), group threads
   // under muted location headers instead of one flat list.
@@ -256,6 +334,15 @@ function ProjectSection(props: {
           >
             <Text style={styles.archivedLink}>▶ Commands</Text>
           </Pressable>
+          {/* Snoozed above Archived: temporary and returning vs terminal. */}
+          {snoozedTotal > 0 ? (
+            <Pressable
+              onPress={() => props.onShowSnoozed(project.id)}
+              style={({ pressed }) => [styles.newThreadRow, pressed && { opacity: 0.7 }]}
+            >
+              <Text style={styles.archivedLink}>Snoozed ({snoozedTotal})</Text>
+            </Pressable>
+          ) : null}
           {archivedTotal > 0 ? (
             <Pressable
               onPress={() => props.onShowArchived(project.id)}
@@ -279,11 +366,14 @@ export function Sidebar() {
   const fetchProjects = useProjectsStore((s) => s.fetch)
   const activeHost = useHostsStore((s) => s.hosts.find((h) => h.id === s.activeHostId))
   const archive = useThreadsStore((s) => s.archive)
+  const snooze = useThreadsStore((s) => s.snooze)
 
   const [renameTarget, setRenameTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [actionTarget, setActionTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [locationPicker, setLocationPicker] = useState<{ projectId: string; locations: RepoLocation[] } | null>(null)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
+  const [snoozedProjectId, setSnoozedProjectId] = useState<string | null>(null)
+  const [snoozeTarget, setSnoozeTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [commandsProjectId, setCommandsProjectId] = useState<string | null>(null)
   const [showNewProject, setShowNewProject] = useState(false)
   const [projectAction, setProjectAction] = useState<Project | null>(null)
@@ -390,6 +480,7 @@ export function Sidebar() {
                         },
                       ]),
                   },
+                  { label: 'Snooze', onPress: () => setSnoozeTarget(actionTarget) },
                   {
                     label: 'Archive',
                     onPress: () => {
@@ -437,6 +528,29 @@ export function Sidebar() {
               : []
           }
         />
+      {/*
+        Presets only on mobile: resolution still happens client-side, so
+        "tomorrow morning" means morning in the phone's timezone, not the
+        host's. Labels show the resolved absolute time so a roll-forward is
+        visible rather than inferred.
+      */}
+      <ActionSheet
+        visible={snoozeTarget !== null}
+        title="Snooze until"
+        onClose={() => setSnoozeTarget(null)}
+        options={
+          snoozeTarget
+            ? SNOOZE_PRESETS.map((preset) => {
+                const at = resolveSnoozePreset(preset.id)
+                return {
+                  label: `${preset.label} · ${formatWakeTime(at)}`,
+                  onPress: () => void snooze(snoozeTarget.projectId, snoozeTarget.thread.id, at.toISOString()),
+                }
+              })
+            : []
+        }
+      />
+      <SnoozedThreadsModal projectId={snoozedProjectId} onClose={() => setSnoozedProjectId(null)} />
       <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
       <NewProjectSheet visible={showNewProject} onClose={() => setShowNewProject(false)} />
@@ -564,6 +678,29 @@ export function Sidebar() {
             : []
         }
       />
+      {/*
+        Presets only on mobile: resolution still happens client-side, so
+        "tomorrow morning" means morning in the phone's timezone, not the
+        host's. Labels show the resolved absolute time so a roll-forward is
+        visible rather than inferred.
+      */}
+      <ActionSheet
+        visible={snoozeTarget !== null}
+        title="Snooze until"
+        onClose={() => setSnoozeTarget(null)}
+        options={
+          snoozeTarget
+            ? SNOOZE_PRESETS.map((preset) => {
+                const at = resolveSnoozePreset(preset.id)
+                return {
+                  label: `${preset.label} · ${formatWakeTime(at)}`,
+                  onPress: () => void snooze(snoozeTarget.projectId, snoozeTarget.thread.id, at.toISOString()),
+                }
+              })
+            : []
+        }
+      />
+        <SnoozedThreadsModal projectId={snoozedProjectId} onClose={() => setSnoozedProjectId(null)} />
         <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       </>
     )
@@ -604,6 +741,7 @@ export function Sidebar() {
                 onNewThread={pickLocationForNewThread}
                 onThreadLongPress={handleThreadLongPress}
                 onShowArchived={setArchivedProjectId}
+                onShowSnoozed={setSnoozedProjectId}
                 onShowCommands={setCommandsProjectId}
                 onProjectLongPress={handleProjectLongPress}
                 onLocationLongPress={handleLocationLongPress}
@@ -636,6 +774,7 @@ export function Sidebar() {
                       },
                     ]),
                 },
+                { label: 'Snooze', onPress: () => setSnoozeTarget(actionTarget) },
                 {
                   label: 'Archive',
                   onPress: () => {

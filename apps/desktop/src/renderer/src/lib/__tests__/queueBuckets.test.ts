@@ -34,6 +34,7 @@ function makeThread(overrides: Partial<QueueThread>): QueueThread {
     run_detail: null,
     last_turn_started_at: null,
     last_turn_completed_at: null,
+    snoozed_until: null,
     created_at: '2026-08-01T00:00:00.000Z',
     updated_at: '2026-08-01T00:00:00.000Z',
     project_name: 'Project',
@@ -54,6 +55,58 @@ describe('bucketQueueThreads', () => {
     expect(buckets.attention.map((t) => t.id)).toEqual([completed.id])
     expect(buckets.running.map((t) => t.id)).toEqual([runningThread.id])
     expect(buckets.fresh.map((t) => t.id)).toEqual([neverRun.id])
+  })
+
+  describe('woken threads', () => {
+    const NOW = new Date('2026-08-10T12:00:00Z')
+
+    it('lifts woken threads out of every status bucket', () => {
+      // A woken thread with no messages would otherwise land in `fresh` and be
+      // rendered below two whole section headers — the case that makes
+      // sorting-within-a-bucket the wrong design.
+      const wokenFresh = makeThread({
+        status: 'idle',
+        has_messages: false,
+        snoozed_until: '2026-08-10T09:00:00Z',
+      })
+      const wokenRunning = makeThread({ status: 'running', snoozed_until: '2026-08-10T10:00:00Z' })
+      const ordinary = makeThread({ status: 'idle', last_turn_completed_at: '2026-08-10T11:00:00Z' })
+
+      const buckets = bucketQueueThreads([wokenFresh, wokenRunning, ordinary], {}, NOW)
+
+      expect(buckets.woken.map((t) => t.id)).toEqual([wokenFresh.id, wokenRunning.id])
+      expect(buckets.attention.map((t) => t.id)).toEqual([ordinary.id])
+      expect(buckets.running).toHaveLength(0)
+      expect(buckets.fresh).toHaveLength(0)
+    })
+
+    it('orders woken by wake time ascending, longest-awake first', () => {
+      const justWoke = makeThread({ snoozed_until: '2026-08-10T11:59:00Z' })
+      const wokeEarlier = makeThread({ snoozed_until: '2026-08-10T08:00:00Z' })
+
+      const buckets = bucketQueueThreads([justWoke, wokeEarlier], {}, NOW)
+
+      expect(buckets.woken.map((t) => t.id)).toEqual([wokeEarlier.id, justWoke.id])
+    })
+
+    it('does not treat a future wake time as woken', () => {
+      // The Queue query already excludes actively-snoozed threads, but the
+      // boundary must hold here too rather than relying on that alone.
+      const stillSnoozed = makeThread({ snoozed_until: '2026-08-10T18:00:00Z' })
+
+      const buckets = bucketQueueThreads([stillSnoozed], {}, NOW)
+
+      expect(buckets.woken).toHaveLength(0)
+      expect(buckets.attention.map((t) => t.id)).toEqual([stillSnoozed.id])
+    })
+
+    it('leaves never-snoozed threads alone', () => {
+      const plain = makeThread({ snoozed_until: null })
+
+      const buckets = bucketQueueThreads([plain], {}, NOW)
+
+      expect(buckets.woken).toHaveLength(0)
+    })
   })
 
   it('orders attention by last turn completed, newest first', () => {

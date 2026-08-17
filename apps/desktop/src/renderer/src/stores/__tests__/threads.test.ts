@@ -32,6 +32,7 @@ function makeThread(overrides: Partial<Thread>): Thread {
     run_detail: null,
     last_turn_started_at: null,
     last_turn_completed_at: null,
+    snoozed_until: null,
     created_at: '2026-01-01T00:00:00.000Z',
     updated_at: '2026-01-01T00:00:00.000Z',
     ...overrides,

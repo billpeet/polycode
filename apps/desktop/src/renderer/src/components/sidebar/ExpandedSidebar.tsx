@@ -61,6 +61,14 @@ interface ExpandedSidebarProps {
   onSelectThread: (threadId: string) => void
   onArchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
   onUnarchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
+  onSnoozeThread: (thread: Thread, projectId: string, untilIso: string) => void | Promise<void>
+  onWakeThread: (thread: Thread, projectId: string) => void | Promise<void>
+  snoozedByProject: Record<string, Thread[] | undefined>
+  snoozedCountByProject: Record<string, number | undefined>
+  expandedSnoozedProjectId: string | null
+  snoozedPageByProject: Record<string, number | undefined>
+  onToggleShowSnoozed: (projectId: string) => void
+  onSetSnoozedPage: (projectId: string, page: number) => void | Promise<void>
   dialogs: ReactNode
 }
 
@@ -114,6 +122,14 @@ export default function ExpandedSidebar({
   onSelectThread,
   onArchiveThread,
   onUnarchiveThread,
+  onSnoozeThread,
+  onWakeThread,
+  snoozedByProject,
+  snoozedCountByProject,
+  expandedSnoozedProjectId,
+  snoozedPageByProject,
+  onToggleShowSnoozed,
+  onSetSnoozedPage,
   dialogs,
 }: ExpandedSidebarProps) {
   const [appVersion, setAppVersion] = useState('')
@@ -250,11 +266,16 @@ export default function ExpandedSidebar({
         })() : projects.map((project) => {
           const isExpanded = expandedProjectIds.has(project.id)
           const isArchivedExpanded = expandedArchivedProjectId === project.id
+          const isSnoozedExpanded = expandedSnoozedProjectId === project.id
           const projectThreads = byProject[project.id] ?? []
           const projectArchivedThreads = archivedByProject[project.id] ?? []
           const projectArchivedCount = archivedCountByProject[project.id] ?? 0
           const archivedPage = archivedPageByProject[project.id] ?? 0
           const archivedPageCount = Math.ceil(projectArchivedCount / 10)
+          const projectSnoozedThreads = snoozedByProject[project.id] ?? []
+          const projectSnoozedCount = snoozedCountByProject[project.id] ?? 0
+          const snoozedPage = snoozedPageByProject[project.id] ?? 0
+          const snoozedPageCount = Math.ceil(projectSnoozedCount / 10)
           const locations = locationsByProject[project.id] ?? EMPTY_LOCATIONS
           const pools = poolsByProject[project.id] ?? EMPTY_POOLS
           const deletingWorktreeCount = deletingWorktreesByProject[project.id] ?? 0
@@ -335,6 +356,8 @@ export default function ExpandedSidebar({
                       onSelectThread={onSelectThread}
                       onArchiveThread={onArchiveThread}
                       onUnarchiveThread={onUnarchiveThread}
+                      onSnoozeThread={onSnoozeThread}
+                      onWakeThread={onWakeThread}
                     />
                   ))}
                   {unreadThreads.map((thread) => (
@@ -351,6 +374,8 @@ export default function ExpandedSidebar({
                       onSelectThread={onSelectThread}
                       onArchiveThread={onArchiveThread}
                       onUnarchiveThread={onUnarchiveThread}
+                      onSnoozeThread={onSnoozeThread}
+                      onWakeThread={onWakeThread}
                     />
                   ))}
                 </div>
@@ -424,6 +449,8 @@ export default function ExpandedSidebar({
                                 onSelectThread={onSelectThread}
                                 onArchiveThread={onArchiveThread}
                                 onUnarchiveThread={onUnarchiveThread}
+                                onSnoozeThread={onSnoozeThread}
+                                onWakeThread={onWakeThread}
                               />
                             ))}
 
@@ -449,6 +476,8 @@ export default function ExpandedSidebar({
                                 onSelectThread={onSelectThread}
                                 onArchiveThread={onArchiveThread}
                                 onUnarchiveThread={onUnarchiveThread}
+                                onSnoozeThread={onSnoozeThread}
+                                onWakeThread={onWakeThread}
                               />
                             ))}
                           </div>
@@ -478,6 +507,8 @@ export default function ExpandedSidebar({
                             onSelectThread={onSelectThread}
                             onArchiveThread={onArchiveThread}
                             onUnarchiveThread={onUnarchiveThread}
+                            onSnoozeThread={onSnoozeThread}
+                            onWakeThread={onWakeThread}
                           />
                         ))}
                     </>
@@ -504,6 +535,8 @@ export default function ExpandedSidebar({
                           onSelectThread={onSelectThread}
                           onArchiveThread={onArchiveThread}
                           onUnarchiveThread={onUnarchiveThread}
+                          onSnoozeThread={onSnoozeThread}
+                          onWakeThread={onWakeThread}
                         />
                       ))}
                     </>
@@ -534,6 +567,8 @@ export default function ExpandedSidebar({
                         onSelectThread={onSelectThread}
                         onArchiveThread={onArchiveThread}
                         onUnarchiveThread={onUnarchiveThread}
+                        onSnoozeThread={onSnoozeThread}
+                        onWakeThread={onWakeThread}
                       />
                     ))}
 
@@ -548,6 +583,74 @@ export default function ExpandedSidebar({
                   )}
 
                   <RoutinesSection projectId={project.id} onSelectThread={onSelectThread} />
+
+                  {/*
+                    Snoozed sits above Archived: a snooze is temporary and
+                    returning, so it belongs closer to the live list than the
+                    terminal Archived section. There is deliberately no woken
+                    marker here — the tree has no attention ordering to lead, so
+                    a woken thread simply reappears in its location's list.
+                  */}
+                  {(projectSnoozedCount > 0 || isSnoozedExpanded) && (
+                    <button
+                      onClick={() => onToggleShowSnoozed(project.id)}
+                      className="flex w-full items-center pl-6 pr-4 py-1 text-left text-[10px] opacity-40 transition-opacity hover:opacity-70"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {isSnoozedExpanded ? (
+                        <><ChevronDown size={9} className="mr-1" /> Hide snoozed</>
+                      ) : (
+                        <><ChevronRight size={9} className="mr-1" /> Snoozed ({projectSnoozedCount})</>
+                      )}
+                    </button>
+                  )}
+
+                  {isSnoozedExpanded && (
+                    <>
+                      {projectSnoozedThreads.map((thread) => (
+                        <ThreadRow
+                          key={thread.id}
+                          thread={thread}
+                          isArchived={false}
+                          isSnoozed
+                          projectId={project.id}
+                          indent="pl-8"
+                          selectedThreadId={selectedThreadId}
+                          statusMap={statusMap}
+                          unreadByThread={unreadByThread}
+                          branchByLocation={branchByLocation}
+                          onSelectThread={onSelectThread}
+                          onArchiveThread={onArchiveThread}
+                          onUnarchiveThread={onUnarchiveThread}
+                          onSnoozeThread={onSnoozeThread}
+                          onWakeThread={onWakeThread}
+                        />
+                      ))}
+
+                      {snoozedPageCount > 1 && (
+                        <div
+                          className="flex items-center justify-between pl-8 pr-4 py-1 text-[10px]"
+                          style={{ color: 'var(--color-text-muted)' }}
+                        >
+                          <button
+                            onClick={() => onSetSnoozedPage(project.id, snoozedPage - 1)}
+                            className="transition-opacity hover:opacity-70 disabled:cursor-default disabled:opacity-30"
+                            disabled={snoozedPage === 0}
+                          >
+                            Back
+                          </button>
+                          <span>{snoozedPage + 1} / {snoozedPageCount}</span>
+                          <button
+                            onClick={() => onSetSnoozedPage(project.id, snoozedPage + 1)}
+                            className="transition-opacity hover:opacity-70 disabled:cursor-default disabled:opacity-30"
+                            disabled={snoozedPage >= snoozedPageCount - 1}
+                          >
+                            Forward
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
 
                   {(projectArchivedCount > 0 || isArchivedExpanded) && (
                     <button
@@ -579,6 +682,8 @@ export default function ExpandedSidebar({
                           onSelectThread={onSelectThread}
                           onArchiveThread={onArchiveThread}
                           onUnarchiveThread={onUnarchiveThread}
+                          onSnoozeThread={onSnoozeThread}
+                          onWakeThread={onWakeThread}
                         />
                       ))}
 
