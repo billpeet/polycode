@@ -289,6 +289,14 @@ function InputBarContent({ threadId }: Props) {
     const currentFastMode = fastMode
     const clientUserMessageId = globalThis.crypto.randomUUID()
 
+    // A create-on-send draft can spend noticeable time creating its Thread or
+    // worktree. Show the user's turn in the draft transcript immediately; the
+    // message store moves it to the real thread when materialization finishes.
+    if (isDraftThread) {
+      const optimisticContent = trimmed || currentAttachments.map((attachment) => `@${attachment.name}`).join(' ')
+      appendUserMessage(threadId, optimisticContent, clientUserMessageId)
+    }
+
     // Clear input immediately so the UI feels responsive before async work completes
     setDraft(threadId, '')
     setAttachments([])
@@ -356,15 +364,20 @@ function InputBarContent({ threadId }: Props) {
       }
 
       // Append optimistic user message to the correct store based on active session
-      const activeSessionId = useSessionStore.getState().activeSessionByThread[targetThreadId]
-      if (activeSessionId) {
-        useMessageStore.getState().appendUserMessageToSession(activeSessionId, targetThreadId, finalContent, clientUserMessageId)
-      } else {
-        appendUserMessage(targetThreadId, finalContent, clientUserMessageId)
+      if (!isDraftThread) {
+        const activeSessionId = useSessionStore.getState().activeSessionByThread[targetThreadId]
+        if (activeSessionId) {
+          useMessageStore.getState().appendUserMessageToSession(activeSessionId, targetThreadId, finalContent, clientUserMessageId)
+        } else {
+          appendUserMessage(targetThreadId, finalContent, clientUserMessageId)
+        }
       }
       await send(targetThreadId, finalContent, sendOptions)
       if (currentPlanMode) setPlanMode(targetThreadId, false)
     } catch (error) {
+      if (isDraftThread && targetThreadId === threadId) {
+        useMessageStore.getState().clear(threadId)
+      }
       setDraft(targetThreadId, trimmed)
       setAttachments(currentAttachments)
       setSelectedSkills(currentSkills)

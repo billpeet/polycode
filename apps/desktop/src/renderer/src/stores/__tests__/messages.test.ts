@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { useMessageStore } from '../messages'
 import { groupByAgent } from '../../components/MessageStream'
 import type { OutputEvent } from '../../types/ipc'
@@ -124,5 +124,34 @@ describe('message store streaming merge', () => {
     if (!group || group.kind !== 'agent') throw new Error('expected agent group')
     expect(group.status).toBe('completed')
     expect(group.usage?.totalTokens).toBe(2000)
+  })
+})
+
+describe('create-on-send optimistic messages', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    useMessageStore.setState({ messagesByThread: {}, messagesBySession: {} })
+  })
+
+  it('moves the optimistic user message from the draft to the materialized thread', () => {
+    useMessageStore.getState().appendUserMessage('draft-thread', 'Start this work', 'message-1')
+
+    useMessageStore.getState().moveThreadMessages('draft-thread', 'real-thread')
+
+    expect(useMessageStore.getState().messagesByThread['draft-thread']).toBeUndefined()
+    expect(useMessageStore.getState().messagesByThread['real-thread']).toMatchObject([
+      { id: 'message-1', thread_id: 'real-thread', role: 'user', content: 'Start this work' },
+    ])
+  })
+
+  it('keeps an optimistic user message when the first server fetch is still empty', async () => {
+    vi.stubGlobal('window', { api: { invoke: vi.fn().mockResolvedValue([]) } })
+    useMessageStore.getState().appendUserMessage('real-thread', 'Start this work', 'message-1')
+
+    await useMessageStore.getState().fetch('real-thread')
+
+    expect(useMessageStore.getState().messagesByThread['real-thread']).toMatchObject([
+      { id: 'message-1', role: 'user', content: 'Start this work' },
+    ])
   })
 })

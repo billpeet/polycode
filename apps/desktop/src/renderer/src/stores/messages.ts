@@ -14,6 +14,7 @@ interface MessageStore {
 
   appendUserMessage: (threadId: string, content: string, messageId?: string) => void
   appendUserMessageToSession: (sessionId: string, threadId: string, content: string, messageId?: string) => void
+  moveThreadMessages: (fromThreadId: string, toThreadId: string) => void
 
   clear: (threadId: string) => void
   clearSession: (sessionId: string) => void
@@ -25,7 +26,17 @@ export const useMessageStore = create<MessageStore>((set) => ({
 
   fetch: async (threadId) => {
     const messages = await window.api.invoke('messages:list', threadId)
-    set((s) => ({ messagesByThread: { ...s.messagesByThread, [threadId]: messages } }))
+    set((s) => {
+      const serverIds = new Set(messages.map((message: Message) => message.id))
+      const pendingUserMessages = (s.messagesByThread[threadId] ?? [])
+        .filter((message) => message.role === 'user' && !serverIds.has(message.id))
+      return {
+        messagesByThread: {
+          ...s.messagesByThread,
+          [threadId]: [...messages, ...pendingUserMessages],
+        },
+      }
+    })
   },
 
   fetchBySession: async (sessionId) => {
@@ -111,6 +122,19 @@ export const useMessageStore = create<MessageStore>((set) => ({
       }
     }))
   },
+
+  moveThreadMessages: (fromThreadId, toThreadId) =>
+    set((s) => {
+      const source = s.messagesByThread[fromThreadId] ?? []
+      if (source.length === 0) return s
+      const updated = { ...s.messagesByThread }
+      delete updated[fromThreadId]
+      updated[toThreadId] = [
+        ...(updated[toThreadId] ?? []),
+        ...source.map((message) => ({ ...message, thread_id: toThreadId })),
+      ]
+      return { messagesByThread: updated }
+    }),
 
   clear: (threadId) =>
     set((s) => {

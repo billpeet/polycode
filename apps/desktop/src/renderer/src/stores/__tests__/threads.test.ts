@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Thread } from '../../types/ipc'
+import { useMessageStore } from '../messages'
 import { useThreadStore } from '../threads'
 
 function makeThread(overrides: Partial<Thread>): Thread {
@@ -126,6 +127,7 @@ describe('create-on-send draft survival', () => {
       draftNewThreadId: null,
       draftNewWorktree: false,
     })
+    useMessageStore.setState({ messagesByThread: {}, messagesBySession: {} })
   })
 
   it('keeps the draft at the head when the project thread list refreshes from the DB', async () => {
@@ -158,5 +160,41 @@ describe('create-on-send draft survival', () => {
     await useThreadStore.getState().fetch('project-2')
 
     expect(useThreadStore.getState().byProject['project-2']).toEqual([])
+  })
+
+  it('recovers when the draft pointer outlives its optimistic thread', () => {
+    useThreadStore.setState({
+      byProject: { 'project-1': [makeThread({})] },
+      selectedThreadId: null,
+      draftNewThreadId: 'missing-draft',
+      draftNewWorktree: false,
+    })
+
+    useThreadStore.getState().openDraftThread('project-1', 'location-main')
+
+    const state = useThreadStore.getState()
+    const draftId = state.draftNewThreadId
+    expect(draftId).not.toBe('missing-draft')
+    expect(state.selectedThreadId).toBe(draftId)
+    expect(state.byProject['project-1'].some((thread) => thread.id === draftId)).toBe(true)
+  })
+
+  it('carries the optimistic user message onto the materialized thread', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'threads:create') return makeThread({ id: 'real-thread', name: 'New thread' })
+      return undefined
+    })
+    useThreadStore.getState().openDraftThread('project-1', 'location-main')
+    const draftId = useThreadStore.getState().draftNewThreadId
+    if (!draftId) throw new Error('expected a draft thread')
+    useMessageStore.getState().appendUserMessage(draftId, 'Start this work', 'message-1')
+
+    const realThreadId = await useThreadStore.getState().materializeDraftThread(draftId)
+
+    expect(realThreadId).toBe('real-thread')
+    expect(useMessageStore.getState().messagesByThread[draftId]).toBeUndefined()
+    expect(useMessageStore.getState().messagesByThread[realThreadId]).toMatchObject([
+      { id: 'message-1', thread_id: realThreadId, role: 'user', content: 'Start this work' },
+    ])
   })
 })

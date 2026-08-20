@@ -155,9 +155,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   openDraftThread: (projectId, locationId, opts) => {
     const existingId = get().draftNewThreadId
     if (existingId) {
-      get().setDraftThreadDestination(projectId, locationId, opts)
-      set({ selectedThreadId: existingId })
-      return
+      const existingDraft = Object.values(get().byProject).flat().find((thread) => thread.id === existingId)
+      if (existingDraft) {
+        get().setDraftThreadDestination(projectId, locationId, opts)
+        set({ selectedThreadId: existingId })
+        return
+      }
+
+      // A project/location mutation can remove the optimistic row before it
+      // clears the singleton pointer. Selecting that orphan ID renders a
+      // composer with no project or destination, so Send can never progress.
+      get().discardDraftThread()
     }
 
     const projectThreads = get().byProject[projectId] ?? []
@@ -312,6 +320,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         await window.api.invoke('threads:updateProviderAndModel', thread.id, draft.provider, draft.model)
         thread = { ...thread, provider: draft.provider, model: draft.model }
       }
+
+      const { useMessageStore } = await import('./messages')
+      useMessageStore.getState().moveThreadMessages(draftId, thread.id)
 
       set((s) => {
         const draftText = s.draftByThread[draftId]
