@@ -163,6 +163,35 @@ describe('PiDriver event parsing', () => {
     ])
   })
 
+  it('uses a provider-reported context limit when Pi supplies one', () => {
+    const driver = makeDriver()
+    expect(parse(driver, {
+      type: 'turn_end',
+      message: { usage: { input: 12, output: 4, contextWindow: 258_400 } },
+    })).toEqual([{
+      type: 'usage',
+      content: '',
+      metadata: {
+        input_tokens: 12,
+        output_tokens: 4,
+        context_window: 16,
+        max_context_window: 258_400,
+      },
+    }])
+  })
+
+  it('clears the live context snapshot after successful compaction', () => {
+    const driver = makeDriver()
+    expect(parse(driver, {
+      type: 'compaction_end',
+      reason: 'threshold',
+      aborted: false,
+      result: { summary: 'compacted' },
+    })).toEqual([
+      { type: 'usage', content: '', metadata: { input_tokens: 0, output_tokens: 0, context_window: 0 } },
+    ])
+  })
+
   it('emits turn_end errors for failed assistant messages', () => {
     const driver = makeDriver()
     expect(parse(driver, {

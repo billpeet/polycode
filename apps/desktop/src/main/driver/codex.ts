@@ -1129,15 +1129,13 @@ export function parseCodexAppServerNotification(
       const usage = (turn?.usage as Record<string, unknown> | undefined) ?? (params?.usage as Record<string, unknown> | undefined)
       const inputTokens = Number(usage?.inputTokens ?? usage?.input_tokens ?? 0)
       const outputTokens = Number(usage?.outputTokens ?? usage?.output_tokens ?? 0)
-      const contextWindow = normalizeCodexContextWindowUsage(usage)
-      if (inputTokens || outputTokens || contextWindow) {
+      if (inputTokens || outputTokens) {
         events.push({
           type: 'usage',
           content: '',
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
-            context_window: contextWindow,
           },
         })
       }
@@ -1193,8 +1191,8 @@ export function parseCodexAppServerNotification(
     case 'thread/tokenUsage/updated': {
       const tokenUsage = params?.tokenUsage as Record<string, unknown> | undefined
       const last = tokenUsage?.last as Record<string, unknown> | undefined
-      const total = tokenUsage?.total as Record<string, unknown> | undefined
-      const usage = last ?? total
+      if (!last) break
+      const usage = last
       const inputTokens = pickNumber(usage, 'inputTokens', 'input_tokens') ?? 0
       const outputTokens = pickNumber(usage, 'outputTokens', 'output_tokens') ?? 0
       const cachedInputTokens = pickNumber(usage, 'cachedInputTokens', 'cached_input_tokens') ?? 0
@@ -1208,6 +1206,7 @@ export function parseCodexAppServerNotification(
             input_tokens: inputTokens,
             output_tokens: outputTokens,
             context_window: maxTokens && maxTokens > 0 ? Math.min(totalTokens, maxTokens) : totalTokens,
+            ...(maxTokens && maxTokens > 0 ? { max_context_window: maxTokens } : {}),
           },
         })
       }
@@ -1225,6 +1224,11 @@ export function parseCodexAppServerNotification(
       break
     }
     case 'thread/compacted':
+      events.push({
+        type: 'usage',
+        content: '',
+        metadata: { input_tokens: 0, output_tokens: 0, context_window: 0 },
+      })
       events.push({
         type: 'tool_result',
         content: 'Conversation history compacted.',

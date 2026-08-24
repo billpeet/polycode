@@ -299,7 +299,7 @@ describe('parseCodexAppServerNotification', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 12, output_tokens: 4, context_window: 16 },
+        metadata: { input_tokens: 12, output_tokens: 4 },
       } satisfies OutputEvent,
     ])
   })
@@ -679,9 +679,52 @@ describe('parseCodexAppServerNotification', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 10, output_tokens: 3, context_window: 15 },
+        metadata: { input_tokens: 10, output_tokens: 3, context_window: 15, max_context_window: 200 },
       } satisfies OutputEvent,
     ])
+  })
+
+  it('keeps lifetime processed tokens separate from the live context after compaction', () => {
+    expect(parseCodexAppServerNotification(
+      'thread/tokenUsage/updated',
+      {
+        threadId: 'thread_1',
+        tokenUsage: {
+          last: { inputTokens: 40_000, cachedInputTokens: 5_000, outputTokens: 5_000, totalTokens: 50_000 },
+          total: { inputTokens: 850_000, cachedInputTokens: 100_000, outputTokens: 50_000, totalTokens: 1_000_000 },
+          modelContextWindow: 258_400,
+        },
+      },
+      state,
+    )).toEqual([{
+      type: 'usage',
+      content: '',
+      metadata: {
+        input_tokens: 40_000,
+        output_tokens: 5_000,
+        context_window: 50_000,
+        max_context_window: 258_400,
+      },
+    } satisfies OutputEvent])
+  })
+
+  it('clears the live context snapshot as soon as Codex reports compaction', () => {
+    expect(parseCodexAppServerNotification(
+      'thread/compacted',
+      { threadId: 'thread_1', turnId: 'turn_1' },
+      state,
+    )).toEqual([
+      { type: 'usage', content: '', metadata: { input_tokens: 0, output_tokens: 0, context_window: 0 } },
+      {
+        type: 'tool_result',
+        content: 'Conversation history compacted.',
+        metadata: {
+          type: 'tool_result',
+          tool_use_id: 'turn_1',
+          source: 'codex_context_compaction',
+        },
+      },
+    ] satisfies OutputEvent[])
   })
 
   it('surfaces Codex model and warning notifications', () => {

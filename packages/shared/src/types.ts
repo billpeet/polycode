@@ -361,6 +361,8 @@ export interface TokenUsage {
   input_tokens: number
   output_tokens: number
   context_window: number
+  /** Provider-reported context limit for the active session/model. */
+  max_context_window?: number
 }
 
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {

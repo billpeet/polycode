@@ -123,7 +123,7 @@ interface ThreadStore {
   queueMessage: (threadId: string, content: string, options: SendOptions) => void
   clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
-  addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window?: number | null) => void
+  addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window?: number | null, max_context_window?: number | null) => void
   setPid: (threadId: string, pid: number | null) => void
 }
 
@@ -1291,7 +1291,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }))
   },
 
-  addUsage: (threadId, input_tokens, output_tokens, context_window) =>
+  addUsage: (threadId, input_tokens, output_tokens, context_window, max_context_window) =>
     set((s) => {
       const prev = s.usageByThread[threadId]
       return {
@@ -1301,6 +1301,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
             input_tokens: (prev?.input_tokens ?? 0) + input_tokens,
             output_tokens: (prev?.output_tokens ?? 0) + output_tokens,
             context_window: context_window ?? (prev?.context_window ?? 0),
+            max_context_window: max_context_window ?? prev?.max_context_window,
           }
         }
       }

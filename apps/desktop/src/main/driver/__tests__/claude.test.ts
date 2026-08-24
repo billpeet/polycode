@@ -45,6 +45,50 @@ describe('ClaudeDriver permission mode', () => {
   })
 })
 
+describe('ClaudeDriver context usage', () => {
+  it('emits the provider-reported context limit with result usage', () => {
+    const driver = makeDriver()
+    const events = (driver as any).parseMessage({
+      type: 'result',
+      subtype: 'success',
+      usage: {
+        input_tokens: 100,
+        output_tokens: 20,
+        cache_creation_input_tokens: 10,
+        cache_read_input_tokens: 70,
+      },
+      modelUsage: { 'claude-test': { contextWindow: 1_000_000 } },
+    })
+
+    expect(events).toEqual([{
+      type: 'usage',
+      content: '',
+      metadata: {
+        input_tokens: 100,
+        output_tokens: 20,
+        context_window: 200,
+        max_context_window: 1_000_000,
+      },
+    }])
+  })
+
+  it('clears the live context snapshot when compaction starts', () => {
+    const driver = makeDriver()
+    expect((driver as any).parseMessage({
+      type: 'system',
+      subtype: 'status',
+      status: 'compacting',
+    })).toEqual([
+      { type: 'usage', content: '', metadata: { input_tokens: 0, output_tokens: 0, context_window: 0 } },
+      {
+        type: 'thinking',
+        content: 'Compacting conversation context...',
+        metadata: { type: 'thinking', source: 'claude_status', status: 'compacting' },
+      },
+    ])
+  })
+})
+
 describe('ClaudeDriver permission control flow', () => {
   it('emits permission_request and resolves when approved', async () => {
     const driver = makeDriver()

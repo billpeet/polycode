@@ -363,6 +363,9 @@ export class PiDriver implements CLIDriver {
         const usage = message?.usage as Record<string, unknown> | undefined
         const inputTokens = Number(usage?.input ?? 0)
         const outputTokens = Number(usage?.output ?? 0)
+        const reportedMaxContextWindow = Number(
+          usage?.contextWindow ?? usage?.context_window ?? usage?.maxTokens ?? usage?.max_tokens ?? 0
+        )
         const contextWindow = inputTokens + outputTokens
         if (inputTokens || outputTokens || contextWindow) {
           events.push({
@@ -372,6 +375,9 @@ export class PiDriver implements CLIDriver {
               input_tokens: inputTokens,
               output_tokens: outputTokens,
               context_window: contextWindow,
+              ...(Number.isFinite(reportedMaxContextWindow) && reportedMaxContextWindow > 0
+                ? { max_context_window: reportedMaxContextWindow }
+                : {}),
             },
           })
         }
@@ -383,6 +389,16 @@ export class PiDriver implements CLIDriver {
         }
         break
       }
+
+      case 'compaction_end':
+        if (typeof data.errorMessage !== 'string') {
+          events.push({
+            type: 'usage',
+            content: '',
+            metadata: { input_tokens: 0, output_tokens: 0, context_window: 0 },
+          })
+        }
+        break
 
       default:
         break

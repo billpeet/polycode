@@ -147,8 +147,10 @@ function ThreadViewContent({ threadId }: Props) {
         const input = (event.metadata.input_tokens as number) ?? 0
         const output = (event.metadata.output_tokens as number) ?? 0
         const contextWindow = (event.metadata.context_window as number | undefined) ?? null
-        if (input || output || contextWindow) {
-          useThreadStore.getState().addUsage(threadId, input, output, contextWindow)
+        const maxContextWindow = (event.metadata.max_context_window as number | undefined) ?? null
+        const hasContextSnapshot = event.metadata.context_window !== undefined
+        if (input || output || hasContextSnapshot || maxContextWindow) {
+          useThreadStore.getState().addUsage(threadId, input, output, contextWindow, maxContextWindow)
         }
       }
 

@@ -644,6 +644,7 @@ export class ClaudeDriver implements CLIDriver {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
             context_window: contextWindow,
+            ...(maxContextWindow > 0 ? { max_context_window: maxContextWindow } : {}),
           },
         })
       }
@@ -756,6 +757,11 @@ export class ClaudeDriver implements CLIDriver {
 
       case 'status':
         if (message.status === 'compacting') {
+          events.push({
+            type: 'usage',
+            content: '',
+            metadata: { input_tokens: 0, output_tokens: 0, context_window: 0 },
+          })
           events.push({
             type: 'thinking',
             content: 'Compacting conversation context...',

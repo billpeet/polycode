@@ -7,7 +7,7 @@ import { useToastStore } from '../stores/toast'
 import { useGitErrorReporter } from '../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../lib/gitRefreshCoordinator'
 import { useTerminalStore } from '../stores/terminal'
-import { MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, resolveEffectiveModel } from '../types/ipc'
+import { resolveDisplayedContextLimit } from '../lib/contextWindowLimit'
 import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
@@ -442,8 +442,12 @@ export default function ThreadHeader({ threadId }: Props) {
 
         {/* Token usage + context window */}
         {usage && (() => {
-          const model = resolveEffectiveModel(thread?.provider ?? 'claude-code', thread?.model ?? 'claude-opus-4-8', thread?.cursor_context)
-          const contextLimit = MODEL_CONTEXT_LIMITS[model] ?? DEFAULT_CONTEXT_LIMIT
+          const contextLimit = resolveDisplayedContextLimit(
+            thread?.provider ?? 'claude-code',
+            thread?.model ?? 'claude-opus-4-8',
+            thread?.cursor_context,
+            usage.max_context_window,
+          )
           return (
             <span
               className="flex items-center gap-2 text-xs flex-shrink-0"
