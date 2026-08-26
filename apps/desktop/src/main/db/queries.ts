@@ -11,6 +11,7 @@ function rowToProject(row: ProjectRow): Project {
     id: row.id,
     name: row.name,
     git_url: row.git_url ?? null,
+    favicon_path: row.favicon_path ?? null,
     allow_main_branch_commits: row.allow_main_branch_commits !== 0,
     archived_at: row.archived_at ?? null,
     created_at: row.created_at,
@@ -65,6 +66,7 @@ export function createProject(name: string, gitUrl?: string | null, allowMainBra
     id,
     name,
     git_url: gitUrl ?? null,
+    favicon_path: null,
     allow_main_branch_commits: allowMainBranchCommits,
     archived_at: null,
     created_at: now,
@@ -73,10 +75,10 @@ export function createProject(name: string, gitUrl?: string | null, allowMainBra
   }
 }
 
-export function updateProject(id: string, name: string, gitUrl?: string | null, allowMainBranchCommits = true): void {
+export function updateProject(id: string, name: string, gitUrl?: string | null, allowMainBranchCommits = true, faviconPath?: string | null): void {
   getDb()
-    .prepare('UPDATE projects SET name = ?, git_url = ?, allow_main_branch_commits = ?, updated_at = ? WHERE id = ?')
-    .run(name, gitUrl ?? null, allowMainBranchCommits ? 1 : 0, new Date().toISOString(), id)
+    .prepare('UPDATE projects SET name = ?, git_url = ?, allow_main_branch_commits = ?, favicon_path = ?, updated_at = ? WHERE id = ?')
+    .run(name, gitUrl ?? null, allowMainBranchCommits ? 1 : 0, faviconPath ?? null, new Date().toISOString(), id)
 }
 
 export function deleteProject(id: string): void {

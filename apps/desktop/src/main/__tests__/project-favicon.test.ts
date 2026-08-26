@@ -9,7 +9,9 @@ import {
   clearProjectFaviconCache,
   flushProjectFaviconCache,
   projectFaviconDataUrl,
+  projectFaviconOverrideDataUrl,
   resolveProjectFaviconPath,
+  storeProjectFaviconPath,
 } from '../project-favicon'
 
 const roots: string[] = []
@@ -27,6 +29,29 @@ afterEach(() => {
 })
 
 describe('project favicon discovery', () => {
+  it('stores files inside any project location as relative paths', () => {
+    const first = path.join('C:', 'projects', 'main')
+    const worktree = path.join('C:', 'projects', 'worktree')
+    const icon = path.join(worktree, 'assets', 'project.svg')
+
+    expect(storeProjectFaviconPath(icon, [first, worktree])).toBe(path.join('assets', 'project.svg'))
+  })
+
+  it('keeps files outside project locations as absolute paths', () => {
+    const icon = path.resolve(tempRoot(), 'project.svg')
+    expect(storeProjectFaviconPath(icon, [path.resolve(tempRoot())])).toBe(icon)
+  })
+
+  it('resolves a relative override against every local location', async () => {
+    const first = tempRoot()
+    const worktree = tempRoot()
+    fs.mkdirSync(path.join(worktree, 'branding'))
+    fs.writeFileSync(path.join(worktree, 'branding', 'project.svg'), '<svg/>')
+
+    await expect(projectFaviconOverrideDataUrl(path.join('branding', 'project.svg'), [first, worktree]))
+      .resolves.toMatch(/^data:image\/svg\+xml;base64,/)
+  })
+
   it('finds a favicon in a nested monorepo app', async () => {
     const root = tempRoot()
     fs.mkdirSync(path.join(root, 'apps', 'web', 'static'), { recursive: true })

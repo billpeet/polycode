@@ -22,6 +22,7 @@ describe('database migrations', () => {
     runMigrations(database)
 
     expect(database.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION)
+    expect(database.prepare("SELECT name FROM pragma_table_info('projects') WHERE name = 'favicon_path'").pluck().get()).toBe('favicon_path')
     const indexes = database
       .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name LIKE 'idx_%' ORDER BY name")
       .pluck()
@@ -75,6 +76,7 @@ describe('database migrations', () => {
     expect(database.prepare('SELECT last_turn_started_at FROM threads WHERE id = ?').pluck().get('thread')).toBeNull()
     // v4 deliberately does not backfill: NULL already means "never snoozed".
     expect(database.prepare('SELECT snoozed_until FROM threads WHERE id = ?').pluck().get('thread')).toBeNull()
+    expect(database.prepare('SELECT favicon_path FROM projects WHERE id = ?').pluck().get('project')).toBeNull()
     expect(database.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION)
   })
 

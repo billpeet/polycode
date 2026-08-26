@@ -92,6 +92,7 @@ import {
   getImportedSessionIds,
   getLastUsedProviderAndModel,
   getLocationForThread,
+  getProjectById,
   getRoutine,
   getSetting,
   getThreadById,
@@ -200,7 +201,7 @@ import {
   removeWorktreeLocation,
   suggestUniquePath,
 } from '../project-admin'
-import { projectFaviconDataUrl } from '../project-favicon'
+import { projectFaviconDataUrl, projectFaviconOverrideDataUrl, storeProjectFaviconPath } from '../project-favicon'
 import { emitAppEvent } from '../app-events'
 import {
   amendCommit,
@@ -560,9 +561,13 @@ export const channelHandlers = {
 
   'projects:listArchived': () => listArchivedProjects(),
 
-  'projects:favicon': (_ctx, projectId) => {
-    const location = listLocations(projectId).find((item) => item.connection_type === 'local')
-    return location ? projectFaviconDataUrl(location.path) : null
+  'projects:favicon': async (_ctx, projectId) => {
+    const locationPaths = listLocations(projectId)
+      .filter((item) => item.connection_type === 'local')
+      .map((item) => item.path)
+    const project = getProjectById(projectId)
+    if (project?.favicon_path) return projectFaviconOverrideDataUrl(project.favicon_path, locationPaths)
+    return locationPaths[0] ? projectFaviconDataUrl(locationPaths[0]) : null
   },
 
   'projects:create': (_ctx, name, gitUrl, allowMainBranchCommits) =>
@@ -573,8 +578,18 @@ export const channelHandlers = {
   // rows are written, so a failure never leaves an orphaned project behind.
   'projects:createFull': (_ctx, spec) => createFullProject(spec),
 
-  'projects:update': (_ctx, id, name, gitUrl, allowMainBranchCommits) =>
-    updateProject(id, name, gitUrl, allowMainBranchCommits ?? true),
+  'projects:update': (_ctx, id, name, gitUrl, allowMainBranchCommits, faviconPath) => {
+    const locationPaths = listLocations(id)
+      .filter((item) => item.connection_type === 'local')
+      .map((item) => item.path)
+    return updateProject(
+      id,
+      name,
+      gitUrl,
+      allowMainBranchCommits ?? true,
+      storeProjectFaviconPath(faviconPath, locationPaths),
+    )
+  },
 
   'projects:delete': (_ctx, id) => {
     sessionManager.stopAll()
@@ -2066,6 +2081,14 @@ export const channelHandlers = {
     // The second `?? null` is not redundant with `canceled`: a dialog can return
     // `canceled: false` with an empty selection, and an `undefined` would be dropped by
     // JSON.stringify on the way to the renderer while the contract promises `string | null`.
+    return result.canceled ? null : result.filePaths[0] ?? null
+  },
+
+  'dialog:open-favicon': async (ctx) => {
+    const result = await dialog.showOpenDialog(ctx.window, {
+      properties: ['openFile'],
+      filters: [{ name: 'Favicons', extensions: ['ico', 'png', 'svg'] }],
+    })
     return result.canceled ? null : result.filePaths[0] ?? null
   },
 

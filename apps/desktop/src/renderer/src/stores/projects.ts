@@ -53,7 +53,7 @@ interface ProjectStore {
   touch: (projectId: string) => void
   create: (name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => Promise<Project>
   createFull: (spec: NewProjectSpec) => Promise<Project>
-  update: (id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean) => Promise<void>
+  update: (id: string, name: string, gitUrl?: string | null, allowMainBranchCommits?: boolean, faviconPath?: string | null) => Promise<void>
   remove: (id: string) => Promise<void>
   archive: (id: string) => Promise<void>
   unarchive: (id: string) => Promise<void>
@@ -121,11 +121,11 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     return project
   },
 
-  update: async (id, name, gitUrl, allowMainBranchCommits = true) => {
-    await window.api.invoke('projects:update', id, name, gitUrl, allowMainBranchCommits)
+  update: async (id, name, gitUrl, allowMainBranchCommits = true, faviconPath) => {
+    await window.api.invoke('projects:update', id, name, gitUrl, allowMainBranchCommits, faviconPath)
     set((s) => ({
-      projects: s.projects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
-      archivedProjects: s.archivedProjects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
+      projects: s.projects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, favicon_path: faviconPath ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
+      archivedProjects: s.archivedProjects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, favicon_path: faviconPath ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
     }))
   },
 

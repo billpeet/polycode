@@ -88,6 +88,33 @@ async function readFaviconDataUrl(iconPath: string): Promise<{ dataUrl: string; 
   }
 }
 
+export async function faviconFileDataUrl(iconPath: string): Promise<string | null> {
+  return (await readFaviconDataUrl(iconPath))?.dataUrl ?? null
+}
+
+export function storeProjectFaviconPath(iconPath: string | null | undefined, locationPaths: string[]): string | null {
+  const selected = iconPath?.trim()
+  if (!selected) return null
+  if (!path.isAbsolute(selected)) return path.normalize(selected)
+
+  const resolvedSelected = path.resolve(selected)
+  const roots = locationPaths.map((root) => path.resolve(root)).sort((a, b) => b.length - a.length)
+  for (const root of roots) {
+    const relative = path.relative(root, resolvedSelected)
+    if (relative && !relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative)) return relative
+  }
+  return resolvedSelected
+}
+
+export async function projectFaviconOverrideDataUrl(faviconPath: string, locationPaths: string[]): Promise<string | null> {
+  if (path.isAbsolute(faviconPath)) return faviconFileDataUrl(faviconPath)
+  for (const root of locationPaths) {
+    const dataUrl = await faviconFileDataUrl(path.resolve(root, faviconPath))
+    if (dataUrl) return dataUrl
+  }
+  return null
+}
+
 async function readPersistentResult(root: string): Promise<string | null | undefined> {
   const key = cacheKey(root)
   const cache = await loadPersistentCache()

@@ -10,6 +10,7 @@ const migrations: Migration[] = [
   { version: 2, up: addRoutines },
   { version: 3, up: addTurnTimestamps },
   { version: 4, up: addSnooze },
+  { version: 5, up: addProjectFaviconOverride },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -27,6 +28,10 @@ export function runMigrations(database: Database.Database): void {
       database.pragma(`user_version = ${migration.version}`)
     })()
   }
+}
+
+function addProjectFaviconOverride(database: Database.Database): void {
+  database.exec('ALTER TABLE projects ADD COLUMN favicon_path TEXT')
 }
 
 /**
@@ -533,4 +538,3 @@ function adoptLegacySchema(database: Database.Database): void {
       ON repo_locations(project_id, created_at ASC);
   `)
 }
-

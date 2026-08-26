@@ -208,6 +208,7 @@ export const CHANNEL_REGISTRY = {
   'attachments:getFileInfo': { local: true, remote: false },
   'attachments:saveFromPath': { local: true, remote: false },
   'dialog:open-directory': { local: true, remote: false },
+  'dialog:open-favicon': { local: true, remote: false },
   'dialog:open-files': { local: true, remote: false },
   'settings:get': { local: true, remote: false },
   'settings:set': { local: true, remote: false },

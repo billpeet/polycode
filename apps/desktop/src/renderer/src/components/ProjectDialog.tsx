@@ -16,6 +16,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   const [name, setName] = useState(project?.name ?? '')
   const [gitUrl, setGitUrl] = useState(project?.git_url ?? '')
   const [allowMainBranchCommits, setAllowMainBranchCommits] = useState(project?.allow_main_branch_commits ?? true)
+  const [faviconPath, setFaviconPath] = useState(project?.favicon_path ?? '')
   const [error, setError] = useState('')
   const [projectSaved, setProjectSaved] = useState(false)
   const [locationForm, setLocationForm] = useState<LocationFormState>({ mode: 'none' })
@@ -52,12 +53,17 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
     }
     if (!project) return
     try {
-      await updateProject(project.id, name.trim(), gitUrl.trim() || null, allowMainBranchCommits)
+      await updateProject(project.id, name.trim(), gitUrl.trim() || null, allowMainBranchCommits, faviconPath.trim() || null)
       setProjectSaved(true)
       setTimeout(() => setProjectSaved(false), 2000)
     } catch (err) {
       setError(String(err))
     }
+  }
+
+  async function handleBrowseFavicon(): Promise<void> {
+    const selected = await window.api.invoke('dialog:open-favicon')
+    if (selected) setFaviconPath(selected)
   }
 
   async function handleDeleteLocation(loc: RepoLocation): Promise<void> {
@@ -127,6 +133,33 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
               style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
               placeholder="https://github.com/org/repo.git"
             />
+          </div>
+
+          <div>
+            <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              Favicon override <span style={{ opacity: 0.5 }}>(optional)</span>
+            </label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={faviconPath}
+                onChange={(e) => setFaviconPath(e.target.value)}
+                className="min-w-0 flex-1 rounded px-3 py-2 text-sm outline-none font-mono"
+                style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+                placeholder="Auto-detect"
+              />
+              <button type="button" onClick={handleBrowseFavicon} className="rounded px-3 py-2 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
+                Browse
+              </button>
+              {faviconPath && (
+                <button type="button" onClick={() => setFaviconPath('')} className="rounded px-3 py-2 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
+                  Clear
+                </button>
+              )}
+            </div>
+            <p className="mt-1 text-[11px]" style={{ color: 'var(--color-text-muted)' }}>
+              Files inside a local project location are saved as repository-relative paths.
+            </p>
           </div>
 
           <label className="flex items-start gap-2 rounded px-3 py-2 text-xs cursor-pointer" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>

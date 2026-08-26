@@ -42,6 +42,7 @@ export interface Project {
   id: string
   name: string
   git_url: string | null
+  favicon_path: string | null
   allow_main_branch_commits: boolean
   archived_at: string | null
   created_at: string
