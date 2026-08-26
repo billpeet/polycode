@@ -104,6 +104,7 @@ describe('channel handler map migration', () => {
       'update:apply',
       'update:get-state',
       'dialog:open-directory',
+      'dialog:open-favicon',
       'dialog:open-files',
       'settings:get',
       'settings:set',
