@@ -138,8 +138,12 @@ export default function ComposerToolbar({
     if (currentProvider !== 'pi') return
 
     let cancelled = false
-    setPiModelsLoading(true)
-    setPiModelsError(null)
+    setTimeout(() => {
+      if (!cancelled) {
+        setPiModelsLoading(true)
+        setPiModelsError(null)
+      }
+    }, 0)
     const forceRefresh = forcePiModelsRefresh.current
     forcePiModelsRefresh.current = false
     window.api.invoke('models:piAvailable', threadId, forceRefresh)

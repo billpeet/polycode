@@ -95,7 +95,9 @@ function SearchableModelSelect({
   }
 
   useEffect(() => {
-    if (highlighted >= filtered.length) setHighlighted(Math.max(0, filtered.length - 1))
+    if (highlighted >= filtered.length) {
+      setTimeout(() => setHighlighted(Math.max(0, filtered.length - 1)), 0)
+    }
   }, [filtered.length, highlighted])
 
   return (
