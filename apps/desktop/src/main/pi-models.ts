@@ -35,8 +35,6 @@ type PiModel = {
 }
 
 const SUCCESS_TTL_MS = 60 * 60_000
-const EMPTY_TTL_MS = 5 * 60_000
-const ERROR_TTL_MS = 60_000
 const REQUEST_TIMEOUT_MS = 15_000
 
 const cache = new Map<string, CacheEntry>()
@@ -190,8 +188,8 @@ async function queryPiAvailableModels(
 
     proc.on('error', (error) => finish(error))
     proc.on('close', (code) => {
-      if (!settled && code !== 0 && code !== null) {
-        finish(new Error(`pi exited with code ${code}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
+      if (!settled) {
+        finish(new Error(`pi exited before returning available models${code !== null ? ` (code ${code})` : ''}${stderrBuffer.trim() ? `: ${stderrBuffer.trim()}` : ''}`))
       }
     })
 
@@ -215,12 +213,10 @@ export async function listPiAvailableModels(options: {
 
   const promise = queryPiAvailableModels(cwd, options.ssh, options.wsl)
     .then((models) => {
-      writeCache(key, models, models.length > 0 ? SUCCESS_TTL_MS : EMPTY_TTL_MS)
+      // Empty catalogs are usually a transient Pi startup or provider-state problem.
+      // Cache only a useful result so the next request can recover immediately.
+      if (models.length > 0) writeCache(key, models, SUCCESS_TTL_MS)
       return models
-    })
-    .catch((error) => {
-      writeCache(key, [], ERROR_TTL_MS)
-      throw error
     })
     .finally(() => {
       inFlight.delete(key)

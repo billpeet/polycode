@@ -151,12 +151,12 @@ export const OPENCODE_MODELS = [
 export type OpenCodeModelId = typeof OPENCODE_MODELS[number]['id']
 
 export const PI_MODELS = [
-  { id: 'openai-codex/gpt-5.5', label: 'GPT-5.5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'openai-codex/gpt-5.4', label: 'GPT-5.4', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'openai-codex/gpt-5.4-mini', label: 'GPT-5.4 Mini', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'anthropic/claude-opus-4-7', label: 'Claude Opus 4.7', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'anthropic/claude-sonnet-4-6', label: 'Claude Sonnet 4.6', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
-  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
+  { id: 'openai-codex/gpt-5.6-sol', label: 'GPT-5.6 Sol', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'openai-codex/gpt-5.6-terra', label: 'GPT-5.6 Terra', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'openai-codex/gpt-5.6-luna', label: 'GPT-5.6 Luna', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'anthropic/claude-fable-5', label: 'Claude Fable 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
 ] as const satisfies readonly ModelOption[]
 
 export type PiModelId = typeof PI_MODELS[number]['id']

@@ -10,6 +10,9 @@ interface ModelSelectorMenuProps {
   providerLocked: boolean
   currentThread: Thread | undefined
   modelOptions: readonly ModelOption[]
+  modelsLoading?: boolean
+  modelsError?: string | null
+  onRetryModels?: () => void
   reasoningOptions: readonly ReasoningLevel[]
   currentReasoningLevel: ReasoningLevel
   showReasoningSelector: boolean
@@ -60,6 +63,9 @@ export default function ModelSelectorMenu({
   providerLocked,
   currentThread,
   modelOptions,
+  modelsLoading = false,
+  modelsError = null,
+  onRetryModels,
   reasoningOptions,
   currentReasoningLevel,
   showReasoningSelector,
@@ -198,18 +204,34 @@ export default function ModelSelectorMenu({
           </SelectRow>
 
           <SelectRow label="Model">
-            <select
-              value={currentThread?.model ?? ''}
-              onChange={(e) => onSelectModel(e.target.value)}
-              disabled={isProcessing}
-              className={selectClassName}
-              style={selectStyle}
-              title="Select model"
-            >
-              {modelOptions.map((m) => (
-                <option key={m.id} value={m.id} style={optionStyle}>{m.label}</option>
-              ))}
-            </select>
+            <div className="flex min-w-0 flex-1 items-center gap-1.5">
+              <select
+                value={currentThread?.model ?? ''}
+                onChange={(e) => onSelectModel(e.target.value)}
+                disabled={isProcessing}
+                className={selectClassName}
+                style={selectStyle}
+                title={modelsError ?? 'Select model'}
+              >
+                {modelOptions.map((m) => (
+                  <option key={m.id} value={m.id} style={optionStyle}>{m.label}</option>
+                ))}
+              </select>
+              {modelsLoading && (
+                <span className="status-spinner h-3 w-3 flex-shrink-0" title="Loading models" aria-label="Loading models" />
+              )}
+              {!modelsLoading && modelsError && onRetryModels && (
+                <button
+                  type="button"
+                  onClick={onRetryModels}
+                  className="flex-shrink-0 rounded px-1 py-0.5 text-[10px]"
+                  style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                  title={modelsError}
+                >
+                  Retry
+                </button>
+              )}
+            </div>
           </SelectRow>
 
           {showReasoningSelector && (

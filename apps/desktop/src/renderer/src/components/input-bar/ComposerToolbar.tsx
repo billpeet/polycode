@@ -82,6 +82,9 @@ export default function ComposerToolbar({
   const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
   const [liveOpenCodeModels, setLiveOpenCodeModels] = useState<ModelOption[]>([])
   const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
+  const [piModelsLoading, setPiModelsLoading] = useState(false)
+  const [piModelsError, setPiModelsError] = useState<string | null>(null)
+  const [piModelsRefresh, setPiModelsRefresh] = useState(0)
   const [liveCursorModels, setLiveCursorModels] = useState<ModelOption[]>([])
   const [liveGrokModels, setLiveGrokModels] = useState<ModelOption[]>([])
 
@@ -134,16 +137,23 @@ export default function ComposerToolbar({
     if (currentProvider !== 'pi') return
 
     let cancelled = false
+    setPiModelsLoading(true)
+    setPiModelsError(null)
     window.api.invoke('models:piAvailable', threadId)
       .then((models) => {
-        if (!cancelled && models.length > 0) setLivePiModels(models)
+        if (cancelled) return
+        setLivePiModels(models)
+        if (models.length === 0) setPiModelsError('Pi returned no available models')
       })
-      .catch(() => {
-        // Keep static fallback models when pi is unavailable or unauthenticated.
+      .catch((error) => {
+        if (!cancelled) setPiModelsError(error instanceof Error ? error.message : 'Could not load Pi models')
+      })
+      .finally(() => {
+        if (!cancelled) setPiModelsLoading(false)
       })
 
     return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
+  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro, piModelsRefresh])
 
   useEffect(() => {
     if (currentProvider !== 'cursor') return
@@ -409,6 +419,9 @@ export default function ComposerToolbar({
           providerLocked={providerLocked}
           currentThread={currentThread}
           modelOptions={modelOptions}
+          modelsLoading={currentProvider === 'pi' && piModelsLoading}
+          modelsError={currentProvider === 'pi' ? piModelsError : null}
+          onRetryModels={currentProvider === 'pi' ? () => setPiModelsRefresh((value) => value + 1) : undefined}
           reasoningOptions={reasoningOptions}
           currentReasoningLevel={currentReasoningLevel}
           showReasoningSelector={showReasoningSelector}
