@@ -30,8 +30,10 @@ afterEach(() => {
 
 describe('project favicon discovery', () => {
   it('stores files inside any project location as relative paths', () => {
-    const first = path.join('C:', 'projects', 'main')
-    const worktree = path.join('C:', 'projects', 'worktree')
+    // path.resolve keeps these absolute on both POSIX and win32; a literal
+    // 'C:/projects' is only absolute on Windows and would be stored verbatim.
+    const first = path.resolve('/projects/main')
+    const worktree = path.resolve('/projects/worktree')
     const icon = path.join(worktree, 'assets', 'project.svg')
 
     expect(storeProjectFaviconPath(icon, [first, worktree])).toBe(path.join('assets', 'project.svg'))
