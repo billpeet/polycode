@@ -271,7 +271,7 @@ export interface ChannelContract {
   'models:claudeAvailable': [[threadId?: string | null], ModelOption[]]
   'models:codexAvailable': [[threadId?: string | null], ModelOption[]]
   'models:opencodeAvailable': [[threadId?: string | null], ModelOption[]]
-  'models:piAvailable': [[threadId?: string | null], ModelOption[]]
+  'models:piAvailable': [[threadId?: string | null, forceRefresh?: boolean], ModelOption[]]
   'models:cursorAvailable': [[threadId?: string | null], ModelOption[]]
   'models:grokAvailable': [[threadId?: string | null], ModelOption[]]
   'terminal:spawn': [[threadId: string, cols: number, rows: number], string]

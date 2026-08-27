@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CodexPersonality, CodexReasoningSummary, Thread, Provider, PermissionMode, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
 import ModelSelectorMenu from './ModelSelectorMenu'
@@ -85,6 +85,7 @@ export default function ComposerToolbar({
   const [piModelsLoading, setPiModelsLoading] = useState(false)
   const [piModelsError, setPiModelsError] = useState<string | null>(null)
   const [piModelsRefresh, setPiModelsRefresh] = useState(0)
+  const forcePiModelsRefresh = useRef(false)
   const [liveCursorModels, setLiveCursorModels] = useState<ModelOption[]>([])
   const [liveGrokModels, setLiveGrokModels] = useState<ModelOption[]>([])
 
@@ -139,7 +140,9 @@ export default function ComposerToolbar({
     let cancelled = false
     setPiModelsLoading(true)
     setPiModelsError(null)
-    window.api.invoke('models:piAvailable', threadId)
+    const forceRefresh = forcePiModelsRefresh.current
+    forcePiModelsRefresh.current = false
+    window.api.invoke('models:piAvailable', threadId, forceRefresh)
       .then((models) => {
         if (cancelled) return
         setLivePiModels(models)
@@ -421,7 +424,10 @@ export default function ComposerToolbar({
           modelOptions={modelOptions}
           modelsLoading={currentProvider === 'pi' && piModelsLoading}
           modelsError={currentProvider === 'pi' ? piModelsError : null}
-          onRetryModels={currentProvider === 'pi' ? () => setPiModelsRefresh((value) => value + 1) : undefined}
+          onRetryModels={currentProvider === 'pi' ? () => {
+            forcePiModelsRefresh.current = true
+            setPiModelsRefresh((value) => value + 1)
+          } : undefined}
           reasoningOptions={reasoningOptions}
           currentReasoningLevel={currentReasoningLevel}
           showReasoningSelector={showReasoningSelector}

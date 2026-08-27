@@ -1721,7 +1721,10 @@ export const channelHandlers = {
   'models:opencodeAvailable': (_ctx, threadId) =>
     listOpenCodeAvailableModels(modelQueryOptions(threadId)),
 
-  'models:piAvailable': (_ctx, threadId) => listPiAvailableModels(modelQueryOptions(threadId)),
+  'models:piAvailable': (_ctx, threadId, forceRefresh) => {
+    const options = modelQueryOptions(threadId)
+    return listPiAvailableModels(forceRefresh ? { ...options, forceRefresh: true } : options)
+  },
 
   'models:cursorAvailable': (_ctx, threadId) =>
     listCursorAvailableModels(modelQueryOptions(threadId)),

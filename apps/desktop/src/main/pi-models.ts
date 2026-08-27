@@ -201,10 +201,13 @@ export async function listPiAvailableModels(options: {
   cwd?: string | null
   ssh?: SshConfig | null
   wsl?: WslConfig | null
+  forceRefresh?: boolean
 } = {}): Promise<PiAvailableModelOption[]> {
   const key = cacheKey(options.ssh, options.wsl)
-  const cached = readCached(key)
-  if (cached) return cached
+  if (!options.forceRefresh) {
+    const cached = readCached(key)
+    if (cached) return cached
+  }
 
   const existing = inFlight.get(key)
   if (existing) return existing

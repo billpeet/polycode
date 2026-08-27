@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { CodexPersonality, CodexReasoningSummary, ModelOption, PROVIDERS, Provider, ReasoningLevel, Thread } from '../../types/ipc'
 import { useFavouritesStore, formatFavourite, FAVOURITE_SLOTS, Favourite } from '../../stores/favourites'
 import { useToastStore } from '../../stores/toast'
@@ -49,6 +49,133 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   return (
     <div className="px-1 pb-1 pt-1.5 text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)', opacity: 0.7 }}>
       {children}
+    </div>
+  )
+}
+
+function SearchableModelSelect({
+  value,
+  options,
+  disabled,
+  title,
+  onChange,
+}: {
+  value: string
+  options: readonly ModelOption[]
+  disabled: boolean
+  title: string
+  onChange: (value: string) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [query, setQuery] = useState('')
+  const [highlighted, setHighlighted] = useState(0)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const selected = options.find((option) => option.id === value)
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    if (!needle) return options
+    return options.filter((option) =>
+      option.label.toLowerCase().includes(needle) || option.id.toLowerCase().includes(needle)
+    )
+  }, [options, query])
+
+  const open = (): void => {
+    if (disabled) return
+    setQuery('')
+    const selectedIndex = options.findIndex((option) => option.id === value)
+    setHighlighted(Math.max(0, selectedIndex))
+    setExpanded(true)
+    requestAnimationFrame(() => inputRef.current?.focus())
+  }
+
+  const choose = (model: ModelOption): void => {
+    onChange(model.id)
+    setExpanded(false)
+    setQuery('')
+  }
+
+  useEffect(() => {
+    if (highlighted >= filtered.length) setHighlighted(Math.max(0, filtered.length - 1))
+  }, [filtered.length, highlighted])
+
+  return (
+    <div className="relative min-w-0 flex-1">
+      {expanded ? (
+        <input
+          ref={inputRef}
+          role="combobox"
+          aria-label="Search models"
+          aria-expanded="true"
+          aria-controls="model-options"
+          value={query}
+          onChange={(event) => { setQuery(event.target.value); setHighlighted(0) }}
+          onKeyDown={(event) => {
+            if (event.key === 'ArrowDown') {
+              event.preventDefault()
+              setHighlighted((index) => Math.min(index + 1, filtered.length - 1))
+            } else if (event.key === 'ArrowUp') {
+              event.preventDefault()
+              setHighlighted((index) => Math.max(index - 1, 0))
+            } else if (event.key === 'Enter' && filtered[highlighted]) {
+              event.preventDefault()
+              choose(filtered[highlighted])
+            } else if (event.key === 'Escape') {
+              event.stopPropagation()
+              setExpanded(false)
+            }
+          }}
+          onBlur={() => window.setTimeout(() => setExpanded(false), 100)}
+          placeholder="Search models..."
+          className={selectClassName + ' w-full'}
+          style={selectStyle}
+          title={title}
+        />
+      ) : (
+        <button
+          type="button"
+          role="combobox"
+          aria-label="Select model"
+          aria-expanded="false"
+          disabled={disabled}
+          onClick={open}
+          className={selectClassName + ' flex w-full items-center justify-between text-left'}
+          style={selectStyle}
+          title={title}
+        >
+          <span className="truncate">{selected?.label ?? value}</span>
+          <span className="ml-1 flex-shrink-0" style={{ opacity: 0.6, fontSize: 9 }}>▾</span>
+        </button>
+      )}
+      {expanded && (
+        <div
+          id="model-options"
+          role="listbox"
+          className="absolute bottom-full left-0 z-[60] mb-1 max-h-60 w-full min-w-64 overflow-y-auto rounded border py-1 shadow-lg"
+          style={{ background: 'var(--color-surface)', borderColor: 'var(--color-border)' }}
+        >
+          {filtered.length === 0 ? (
+            <div className="px-2 py-1.5" style={{ color: 'var(--color-text-muted)' }}>No matching models</div>
+          ) : filtered.map((option, index) => (
+            <button
+              key={option.id}
+              type="button"
+              role="option"
+              aria-selected={option.id === value}
+              onMouseDown={(event) => event.preventDefault()}
+              onMouseEnter={() => setHighlighted(index)}
+              onClick={() => choose(option)}
+              className="block w-full truncate px-2 py-1.5 text-left"
+              style={{
+                color: 'var(--color-text)',
+                background: index === highlighted ? 'rgba(255,255,255,0.08)' : 'transparent',
+              }}
+              title={option.id}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -205,30 +332,25 @@ export default function ModelSelectorMenu({
 
           <SelectRow label="Model">
             <div className="flex min-w-0 flex-1 items-center gap-1.5">
-              <select
+              <SearchableModelSelect
                 value={currentThread?.model ?? ''}
-                onChange={(e) => onSelectModel(e.target.value)}
+                onChange={onSelectModel}
                 disabled={isProcessing}
-                className={selectClassName}
-                style={selectStyle}
                 title={modelsError ?? 'Select model'}
-              >
-                {modelOptions.map((m) => (
-                  <option key={m.id} value={m.id} style={optionStyle}>{m.label}</option>
-                ))}
-              </select>
+                options={modelOptions}
+              />
               {modelsLoading && (
                 <span className="status-spinner h-3 w-3 flex-shrink-0" title="Loading models" aria-label="Loading models" />
               )}
-              {!modelsLoading && modelsError && onRetryModels && (
+              {!modelsLoading && onRetryModels && (
                 <button
                   type="button"
                   onClick={onRetryModels}
                   className="flex-shrink-0 rounded px-1 py-0.5 text-[10px]"
                   style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
-                  title={modelsError}
+                  title={modelsError ?? 'Refresh models from Pi'}
                 >
-                  Retry
+                  {modelsError ? 'Retry' : 'Refresh'}
                 </button>
               )}
             </div>

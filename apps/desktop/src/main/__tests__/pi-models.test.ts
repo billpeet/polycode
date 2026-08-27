@@ -69,4 +69,29 @@ describe('listPiAvailableModels', () => {
     }])
     expect(spawn).toHaveBeenCalledTimes(2)
   })
+
+  it('bypasses a successful cached catalog when refresh is requested', async () => {
+    for (const id of ['glm-5.3', 'glm-5.3-flash']) {
+      spawn.mockImplementationOnce(() => mockPiProcess((request, proc) => {
+        const response = JSON.stringify({
+          id: request.id,
+          type: 'response',
+          command: 'get_available_models',
+          success: true,
+          data: { models: [{ provider: 'zai', id, name: id, reasoning: true }] },
+        }) + '\n'
+        queueMicrotask(() => proc.stdout.write(response))
+      }))
+    }
+
+    const { listPiAvailableModels } = await import('../pi-models')
+
+    await expect(listPiAvailableModels({ cwd: process.cwd() })).resolves.toEqual([
+      expect.objectContaining({ id: 'zai/glm-5.3' }),
+    ])
+    await expect(listPiAvailableModels({ cwd: process.cwd(), forceRefresh: true })).resolves.toEqual([
+      expect.objectContaining({ id: 'zai/glm-5.3-flash' }),
+    ])
+    expect(spawn).toHaveBeenCalledTimes(2)
+  })
 })
