@@ -43,6 +43,7 @@ const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium
 
 const PERMISSION_MODES: { id: PermissionMode; label: string }[] = [
   { id: 'ask', label: 'Ask' },
+  { id: 'auto', label: 'Auto' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'yolo', label: 'YOLO' },
 ]

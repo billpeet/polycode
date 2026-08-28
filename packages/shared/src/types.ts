@@ -210,7 +210,14 @@ export const GROK_MODELS = [
 export type GrokModelId = typeof GROK_MODELS[number]['id']
 
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok'
-export type PermissionMode = 'ask' | 'workspace' | 'yolo'
+/**
+ * How much a provider may do before escalating to the user.
+ * - `ask`       — every privileged action needs approval
+ * - `auto`      — the provider's own classifier clears routine actions, unusual ones still ask (Claude)
+ * - `workspace` — edits inside the workspace are allowed, the rest escalates (Codex)
+ * - `yolo`      — nothing asks
+ */
+export type PermissionMode = 'ask' | 'auto' | 'workspace' | 'yolo'
 
 export const PROVIDERS = [
   { id: 'claude-code' as Provider, label: 'Claude Code' },

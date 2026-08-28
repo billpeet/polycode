@@ -252,6 +252,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
             <span style={labelStyle}>Execution mode</span>
             <select className={inputClass} style={inputStyle} value={permissionMode} onChange={(e) => setPermissionMode(e.target.value as PermissionMode)}>
               <option value="yolo">Yolo — run fully autonomous</option>
+              <option value="auto">Auto — Claude's classifier clears routine actions, rest escalates</option>
               <option value="workspace">Workspace — workspace edits allowed, rest escalates</option>
               <option value="ask">Ask — every permission escalates the run</option>
             </select>

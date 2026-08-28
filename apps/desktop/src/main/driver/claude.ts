@@ -339,6 +339,7 @@ export class ClaudeDriver implements CLIDriver {
   private resolvePermissionMode(options?: MessageOptions): PermissionMode {
     if (options?.planMode) return 'plan'
     if (this.isYoloEnabled(options)) return 'bypassPermissions'
+    if ((options?.permissionMode ?? this.options.permissionMode) === 'auto') return 'auto'
     return 'default'
   }
 

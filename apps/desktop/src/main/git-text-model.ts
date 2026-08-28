@@ -1,5 +1,5 @@
 import type { SshConfig, WslConfig } from '../shared/types'
-import { queryCodexText } from './codex-text'
+import { querySystemText } from './system-text'
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
@@ -44,14 +44,14 @@ const branchNameSchema = {
   required: ['branch'],
 }
 
-async function queryCodexStructured(
+async function querySystemTextStructured(
   repoPath: string,
   prompt: string,
   schema: unknown,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<string> {
-  return queryCodexText(prompt, { cwd: repoPath, schema, ssh, wsl })
+  return querySystemText(prompt, { cwd: repoPath, schema, ssh, wsl })
 }
 
 export async function generateCommitMessageText(
@@ -60,7 +60,7 @@ export async function generateCommitMessageText(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<string> {
-  const raw = await queryCodexStructured(repoPath, buildCommitMessagePrompt(context), commitMessageSchema, ssh, wsl)
+  const raw = await querySystemTextStructured(repoPath, buildCommitMessagePrompt(context), commitMessageSchema, ssh, wsl)
   return formatCommitMessage(parseCommitMessageResponse(raw))
 }
 
@@ -70,7 +70,7 @@ export async function generatePullRequestText(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<GeneratedPullRequestText> {
-  const raw = await queryCodexStructured(repoPath, buildPullRequestTextPrompt(context), pullRequestTextSchema, ssh, wsl)
+  const raw = await querySystemTextStructured(repoPath, buildPullRequestTextPrompt(context), pullRequestTextSchema, ssh, wsl)
   return formatPullRequestText(parsePullRequestTextResponse(raw))
 }
 
@@ -80,6 +80,6 @@ export async function generateBranchNameText(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<string> {
-  const raw = await queryCodexStructured(repoPath, buildBranchNamePrompt(context), branchNameSchema, ssh, wsl)
+  const raw = await querySystemTextStructured(repoPath, buildBranchNamePrompt(context), branchNameSchema, ssh, wsl)
   return sanitizeBranchName(parseBranchNameResponse(raw))
 }

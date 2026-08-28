@@ -388,7 +388,7 @@ export function getLocationByPath(path: string): RepoLocation | null {
 // ── Threads ───────────────────────────────────────────────────────────────────
 
 const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-const VALID_PERMISSION_MODES: PermissionMode[] = ['ask', 'workspace', 'yolo']
+const VALID_PERMISSION_MODES: PermissionMode[] = ['ask', 'auto', 'workspace', 'yolo']
 const VALID_CODEX_PERSONALITIES: CodexPersonality[] = ['none', 'friendly', 'pragmatic']
 const VALID_CODEX_SUMMARIES: CodexReasoningSummary[] = ['auto', 'concise', 'detailed', 'none']
 

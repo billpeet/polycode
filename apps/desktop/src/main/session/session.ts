@@ -33,7 +33,7 @@ import {
   updateThreadUsage,
   cancelPendingToolCalls
 } from '../db/queries'
-import { generateTitle } from '../codex-text'
+import { generateTitle } from '../system-text'
 import { emitAppEvent } from '../app-events'
 
 export class Session {

@@ -436,7 +436,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
             thread ? (
               <>
                 <Chip
-                  label={`⚙ ${modelLabel(thread.provider, thread.model)} · ${effortLabel(thread.provider, thread.reasoning_level)}${thread.permission_mode === 'yolo' ? ' · YOLO' : ''}`}
+                  label={`⚙ ${modelLabel(thread.provider, thread.model)} · ${effortLabel(thread.provider, thread.reasoning_level)}${thread.permission_mode === 'yolo' ? ' · YOLO' : thread.permission_mode === 'auto' ? ' · Auto' : ''}`}
                   onPress={() => setShowSettings(true)}
                   active
                   color={thread.permission_mode === 'yolo' ? colors.danger : undefined}

@@ -15,6 +15,15 @@ function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly M
   })
 }
 
+// Per-mode highlight colors for the permission segmented control. Auto gets
+// violet to sit visually between Ask (green) and Yolo (orange).
+const PERMISSION_MODE_ACCENTS: Record<PermissionMode, { background: string; color: string }> = {
+  ask: { background: 'rgba(34, 197, 94, 0.12)', color: '#22c55e' },
+  auto: { background: 'rgba(167, 139, 250, 0.15)', color: '#a78bfa' },
+  workspace: { background: 'rgba(59, 130, 246, 0.14)', color: '#60a5fa' },
+  yolo: { background: 'rgba(249, 115, 22, 0.15)', color: '#f97316' },
+}
+
 interface ComposerToolbarProps {
   threadId: string
   planMode: boolean
@@ -69,7 +78,14 @@ export default function ComposerToolbar({
         { mode: 'yolo', label: 'Yolo', title: 'Bypass Codex approvals and sandbox' },
       ]
     }
-    if (currentThread?.provider === 'claude-code' || currentThread?.provider === 'cursor' || currentThread?.provider === 'grok') {
+    if (currentThread?.provider === 'claude-code') {
+      return [
+        { mode: 'ask', label: 'Ask', title: 'Ask before privileged Claude actions' },
+        { mode: 'auto', label: 'Auto', title: 'Claude auto-approves routine actions; anything unusual still asks' },
+        { mode: 'yolo', label: 'Yolo', title: 'Bypass Claude approval checks entirely' },
+      ]
+    }
+    if (currentThread?.provider === 'cursor' || currentThread?.provider === 'grok') {
       return [
         { mode: 'ask', label: 'Ask', title: 'Ask before privileged provider actions' },
         { mode: 'yolo', label: 'Yolo', title: 'Bypass provider approval checks where supported' },
@@ -333,6 +349,7 @@ export default function ComposerToolbar({
             </span>
             {permissionOptions.map((option) => {
               const selected = currentThread.permission_mode === option.mode || (!currentThread.permission_mode && option.mode === (currentThread.yolo_mode ? 'yolo' : 'ask'))
+              const accent = PERMISSION_MODE_ACCENTS[option.mode]
               return (
                 <button
                   key={option.mode}
@@ -341,20 +358,8 @@ export default function ComposerToolbar({
                   className="px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-80"
                   title={option.title}
                   style={{
-                    background: selected
-                      ? option.mode === 'yolo'
-                        ? 'rgba(249, 115, 22, 0.15)'
-                        : option.mode === 'workspace'
-                          ? 'rgba(59, 130, 246, 0.14)'
-                          : 'rgba(34, 197, 94, 0.12)'
-                      : 'transparent',
-                    color: selected
-                      ? option.mode === 'yolo'
-                        ? '#f97316'
-                        : option.mode === 'workspace'
-                          ? '#60a5fa'
-                          : '#22c55e'
-                      : 'var(--color-text-muted)',
+                    background: selected ? accent.background : 'transparent',
+                    color: selected ? accent.color : 'var(--color-text-muted)',
                     borderLeft: '1px solid var(--color-border)',
                   }}
                 >

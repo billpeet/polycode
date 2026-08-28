@@ -161,6 +161,7 @@ export function ReasoningLevelSheet(props: {
 
 const PERMISSION_MODES: { id: PermissionMode; label: string; description: string }[] = [
   { id: 'ask', label: 'Ask', description: 'Ask before running tools that modify things' },
+  { id: 'auto', label: 'Auto', description: 'Auto-approve routine actions; unusual ones still ask' },
   { id: 'workspace', label: 'Workspace', description: 'Allow edits inside the workspace without asking' },
   { id: 'yolo', label: 'YOLO', description: 'Run everything without asking' },
 ]

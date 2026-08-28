@@ -39,6 +39,22 @@ describe('ClaudeDriver permission mode', () => {
     expect((driver as any).resolvePermissionMode({ yoloMode: true })).toBe('bypassPermissions')
   })
 
+  it('uses Claude auto mode when requested', () => {
+    const driver = makeDriver()
+    expect((driver as any).resolvePermissionMode({ permissionMode: 'auto' })).toBe('auto')
+  })
+
+  it('falls back to the driver-level permission mode for auto', () => {
+    const driver = makeDriver({ permissionMode: 'auto' })
+    expect((driver as any).resolvePermissionMode({})).toBe('auto')
+  })
+
+  it('yolo and plan take precedence over auto', () => {
+    const driver = makeDriver()
+    expect((driver as any).resolvePermissionMode({ permissionMode: 'auto', yoloMode: true })).toBe('bypassPermissions')
+    expect((driver as any).resolvePermissionMode({ permissionMode: 'auto', planMode: true })).toBe('plan')
+  })
+
   it('uses plan mode when requested', () => {
     const driver = makeDriver()
     expect((driver as any).resolvePermissionMode({ planMode: true, yoloMode: true })).toBe('plan')
@@ -212,6 +228,31 @@ describe('ClaudeDriver query configuration', () => {
     expect(capturedInput).toBeDefined()
     expect(capturedInput.options.permissionMode).toBe('plan')
     expect(capturedInput.options.allowDangerouslySkipPermissions).toBe(true)
+  })
+
+  it('launches auto-mode sessions without dangerous skip permissions', async () => {
+    let capturedInput: any
+    const fakeQuery = {
+      setPermissionMode: async () => {},
+      setModel: async () => {},
+      interrupt: async () => {},
+      close: () => {},
+      [Symbol.asyncIterator]: async function* () {},
+    }
+
+    queryMock.mockImplementation((input: any) => {
+      capturedInput = input
+      return fakeQuery
+    })
+
+    const driver = makeDriver()
+    ;(driver as any).currentMessageOptions = { permissionMode: 'auto' }
+
+    await (driver as any).ensureQuery()
+
+    expect(capturedInput).toBeDefined()
+    expect(capturedInput.options.permissionMode).toBe('auto')
+    expect(capturedInput.options.allowDangerouslySkipPermissions).toBe(false)
   })
 
   it('uses the system claude binary and adds the working directory to additionalDirectories', async () => {
