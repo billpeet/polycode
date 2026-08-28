@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import CommandsEditModal from '../CommandsEditModal'
 import { useFilesStore } from '../../stores/files'
 import { useCommandStore, EMPTY_COMMANDS, instKey } from '../../stores/commands'
+import { useBrowserStore } from '../../stores/browser'
 import { useThreadStore } from '../../stores/threads'
 import { CommandStatus } from '../../types/ipc'
 
@@ -147,8 +148,22 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                     {cmd.command}
                   </p>
                   {ports.length > 0 && (
-                    <p className="text-[10px] font-mono truncate mb-2" style={{ color: '#4ade80' }}>
-                      ports: {ports.join(', ')}
+                    <p className="text-[10px] font-mono mb-2" style={{ color: '#4ade80' }}>
+                      ports:{' '}
+                      {ports.map((port) => (
+                        <button
+                          key={port}
+                          onClick={() => {
+                            if (locationId) {
+                              void useBrowserStore.getState().open(locationId, `http://localhost:${port}`)
+                            }
+                          }}
+                          className="mr-1 hover:underline"
+                          title={`Open localhost:${port} in the internal browser`}
+                        >
+                          {port}
+                        </button>
+                      ))}
                     </p>
                   )}
                   <div className="flex gap-1">

@@ -173,6 +173,7 @@ function validateRoutineDraft(draft: { trigger_type: string; schedule: string | 
 }
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
+import { browserSessionManager } from '../browser/manager'
 import {
   cleanupThreadAttachments,
   copyAttachmentFromPath,
@@ -1882,6 +1883,26 @@ export const channelHandlers = {
   'terminal:kill': (_ctx, terminalId) => ptyManager.kill(terminalId),
 
   'terminal:getBuffer': (_ctx, terminalId) => ptyManager.getBuffer(terminalId),
+
+  // ── Browser ─────────────────────────────────────────────────────────────
+  //
+  // Desktop-only (`remote: false`): the guest sessions and SSH tunnel pools
+  // live in this app's main process, and a remote host has nothing to serve —
+  // a browser panel on a phone would have nowhere to draw. Preparing is
+  // idempotent per location, so every tab of a panel may call it.
+
+  'browser:prepareSession': (_ctx, locationId) =>
+    browserSessionManager.prepareSession(locationId),
+
+  'browser:releaseSession': (_ctx, locationId) =>
+    browserSessionManager.releaseSession(locationId),
+
+  // http/https only: this is the escape hatch for the browser panel's "open in
+  // system browser" button, not a general URL launcher.
+  'shell:openExternal': (_ctx, url) => {
+    if (!/^https?:\/\//i.test(url)) throw new Error(`Refusing to open non-http(s) URL: ${url}`)
+    return shell.openExternal(url)
+  },
 
   // ── Attachments ───────────────────────────────────────────────────────────
   //

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFilesStore } from '../stores/files'
 import { useTerminalStore } from '../stores/terminal'
+import { useBrowserStore, type BrowserTab } from '../stores/browser'
 import { useCommandStore } from '../stores/commands'
 import { useThreadStore } from '../stores/threads'
 import { usePlanStore } from '../stores/plans'
@@ -8,12 +9,18 @@ import { useUiStore } from '../stores/ui'
 import type { LocationAuxTab } from '../stores/ui'
 import { DiffPane, FilePane } from './FilePreview'
 import TerminalContent from './Terminal'
+import BrowserContent from './Browser'
 import CommandLogsContent from './CommandLogs'
 import Assassin from './Assassin'
 import PlanPane from './PlanPane'
 import PanelErrorBoundary from './PanelErrorBoundary'
 
-type Tab = 'diff' | 'file' | 'terminal' | 'commands' | 'plan'
+type Tab = 'diff' | 'file' | 'terminal' | 'commands' | 'plan' | 'browser'
+
+// Stable reference for absent browser tabs: an inline `[]` in a selector
+// allocates a fresh array per getSnapshot call, which useSyncExternalStore
+// reads as "the store changed" — an infinite re-render loop.
+const EMPTY_BROWSER_TABS: BrowserTab[] = []
 
 const TAB_LABELS: Record<Tab, string> = {
   diff: 'Git Diff',
@@ -21,6 +28,7 @@ const TAB_LABELS: Record<Tab, string> = {
   terminal: 'Terminal',
   commands: 'Command Logs',
   plan: 'Plan',
+  browser: 'Browser',
 }
 
 function toPanelTab(tab: LocationAuxTab): Tab | null {
@@ -108,6 +116,13 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
   )
 
+  const browserTabs = useBrowserStore((s) =>
+    currentLocationId ? (s.tabsByLocation[currentLocationId] ?? EMPTY_BROWSER_TABS) : EMPTY_BROWSER_TABS
+  )
+  const isBrowserOpen = useBrowserStore((s) =>
+    currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
+  )
+
   const selectedInstance = useCommandStore((s) =>
     currentLocationId ? (s.selectedInstanceByLocation[currentLocationId] ?? null) : null
   )
@@ -129,6 +144,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   const hasTerminal = isTerminalOpen
   const hasCommands = !!(selectedInstance || hasPinnedCommands)
   const showPlan = planVisible && hasPlan
+  const hasBrowser = isBrowserOpen && browserTabs.length > 0
 
   const availableTabs: Tab[] = []
   if (showPlan) availableTabs.push('plan')
@@ -136,6 +152,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   if (hasFile) availableTabs.push('file')
   if (hasTerminal) availableTabs.push('terminal')
   if (hasCommands) availableTabs.push('commands')
+  if (hasBrowser) availableTabs.push('browser')
 
   const [activeTab, setActiveTab] = useState<Tab | null>(null)
 
@@ -145,6 +162,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   const prevHasTerminal = useRef(hasTerminal)
   const prevHasCommands = useRef(hasCommands)
   const prevShowPlan = useRef(showPlan)
+  const prevHasBrowser = useRef(hasBrowser)
 
   useEffect(() => {
     if (hasDiff && !prevHasDiff.current) setActiveTab('diff')
@@ -172,6 +190,11 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   }, [showPlan])
 
   useEffect(() => {
+    if (hasBrowser && !prevHasBrowser.current) setActiveTab('browser')
+    prevHasBrowser.current = hasBrowser
+  }, [hasBrowser])
+
+  useEffect(() => {
     const requestedTab = toPanelTab(requestedAuxTab)
     if (!requestedTab) return
     const isAvailable =
@@ -179,9 +202,10 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       : requestedTab === 'file' ? hasFile
       : requestedTab === 'terminal' ? hasTerminal
       : requestedTab === 'commands' ? hasCommands
+      : requestedTab === 'browser' ? hasBrowser
       : false
     if (isAvailable) queueMicrotask(() => setActiveTab(requestedTab))
-  }, [requestedAuxTab, requestedAuxTabVersion, hasDiff, hasFile, hasTerminal, hasCommands, showPlan])
+  }, [requestedAuxTab, requestedAuxTabVersion, hasDiff, hasFile, hasTerminal, hasCommands, showPlan, hasBrowser])
 
   const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
 
@@ -278,6 +302,23 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
         {hasTerminal && currentLocationId && (
           <PanelErrorBoundary context={`Terminal (${currentLocationId})`}>
             <TerminalContent threadId={threadId} locationId={currentLocationId} />
+          </PanelErrorBoundary>
+        )}
+      </div>
+
+      {/* Browser — kept mounted while open to preserve guest pages; hidden behind other tabs via height:0 */}
+      <div
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+          flex: currentTab === 'browser' ? 1 : 0,
+          height: currentTab === 'browser' ? 'auto' : 0,
+        }}
+      >
+        {hasBrowser && currentLocationId && (
+          <PanelErrorBoundary context={`Browser (${currentLocationId})`}>
+            <BrowserContent locationId={currentLocationId} />
           </PanelErrorBoundary>
         )}
       </div>

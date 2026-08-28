@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type RightPanelTab = 'tasks' | 'files' | 'commands'
-export type LocationAuxTab = 'diff' | 'file' | 'command' | 'terminal' | null
+export type LocationAuxTab = 'diff' | 'file' | 'command' | 'terminal' | 'browser' | null
 /** Sidebar presentation: per-project tree, or the cross-project attention Queue. */
 export type SidebarViewMode = 'tree' | 'queue'
 

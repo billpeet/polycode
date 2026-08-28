@@ -7,6 +7,7 @@ import { useToastStore } from '../stores/toast'
 import { useGitErrorReporter } from '../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../lib/gitRefreshCoordinator'
 import { useTerminalStore } from '../stores/terminal'
+import { useBrowserStore } from '../stores/browser'
 import { resolveDisplayedContextLimit } from '../lib/contextWindowLimit'
 import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
@@ -188,6 +189,7 @@ export default function ThreadHeader({ threadId }: Props) {
 
   const usage = useThreadStore((s) => s.usageByThread[threadId])
   const isTerminalOpen = useTerminalStore((s) => locationId ? (s.visibleByLocation[locationId] ?? false) : false)
+  const isBrowserOpen = useBrowserStore((s) => locationId ? (s.visibleByLocation[locationId] ?? false) : false)
 
   const gitStatus = useGitStore((s) =>
     locationPath ? (s.statusByPath[locationPath] ?? null) : null
@@ -415,6 +417,26 @@ export default function ThreadHeader({ threadId }: Props) {
                 <rect x="1" y="2" width="14" height="12" rx="1.5" />
                 <path d="M4 6l3 3-3 3" />
                 <path d="M9 12h3" />
+              </svg>
+            </button>
+            <button
+              onClick={() => {
+                if (locationId) useBrowserStore.getState().toggleVisible(locationId)
+              }}
+              className="rounded p-0.5 hover:opacity-70 transition-opacity"
+              style={{
+                color: isBrowserOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                background: 'none',
+                border: 'none',
+                cursor: 'pointer',
+                lineHeight: 1,
+              }}
+              title="Toggle internal browser"
+            >
+              <svg width="11" height="11" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="8" cy="8" r="6.5" />
+                <path d="M1.5 8h13" />
+                <path d="M8 1.5c-4.5 4-4.5 9 0 13 4.5-4 4.5-9 0-13z" />
               </svg>
             </button>
             <button

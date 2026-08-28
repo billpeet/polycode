@@ -4,9 +4,11 @@ import { FitAddon } from '@xterm/addon-fit'
 import { SearchAddon } from '@xterm/addon-search'
 import '@xterm/xterm/css/xterm.css'
 import { useCommandStore, parseInstKey } from '../stores/commands'
+import { useBrowserStore } from '../stores/browser'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
+import { registerUrlLinks } from '../lib/xtermLinks'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 
 const EMPTY_PINNED: string[] = []
@@ -231,6 +233,15 @@ function CommandLogPanel({
       return false
     })
 
+    // URLs printed by the command become links and open in the internal
+    // browser — which, for an SSH location, tunnels loopback to the session
+    // host and relays everything else direct.
+    const disposeLinks = registerUrlLinks(term, (url) => {
+      if (locationId) {
+        void useBrowserStore.getState().open(locationId, url)
+      }
+    })
+
     xtermRef.current = term
     fitAddonRef.current = fitAddon
     searchAddonRef.current = searchAddon
@@ -249,6 +260,7 @@ function CommandLogPanel({
     })
 
     return () => {
+      disposeLinks.dispose()
       if (flushFrameRef.current !== null) {
         cancelAnimationFrame(flushFrameRef.current)
         flushFrameRef.current = null
@@ -351,15 +363,21 @@ function CommandLogPanel({
               {pid}
             </span>
           )}
-          {ports.length > 0 && (
-            <span
-              className="text-[10px] font-mono px-1 rounded flex-shrink-0"
+          {ports.length > 0 && ports.map((port) => (
+            <button
+              key={port}
+              onClick={() => {
+                if (locationId) {
+                  void useBrowserStore.getState().open(locationId, `http://localhost:${port}`)
+                }
+              }}
+              className="text-[10px] font-mono px-1 rounded flex-shrink-0 hover:opacity-80 transition-opacity"
               style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.12)' }}
-              title="Listening ports"
+              title={`Open localhost:${port} in the internal browser`}
             >
-              {ports.join(', ')}
-            </span>
-          )}
+              :{port}
+            </button>
+          ))}
           {/* Start / Stop */}
           {!isActive ? (
             <button

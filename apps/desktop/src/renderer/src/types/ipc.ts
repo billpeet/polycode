@@ -3,6 +3,7 @@ import { BackgroundTerminal, Project, ProjectSortMode, Thread, Message, OutputEv
 
 export type { Routine, RoutineDraft, RoutineTriggerType, RunState }
 export type { QueueThread } from '../../../shared/types'
+export type { BrowserSessionConfig } from '../../../shared/types'
 export type { BackgroundTerminal, Project, ProjectSortMode, Thread, Message, OutputEvent, ThreadStatus, GitStatus, GitFileChange, GitBranches, GitCompareResult, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, PullRequest, AnthropicModelId, OpenAIModelId, CursorModelId, GrokModelId, Provider, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary, SendOptions, Question, PermissionRequest, FileEntry, SearchableFile, ClaudeProject, ClaudeSession, PendingAttachment, Session, SshConfig, WslConfig, ConnectionType, RepoLocation, TokenUsage, RateLimitInfo, ProjectCommand, CommandStatus, CommandLogLine, YouTrackServer, YouTrackIssue, SlashCommand, CliHealthResult, CliUpdateResult, ThreadLogEntry, LocationPool, ModelOption, QuestionAnswerValue, UpdateState, NewProjectSpec, NewProjectResult, RemoteServerConfig, RemoteHost, RemoteHostInput, RemoteConnectionStatus, RemotePairingInfo }
 export { ANTHROPIC_MODELS, OPENAI_MODELS, CURSOR_MODELS, GROK_MODELS, PROVIDERS, getModelsForProvider, getDefaultModelForProvider, SUPPORTED_ATTACHMENT_TYPES, MAX_ATTACHMENT_SIZE, MAX_ATTACHMENTS_PER_MESSAGE, MODEL_CONTEXT_LIMITS, DEFAULT_CONTEXT_LIMIT, resolveEffectiveModel }
 

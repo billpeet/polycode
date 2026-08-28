@@ -20,6 +20,7 @@ import { useCommandStore } from './stores/commands'
 import { Provider } from './types/ipc'
 import { useToastStore } from './stores/toast'
 import './stores/plans' // Initialize plan file watcher listener
+import { useBrowserStore } from './stores/browser'
 import { reportReactCommit } from './lib/perf'
 import { getCurrentLocationId } from './lib/currentLocation'
 import UiErrorBoundary from './components/UiErrorBoundary'
@@ -57,6 +58,16 @@ export default function App() {
 
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
   const loadFavourites = useFavouritesStore((s) => s.load)
+
+  // Popups from browser-panel guest pages (target=_blank) arrive here as
+  // "open this url in the same location's browser panel" requests from main.
+  useEffect(() => {
+    return window.api.on('browser:popup-request', (locationId, url) => {
+      if (typeof locationId === 'string' && typeof url === 'string') {
+        void useBrowserStore.getState().open(locationId, url)
+      }
+    })
+  }, [])
 
   // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
