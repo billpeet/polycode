@@ -77,6 +77,19 @@ export interface NewProjectResult {
   location: RepoLocation
 }
 
+/**
+ * Result of preparing the browser session for a Project Location.
+ * `partition` is the Electron session partition every Browser tab at that
+ * location must use; `proxied` says whether loopback traffic tunnels through
+ * the location's SSH connection (false for local and WSL locations).
+ */
+export interface BrowserSessionConfig {
+  partition: string
+  proxied: boolean
+  /** `user@host` of the SSH connection when proxied; null otherwise. */
+  sshLabel: string | null
+}
+
 export interface RemoteServerConfig {
   enabled: boolean
   host: string

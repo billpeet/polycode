@@ -14,6 +14,7 @@ import { readWebhookConfig } from './webhook/config'
 import { startRemoteControlServer, stopRemoteControlServer } from './remote/server'
 import { readRemoteServerConfig } from './remote/config'
 import { stopRemoteControlClient } from './remote/client'
+import { browserSessionManager } from './browser/manager'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
 import { sessionManager } from './session/manager'
@@ -138,7 +139,10 @@ function createWindow(): BrowserWindow {
       preload: join(__dirname, '../preload/index.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false
+      sandbox: false,
+      // The internal browser panel embeds remote pages via <webview> guests,
+      // one persisted session partition per project location.
+      webviewTag: true,
     }
   })
 
@@ -200,6 +204,21 @@ function createWindow(): BrowserWindow {
   win.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // Guest pages (the internal browser): popups cannot become unmanaged
+  // windows, so they open as another tab of the same location's browser
+  // panel. Everything else about guests — navigation, permissions — is
+  // handled by their session in browser/manager.ts.
+  app.on('web-contents-created', (_event, contents) => {
+    if (contents.getType() !== 'webview') return
+    contents.setWindowOpenHandler(({ url }) => {
+      const locationId = browserSessionManager.locationIdForSession(contents.session)
+      if (locationId && /^https?:\/\//i.test(url) && !win.isDestroyed()) {
+        win.webContents.send('browser:popup-request', locationId, url)
+      }
+      return { action: 'deny' }
+    })
   })
 
   // Intercept in-page navigation (plain <a href> clicks) and open externally
@@ -295,6 +314,7 @@ app.on('before-quit', (event) => {
   stopWebhookServer()
   stopRemoteControlClient()
   stopRemoteControlServer()
+  browserSessionManager.stopAll()
   stopPlanWatcher()
   stopAllFileWatches()
   ptyManager.killAll()

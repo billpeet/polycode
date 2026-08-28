@@ -52,6 +52,7 @@ import type {
   RemoteHostInput,
   RemoteConnectionStatus,
   RemotePairingInfo,
+  BrowserSessionConfig,
   Routine,
   RoutineDraft,
 } from './types'
@@ -215,12 +216,15 @@ export interface ChannelContract {
   'claude-history:listSessions': [[encodedPath: string], ClaudeSession[]]
   'claude-history:importedIds': [[projectId: string], string[]]
   'claude-history:import': [[projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string], Thread]
+  'browser:prepareSession': [[locationId: string], BrowserSessionConfig]
+  'browser:releaseSession': [[locationId: string], void]
   'attachments:save': [[dataUrl: string, filename: string, threadId: string], { tempPath: string; id: string }]
   'attachments:saveFromPath': [[sourcePath: string, threadId: string], { tempPath: string; id: string }]
   'attachments:cleanup': [[threadId: string], void]
   'attachments:getFileInfo': [[filePath: string], { size: number; mimeType: string } | null]
   'dialog:open-files': [[], string[]]
   'shell:copyPath': [[dirPath: string], void]
+  'shell:openExternal': [[url: string], void]
   'shell:openInExplorer': [[dirPath: string], void]
   'shell:openInVsCode': [[dirPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null], void]
   'shell:revealInExplorer': [[filePath: string], void]

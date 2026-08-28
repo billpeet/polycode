@@ -174,6 +174,10 @@ export const CHANNEL_REGISTRY = {
   'terminal:resize': { local: true, remote: true },
   'terminal:kill': { local: true, remote: true },
   'terminal:getBuffer': { local: true, remote: true },
+  // The internal browser is desktop-only: its session lives in this app's main
+  // process, and the host (which renders no UI) has nothing to serve.
+  'browser:prepareSession': { local: true, remote: false },
+  'browser:releaseSession': { local: true, remote: false },
   'attachments:save': { local: true, remote: true },
   'attachments:cleanup': { local: true, remote: true },
   'attachments:readDataUrl': { local: false, remote: true },
@@ -213,6 +217,7 @@ export const CHANNEL_REGISTRY = {
   'settings:get': { local: true, remote: false },
   'settings:set': { local: true, remote: false },
   'shell:copyPath': { local: true, remote: false },
+  'shell:openExternal': { local: true, remote: false },
   'shell:openInExplorer': { local: true, remote: false },
   'shell:openInTerminal': { local: true, remote: false },
   'shell:openInVsCode': { local: true, remote: false },

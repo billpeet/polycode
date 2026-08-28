@@ -84,6 +84,12 @@ const boundaryOwners = {
     // The OS process-control module: killing by pid, finding what holds a port.
     // A different concern from running a command, with its own home already.
     'apps/desktop/src/main/process-control.ts',
+    // The internal browser's SSH tunnel pool: each `ssh -N -L` is a persistent
+    // port forwarder that lives as long as the browser uses it — a transport,
+    // not a command to run or collect, so the Runner seam's contract does not
+    // fit. It still goes through buildSshBaseArgs so the ssh invocation stays
+    // identical to every other remote operation.
+    'apps/desktop/src/main/browser/**/*.ts',
   ],
   rules: {
     '@typescript-eslint/no-restricted-imports': 'off',
