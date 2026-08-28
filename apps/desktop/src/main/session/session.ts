@@ -575,10 +575,13 @@ export class Session {
       insertMessage(this.threadId, 'system', 'Plan rejected by user.', undefined, this.activeSessionId)
     }
 
+    // Display-only: the persisted row above has different content, so this
+    // frame gets a fresh id rather than a row id.
     this.emit(`thread:output:${this.threadId}`, {
       type: 'text',
       content: 'Plan rejected.',
-      sessionId: this.activeSessionId ?? undefined
+      sessionId: this.activeSessionId ?? undefined,
+      eventId: randomUUID(),
     } satisfies OutputEvent)
   }
 
@@ -639,15 +642,18 @@ export class Session {
     const qaText = qaLines.join('\n').trim()
     const answerText = answerLines.join('\n')
 
-    // Persist the Q&A as a user message
-    insertMessage(this.threadId, 'user', qaText, { type: 'question_answer' }, this.activeSessionId)
+    // Persist the Q&A as a user message, then echo it to clients carrying the
+    // row id so streamed frames and snapshot refetches dedupe to one bubble.
+    const answerEventId = randomUUID()
+    insertMessage(this.threadId, 'user', qaText, { type: 'question_answer' }, this.activeSessionId, answerEventId)
 
     // Send to renderer so it appears in the thread
     this.emit(`thread:output:${this.threadId}`, {
       type: 'text',
       content: qaText,
       metadata: { type: 'question_answer', role: 'user' },
-      sessionId: this.activeSessionId
+      sessionId: this.activeSessionId,
+      eventId: answerEventId,
     } satisfies OutputEvent)
 
     this.questionPending = false
@@ -754,11 +760,11 @@ export class Session {
     const shouldSuppressAssistantText =
       this.suppressAssistantTextForPermissionTurn && (event.type === 'text' || event.type === 'thinking')
 
-    // Don't send question/permission_request events to renderer message stream —
-    // they're handled via UI state (status + banner), not as message bubbles
-    if (event.type !== 'question' && event.type !== 'permission_request' && !shouldSuppressAssistantText) {
-      this.emit(`thread:output:${this.threadId}`, eventWithSession)
-    }
+    // Persisted events share one id between the streamed frame and the DB row
+    // (`eventId` === the row's `id`). Remote clients dedupe on it, because the
+    // SSE stream and a `messages:list` snapshot travel over independent
+    // connections and can deliver the same event twice.
+    let streamEventId: string | undefined
 
     // Persist all relevant event types to DB with session ID
     switch (event.type) {
@@ -770,12 +776,14 @@ export class Session {
         // space before a list item). Dropping them corrupts markdown once the renderer
         // re-fetches the persisted messages after stream completion.
         if (event.content.length > 0 && this.activeSessionId) {
-          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
+          streamEventId = randomUUID()
+          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId, streamEventId)
         }
         break
       case 'tool_call': {
         if (this.activeSessionId) {
-          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
+          streamEventId = randomUUID()
+          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId, streamEventId)
         }
         // Track tool calls by ID so we can match permission errors to them
         const toolId = event.metadata?.id as string | undefined
@@ -798,7 +806,8 @@ export class Session {
       }
       case 'tool_result': {
         if (this.activeSessionId) {
-          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
+          streamEventId = randomUUID()
+          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId, streamEventId)
         }
         // Fallback: detect permission errors from error tool_results (non-stream-json mode or
         // older Claude CLI versions that don't emit control_request events).
@@ -847,7 +856,8 @@ export class Session {
           break
         }
         if (this.activeSessionId) {
-          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
+          streamEventId = randomUUID()
+          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId, streamEventId)
         }
         break
       case 'plan_ready':
@@ -855,7 +865,8 @@ export class Session {
         this.planPending = true
         this.pendingPlanContent = event.content
         if (this.activeSessionId) {
-          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId)
+          streamEventId = randomUUID()
+          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId, streamEventId)
         }
         // Emit per-thread plan association so the renderer can show the plan for the right thread
         if (this.lastPlanFileName) {
@@ -882,7 +893,8 @@ export class Session {
         break
       case 'error':
         if (this.activeSessionId) {
-          insertMessage(this.threadId, 'system', event.content, { type: 'error' }, this.activeSessionId)
+          streamEventId = randomUUID()
+          insertMessage(this.threadId, 'system', event.content, { type: 'error' }, this.activeSessionId, streamEventId)
         }
         break
       case 'usage': {
@@ -915,6 +927,15 @@ export class Session {
         break
       }
     }
+
+    // Emit after persisting: a frame is only sent once its row exists, so a
+    // `messages:list` snapshot can never be older than a frame already
+    // delivered. Don't send question/permission_request events to renderer
+    // message stream — they're handled via UI state (status + banner), not as
+    // message bubbles.
+    if (event.type !== 'question' && event.type !== 'permission_request' && !shouldSuppressAssistantText) {
+      this.emit(`thread:output:${this.threadId}`, { ...eventWithSession, eventId: streamEventId })
+    }
   }
 
   private handleDone(error?: Error): void {
@@ -940,6 +961,7 @@ export class Session {
             content: '',
             metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
             sessionId: this.activeSessionId,
+            eventId: msg.id,
           } satisfies OutputEvent)
         }
       }
@@ -955,7 +977,10 @@ export class Session {
       this.emit(`thread:output:${this.threadId}`, {
         type: 'error',
         content: error.message,
-        sessionId: this.activeSessionId ?? undefined
+        sessionId: this.activeSessionId ?? undefined,
+        // Display-only — this event is not persisted, so it has no row id to
+        // share; a fresh id still lets clients dedupe a replayed frame.
+        eventId: randomUUID(),
       } satisfies OutputEvent)
       finalStatus = 'error'
     } else if (this.planPending) {
@@ -981,6 +1006,7 @@ export class Session {
           content: '',
           metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
           sessionId: this.activeSessionId,
+          eventId: msg.id,
         } satisfies OutputEvent)
       }
     }

@@ -12,6 +12,39 @@ import { requireConnection } from './hosts'
 
 let streamCounter = 0
 
+/**
+ * Streamed frames and `messages:list` snapshots travel over independent
+ * connections with no ordering between them, so the same event can arrive
+ * twice: as a live frame and again inside a snapshot that was fetched while
+ * that frame was still in flight. Persisted events carry their row id as
+ * `eventId`, which lets us drop the replay instead of doubling the bubble.
+ * Bounded per thread; fetched row ids re-seed it after each snapshot.
+ */
+const SEEN_EVENT_ID_LIMIT = 2000
+const seenEventIdsByThread = new Map<string, Set<string>>()
+
+function hasSeenEventId(threadId: string, eventId: string): boolean {
+  return seenEventIdsByThread.get(threadId)?.has(eventId) ?? false
+}
+
+function rememberEventIds(threadId: string, eventIds: string[]): void {
+  if (eventIds.length === 0) return
+  let seen = seenEventIdsByThread.get(threadId)
+  if (!seen) {
+    seen = new Set()
+    seenEventIdsByThread.set(threadId, seen)
+  }
+  for (const id of eventIds) {
+    seen.delete(id)
+    seen.add(id)
+  }
+  while (seen.size > SEEN_EVENT_ID_LIMIT) {
+    const oldest = seen.values().next().value
+    if (oldest === undefined) break
+    seen.delete(oldest)
+  }
+}
+
 interface MessagesState {
   messagesByThread: Record<string, Message[]>
   usageByThread: Record<string, TokenUsage>
@@ -34,6 +67,12 @@ export const useMessagesStore = create<MessagesState>((set) => ({
     set((s) => ({ loadingByThread: { ...s.loadingByThread, [threadId]: true } }))
     try {
       const messages = await rpc(requireConnection(), 'messages:list', threadId)
+      // Persisted row ids are the same ids the stream frames carry, so the
+      // snapshot seeds the replay guard.
+      rememberEventIds(
+        threadId,
+        messages.map((message) => message.id),
+      )
       set((s) => ({
         messagesByThread: { ...s.messagesByThread, [threadId]: messages },
         loadingByThread: { ...s.loadingByThread, [threadId]: false },
@@ -46,6 +85,11 @@ export const useMessagesStore = create<MessagesState>((set) => ({
   },
 
   appendEvent: (threadId, event) => {
+    // Drop a frame that raced a snapshot refetch and was already applied.
+    if (typeof event.eventId === 'string' && event.eventId) {
+      if (hasSeenEventId(threadId, event.eventId)) return
+      rememberEventIds(threadId, [event.eventId])
+    }
     // usage events update the token counter instead of rendering a bubble.
     if (event.type === 'usage') {
       const meta = event.metadata ?? {}
@@ -96,6 +140,9 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       metadata: null,
       created_at: new Date().toISOString(),
     }
+    // The host persists this send under the same id (clientUserMessageId),
+    // so remember it here too.
+    rememberEventIds(threadId, [msg.id])
     set((s) => ({
       messagesByThread: {
         ...s.messagesByThread,
@@ -106,6 +153,7 @@ export const useMessagesStore = create<MessagesState>((set) => ({
 
   clear: (threadId) =>
     set((s) => {
+      seenEventIdsByThread.delete(threadId)
       const updated = { ...s.messagesByThread }
       delete updated[threadId]
       return { messagesByThread: updated }

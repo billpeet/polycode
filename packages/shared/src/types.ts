@@ -469,6 +469,15 @@ export interface OutputEvent {
   content: string
   metadata?: Record<string, unknown>
   sessionId?: string
+  /**
+   * Stable identity shared by the streamed frame and its persisted row (the
+   * row's `id`). Remote clients dedupe on it: the SSE stream and a
+   * `messages:list` snapshot travel over independent connections, so the same
+   * event can arrive once as a frame and again inside a snapshot. Absent on
+   * transient events that are never persisted (usage, status) and on frames
+   * from hosts that predate the field.
+   */
+  eventId?: string
 }
 
 export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending' | 'permission_pending'
