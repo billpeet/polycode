@@ -715,6 +715,17 @@ vi.mock('../updater', () => H.autoModule('updater', {
   getUpdateState: H.stub('updater.getUpdateState', { status: 'downloaded', version: '1.2.3' }),
 }))
 
+// `update:release-notes` reaches the GitHub-facing release-notes module. settlesLate
+// because the handler returns the promise rather than awaiting it in its own frame —
+// the `:settled` entry is the only proof the reply waited for the fetch.
+vi.mock('../release-notes', () => H.autoModule('releaseNotes', {
+  getUpdateReleaseNotes: H.settlesLate('releaseNotes.getUpdateReleaseNotes', {
+    version: '1.2.4',
+    commits: [],
+    releaseUrl: 'https://github.com/billpeet/polycode/releases/tag/v1.2.4',
+  }),
+}))
+
 vi.mock('../webhook/server', () => H.autoModule('webhook', {
   // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
   restartWebhookServer: H.stub('webhook.restartWebhookServer', 'RET_restartWebhookServer'),
@@ -4458,6 +4469,19 @@ describe('app:* and update:* — local-only', () => {
   it('update:get-state reads the state without triggering a check', async () => {
     await expectLocalOnly('update:get-state')
     expect(await viaIpc('update:get-state', [])).toEqual(['updater.getUpdateState([])'])
+  })
+
+  it('update:release-notes forwards to the release-notes module', async () => {
+    await expectLocalOnly('update:release-notes')
+    expect(await viaIpc('update:release-notes', [])).toEqual([
+      'releaseNotes.getUpdateReleaseNotes([])',
+      'releaseNotes.getUpdateReleaseNotes:settled',
+    ])
+    expect(await resultViaIpc('update:release-notes', [])).toEqual({
+      version: '1.2.4',
+      commits: [],
+      releaseUrl: 'https://github.com/billpeet/polycode/releases/tag/v1.2.4',
+    })
   })
 })
 

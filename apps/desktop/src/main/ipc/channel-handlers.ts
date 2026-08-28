@@ -186,6 +186,7 @@ import { listDetectedSkills } from '../skills'
 import { listWslDistros, testSshConnection, testWslConnection } from '../host-connection-tests'
 import { killByPid, killByPort, runExecFile } from '../process-control'
 import { applyUpdate, checkForUpdates, getUpdateState } from '../updater'
+import { getUpdateReleaseNotes } from '../release-notes'
 import { getLogsDirPath } from '../app-logger'
 import { restartWebhookServer } from '../webhook/server'
 import { readWebhookConfig, saveWebhookConfig } from '../webhook/config'
@@ -2091,6 +2092,12 @@ export const channelHandlers = {
   'update:apply': () => ({ success: applyUpdate() }),
 
   'update:get-state': () => getUpdateState(),
+
+  // Commit list between the running version and the pending one, for the
+  // "what's new" dialog the renderer shows before the user installs. Resolves
+  // null when no update is pending; a failed GitHub fetch degrades to an empty
+  // list rather than throwing, so reviewing notes never blocks installing.
+  'update:release-notes': () => getUpdateReleaseNotes(),
 
   // ── Native file dialogs ───────────────────────────────────────────────────
   //

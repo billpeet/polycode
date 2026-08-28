@@ -45,6 +45,7 @@ import type {
   CodexReasoningSummary,
   QuestionAnswerValue,
   UpdateState,
+  UpdateReleaseNotes,
   NewProjectSpec,
   NewProjectResult,
   RemoteServerConfig,
@@ -239,6 +240,7 @@ export interface ChannelContract {
   'update:check': [[], UpdateState]
   'update:apply': [[], { success: boolean }]
   'update:get-state': [[], UpdateState]
+  'update:release-notes': [[], UpdateReleaseNotes | null]
   'commands:list': [[projectId: string], ProjectCommand[]]
   'commands:create': [[projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean], ProjectCommand]
   'commands:update': [[id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate?: boolean], void]

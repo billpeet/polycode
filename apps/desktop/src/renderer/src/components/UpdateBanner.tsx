@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Download, Loader2, RefreshCw } from 'lucide-react'
+import { Download, GitCommitHorizontal, Loader2, RefreshCw } from 'lucide-react'
 import type { UpdateState } from '../types/ipc'
 import { useToastStore } from '../stores/toast'
 import { formatErrorDetails } from '../lib/errorDetails'
+import { UpdateReleaseNotesDialog } from './UpdateReleaseNotesDialog'
 
 const INITIAL_STATE: UpdateState = {
   available: false,
@@ -16,9 +17,14 @@ const INITIAL_STATE: UpdateState = {
  * - Hidden when no update is available.
  * - Blue progress banner while an update downloads.
  * - Green banner with a "Restart to Update" button once it's ready.
+ *
+ * "Restart to Update" opens the release-notes dialog first: the user reviews
+ * the commits in the new version, and installing happens only from the
+ * dialog's confirm button.
  */
 export function UpdateBanner(): React.JSX.Element | null {
   const [state, setState] = useState<UpdateState>(INITIAL_STATE)
+  const [showNotes, setShowNotes] = useState(false)
 
   useEffect(() => {
     window.api.invoke('update:get-state').then(setState).catch(() => {})
@@ -29,6 +35,9 @@ export function UpdateBanner(): React.JSX.Element | null {
     try {
       const { success } = await window.api.invoke('update:apply')
       if (!success) {
+        // The app did not quit, so un-stick the release-notes dialog — the toast
+        // below explains why nothing restarted.
+        setShowNotes(false)
         useToastStore.getState().add({
           type: 'error',
           title: 'Update Install Failed',
@@ -61,21 +70,37 @@ export function UpdateBanner(): React.JSX.Element | null {
 
   if (state.ready) {
     return (
-      <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600/20 px-4 py-1.5">
-        <div className="flex items-center gap-2">
-          <Download className="h-3.5 w-3.5 text-emerald-400" />
-          <span className="text-xs text-emerald-300">
-            A new version is ready to install{state.version ? ` (v${state.version})` : ''}
-          </span>
+      <>
+        <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600/20 px-4 py-1.5">
+          <div className="flex items-center gap-2">
+            <Download className="h-3.5 w-3.5 text-emerald-400" />
+            <span className="text-xs text-emerald-300">
+              A new version is ready to install{state.version ? ` (v${state.version})` : ''}
+            </span>
+            <button
+              onClick={() => setShowNotes(true)}
+              className="flex items-center gap-1 text-xs text-emerald-300 underline-offset-2 transition-colors hover:text-emerald-200 hover:underline"
+            >
+              <GitCommitHorizontal className="h-3 w-3" />
+              What's new
+            </button>
+          </div>
+          <button
+            onClick={() => setShowNotes(true)}
+            className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1 text-xs text-white transition-colors hover:bg-emerald-500"
+          >
+            <RefreshCw className="h-3 w-3" />
+            Restart to Update
+          </button>
         </div>
-        <button
-          onClick={handleRestart}
-          className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1 text-xs text-white transition-colors hover:bg-emerald-500"
-        >
-          <RefreshCw className="h-3 w-3" />
-          Restart to Update
-        </button>
-      </div>
+        {showNotes && (
+          <UpdateReleaseNotesDialog
+            version={state.version}
+            onClose={() => setShowNotes(false)}
+            onInstall={handleRestart}
+          />
+        )}
+      </>
     )
   }
 

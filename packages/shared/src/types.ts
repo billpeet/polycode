@@ -841,3 +841,17 @@ export interface UpdateState {
   /** The version available for download / ready to install */
   version?: string
 }
+
+/** What the `update:release-notes` channel reports about a pending update. */
+export interface UpdateReleaseNotes {
+  /** The pending version the notes describe. */
+  version: string
+  /**
+   * Commits between the running version's tag and the pending version's tag,
+   * oldest first — the changelog the user reviews before installing.
+   * Empty when the tags could not be compared (missing tag, offline, rate limit).
+   */
+  commits: CommitLogEntry[]
+  /** GitHub release page for the pending version, when one can be constructed. */
+  releaseUrl: string | null
+}
