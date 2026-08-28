@@ -8,6 +8,7 @@ import HardBreak from '@tiptap/extension-hard-break'
 import { Markdown } from 'tiptap-markdown'
 import type { EditorView } from '@tiptap/pm/view'
 import type { Node as PMNode } from '@tiptap/pm/model'
+import { Fragment, Slice } from '@tiptap/pm/model'
 import { ComposerHighlight } from './composerHighlight'
 
 /**
@@ -305,6 +306,29 @@ export default function ComposerEditor({
         if (files.length === 0) return false
         callbacksRef.current.onPasteImages(files)
         return true
+      },
+      // Clipboard text often carries trailing newlines (e.g. copies that include
+      // a final line break); strip the resulting trailing empty paragraphs and
+      // hard breaks from the pasted slice so they don't show up in the composer.
+      transformPasted: (slice) => {
+        let nodes = slice.content.content.slice()
+        const isStrippable = (node: PMNode): boolean =>
+          (node.type.name === 'paragraph' && node.childCount === 0) ||
+          (node.type.name === 'paragraph' && node.lastChild?.type.name === 'hardBreak') ||
+          node.type.name === 'hardBreak'
+        let changed = false
+        while (nodes.length > 0 && isStrippable(nodes[nodes.length - 1])) {
+          const last = nodes[nodes.length - 1]
+          if (last.type.name === 'paragraph' && last.childCount > 0) {
+            // Paragraph ending in a hard break: keep the paragraph, drop the break
+            nodes[nodes.length - 1] = last.copy(last.content.cut(last.content.size - 1))
+          } else {
+            nodes = nodes.slice(0, -1)
+          }
+          changed = true
+        }
+        if (!changed) return slice
+        return new Slice(Fragment.fromArray(nodes), slice.openStart, slice.openEnd)
       },
     },
   })

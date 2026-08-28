@@ -655,7 +655,12 @@ function InputBarContent({ threadId }: Props) {
   function handleDragLeave(e: React.DragEvent): void {
     e.preventDefault()
     e.stopPropagation()
-    setIsDragOver(false)
+    // Child elements fire dragleave as the pointer moves across them; only
+    // clear the highlight when the drag actually leaves the container.
+    const next = e.relatedTarget as Node | null
+    if (!next || !containerRef.current?.contains(next)) {
+      setIsDragOver(false)
+    }
   }
 
   async function handleDrop(e: React.DragEvent): Promise<void> {

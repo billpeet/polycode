@@ -4,6 +4,7 @@ import { useGitStore } from '../../stores/git'
 import { useLocationStore } from '../../stores/locations'
 import { useProjectStore } from '../../stores/projects'
 import { useThreadStore } from '../../stores/threads'
+import { toKebabBranchName } from '../../lib/utils'
 import { useToastStore } from '../../stores/toast'
 import { GitCompareResult, GitFileChange, PullRequest, PullResult, RepoLocation } from '../../types/ipc'
 import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu'
@@ -589,7 +590,7 @@ function BranchControls({
           )}
           {mode === 'new' && (
             <div className="px-3 space-y-2">
-              <input type="text" value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Branch name" onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate() }} className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
+              <input type="text" value={newName} onChange={(e) => setNewName(toKebabBranchName(e.target.value))} placeholder="Branch name" onKeyDown={(e) => { if (e.key === 'Enter') void handleCreate() }} className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
               <div className="space-y-1">
                 <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Base branch</p>
                 <select value={baseBranch} onChange={(e) => setBaseBranch(e.target.value)} className="w-full rounded px-2 py-1.5 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>

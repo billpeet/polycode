@@ -5,6 +5,7 @@ import { useBackdropClose } from '../../hooks/useBackdropClose'
 import { useToastStore } from '../../stores/toast'
 import { useGitStore } from '../../stores/git'
 import { formatErrorDetails } from '../../lib/errorDetails'
+import { toKebabBranchName } from '../../lib/utils'
 import { GitBranches, GitFileChange } from '../../types/ipc'
 import MarkdownEditor from '../MarkdownEditor'
 import { SparkleIcon } from './shared'
@@ -304,7 +305,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     try {
       const name = await window.api.invoke('git:generateBranchName', projectPath)
       if (name.trim()) {
-        setNewBranchName((current) => (current === startingName ? name : current))
+        setNewBranchName((current) => (current === startingName ? toKebabBranchName(name) : current))
       } else {
         addToast({
           type: 'error',
@@ -415,7 +416,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
         setTitle(values.title)
         setDescription(values.description)
         setCommitMessage(values.commitMessage)
-        setNewBranchName(values.branchName)
+        setNewBranchName(toKebabBranchName(values.branchName))
       } catch (err) {
         addToast({
           type: 'error',
@@ -534,7 +535,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                   <div className="relative">
                     <input
                       value={newBranchName}
-                      onChange={(e) => setNewBranchName(e.target.value)}
+                      onChange={(e) => setNewBranchName(toKebabBranchName(e.target.value))}
                       disabled={busy}
                       placeholder="feature/my-change"
                       className="w-full rounded px-2 py-1.5 pr-8 text-sm outline-none font-mono"
