@@ -5,6 +5,7 @@ import './index.css'
 import App from './App'
 import { SENTRY_DSN } from '../../shared/sentry.config'
 import { installRendererPerfObservers, reportReactCommit } from './lib/perf'
+import { initPostHog } from './lib/posthog'
 
 type RendererLogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug'
 
@@ -58,6 +59,8 @@ if (import.meta.env.PROD) {
     integrations: [Sentry.browserTracingIntegration()],
     tracesSampleRate: 0.1,
   })
+
+  initPostHog()
 }
 
 window.addEventListener('error', (event) => {
