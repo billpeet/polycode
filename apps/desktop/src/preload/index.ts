@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { isLocalChannel } from '@polycode/shared'
+import { getHeapStatistics } from 'node:v8'
 
 export type IpcListener = (...args: unknown[]) => void
 
@@ -46,3 +47,35 @@ const api = {
 }
 
 contextBridge.exposeInMainWorld('api', api)
+
+const MEMORY_SAMPLE_INTERVAL_MS = 30_000
+
+async function reportMemory(): Promise<void> {
+  const [memory, heap] = await Promise.all([
+    process.getProcessMemoryInfo(),
+    Promise.resolve(getHeapStatistics()),
+  ])
+  ipcRenderer.send('telemetry:memory', {
+    process: 'renderer',
+    privateBytes: memory.private * 1024,
+    residentSetBytes: memory.residentSet * 1024,
+    sharedBytes: memory.shared * 1024,
+    heapUsedBytes: heap.used_heap_size,
+    heapTotalBytes: heap.total_heap_size,
+    heapLimitBytes: heap.heap_size_limit,
+  })
+}
+
+function reportMemorySafely(): void {
+  void reportMemory().catch((error) => {
+    ipcRenderer.send('log:write', {
+      source: 'renderer',
+      level: 'warn',
+      timestamp: new Date().toISOString(),
+      messages: [`[telemetry] Memory sample failed: ${String(error)}`],
+    })
+  })
+}
+
+reportMemorySafely()
+setInterval(reportMemorySafely, MEMORY_SAMPLE_INTERVAL_MS)
