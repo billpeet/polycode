@@ -698,6 +698,39 @@ export interface CreateThreadOptions {
   permissionMode?: PermissionMode
 }
 
+export class StaleThreadSelectionError extends Error {
+  readonly code = 'STALE_THREAD_SELECTION' as const
+
+  constructor() {
+    super('The selected project location is no longer available. Refresh and try again.')
+    this.name = 'StaleThreadSelectionError'
+  }
+}
+
+/**
+ * Creates a user-selected thread from a transactionally validated location.
+ * Provider/model derivation belongs inside the same transaction so project or
+ * location deletion cannot invalidate either lookup before the insert.
+ */
+export function createThreadForLocation(
+  projectId: string,
+  name: string,
+  locationId: string
+): Thread {
+  const db = getDb()
+  return db.transaction(() => {
+    const location = db.prepare('SELECT project_id FROM repo_locations WHERE id = ?')
+      .get(locationId) as { project_id: string } | undefined
+
+    if (!location || location.project_id !== projectId) {
+      throw new StaleThreadSelectionError()
+    }
+
+    const { provider, model } = getLastUsedProviderAndModel(projectId)
+    return createThread(projectId, name, locationId, provider, model)
+  })()
+}
+
 export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-8', gitBranch: string | null = null, opts: CreateThreadOptions = {}): Thread {
   const now = new Date().toISOString()
   const permissionMode = normalizePermissionMode(opts.permissionMode ?? 'ask')

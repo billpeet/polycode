@@ -4,6 +4,11 @@ import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
+const STALE_THREAD_SELECTION_MESSAGE = 'The selected project location is no longer available.'
+
+function isStaleThreadSelectionError(error: unknown): boolean {
+  return error instanceof Error && error.message.includes(STALE_THREAD_SELECTION_MESSAGE)
+}
 
 function makeOptimisticThreadId(): string {
   return `pending-thread-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
@@ -368,10 +373,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       return thread.id
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const staleSelection = isStaleThreadSelectionError(error)
+      if (staleSelection) {
+        const { useLocationStore } = await import('./locations')
+        void useLocationStore.getState().fetch(projectId).catch(() => undefined)
+      }
       useToastStore.getState().add({
         type: 'error',
         title: 'Create Thread Failed',
-        message: 'Failed to create the new thread',
+        message: staleSelection
+          ? 'That location changed. Select an available location and try again.'
+          : 'Failed to create the new thread',
         details: formatErrorDetails({
           action: 'threads:create',
           projectId,
@@ -623,10 +635,17 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const staleSelection = isStaleThreadSelectionError(error)
+      if (staleSelection) {
+        const { useLocationStore } = await import('./locations')
+        void useLocationStore.getState().fetch(projectId).catch(() => undefined)
+      }
       useToastStore.getState().add({
         type: 'error',
         title: 'Create Thread Failed',
-        message: 'Failed to create new thread',
+        message: staleSelection
+          ? 'That location changed. Select an available location and try again.'
+          : 'Failed to create new thread',
         details: formatErrorDetails({
           action: 'threads:create',
           projectId,
