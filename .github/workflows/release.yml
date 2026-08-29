@@ -91,15 +91,61 @@ jobs:
         working-directory: apps/desktop
         run: pnpm run verify:electron-abi
 
-      - name: Build installer and upload draft release
+      - name: Build installer
         working-directory: apps/desktop
-        run: pnpm exec electron-builder --win --publish always --config.publish.releaseType=draft
+        run: pnpm exec electron-builder --win --publish never
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
-      # All updater assets exist before the release becomes visible to clients.
-      - name: Publish complete release
-        run: gh release edit "v${{ steps.version.outputs.version }}" --draft=false --latest
+      # electron-builder 26 can race its per-artifact GitHub publishers while
+      # creating a release. Create one draft ourselves and upload the complete,
+      # explicit updater asset set before making it visible to clients.
+      - name: Create draft release
+        shell: pwsh
+        run: gh release create "v$env:VERSION" --draft --title "v$env:VERSION" --target "$env:GITHUB_SHA"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Upload updater assets
+        shell: pwsh
+        run: |
+          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "apps/desktop/release"
+          $assets = @(
+            (Join-Path $releaseDir "latest.yml"),
+            (Join-Path $releaseDir "PolyCode-Setup-$env:VERSION.exe"),
+            (Join-Path $releaseDir "PolyCode-Setup-$env:VERSION.exe.blockmap")
+          )
+          foreach ($asset in $assets) {
+            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+              throw "Missing required updater asset: $asset"
+            }
+          }
+          gh release upload "v$env:VERSION" $assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Verify updater assets
+        shell: pwsh
+        run: |
+          $expected = @(
+            "latest.yml",
+            "PolyCode-Setup-$env:VERSION.exe",
+            "PolyCode-Setup-$env:VERSION.exe.blockmap"
+          )
+          $actual = @(gh release view "v$env:VERSION" --json assets --jq '.assets[].name')
+          $missing = @($expected | Where-Object { $_ -notin $actual })
+          if ($missing.Count -ne 0) {
+            throw "Draft release is missing updater assets: $($missing -join ', ')"
+          }
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+
+      - name: Publish complete release
+        shell: pwsh
+        run: gh release edit "v$env:VERSION" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
