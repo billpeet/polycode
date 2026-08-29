@@ -1,14 +1,28 @@
 import { create } from 'zustand'
-import type { SendOptions, Thread, ThreadStatus } from '@polycode/shared'
+import type { QueueThread, SendOptions, Thread, ThreadStatus } from '@polycode/shared'
 import { rpc } from '../api/rpc'
 import { requireConnection } from './hosts'
 
+/** Page size for the Queue's collapsed Snoozed/Archived sections. */
+export const QUEUE_PAGE_SIZE = 30
+
 interface ThreadsState {
   threadsByProject: Record<string, Thread[]>
+  /**
+   * The Queue: the cross-project attention list (see `threads:listQueue`).
+   * Ordering is not stored here — `bucketQueueThreads` derives it at render
+   * time so desktop and mobile cannot drift.
+   */
+  queueThreads: QueueThread[]
+  queueLoading: boolean
   loading: boolean
   error: string | null
 
   fetch: (projectId: string) => Promise<void>
+  fetchQueue: () => Promise<void>
+  /** Server-side search over the collapsed Queue sections. */
+  listQueueSnoozed: (search: string | null, offset?: number) => Promise<QueueThread[]>
+  listQueueArchived: (search: string | null, offset?: number) => Promise<QueueThread[]>
   create: (projectId: string, name: string, locationId: string) => Promise<Thread>
   rename: (projectId: string, threadId: string, name: string) => Promise<void>
   archive: (projectId: string, threadId: string) => Promise<void>
@@ -40,6 +54,20 @@ interface ThreadsState {
   findThread: (threadId: string) => Thread | undefined
 }
 
+/**
+ * Applies a patch to a thread wherever it appears in the Queue.
+ *
+ * The Queue is a parallel list to `threadsByProject` — the same thread can sit
+ * in both — so a live status or title update has to reach both or a Queue row
+ * will keep rendering a stale status for as long as the Queue stays open.
+ */
+function patchInQueue(queue: QueueThread[], threadId: string, patch: Partial<Thread>): QueueThread[] {
+  // Returning the same array when nothing matched keeps the store's identity
+  // check intact, so an unrelated thread's event does not re-render the Queue.
+  if (!queue.some((t) => t.id === threadId)) return queue
+  return queue.map((t) => (t.id === threadId ? { ...t, ...patch } : t))
+}
+
 function patchInAllProjects(
   threadsByProject: Record<string, Thread[]>,
   threadId: string,
@@ -61,6 +89,8 @@ function patchInAllProjects(
 
 export const useThreadsStore = create<ThreadsState>((set, get) => ({
   threadsByProject: {},
+  queueThreads: [],
+  queueLoading: false,
   loading: false,
   error: null,
 
@@ -72,6 +102,29 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     } catch (error) {
       set({ loading: false, error: error instanceof Error ? error.message : String(error) })
     }
+  },
+
+  /**
+   * Refetches the Queue. Deliberately does not clear `queueThreads` first: this
+   * runs on every status event and on resume, and blanking the list mid-read
+   * would make the Queue flicker on a phone that is polling in the background.
+   */
+  fetchQueue: async () => {
+    set({ queueLoading: true })
+    try {
+      const threads = await rpc(requireConnection(), 'threads:listQueue')
+      set({ queueThreads: threads, queueLoading: false })
+    } catch (error) {
+      set({ queueLoading: false, error: error instanceof Error ? error.message : String(error) })
+    }
+  },
+
+  listQueueSnoozed: async (search, offset = 0) => {
+    return rpc(requireConnection(), 'threads:listQueueSnoozed', search, QUEUE_PAGE_SIZE, offset)
+  },
+
+  listQueueArchived: async (search, offset = 0) => {
+    return rpc(requireConnection(), 'threads:listQueueArchived', search, QUEUE_PAGE_SIZE, offset)
   },
 
   create: async (projectId, name, locationId) => {
@@ -97,12 +150,13 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         ...s.threadsByProject,
         [projectId]: (s.threadsByProject[projectId] ?? []).filter((t) => t.id !== threadId),
       },
+      queueThreads: s.queueThreads.filter((t) => t.id !== threadId),
     }))
   },
 
   unarchive: async (projectId, threadId) => {
     await rpc(requireConnection(), 'threads:unarchive', threadId)
-    await get().fetch(projectId)
+    await Promise.all([get().fetch(projectId), get().fetchQueue()])
   },
 
   remove: async (projectId, threadId) => {
@@ -112,6 +166,7 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         ...s.threadsByProject,
         [projectId]: (s.threadsByProject[projectId] ?? []).filter((t) => t.id !== threadId),
       },
+      queueThreads: s.queueThreads.filter((t) => t.id !== threadId),
     }))
   },
 
@@ -127,6 +182,15 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
     return rpc(requireConnection(), 'threads:archivedCount', projectId)
   },
 
+  /**
+   * Snoozing drops the thread from both the project list and the Queue, since
+   * a snoozed thread is by definition not awaiting the user.
+   *
+   * Unlike archiving this does no session teardown and drops no per-thread
+   * state: a running thread keeps running while snoozed. The selection is left
+   * alone too — you may well snooze the thread you are currently reading, and
+   * yanking it out from under you would be hostile.
+   */
   snooze: async (projectId, threadId, untilIso) => {
     await rpc(requireConnection(), 'threads:snooze', threadId, untilIso)
     set((s) => ({
@@ -134,12 +198,13 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
         ...s.threadsByProject,
         [projectId]: (s.threadsByProject[projectId] ?? []).filter((t) => t.id !== threadId),
       },
+      queueThreads: s.queueThreads.filter((t) => t.id !== threadId),
     }))
   },
 
   wake: async (projectId, threadId) => {
     await rpc(requireConnection(), 'threads:unsnooze', threadId)
-    await get().fetch(projectId)
+    await Promise.all([get().fetch(projectId), get().fetchQueue()])
   },
 
   listSnoozed: async (projectId) => {
@@ -189,7 +254,10 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   },
 
   patchThread: (threadId, patch) => {
-    set((s) => ({ threadsByProject: patchInAllProjects(s.threadsByProject, threadId, patch) }))
+    set((s) => ({
+      threadsByProject: patchInAllProjects(s.threadsByProject, threadId, patch),
+      queueThreads: patchInQueue(s.queueThreads, threadId, patch),
+    }))
   },
 
   findThread: (threadId) => {

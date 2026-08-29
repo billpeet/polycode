@@ -1,13 +1,19 @@
 import { Stack } from 'expo-router'
 import { StatusBar } from 'expo-status-bar'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
+import { AppState } from 'react-native'
 import * as Linking from 'expo-linking'
 import { useRouter } from 'expo-router'
 import type { ThreadStatus } from '@polycode/shared'
 import { channelPrefixes, channelSuffix, onChannelPrefix } from '@/api/events'
 import { parsePairingPayload } from '@/api/pairing'
+import { sseManager } from '@/api/sse'
+import { useHostsStore } from '@/stores/hosts'
 import { useThreadsStore } from '@/stores/threads'
 import { colors } from '@/theme/colors'
+
+/** Coalesces bursts of thread events into a single Queue refetch. */
+const QUEUE_REFRESH_DEBOUNCE_MS = 400
 
 /**
  * Global SSE → store wiring that must stay alive regardless of which screen
@@ -35,6 +41,48 @@ function useGlobalEventWiring(): void {
   }, [])
 }
 
+/**
+ * Keeps the Queue fresh.
+ *
+ * Membership of the Queue changes for reasons no single event announces: a
+ * thread finishing a Turn moves between sections, and — uniquely — an elapsed
+ * snooze has no event behind it at all, because nothing is written when a wake
+ * time arrives (ADR-0002). So besides refetching on thread activity, we refetch
+ * whenever the app comes back to the foreground and whenever the SSE stream
+ * reconnects, since the stream has no replay and anything missed while it was
+ * down would otherwise persist as a stale Queue.
+ */
+function useQueueRefresh(): void {
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => {
+    const refresh = (): void => {
+      // Without an active host the RPC would throw; the Queue refetches on
+      // mount anyway once one is selected.
+      if (!useHostsStore.getState().activeHostId) return
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => {
+        void useThreadsStore.getState().fetchQueue()
+      }, QUEUE_REFRESH_DEBOUNCE_MS)
+    }
+
+    const offStatus = onChannelPrefix(channelPrefixes.threadStatus, refresh)
+    const offComplete = onChannelPrefix(channelPrefixes.threadComplete, refresh)
+    const offConnect = sseManager.onConnect(refresh)
+    const appStateSub = AppState.addEventListener('change', (status) => {
+      if (status === 'active') refresh()
+    })
+
+    return () => {
+      if (timer.current) clearTimeout(timer.current)
+      offStatus()
+      offComplete()
+      offConnect()
+      appStateSub.remove()
+    }
+  }, [])
+}
+
 /** Handle polycode://pair?url=&token=&name= deep links (QR scans from outside the app). */
 function usePairingDeepLink(): void {
   const router = useRouter()
@@ -53,6 +101,7 @@ function usePairingDeepLink(): void {
 
 export default function RootLayout() {
   useGlobalEventWiring()
+  useQueueRefresh()
   usePairingDeepLink()
 
   return (
@@ -68,6 +117,7 @@ export default function RootLayout() {
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
         <Stack.Screen name="home" options={{ headerShown: false }} />
+        <Stack.Screen name="queue" options={{ headerShown: false }} />
         <Stack.Screen name="hosts/index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="hosts/new" options={{ title: 'Add Host' }} />
         <Stack.Screen name="hosts/scan" options={{ title: 'Scan QR Code' }} />

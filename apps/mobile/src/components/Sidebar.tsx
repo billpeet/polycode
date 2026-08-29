@@ -152,9 +152,10 @@ function ArchivedThreadsModal(props: { projectId: string | null; onClose: () => 
  *
  * Mobile shares `threads:list` with the desktop, so a snoozed thread drops out
  * of the project list here too. Without this modal it would simply vanish with
- * no affordance to get it back — which is why mobile gets a Snoozed surface even
- * though it has no Queue view. Rows show the wake time, since "when does this
- * come back" is the only thing worth knowing about deferred work.
+ * no affordance to get it back. The Queue's Snoozed section covers this across
+ * all projects; this one answers it for a single project, from the tree. Rows
+ * show the wake time, since "when does this come back" is the only thing worth
+ * knowing about deferred work.
  */
 function SnoozedThreadsModal(props: { projectId: string | null; onClose: () => void }) {
   const { projectId, onClose } = props
@@ -367,6 +368,7 @@ export function Sidebar() {
   const activeHost = useHostsStore((s) => s.hosts.find((h) => h.id === s.activeHostId))
   const archive = useThreadsStore((s) => s.archive)
   const snooze = useThreadsStore((s) => s.snooze)
+  const setSidebarViewMode = useUiStore((s) => s.setSidebarViewMode)
 
   const [renameTarget, setRenameTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [actionTarget, setActionTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
@@ -663,6 +665,23 @@ export function Sidebar() {
               <Text style={styles.hostsLink}>Hosts</Text>
             </Pressable>
           </View>
+          {/*
+            Entry to the Queue: the cross-project attention list. It gets a full
+            screen rather than a mode inside this drawer, since triage wants the
+            width for project name, status and wake time.
+          */}
+          <Pressable
+            style={({ pressed }) => [styles.queueLink, pressed && { opacity: 0.7 }]}
+            onPress={() => {
+              setSidebarViewMode('queue')
+              setSidebarOpen(false)
+              router.push('/queue')
+            }}
+          >
+            <Text style={styles.queueLinkIcon}>▤</Text>
+            <Text style={styles.queueLinkText}>Queue</Text>
+            <Text style={styles.queueLinkChevron}>›</Text>
+          </Pressable>
           <ScrollView contentContainerStyle={{ paddingVertical: 6 }}>
             {projects.map((project) => (
               <ProjectSection
@@ -689,6 +708,18 @@ export function Sidebar() {
 }
 
 const styles = StyleSheet.create({
+  queueLink: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  queueLinkIcon: { color: colors.claude, fontSize: 14 },
+  queueLinkText: { color: colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
+  queueLinkChevron: { color: colors.textMuted, fontSize: 16 },
   panel: {
     position: 'absolute',
     top: 0,
