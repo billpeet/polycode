@@ -38,6 +38,7 @@ import {
   type TelemetryAttributes,
 } from './observability'
 import { getAppLifecycleState, shutdownApp, waitForAppOperations } from './app-lifecycle'
+import { recordMemorySample, startMemoryTelemetry, stopMemoryTelemetry, type MemorySample } from './memory-telemetry'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
@@ -81,6 +82,21 @@ ipcMain.on('telemetry:duration', (_event, payload: unknown) => {
       .map(([key, value]) => [key.slice(0, 64), typeof value === 'string' ? value.slice(0, 128) : value])
   ) as TelemetryAttributes
   recordDuration(candidate.name.slice(0, 128), candidate.durationMs, { process: 'renderer', ...attributes })
+})
+
+ipcMain.on('telemetry:memory', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return
+  const candidate = payload as Partial<MemorySample>
+  const values = [
+    candidate.privateBytes,
+    candidate.residentSetBytes,
+    candidate.sharedBytes,
+    candidate.heapUsedBytes,
+    candidate.heapTotalBytes,
+    candidate.heapLimitBytes,
+  ]
+  if (candidate.process !== 'renderer' || values.some((value) => typeof value !== 'number' || !Number.isFinite(value) || value < 0)) return
+  recordMemorySample(candidate as MemorySample)
 })
 
 let fatalDialogShown = false
@@ -320,6 +336,7 @@ function createWindow(): BrowserWindow {
 app.whenReady().then(async () => {
   const telemetryEnabled = initializeObservability(observabilityConfigFromEnv(app.getVersion()))
   console.info(`[telemetry] OTLP export ${telemetryEnabled ? 'enabled' : 'disabled'}`)
+  startMemoryTelemetry()
   installIpcProfiling()
 
   // Register protocol handler for attachment:// URLs
@@ -394,6 +411,7 @@ app.on('before-quit', (event) => {
       stopPlanWatcher()
       stopAllFileWatches()
       ptyManager.killAll()
+      stopMemoryTelemetry()
     },
     awaitProducers: async () => {
       await Promise.allSettled([

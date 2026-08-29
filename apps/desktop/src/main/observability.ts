@@ -5,6 +5,7 @@ import {
   type Attributes,
   type Counter,
   type Histogram,
+  type Gauge,
   type Span,
 } from '@opentelemetry/api'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -37,6 +38,7 @@ interface ObservabilityState {
   loggerProvider: LoggerProvider
   counters: Map<string, Counter>
   histograms: Map<string, Histogram>
+  gauges: Map<string, Gauge>
 }
 
 let state: ObservabilityState | null = null
@@ -111,8 +113,30 @@ export function initializeObservability(config: ObservabilityConfig): boolean {
     })],
   })
 
-  state = { tracerProvider, meterProvider, loggerProvider, counters: new Map(), histograms: new Map() }
+  state = {
+    tracerProvider,
+    meterProvider,
+    loggerProvider,
+    counters: new Map(),
+    histograms: new Map(),
+    gauges: new Map(),
+  }
   return true
+}
+
+export function recordGauge(
+  name: string,
+  value: number,
+  unit: string,
+  attributes: TelemetryAttributes = {}
+): void {
+  if (!state || !Number.isFinite(value) || value < 0) return
+  let gauge = state.gauges.get(name)
+  if (!gauge) {
+    gauge = state.meterProvider.getMeter('polycode').createGauge(name, { unit })
+    state.gauges.set(name, gauge)
+  }
+  gauge.record(value, attributes)
 }
 
 export function count(name: string, attributes: TelemetryAttributes = {}, value = 1): void {

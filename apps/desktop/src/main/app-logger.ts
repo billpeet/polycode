@@ -34,6 +34,7 @@ let flushing = false
 
 const LOG_FLUSH_INTERVAL_MS = 100
 const LOG_FLUSH_BATCH_SIZE = 250
+export const MAX_PENDING_LOG_LINES = 5_000
 
 function formatLocalDay(date: Date): string {
   const year = date.getFullYear()
@@ -73,6 +74,9 @@ function serializeArg(arg: unknown): string {
 
 function appendLogLine(source: LogSource, level: LogLevel, timestamp: string, messages: string[]): void {
   pendingLines.push({ timestamp, line: `[${timestamp}] [${source}] [${level}] ${messages.join(' ')}\n` })
+  if (pendingLines.length > MAX_PENDING_LOG_LINES) {
+    pendingLines.splice(0, pendingLines.length - MAX_PENDING_LOG_LINES)
+  }
   recordLog(level, messages.join(' '), { 'polycode.process.type': source })
   scheduleFlush()
 }
