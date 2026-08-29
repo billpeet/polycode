@@ -363,6 +363,11 @@ export class PiDriver implements CLIDriver {
         const usage = message?.usage as Record<string, unknown> | undefined
         const inputTokens = Number(usage?.input ?? 0)
         const outputTokens = Number(usage?.output ?? 0)
+        const cacheReadTokens = Number(usage?.cacheRead ?? usage?.cache_read ?? 0)
+        const cacheWriteTokens = Number(usage?.cacheWrite ?? usage?.cache_write ?? 0)
+        const totalTokens = Number(usage?.totalTokens ?? usage?.total_tokens ?? (inputTokens + outputTokens + cacheReadTokens + cacheWriteTokens))
+        const cost = (usage?.cost ?? message?.cost) as Record<string, unknown> | number | undefined
+        const costUsd = typeof cost === 'number' ? cost : Number(cost?.total ?? cost?.totalUsd ?? cost?.total_usd ?? NaN)
         const reportedMaxContextWindow = Number(
           usage?.contextWindow ?? usage?.context_window ?? usage?.maxTokens ?? usage?.max_tokens ?? 0
         )
@@ -374,6 +379,8 @@ export class PiDriver implements CLIDriver {
             metadata: {
               input_tokens: inputTokens,
               output_tokens: outputTokens,
+              total_tokens: Number.isFinite(totalTokens) ? totalTokens : inputTokens + outputTokens,
+              ...(Number.isFinite(costUsd) ? { cost_usd: costUsd } : {}),
               context_window: contextWindow,
               ...(Number.isFinite(reportedMaxContextWindow) && reportedMaxContextWindow > 0
                 ? { max_context_window: reportedMaxContextWindow }

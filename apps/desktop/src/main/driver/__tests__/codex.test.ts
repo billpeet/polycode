@@ -264,7 +264,7 @@ describe('parseCodexSdkEvent', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 10, output_tokens: 3, context_window: 17 },
+        metadata: { input_tokens: 10, output_tokens: 3, total_tokens: 17, context_window: 17 },
       } satisfies OutputEvent,
     ])
   })
@@ -299,7 +299,7 @@ describe('parseCodexAppServerNotification', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 12, output_tokens: 4 },
+        metadata: { input_tokens: 12, output_tokens: 4, total_tokens: 16 },
       } satisfies OutputEvent,
     ])
   })
@@ -679,7 +679,7 @@ describe('parseCodexAppServerNotification', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 10, output_tokens: 3, context_window: 15, max_context_window: 200 },
+        metadata: { input_tokens: 10, output_tokens: 3, total_tokens: 15, context_window: 15, max_context_window: 200 },
       } satisfies OutputEvent,
     ])
   })
@@ -702,6 +702,7 @@ describe('parseCodexAppServerNotification', () => {
       metadata: {
         input_tokens: 40_000,
         output_tokens: 5_000,
+        total_tokens: 50_000,
         context_window: 50_000,
         max_context_window: 258_400,
       },

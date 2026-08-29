@@ -146,11 +146,13 @@ function ThreadViewContent({ threadId }: Props) {
       if (event.type === 'usage' && event.metadata) {
         const input = (event.metadata.input_tokens as number) ?? 0
         const output = (event.metadata.output_tokens as number) ?? 0
+        const total = (event.metadata.total_tokens as number | undefined) ?? (input + output)
+        const costUsd = (event.metadata.cost_usd as number | undefined) ?? null
         const contextWindow = (event.metadata.context_window as number | undefined) ?? null
         const maxContextWindow = (event.metadata.max_context_window as number | undefined) ?? null
         const hasContextSnapshot = event.metadata.context_window !== undefined
         if (input || output || hasContextSnapshot || maxContextWindow) {
-          useThreadStore.getState().addUsage(threadId, input, output, contextWindow, maxContextWindow)
+          useThreadStore.getState().addUsage(threadId, input, output, total, costUsd, contextWindow, maxContextWindow)
         }
       }
 

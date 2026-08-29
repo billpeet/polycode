@@ -155,6 +155,48 @@ describe('parseOpenCodeEvent — text', () => {
   })
 })
 
+// ── usage events ──────────────────────────────────────────────────────────────
+
+describe('parseOpenCodeEvent — usage', () => {
+  it('emits provider-reported cost and all token categories from step_finish', () => {
+    const driver = makeDriver()
+    expect(parse(driver, {
+      type: 'step_finish',
+      sessionID: SESSION_ID,
+      timestamp: 1771739480000,
+      part: {
+        type: 'step-finish',
+        cost: 0.01234,
+        tokens: {
+          input: 100,
+          output: 20,
+          reasoning: 30,
+          cache: { read: 40, write: 10 },
+        },
+      },
+    })).toEqual([{
+      type: 'usage',
+      content: '',
+      metadata: {
+        input_tokens: 100,
+        output_tokens: 20,
+        total_tokens: 200,
+        cost_usd: 0.01234,
+        context_window: 200,
+      },
+    }])
+  })
+
+  it('does not fabricate usage when step_finish omits cost and tokens', () => {
+    const driver = makeDriver()
+    expect(parse(driver, {
+      type: 'step_finish',
+      sessionID: SESSION_ID,
+      part: { type: 'step-finish', tokens: {} },
+    })).toEqual([])
+  })
+})
+
 // ── tool_use events ───────────────────────────────────────────────────────────
 
 describe('parseOpenCodeEvent — tool_use (completed)', () => {

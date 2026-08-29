@@ -11,6 +11,7 @@ const migrations: Migration[] = [
   { version: 3, up: addTurnTimestamps },
   { version: 4, up: addSnooze },
   { version: 5, up: addProjectFaviconOverride },
+  { version: 6, up: addThreadCostUsage },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -32,6 +33,18 @@ export function runMigrations(database: Database.Database): void {
 
 function addProjectFaviconOverride(database: Database.Database): void {
   database.exec('ALTER TABLE projects ADD COLUMN favicon_path TEXT')
+}
+
+/** Version 6 — Provider-reported lifetime token totals and actual USD cost. */
+function addThreadCostUsage(database: Database.Database): void {
+  const columns = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'total_tokens')) {
+    database.exec('ALTER TABLE threads ADD COLUMN total_tokens INTEGER NOT NULL DEFAULT 0')
+    database.exec('UPDATE threads SET total_tokens = input_tokens + output_tokens')
+  }
+  if (!columns.some((column) => column.name === 'total_cost_usd')) {
+    database.exec('ALTER TABLE threads ADD COLUMN total_cost_usd REAL')
+  }
 }
 
 /**
@@ -222,7 +235,6 @@ function adoptLegacySchema(database: Database.Database): void {
     database.exec('ALTER TABLE threads ADD COLUMN output_tokens INTEGER NOT NULL DEFAULT 0')
     database.exec('ALTER TABLE threads ADD COLUMN context_window INTEGER NOT NULL DEFAULT 0')
   }
-
   // Add session_id column to messages if not present
   const msgCols = database.pragma('table_info(messages)') as Array<{ name: string }>
   const hasSessionIdInMessages = msgCols.some((c) => c.name === 'session_id')

@@ -685,6 +685,8 @@ export function parseCodexSdkEvent(
     case 'turn.completed': {
       const inputTokens = event.usage?.input_tokens ?? 0
       const outputTokens = event.usage?.output_tokens ?? 0
+      const cachedInputTokens = event.usage?.cached_input_tokens ?? 0
+      const totalTokens = inputTokens + outputTokens + cachedInputTokens
       const contextWindow = normalizeCodexContextWindowUsage(event.usage as Record<string, unknown> | undefined)
       if (inputTokens || outputTokens || contextWindow) {
         events.push({
@@ -693,6 +695,7 @@ export function parseCodexSdkEvent(
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
+            total_tokens: totalTokens,
             context_window: contextWindow,
           },
         })
@@ -1129,6 +1132,8 @@ export function parseCodexAppServerNotification(
       const usage = (turn?.usage as Record<string, unknown> | undefined) ?? (params?.usage as Record<string, unknown> | undefined)
       const inputTokens = Number(usage?.inputTokens ?? usage?.input_tokens ?? 0)
       const outputTokens = Number(usage?.outputTokens ?? usage?.output_tokens ?? 0)
+      const cachedInputTokens = Number(usage?.cachedInputTokens ?? usage?.cached_input_tokens ?? 0)
+      const totalTokens = Number(usage?.totalTokens ?? usage?.total_tokens ?? (inputTokens + outputTokens + cachedInputTokens))
       if (inputTokens || outputTokens) {
         events.push({
           type: 'usage',
@@ -1136,6 +1141,7 @@ export function parseCodexAppServerNotification(
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
+            total_tokens: totalTokens,
           },
         })
       }
@@ -1205,6 +1211,7 @@ export function parseCodexAppServerNotification(
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
+            total_tokens: totalTokens,
             context_window: maxTokens && maxTokens > 0 ? Math.min(totalTokens, maxTokens) : totalTokens,
             ...(maxTokens && maxTokens > 0 ? { max_context_window: maxTokens } : {}),
           },
@@ -1631,7 +1638,7 @@ class CodexCliDriver extends BaseDriver {
       }
 
       case 'turn.completed': {
-        const usage = data.usage as { input_tokens?: number; output_tokens?: number } | undefined
+        const usage = data.usage as { input_tokens?: number; output_tokens?: number; cached_input_tokens?: number } | undefined
         if (usage && (usage.input_tokens || usage.output_tokens)) {
           events.push({
             type: 'usage',
@@ -1639,6 +1646,7 @@ class CodexCliDriver extends BaseDriver {
             metadata: {
               input_tokens: usage.input_tokens ?? 0,
               output_tokens: usage.output_tokens ?? 0,
+              total_tokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0) + (usage.cached_input_tokens ?? 0),
             },
           })
         }

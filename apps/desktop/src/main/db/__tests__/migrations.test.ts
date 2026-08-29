@@ -92,6 +92,20 @@ describe('database migrations', () => {
     ).toBeUndefined()
   })
 
+  it('adds thread cost and total-token columns to a version 5 database', () => {
+    const database = createDatabase()
+    runMigrations(database)
+    database.exec('ALTER TABLE threads DROP COLUMN total_cost_usd')
+    database.exec('ALTER TABLE threads DROP COLUMN total_tokens')
+    database.pragma('user_version = 5')
+
+    runMigrations(database)
+
+    const columns = database.prepare("SELECT name FROM pragma_table_info('threads')").pluck().all()
+    expect(columns).toContain('total_tokens')
+    expect(columns).toContain('total_cost_usd')
+  })
+
   it('rejects databases created by a newer application version', () => {
     const database = createDatabase()
     database.pragma(`user_version = ${LATEST_SCHEMA_VERSION + 1}`)

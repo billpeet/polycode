@@ -61,6 +61,8 @@ export interface ThreadRow {
   archived: number
   input_tokens: number
   output_tokens: number
+  total_tokens: number
+  total_cost_usd: number | null
   context_window: number
   unread: number
   /** Set by queries that include an EXISTS subquery; undefined when row built locally */

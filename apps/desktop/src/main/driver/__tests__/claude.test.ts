@@ -73,6 +73,7 @@ describe('ClaudeDriver context usage', () => {
         cache_creation_input_tokens: 10,
         cache_read_input_tokens: 70,
       },
+      total_cost_usd: 0.0123,
       modelUsage: { 'claude-test': { contextWindow: 1_000_000 } },
     })
 
@@ -82,6 +83,8 @@ describe('ClaudeDriver context usage', () => {
       metadata: {
         input_tokens: 100,
         output_tokens: 20,
+        total_tokens: 200,
+        cost_usd: 0.0123,
         context_window: 200,
         max_context_window: 1_000_000,
       },

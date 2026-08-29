@@ -158,7 +158,7 @@ describe('PiDriver event parsing', () => {
       {
         type: 'usage',
         content: '',
-        metadata: { input_tokens: 12, output_tokens: 4, context_window: 16 },
+        metadata: { input_tokens: 12, output_tokens: 4, total_tokens: 16, context_window: 16 },
       } satisfies OutputEvent,
     ])
   })
@@ -174,8 +174,35 @@ describe('PiDriver event parsing', () => {
       metadata: {
         input_tokens: 12,
         output_tokens: 4,
+        total_tokens: 16,
         context_window: 16,
         max_context_window: 258_400,
+      },
+    }])
+  })
+
+  it('emits provider-calculated token totals and cost when Pi supplies them', () => {
+    const driver = makeDriver()
+    expect(parse(driver, {
+      type: 'turn_end',
+      message: {
+        usage: {
+          input: 12,
+          output: 4,
+          cacheRead: 30,
+          totalTokens: 46,
+          cost: { total: 0.0042 },
+        },
+      },
+    })).toEqual([{
+      type: 'usage',
+      content: '',
+      metadata: {
+        input_tokens: 12,
+        output_tokens: 4,
+        total_tokens: 46,
+        cost_usd: 0.0042,
+        context_window: 16,
       },
     }])
   })

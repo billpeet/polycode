@@ -93,12 +93,21 @@ export const useMessagesStore = create<MessagesState>((set) => ({
     // usage events update the token counter instead of rendering a bubble.
     if (event.type === 'usage') {
       const meta = event.metadata ?? {}
-      const usage: TokenUsage = {
-        input_tokens: typeof meta.input_tokens === 'number' ? meta.input_tokens : 0,
-        output_tokens: typeof meta.output_tokens === 'number' ? meta.output_tokens : 0,
-        context_window: typeof meta.context_window === 'number' ? meta.context_window : 0,
-      }
-      set((s) => ({ usageByThread: { ...s.usageByThread, [threadId]: usage } }))
+      set((s) => {
+        const previous = s.usageByThread[threadId]
+        const input = typeof meta.input_tokens === 'number' ? meta.input_tokens : 0
+        const output = typeof meta.output_tokens === 'number' ? meta.output_tokens : 0
+        const total = typeof meta.total_tokens === 'number' ? meta.total_tokens : input + output
+        const cost = typeof meta.cost_usd === 'number' ? meta.cost_usd : null
+        const usage: TokenUsage = {
+          input_tokens: (previous?.input_tokens ?? 0) + input,
+          output_tokens: (previous?.output_tokens ?? 0) + output,
+          total_tokens: (previous?.total_tokens ?? 0) + total,
+          total_cost_usd: cost == null ? (previous?.total_cost_usd ?? null) : (previous?.total_cost_usd ?? 0) + cost,
+          context_window: typeof meta.context_window === 'number' ? meta.context_window : (previous?.context_window ?? 0),
+        }
+        return { usageByThread: { ...s.usageByThread, [threadId]: usage } }
+      })
       return
     }
     if (event.type === 'rate_limit') {

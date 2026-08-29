@@ -266,6 +266,10 @@ export interface Thread {
   archived: boolean
   input_tokens: number
   output_tokens: number
+  /** All billable token categories reported by the provider (including cached/reasoning tokens when supplied). */
+  total_tokens: number
+  /** Actual provider-reported charge in USD; null when the provider does not expose one. */
+  total_cost_usd: number | null
   context_window: number
   unread: boolean
   /** True if at least one message has been sent in this thread */
@@ -381,6 +385,8 @@ export interface Session {
 export interface TokenUsage {
   input_tokens: number
   output_tokens: number
+  total_tokens: number
+  total_cost_usd: number | null
   context_window: number
   /** Provider-reported context limit for the active session/model. */
   max_context_window?: number

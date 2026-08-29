@@ -644,6 +644,8 @@ export class ClaudeDriver implements CLIDriver {
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
+            total_tokens: usedContextWindow,
+            ...(Number.isFinite(message.total_cost_usd) ? { cost_usd: message.total_cost_usd } : {}),
             context_window: contextWindow,
             ...(maxContextWindow > 0 ? { max_context_window: maxContextWindow } : {}),
           },

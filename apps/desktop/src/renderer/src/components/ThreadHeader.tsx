@@ -476,13 +476,17 @@ export default function ThreadHeader({ threadId }: Props) {
               style={{ color: 'var(--color-text-muted)', fontFamily: 'monospace' }}
             >
               <Tooltip
-                content={`Input: ${usage.input_tokens.toLocaleString()} tokens · Output: ${usage.output_tokens.toLocaleString()} tokens`}
+                content={`Total: ${usage.total_tokens.toLocaleString()} tokens · Input: ${usage.input_tokens.toLocaleString()} · Output: ${usage.output_tokens.toLocaleString()}${usage.total_cost_usd == null ? '' : ` · Actual cost: $${usage.total_cost_usd.toFixed(4)}`}`}
                 side="top"
               >
                 <span>
                   ↓{formatTokenCount(usage.input_tokens)} ↑{formatTokenCount(usage.output_tokens)}
                 </span>
               </Tooltip>
+              <span>{formatTokenCount(usage.total_tokens)} total</span>
+              {usage.total_cost_usd != null && (
+                <span>${usage.total_cost_usd.toFixed(4)}</span>
+              )}
               {usage.context_window > 0 && (
                 <>
                   <ContextWindowMeter

@@ -431,6 +431,8 @@ function rowToThread(r: ThreadRow): Thread {
     archived: r.archived === 1,
     input_tokens: r.input_tokens ?? 0,
     output_tokens: r.output_tokens ?? 0,
+    total_tokens: r.total_tokens ?? ((r.input_tokens ?? 0) + (r.output_tokens ?? 0)),
+    total_cost_usd: r.total_cost_usd ?? null,
     context_window: r.context_window ?? 0,
     unread: (r.unread ?? 0) === 1,
     has_messages: (r.has_messages ?? 0) === 1,
@@ -714,6 +716,8 @@ export function createThread(projectId: string, name: string, locationId: string
     archived: 0,
     input_tokens: 0,
     output_tokens: 0,
+    total_tokens: 0,
+    total_cost_usd: null,
     context_window: 0,
     unread: 0,
     has_messages: 0,
@@ -1181,13 +1185,13 @@ export function updateThreadSessionId(threadId: string, sessionId: string): void
     .run(sessionId, threadId)
 }
 
-/** Accumulate input/output token totals and optionally set context_window to the latest snapshot. */
-export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, contextWindow: number | null): void {
+/** Accumulate provider usage totals and optionally set context_window to the latest snapshot. */
+export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, totalTokens: number, costUsd: number | null, contextWindow: number | null): void {
   getDb()
     .prepare(
-      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, context_window = COALESCE(?, context_window), updated_at = ? WHERE id = ?'
+      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, total_tokens = total_tokens + ?, total_cost_usd = CASE WHEN ? IS NULL THEN total_cost_usd ELSE COALESCE(total_cost_usd, 0) + ? END, context_window = COALESCE(?, context_window), updated_at = ? WHERE id = ?'
     )
-    .run(inputTokens, outputTokens, contextWindow, new Date().toISOString(), id)
+    .run(inputTokens, outputTokens, totalTokens, costUsd, costUsd, contextWindow, new Date().toISOString(), id)
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────
@@ -1632,6 +1636,8 @@ export function importThread(
     archived: 0,
     input_tokens: 0,
     output_tokens: 0,
+    total_tokens: 0,
+    total_cost_usd: null,
     context_window: 0,
     unread: 0,
     has_messages: 1,

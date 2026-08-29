@@ -236,6 +236,8 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
 
   // context_window on usage/thread = tokens currently in the context window.
   const contextTokens = usage?.context_window ?? thread?.context_window ?? 0
+  const totalTokens = usage?.total_tokens ?? thread?.total_tokens ?? 0
+  const totalCostUsd = usage?.total_cost_usd ?? thread?.total_cost_usd ?? null
   const contextPercent = contextLimit > 0 ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0
 
   const pickImages = async () => {
@@ -348,6 +350,12 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
             <StatusDot status={status} size={7} />
             <Text style={styles.statusText}>{statusLabel(status)}</Text>
+            {totalTokens > 0 ? (
+              <Text style={styles.statusText}>· {formatTokens(totalTokens)} total</Text>
+            ) : null}
+            {totalCostUsd != null ? (
+              <Text style={styles.statusText}>· ${totalCostUsd.toFixed(4)}</Text>
+            ) : null}
             {contextTokens > 0 ? (
               <Text style={styles.statusText}>
                 · {formatTokens(contextTokens)} ctx ({contextPercent}%)

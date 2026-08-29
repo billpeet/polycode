@@ -20,6 +20,8 @@ function makeThread(overrides: Partial<Thread>): Thread {
     archived: false,
     input_tokens: 0,
     output_tokens: 0,
+    total_tokens: 0,
+    total_cost_usd: null,
     context_window: 0,
     unread: false,
     has_messages: false,

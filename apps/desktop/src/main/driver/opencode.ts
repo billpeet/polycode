@@ -118,6 +118,39 @@ export class OpenCodeDriver extends BaseDriver {
         break
       }
 
+      case 'step_finish': {
+        // OpenCode reports authoritative per-step cost and token usage here.
+        const part = data.part as Record<string, unknown> | undefined
+        const tokens = part?.tokens as Record<string, unknown> | undefined
+        if (!part || !tokens) break
+
+        const cache = tokens.cache as Record<string, unknown> | undefined
+        const numberOrZero = (value: unknown): number =>
+          typeof value === 'number' && Number.isFinite(value) ? value : 0
+        const inputTokens = numberOrZero(tokens.input)
+        const outputTokens = numberOrZero(tokens.output)
+        const reasoningTokens = numberOrZero(tokens.reasoning)
+        const cacheReadTokens = numberOrZero(cache?.read)
+        const cacheWriteTokens = numberOrZero(cache?.write)
+        const totalTokens = inputTokens + outputTokens + reasoningTokens + cacheReadTokens + cacheWriteTokens
+        const costUsd = typeof part.cost === 'number' && Number.isFinite(part.cost) ? part.cost : null
+
+        if (totalTokens || costUsd != null) {
+          events.push({
+            type: 'usage',
+            content: '',
+            metadata: {
+              input_tokens: inputTokens,
+              output_tokens: outputTokens,
+              total_tokens: totalTokens,
+              ...(costUsd != null ? { cost_usd: costUsd } : {}),
+              context_window: totalTokens,
+            },
+          })
+        }
+        break
+      }
+
       case 'error': {
         // Session-level error.
         // Shape: { type: "error", sessionID, timestamp, error: { message: string, ... } }
@@ -130,7 +163,7 @@ export class OpenCodeDriver extends BaseDriver {
         break
       }
 
-      // step_start, step_finish, reasoning — internal orchestration events not surfaced to the user
+      // step_start and reasoning — internal orchestration events not surfaced to the user
       default:
         break
     }

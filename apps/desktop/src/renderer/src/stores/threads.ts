@@ -123,7 +123,7 @@ interface ThreadStore {
   queueMessage: (threadId: string, content: string, options: SendOptions) => void
   clearQueue: (threadId: string) => void
   importFromHistory: (projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string) => Promise<void>
-  addUsage: (threadId: string, input_tokens: number, output_tokens: number, context_window?: number | null, max_context_window?: number | null) => void
+  addUsage: (threadId: string, input_tokens: number, output_tokens: number, total_tokens: number, cost_usd?: number | null, context_window?: number | null, max_context_window?: number | null) => void
   setPid: (threadId: string, pid: number | null) => void
 }
 
@@ -194,6 +194,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       archived: false,
       input_tokens: 0,
       output_tokens: 0,
+      total_tokens: 0,
+      total_cost_usd: null,
       context_window: 0,
       unread: false,
       has_messages: false,
@@ -435,8 +437,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         ...s.usageByThread,
         ...Object.fromEntries(
           threads
-            .filter((t: Thread) => t.input_tokens > 0 || t.output_tokens > 0)
-            .map((t: Thread) => [t.id, { input_tokens: t.input_tokens, output_tokens: t.output_tokens, context_window: t.context_window }])
+            .filter((t: Thread) => t.total_tokens > 0 || t.total_cost_usd != null)
+            .map((t: Thread) => [t.id, { input_tokens: t.input_tokens, output_tokens: t.output_tokens, total_tokens: t.total_tokens, total_cost_usd: t.total_cost_usd, context_window: t.context_window }])
         )
       }
       }
@@ -492,6 +494,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       archived: false,
       input_tokens: 0,
       output_tokens: 0,
+      total_tokens: 0,
+      total_cost_usd: null,
       context_window: 0,
       unread: false,
       has_messages: false,
@@ -1291,7 +1295,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }))
   },
 
-  addUsage: (threadId, input_tokens, output_tokens, context_window, max_context_window) =>
+  addUsage: (threadId, input_tokens, output_tokens, total_tokens, cost_usd, context_window, max_context_window) =>
     set((s) => {
       const prev = s.usageByThread[threadId]
       return {
@@ -1300,6 +1304,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           [threadId]: {
             input_tokens: (prev?.input_tokens ?? 0) + input_tokens,
             output_tokens: (prev?.output_tokens ?? 0) + output_tokens,
+            total_tokens: (prev?.total_tokens ?? 0) + total_tokens,
+            total_cost_usd: cost_usd == null ? (prev?.total_cost_usd ?? null) : (prev?.total_cost_usd ?? 0) + cost_usd,
             context_window: context_window ?? (prev?.context_window ?? 0),
             max_context_window: max_context_window ?? prev?.max_context_window,
           }
