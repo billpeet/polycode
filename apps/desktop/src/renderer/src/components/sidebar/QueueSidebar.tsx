@@ -136,7 +136,7 @@ function QueueRow({
       )}
 
       <div
-        className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover/thread:opacity-100"
+        className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity ${menuOpen ? 'z-50 opacity-100' : 'opacity-0 group-hover/thread:opacity-100'}`}
         style={{ background: isSelected ? 'color-mix(in srgb, var(--color-border) 80%, transparent)' : 'color-mix(in srgb, var(--color-surface) 80%, transparent)' }}
       >
         <span className="px-1 text-[10px]" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
