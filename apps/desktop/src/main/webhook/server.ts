@@ -11,7 +11,7 @@ import {
   getLastUsedProviderAndModel,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
-import { getModelsForProvider, getDefaultModelForProvider, Provider } from '../../shared/types'
+import { Provider } from '../../shared/types'
 import { emitAppEvent } from '../app-events'
 import { isValidBearerToken } from '../http-auth'
 import { getAllowedCorsOrigin, isAllowedHostHeader } from '../http-request-security'
@@ -75,16 +75,12 @@ async function handleCreateThread(
     }
   }
 
-  // Resolve provider/model
+  // Resolve provider/model. A requested model is passed through as-is: model
+  // ids may be live-discovered and absent from any static fallback list (see
+  // rowToThread), and an invalid id surfaces as a provider error on the turn.
   const { provider: defaultProvider, model: defaultModel } = getLastUsedProviderAndModel(project.id)
   const resolvedProvider = (typeof provider === 'string' ? provider : defaultProvider) as Provider
-  const validModels = getModelsForProvider(resolvedProvider).map((m) => m.id)
-  const resolvedModel =
-    typeof model === 'string' && (resolvedProvider === 'claude-code' || resolvedProvider === 'codex' || resolvedProvider === 'pi' || resolvedProvider === 'cursor' || resolvedProvider === 'grok' || (validModels as readonly string[]).includes(model))
-      ? model
-      : typeof model === 'string'
-        ? getDefaultModelForProvider(resolvedProvider)
-        : defaultModel
+  const resolvedModel = typeof model === 'string' ? model : defaultModel
 
   // Create thread
   const threadName = typeof name === 'string' && name.trim() ? name.trim() : 'Webhook thread'

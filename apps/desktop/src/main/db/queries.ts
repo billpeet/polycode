@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
 import { foldMessages } from '@polycode/shared'
-import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getModelsForProvider, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState } from '../../shared/types'
+import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -410,10 +410,11 @@ function normalizeCodexReasoningSummary(value: string | null | undefined): Codex
 }
 
 function rowToThread(r: ThreadRow): Thread {
-  // Validate provider/model pairing — fix mismatches caused by stale data
+  // The model id is stored exactly as written and passed through untouched:
+  // providers surface live-discovered model lists (e.g. `opencode models`),
+  // so no hardcoded fallback list can validate them — rewriting "unknown"
+  // ids here silently reverted threads to the provider's default model.
   const provider = (r.provider ?? 'claude-code') as Provider
-  const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'claude-code' || provider === 'codex' || provider === 'pi' || provider === 'cursor' || provider === 'grok' || validModels.includes(r.model) ? r.model : getDefaultModelForProvider(provider)
   const permissionMode = normalizePermissionMode(r.permission_mode, r.yolo_mode)
   return {
     id: r.id,
@@ -421,7 +422,7 @@ function rowToThread(r: ThreadRow): Thread {
     location_id: r.location_id ?? null,
     name: r.name,
     provider,
-    model,
+    model: r.model,
     reasoning_level: normalizeReasoningLevel(r.reasoning_level),
     codex_personality: normalizeCodexPersonality(r.codex_personality),
     codex_reasoning_summary: normalizeCodexReasoningSummary(r.codex_reasoning_summary),
@@ -1172,11 +1173,10 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
 
   if (!row) return { provider: 'claude-code', model: 'claude-opus-4-8' }
 
-  // Validate the pair before returning it
+  // Model ids are passed through exactly as stored — they may be live-discovered
+  // and absent from any hardcoded fallback list (see rowToThread).
   const provider = (row.provider ?? 'claude-code') as Provider
-  const validModels = getModelsForProvider(provider).map((m) => m.id as string)
-  const model = provider === 'claude-code' || provider === 'codex' || provider === 'pi' || provider === 'cursor' || provider === 'grok' || validModels.includes(row.model) ? row.model : getDefaultModelForProvider(provider)
-  return { provider, model }
+  return { provider, model: row.model }
 }
 
 export function updateThreadSessionId(threadId: string, sessionId: string): void {
