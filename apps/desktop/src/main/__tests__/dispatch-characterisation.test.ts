@@ -869,6 +869,7 @@ const window = {
   maximize: H.stub('window.maximize'),
   unmaximize: H.stub('window.unmaximize'),
   close: H.stub('window.close'),
+  isDestroyed: () => false,
   isMaximized: H.stub('window.isMaximized', () => H.state.isMaximized),
   webContents: {
     isDestroyed: () => false,

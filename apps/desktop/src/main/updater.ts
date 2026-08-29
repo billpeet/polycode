@@ -2,6 +2,7 @@ import { app, BrowserWindow } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import * as Sentry from '@sentry/electron/main'
 import type { UpdateState } from '../shared/types'
+import { sendToRenderer } from './app-events'
 
 const FIRST_CHECK_DELAY = 10_000 // 10 seconds after launch
 const UPDATE_CHECK_INTERVAL = 30 * 60 * 1000 // every 30 minutes
@@ -41,11 +42,8 @@ function isExpectedNetworkError(error: unknown): boolean {
 }
 
 function broadcast(): void {
-  try {
-    getWindow()?.webContents.send('update:state', { ...updateState })
-  } catch {
-    // Window may not be ready yet
-  }
+  const window = getWindow()
+  if (window) sendToRenderer(window, 'update:state', { ...updateState })
 }
 
 function setState(partial: Partial<UpdateState>): void {

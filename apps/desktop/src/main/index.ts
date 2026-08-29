@@ -24,7 +24,7 @@ import { createRunGit } from './runs/adapters/git'
 import { createRunWorktrees } from './runs/adapters/worktrees'
 import { createRunSessions } from './runs/adapters/sessions'
 import { electronRunNotifier } from './runs/adapters/notifier'
-import { emitAppEvent } from './app-events'
+import { emitAppEvent, sendToRenderer } from './app-events'
 import { commandManager } from './commands/manager'
 import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
@@ -218,8 +218,6 @@ function createWindow(): BrowserWindow {
       })
       if (response !== 0) return
 
-      sessionManager.stopAll()
-      await commandManager.stopAll()
       isQuitting = true
       win.close()
     }
@@ -239,8 +237,8 @@ function createWindow(): BrowserWindow {
     if (contents.getType() !== 'webview') return
     contents.setWindowOpenHandler(({ url }) => {
       const locationId = browserSessionManager.locationIdForSession(contents.session)
-      if (locationId && /^https?:\/\//i.test(url) && !win.isDestroyed()) {
-        win.webContents.send('browser:popup-request', locationId, url)
+      if (locationId && /^https?:\/\//i.test(url)) {
+        sendToRenderer(win, 'browser:popup-request', locationId, url)
       }
       return { action: 'deny' }
     })
@@ -320,24 +318,20 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
-    cleanupAllAttachments()
-    closeDb()
     app.quit()
   }
 })
 
-let commandShutdown: Promise<void> | null = null
+let shutdownStarted = false
+let shutdownComplete = false
 
 app.on('before-quit', (event) => {
-  if (!commandShutdown) {
-    event.preventDefault()
-    commandShutdown = Promise.allSettled([
-      commandManager.stopAll(),
-      shutdownObservability(),
-    ]).then(() => undefined).finally(() => app.quit())
-    return
-  }
+  if (shutdownComplete) return
 
+  event.preventDefault()
+  if (shutdownStarted) return
+
+  shutdownStarted = true
   isQuitting = true
   runLifecycle?.stop()
   sessionManager.stopAll()
@@ -348,7 +342,15 @@ app.on('before-quit', (event) => {
   stopPlanWatcher()
   stopAllFileWatches()
   ptyManager.killAll()
-  cleanupAllAttachments()
-  closeDb()
-  flushAppLogs()
+
+  void Promise.allSettled([
+    commandManager.stopAll(),
+    shutdownObservability(),
+  ]).finally(() => {
+    cleanupAllAttachments()
+    closeDb()
+    flushAppLogs()
+    shutdownComplete = true
+    app.quit()
+  })
 })

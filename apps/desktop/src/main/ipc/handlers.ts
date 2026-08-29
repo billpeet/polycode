@@ -1,5 +1,6 @@
 import { basename } from 'path'
 import { ipcMain, BrowserWindow } from 'electron'
+import { sendToRenderer } from '../app-events'
 import { isLocalChannel, isRemoteChannel } from '@polycode/shared'
 import { commandManager } from '../commands/manager'
 import { ptyManager } from '../terminal/manager'
@@ -111,8 +112,8 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
   // `window.api.on`, which CHANNEL_REGISTRY does not inventory. The four `window:*`
   // request/response channels this pairs with are folded.
 
-  window.on('maximize',   () => window.webContents.send('window:maximized-changed', true))
-  window.on('unmaximize', () => window.webContents.send('window:maximized-changed', false))
+  window.on('maximize',   () => sendToRenderer(window, 'window:maximized-changed', true))
+  window.on('unmaximize', () => sendToRenderer(window, 'window:maximized-changed', false))
 
   // ── Terminal (PTY) ──────────────────────────────────────────────────────────
   //
