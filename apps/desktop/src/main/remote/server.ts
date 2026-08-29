@@ -5,6 +5,7 @@ import { onAppEvent } from '../app-events'
 import { RemoteServerConfig } from '../../shared/types'
 import { isValidBearerToken } from '../http-auth'
 import { getAllowedCorsOrigin, isAllowedHostHeader } from '../http-request-security'
+import { attachRemoteBrowserTunnel } from './browser-tunnel'
 
 let server: http.Server | null = null
 
@@ -138,6 +139,7 @@ export function startRemoteControlServer(config: RemoteServerConfig, window: Bro
   if (!config.enabled) return
 
   server = http.createServer(createRequestHandler(config, window))
+  attachRemoteBrowserTunnel(server, config)
   server.listen(config.port, config.host, () => {
     console.log(`[remote-control] Server listening on http://${config.host}:${config.port}`)
   })

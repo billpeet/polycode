@@ -126,7 +126,7 @@ function BrowserTabView({ locationId, tab, session, active, onWebview }: TabView
           <p className="text-sm mb-2">Open a page from this location</p>
           <p className="text-xs leading-relaxed">
             {session.proxied
-              ? <>localhost traffic is tunneled to <b>{session.sshLabel}</b> over SSH —{'\n'}e.g. <code>localhost:5173</code> reaches the dev server on the session host.</>
+              ? <>localhost traffic is tunneled to <b>{session.sshLabel}</b> —{'\n'}e.g. <code>localhost:5173</code> reaches the dev server on the session host.</>
               : <>Type a URL above, e.g. <code>localhost:5173</code> for a local dev server.</>}
           </p>
         </div>
@@ -275,7 +275,7 @@ export default function BrowserContent({ locationId }: Props) {
           <span
             className="text-[10px] font-mono rounded px-1.5 py-0.5"
             style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.12)' }}
-            title={`localhost traffic is tunneled over SSH to ${session.sshLabel}`}
+            title={`localhost traffic is tunneled to ${session.sshLabel}`}
           >
             via {session.sshLabel}
           </span>

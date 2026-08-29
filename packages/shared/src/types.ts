@@ -80,13 +80,13 @@ export interface NewProjectResult {
 /**
  * Result of preparing the browser session for a Project Location.
  * `partition` is the Electron session partition every Browser tab at that
- * location must use; `proxied` says whether loopback traffic tunnels through
- * the location's SSH connection (false for local and WSL locations).
+ * location must use; `proxied` says whether loopback traffic tunnels to the
+ * execution host (false for local and WSL locations on this desktop).
  */
 export interface BrowserSessionConfig {
   partition: string
   proxied: boolean
-  /** `user@host` of the SSH connection when proxied; null otherwise. */
+  /** Human-readable tunnel destination (SSH endpoint or remote-host label). */
   sshLabel: string | null
 }
 

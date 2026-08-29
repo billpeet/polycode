@@ -1885,8 +1885,8 @@ export const channelHandlers = {
   // a browser panel on a phone would have nowhere to draw. Preparing is
   // idempotent per location, so every tab of a panel may call it.
 
-  'browser:prepareSession': (_ctx, locationId) =>
-    browserSessionManager.prepareSession(locationId),
+  'browser:prepareSession': (ctx, locationId) =>
+    browserSessionManager.prepareSession(locationId, ctx.remoteClient.getActiveHost()),
 
   'browser:releaseSession': (_ctx, locationId) =>
     browserSessionManager.releaseSession(locationId),

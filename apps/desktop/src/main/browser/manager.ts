@@ -1,16 +1,16 @@
 import { session, Session } from 'electron'
 import { getLocationById } from '../db/queries'
-import type { RepoLocation, SshConfig, BrowserPrepareSessionResult } from '../../shared/types'
+import type { RepoLocation, SshConfig, BrowserPrepareSessionResult, RemoteHost } from '../../shared/types'
 import { browserPartitionFor, sshLabelFor } from '../../shared/browser'
 import { SshTunnelPool } from './port-forward'
 import { startBrowserProxy, BrowserProxy } from './proxy-server'
+import { RemoteTunnelPool } from './remote-forward'
 
 interface ProxyEntry {
   key: string
-  ssh: SshConfig
   label: string
   proxy: BrowserProxy
-  pool: SshTunnelPool
+  pool: { dispose(): void }
   teardownTimer: NodeJS.Timeout | null
 }
 
@@ -23,10 +23,10 @@ const TEARDOWN_DELAY_MS = 5_000
  * Every Project Location that opens a Browser gets one persisted Electron
  * session (`persist:browser:{locationId}`), so dev-server cookies and
  * localStorage survive restarts and stay isolated per location. When the
- * location is SSH-backed, that session's loopback traffic is routed through a
- * local proxy which tunnels over the location's own SSH connection — this map
- * owns those proxies and the tunnel pools beneath them, keyed by SSH config so
- * two locations on one host share a proxy.
+ * location is remote, that session's loopback traffic is routed through a
+ * local proxy which tunnels either over the location's SSH connection or the
+ * active PolyCode remote-control connection. This map owns those proxies and
+ * the tunnel pools beneath them, keyed by transport so locations share safely.
  *
  * Usage is derived from the set of prepared locations rather than counted:
  * preparing is idempotent per location, so re-preparing can never leak a
@@ -46,17 +46,25 @@ class BrowserSessionManager {
   /** Sessions already configured not to prompt the page for permissions. */
   private hardened = new WeakSet<Session>()
 
-  async prepareSession(locationId: string): Promise<BrowserPrepareSessionResult> {
+  async prepareSession(locationId: string, remoteHost: RemoteHost | null = null): Promise<BrowserPrepareSessionResult> {
     const location = getLocationById(locationId)
-    if (!location) return { ok: false, code: 'LOCATION_NOT_FOUND' }
+    if (!location && !remoteHost) return { ok: false, code: 'LOCATION_NOT_FOUND' }
 
-    const partition = browserPartitionFor(locationId)
+    const partition = browserPartitionFor(remoteHost ? `${remoteHost.id}:${locationId}` : locationId)
     const guestSession = session.fromPartition(partition)
     this.sessionLocations.add(guestSession)
     this.sessionLocationIds.set(guestSession, locationId)
     this.hardenSession(guestSession)
 
-    const ssh = sshConfigFor(location)
+    const ssh = location ? sshConfigFor(location) : null
+    if (remoteHost) {
+      const key = `remote:${remoteHost.id}:${remoteHost.baseUrl}`
+      this.prepared.add(locationId)
+      this.locationKeys.set(locationId, key)
+      const entry = await this.ensureProxyEntry(key, remoteHost.label, () => new RemoteTunnelPool(remoteHost))
+      await this.configureProxy(guestSession, entry)
+      return { ok: true, session: { partition, proxied: true, sshLabel: remoteHost.label } }
+    }
     if (!ssh) {
       // Local and WSL locations: the browser runs on this machine (WSL2's own
       // localhost forwarding makes local dev servers reachable here already),
@@ -72,17 +80,13 @@ class BrowserSessionManager {
       this.prepared.add(locationId)
       this.locationKeys.set(locationId, key)
     }
-    const entry = await this.ensureProxyEntry(key, ssh)
+    const entry = await this.ensureProxyEntry(key, sshLabelFor(ssh.user, ssh.host), () => new SshTunnelPool(ssh))
     // Route the guest session through our local proxy. `<-loopback>` matters
     // more than it looks: Chromium implicitly *bypasses* proxies for loopback
     // hosts, which would send `localhost:5173` at this machine instead of
     // through the SSH tunnel — negating that is the whole feature. Everything
     // non-loopback also transits the proxy, which relays it direct.
-    await guestSession.setProxy({
-      mode: 'fixed_servers',
-      proxyRules: `http=127.0.0.1:${entry.proxy.port};https=127.0.0.1:${entry.proxy.port}`,
-      proxyBypassRules: '<-loopback>',
-    })
+    await this.configureProxy(guestSession, entry)
     return { ok: true, session: { partition, proxied: true, sshLabel: entry.label } }
   }
 
@@ -131,7 +135,15 @@ class BrowserSessionManager {
     }
   }
 
-  private ensureProxyEntry(key: string, ssh: SshConfig): Promise<ProxyEntry> {
+  private configureProxy(guestSession: Session, entry: ProxyEntry): Promise<void> {
+    return guestSession.setProxy({
+      mode: 'fixed_servers',
+      proxyRules: `http=127.0.0.1:${entry.proxy.port};https=127.0.0.1:${entry.proxy.port}`,
+      proxyBypassRules: '<-loopback>',
+    })
+  }
+
+  private ensureProxyEntry(key: string, label: string, createPool: () => SshTunnelPool | RemoteTunnelPool): Promise<ProxyEntry> {
     const existing = this.entries.get(key)
     if (existing) {
       if (existing.teardownTimer) {
@@ -144,23 +156,22 @@ class BrowserSessionManager {
     const pending = this.pendingEntries.get(key)
     if (pending) return pending
 
-    const creating = this.createProxyEntry(key, ssh).finally(() => {
+    const creating = this.createProxyEntry(key, label, createPool).finally(() => {
       this.pendingEntries.delete(key)
     })
     this.pendingEntries.set(key, creating)
     return creating
   }
 
-  private async createProxyEntry(key: string, ssh: SshConfig): Promise<ProxyEntry> {
-    const pool = new SshTunnelPool(ssh)
+  private async createProxyEntry(key: string, label: string, createPool: () => SshTunnelPool | RemoteTunnelPool): Promise<ProxyEntry> {
+    const pool = createPool()
     try {
       // Binding the proxy is synchronous; the tunnels beneath it spawn lazily
       // per (host, port) on first use, so this resolves immediately.
       const proxy = await startBrowserProxy(pool)
       const entry: ProxyEntry = {
         key,
-        ssh,
-        label: sshLabelFor(ssh.user, ssh.host),
+        label,
         proxy,
         pool,
         teardownTimer: null,
