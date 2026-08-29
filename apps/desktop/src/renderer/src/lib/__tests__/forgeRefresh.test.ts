@@ -8,6 +8,7 @@ describe('forge refresh backoff', () => {
     vi.resetModules()
     vi.useFakeTimers()
     invoke = vi.fn(async (channel: string) => {
+      if (channel === 'git:isRepo') return true
       if (channel === 'git:hostingProvider') return 'github'
       if (channel === 'git:defaultBranch') return 'main'
       if (channel === 'forge:pr:webUrl') return 'https://github.test/pulls'
@@ -20,6 +21,46 @@ describe('forge refresh backoff', () => {
   })
 
   afterEach(() => vi.useRealTimers())
+
+  it('treats a plain or deleted directory as a capability state before forge metadata is read', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'git:isRepo') return false
+      throw new Error(`unexpected command for a non-repository: ${channel}`)
+    })
+    const { refreshForge } = await import('../forgeRefresh')
+
+    await expect(refreshForge('C:/deleted-worktree', 'main')).resolves.toMatchObject({
+      capability: { available: false, reason: 'not-repository' },
+      provider: null,
+      openPrs: [],
+    })
+    expect(invoke).toHaveBeenCalledOnce()
+    expect(invoke).toHaveBeenCalledWith('git:isRepo', 'C:/deleted-worktree')
+  })
+
+  it('returns Azure setup instructions instead of rejecting when the optional CLI is absent', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'git:isRepo') return true
+      if (channel === 'git:hostingProvider') return 'azure'
+      if (channel === 'git:defaultBranch') return 'main'
+      if (channel === 'forge:pr:webUrl') return 'https://dev.azure.test/pulls'
+      if (channel === 'forge:pr:list') {
+        throw new Error('azdevops CLI not found. Install and configure it first: azdevops setup --org <org> --token <pat> --project <project>')
+      }
+      return null
+    })
+    const { refreshForge } = await import('../forgeRefresh')
+
+    await expect(refreshForge('C:/azure-repo', 'main')).resolves.toMatchObject({
+      capability: {
+        available: false,
+        reason: 'azure-cli-missing',
+        setupCommand: 'azdevops setup --org <org> --token <pat> --project <project>',
+      },
+      provider: 'azure',
+      openPrs: [],
+    })
+  })
 
   it('caches stable provider and repository metadata', async () => {
     const { refreshForge } = await import('../forgeRefresh')
@@ -34,6 +75,7 @@ describe('forge refresh backoff', () => {
   it('publishes and caches the base list before enrichment completes', async () => {
     let finishEnrichment!: (value: Array<{ id: number; title: string }>) => void
     invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'git:isRepo') return true
       if (channel === 'git:hostingProvider') return 'github'
       if (channel === 'git:defaultBranch') return 'main'
       if (channel === 'forge:pr:webUrl') return 'https://github.test/pulls'
@@ -54,6 +96,7 @@ describe('forge refresh backoff', () => {
 
   it('suppresses automatic retries after deterministic failures but permits manual retry', async () => {
     invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'git:isRepo') return true
       if (channel === 'git:hostingProvider') return 'github'
       if (channel === 'git:defaultBranch') return 'main'
       if (channel === 'forge:pr:webUrl') return 'https://github.test/pulls'
@@ -71,6 +114,7 @@ describe('forge refresh backoff', () => {
 
   it('exponentially backs off transient failures', async () => {
     invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'git:isRepo') return true
       if (channel === 'git:hostingProvider') return 'github'
       if (channel === 'git:defaultBranch') return 'main'
       if (channel === 'forge:pr:webUrl') return 'https://github.test/pulls'
