@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { MultiFileDiff } from '@pierre/diffs/react'
 import type { FileContents } from '@pierre/diffs/react'
+import { diffLanguageFromPath } from '../lib/diffLanguage'
 
 interface Props {
   /** For Edit: old_string to replace */
@@ -13,16 +14,8 @@ interface Props {
   toolName: 'Edit' | 'Write'
 }
 
-/** Guess a language from the file extension for Shiki highlighting. */
-function langFromPath(filePath: string | undefined): string | undefined {
-  if (!filePath) return undefined
-  const ext = filePath.split('.').pop()?.toLowerCase()
-  return ext || undefined
-}
-
-
 export default function EditDiffView({ oldString, newString, filePath, toolName }: Props) {
-  const lang = langFromPath(filePath)
+  const lang = diffLanguageFromPath(filePath)
   const displayName = filePath ?? (toolName === 'Write' ? 'new file' : 'edit')
 
   const oldFile = useMemo<FileContents>(() => {
