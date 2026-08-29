@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { bucketQueueThreads } from '../queueBuckets'
-import type { QueueThread } from '../../types/ipc'
+import { bucketQueueThreads } from '../queue-buckets'
+import type { QueueThread } from '../types'
 
 let counter = 0
 function makeThread(overrides: Partial<QueueThread>): QueueThread {

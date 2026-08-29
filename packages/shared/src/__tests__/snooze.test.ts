@@ -6,12 +6,12 @@ import {
   resolveSnoozePreset,
   SNOOZE_PRESETS,
   timeUntil,
-} from '@polycode/shared'
+} from '../snooze'
 
 /**
- * Tests for the shared snooze logic. They live in the desktop app because the
- * shared package is consumed as raw TypeScript with no test runner of its own;
- * the logic is used identically by mobile.
+ * Tests for the shared snooze logic, used identically by desktop and mobile.
+ * The shared package is consumed as raw TypeScript and has no test runner of
+ * its own, so these execute under the desktop's vitest `shared` project.
  *
  * Every `now` here is built from local date components rather than a UTC string,
  * because the presets anchor to local wall-clock hours by design ("morning"
