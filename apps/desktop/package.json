@@ -29,6 +29,7 @@
     "@opentelemetry/sdk-trace-node": "^2.10.0",
     "@opentelemetry/semantic-conventions": "^1.43.0",
     "@pierre/diffs": "^1.0.11",
+    "posthog-js": "^1.422.5",
     "@sentry/electron": "^7.8.0",
     "@sentry/react": "^10.40.0",
     "@tanstack/react-virtual": "^3.13.21",
