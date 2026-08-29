@@ -87,6 +87,7 @@ jobs:
       - name: Build app
         run: pnpm run build
         env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           POLYCODE_OTLP_ENDPOINT: https://otlp.biap.cc
           POLYCODE_OTLP_HEADERS: ${{ secrets.POLYCODE_OTLP_HEADERS }}
 

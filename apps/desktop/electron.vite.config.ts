@@ -32,6 +32,12 @@ export default defineConfig({
     plugins: [react(), tailwindcss(), ...(sentryPlugin ? [sentryPlugin] : [])],
     define: {
       __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.0.0'),
+      // PostHog project keys are write-only and safe to embed in the app.
+      // CI supplies the real key from the POSTHOG_API_KEY secret; local and
+      // dev builds fall back to a placeholder that stays disabled.
+      __POSTHOG_API_KEY__: JSON.stringify(
+        process.env.POSTHOG_API_KEY ?? 'phc_REPLACE_WITH_YOUR_PROJECT_API_KEY'
+      ),
     },
     build: { sourcemap: true },
   },
