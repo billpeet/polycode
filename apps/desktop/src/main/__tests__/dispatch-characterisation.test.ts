@@ -321,17 +321,13 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   getThreadWsl: H.stub('db.getThreadWsl', () => H.state.threadWsl),
   threadExists: H.stub('db.threadExists', () => H.state.threadExists),
   threadHasMessages: H.stub('db.threadHasMessages', () => H.state.threadHasMessages),
-  // Recorded, not a bare function: `threads:create` derives provider/model through it and
-  // the derivation itself — that it happens, and before createThread — is the behaviour.
-  getLastUsedProviderAndModel: H.stub('db.getLastUsedProviderAndModel', {
-    provider: 'claude',
-    model: 'opus',
-  }),
   listLocations: H.stub('db.listLocations', () => (H.state.location ? [H.state.location] : [])),
   listThreads: H.stub('db.listThreads', [{ id: 't1', name: 'Thread one' }]),
   listArchivedThreads: H.stub('db.listArchivedThreads', [{ id: 't-old', name: 'Old thread' }]),
   archivedThreadCount: H.stub('db.archivedThreadCount', 7),
-  createThread: H.stub('db.createThread', { id: 't-new', name: 'New thread' }),
+  createThreadForLocation: H.stub(
+    'db.createThreadForLocation', { id: 't-new', name: 'New thread' },
+  ),
   getThreadModifiedFiles: H.stub('db.getThreadModifiedFiles', ['src/a.ts']),
   archiveThread: H.stub('db.archiveThread', 'RET_archiveThread'),
   // Sentinel returns for functions currently declared `: void`. Real code ignores these,
@@ -1839,18 +1835,14 @@ describe('threads:* CRUD and settings — both transports agree', () => {
     ])
   })
 
-  it('threads:create derives provider/model from the project before inserting', async () => {
+  it('threads:create delegates validation and insertion to the transactional query', async () => {
     const args = ['p1', 'New thread', 'loc1']
     const ipc = await viaIpc('threads:create', args)
     const rpc = await viaControlRpc('threads:create', args)
 
     expect(rpc).toEqual(ipc)
-    // The derivation is the behaviour: createThread's own `provider = 'claude-code'` /
-    // `model = 'claude-opus-4-8'` parameter defaults would otherwise silently take over,
-    // so dropping the lookup would still produce a valid-looking thread.
     expect(ipc).toEqual([
-      'db.getLastUsedProviderAndModel(["p1"])',
-      'db.createThread(["p1","New thread","loc1","claude","opus"])',
+      'db.createThreadForLocation(["p1","New thread","loc1"])',
     ])
 
     expect(await resultViaIpc('threads:create', args)).toEqual({ id: 't-new', name: 'New thread' })

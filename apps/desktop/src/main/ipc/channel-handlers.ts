@@ -78,7 +78,7 @@ import {
   createProject,
   createRoutine,
   createSlashCommand,
-  createThread,
+  createThreadForLocation,
   createYouTrackServer,
   deleteCommand,
   deleteLocation,
@@ -90,7 +90,6 @@ import {
   deleteYouTrackServer,
   getActiveSession,
   getImportedSessionIds,
-  getLastUsedProviderAndModel,
   getLocationForThread,
   getProjectById,
   getRoutine,
@@ -862,14 +861,8 @@ export const channelHandlers = {
   'threads:listQueueSnoozed': (_ctx, search, limit, offset) =>
     listSnoozedQueueThreads(search, limit, offset),
 
-  // The provider/model lookup is load-bearing, not decoration: `createThread` declares
-  // `provider = 'claude-code', model = 'claude-opus-4-8'` parameter defaults, so dropping
-  // it would still produce a valid-looking thread that had silently stopped inheriting
-  // what the project last used.
-  'threads:create': (_ctx, projectId, name, locationId) => {
-    const { provider, model } = getLastUsedProviderAndModel(projectId)
-    return createThread(projectId, name, locationId, provider, model)
-  },
+  'threads:create': (_ctx, projectId, name, locationId) =>
+    createThreadForLocation(projectId, name, locationId),
 
   'threads:delete': (_ctx, id) => {
     sessionManager.remove(id)
