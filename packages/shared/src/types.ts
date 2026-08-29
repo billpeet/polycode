@@ -232,6 +232,18 @@ export const PROVIDERS = [
   { id: 'grok' as Provider, label: 'Grok Build' },
 ] as const
 
+const PROVIDER_IDS = new Set<string>(PROVIDERS.map(({ id }) => id))
+const LEGACY_PROVIDER_ALIASES: Readonly<Record<string, Provider>> = {
+  claude: 'claude-code',
+}
+
+/** Validate an untrusted or persisted provider id against the live registry. */
+export function parseProviderId(value: unknown): Provider | null {
+  if (typeof value !== 'string') return null
+  const migrated = LEGACY_PROVIDER_ALIASES[value] ?? value
+  return PROVIDER_IDS.has(migrated) ? migrated as Provider : null
+}
+
 export function getModelsForProvider(provider: Provider) {
   if (provider === 'codex') return OPENAI_MODELS
   if (provider === 'opencode') return OPENCODE_MODELS
@@ -804,6 +816,8 @@ export interface CliHealthResult {
   upToDate: boolean | null
   /** Non-fatal capability advisory (e.g. Cursor parameterized model picker requires a newer CLI / lab channel). */
   advisory?: string | null
+  /** Present when the requested provider cannot be checked. */
+  error?: string
 }
 
 export interface CliUpdateResult {

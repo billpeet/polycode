@@ -127,6 +127,32 @@ describe('checkCliHealth — remote probe contents', () => {
 })
 
 describe('checkCliHealth — result shaping', () => {
+  it('reports an unsupported persisted provider instead of throwing', async () => {
+    const { checkCliHealth } = await loadChecker()
+
+    const result = await checkCliHealth('removed-provider', 'local', null, null)
+
+    expect(result).toMatchObject({
+      installed: false,
+      currentVersion: null,
+      latestVersion: null,
+      upToDate: null,
+      error: 'Unsupported provider: removed-provider',
+    })
+    expect(createRunnerMock).not.toHaveBeenCalled()
+  })
+
+  it('migrates the legacy claude provider id at the health boundary', async () => {
+    const runner = fakeFor('local', { stdout: '1.2.3\n' })
+    const { checkCliHealth } = await loadChecker()
+
+    const result = await checkCliHealth('claude', 'local', null, null)
+
+    expect(runner.runCommands[0].binary).toMatch(/claude(?:\.exe)?$/)
+    expect(runner.runCommands[0].args).toEqual(['--version'])
+    expect(result.currentVersion).toBe('1.2.3')
+  })
+
   it('reads a version out of stderr, which is where several CLIs print it', async () => {
     fakeFor('local', { stdout: '', stderr: 'codex 4.5.6\n', exitCode: 1 })
     const { checkCliHealth } = await loadChecker()
@@ -164,6 +190,16 @@ describe('checkCliHealth — result shaping', () => {
 })
 
 describe('updateCli', () => {
+  it('refuses an unsupported persisted provider without invoking a runner', async () => {
+    const { updateCli } = await loadChecker()
+
+    await expect(updateCli('removed-provider', 'local', null, null)).resolves.toEqual({
+      success: false,
+      output: 'Unsupported provider: removed-provider',
+    })
+    expect(createRunnerMock).not.toHaveBeenCalled()
+  })
+
   it('runs claude-code through its own updater locally', async () => {
     const runner = fakeFor('local', { stdout: 'updated', exitCode: 0 })
     const { updateCli } = await loadChecker()
