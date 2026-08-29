@@ -118,6 +118,38 @@ PolyCode stores its SQLite database as `polycode.db` in Electron's `userData` di
 
 SQLite runs with WAL mode and foreign keys enabled.
 
+## Observability
+
+The desktop main process can export logs, metrics, and traces using OTLP over
+HTTP/protobuf. Export is disabled unless an endpoint is configured:
+
+```powershell
+$env:OTEL_EXPORTER_OTLP_ENDPOINT = 'https://alloy.example.com/otlp'
+$env:OTEL_EXPORTER_OTLP_HEADERS = 'Authorization=Bearer token'
+$env:OTEL_ENVIRONMENT = 'development'
+pnpm dev
+```
+
+PolyCode appends `/v1/logs`, `/v1/metrics`, and `/v1/traces` to the configured
+base endpoint. Telemetry is batched and flushed during normal shutdown; local
+buffered log files remain available when OTLP export is disabled or unreachable.
+Do not embed long-lived production credentials in a distributed desktop build.
+
+The initial instrumentation reports renderer and main-process stalls, IPC
+latency/call counts, and collected Runner command latency. IPC calls are root
+spans and collected Runner commands become children, so slow Git, Forge, driver,
+SSH, and WSL work can be attributed without exporting command arguments,
+scripts, working directories, repository paths, or remote hostnames.
+
+Explicit user actions also increment `polycode.feature.usage` with a controlled
+`feature`, `action`, and `outcome` vocabulary. Polling, reads, status checks, and
+automatic refresh channels are excluded from feature usage.
+
+Official GitHub releases package the `https://otlp.biap.cc` endpoint and an
+ingestion-only credential supplied by the `POLYCODE_OTLP_HEADERS` Actions
+secret. Runtime `OTEL_EXPORTER_OTLP_*` variables take precedence, allowing a
+developer or managed installation to redirect or replace the packaged setting.
+
 ## Tech stack
 
 | Area | Technology |
@@ -132,6 +164,7 @@ SQLite runs with WAL mode and foreign keys enabled.
 | Markdown/code highlighting | marked + DOMPurify + Shiki |
 | Packaging/updating | electron-builder + electron-updater |
 | Error reporting | Sentry Electron + Sentry React |
+| Observability | OpenTelemetry OTLP logs, metrics, and traces |
 | Package manager/runtime | pnpm 11 + Node.js 22 |
 
 ## License

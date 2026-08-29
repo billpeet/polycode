@@ -62,6 +62,11 @@ export function reportPerf(
       detailText,
     ].filter(Boolean),
   })
+  window.api.send('telemetry:duration', {
+    name: `polycode.renderer.${name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`,
+    durationMs,
+    attributes: details,
+  })
 }
 
 export const reportReactCommit: ProfilerOnRenderCallback = (

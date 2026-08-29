@@ -86,6 +86,9 @@ jobs:
 
       - name: Build app
         run: pnpm run build
+        env:
+          POLYCODE_OTLP_ENDPOINT: https://otlp.biap.cc
+          POLYCODE_OTLP_HEADERS: ${{ secrets.POLYCODE_OTLP_HEADERS }}
 
       - name: Build installer and publish to GitHub
         working-directory: apps/desktop

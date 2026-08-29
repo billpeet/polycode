@@ -28,6 +28,13 @@ import { emitAppEvent } from './app-events'
 import { commandManager } from './commands/manager'
 import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
+import {
+  initializeObservability,
+  observabilityConfigFromEnv,
+  recordDuration,
+  shutdownObservability,
+  type TelemetryAttributes,
+} from './observability'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
@@ -53,6 +60,24 @@ ipcMain.on('log:write', (_event, payload: unknown) => {
     timestamp: candidate.timestamp,
     messages: candidate.messages.map((message) => String(message)),
   })
+})
+
+ipcMain.on('telemetry:duration', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object') return
+  const candidate = payload as Partial<{
+    name: string
+    durationMs: number
+    attributes: TelemetryAttributes
+  }>
+  if (!candidate.name?.startsWith('polycode.') || typeof candidate.durationMs !== 'number') return
+
+  const attributes = Object.fromEntries(
+    Object.entries(candidate.attributes ?? {})
+      .filter(([, value]) => ['string', 'number', 'boolean'].includes(typeof value))
+      .slice(0, 12)
+      .map(([key, value]) => [key.slice(0, 64), typeof value === 'string' ? value.slice(0, 128) : value])
+  ) as TelemetryAttributes
+  recordDuration(candidate.name.slice(0, 128), candidate.durationMs, { process: 'renderer', ...attributes })
 })
 
 let fatalDialogShown = false
@@ -243,6 +268,8 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(() => {
+  const telemetryEnabled = initializeObservability(observabilityConfigFromEnv(app.getVersion()))
+  console.info(`[telemetry] OTLP export ${telemetryEnabled ? 'enabled' : 'disabled'}`)
   installIpcProfiling()
 
   // Register protocol handler for attachment:// URLs
@@ -304,7 +331,10 @@ let commandShutdown: Promise<void> | null = null
 app.on('before-quit', (event) => {
   if (!commandShutdown) {
     event.preventDefault()
-    commandShutdown = commandManager.stopAll().finally(() => app.quit())
+    commandShutdown = Promise.allSettled([
+      commandManager.stopAll(),
+      shutdownObservability(),
+    ]).then(() => undefined).finally(() => app.quit())
     return
   }
 

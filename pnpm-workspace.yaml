@@ -19,6 +19,7 @@ allowBuilds:
   electron: true
   esbuild: true
   node-pty: true
+  protobufjs: true
   sharp: true
 
 strictDepBuilds: true

@@ -2,6 +2,7 @@ import { app } from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
 import { inspect } from 'util'
+import { recordLog } from './observability'
 
 type LogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug'
 type LogSource = 'main' | 'renderer'
@@ -72,6 +73,7 @@ function serializeArg(arg: unknown): string {
 
 function appendLogLine(source: LogSource, level: LogLevel, timestamp: string, messages: string[]): void {
   pendingLines.push({ timestamp, line: `[${timestamp}] [${source}] [${level}] ${messages.join(' ')}\n` })
+  recordLog(level, messages.join(' '), { 'polycode.process.type': source })
   scheduleFlush()
 }
 

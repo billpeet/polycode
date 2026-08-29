@@ -1,4 +1,6 @@
 import { ipcMain } from 'electron'
+import { count, recordDuration, withSpan } from './observability'
+import { recordFeatureUsage } from './feature-usage'
 
 const IPC_PROFILING_PATCHED = Symbol.for('polycode.ipcProfilingPatched')
 const DEFAULT_IPC_THRESHOLD_MS = 50
@@ -104,33 +106,39 @@ export function installIpcProfiling(): void {
   const originalHandle = ipcMain.handle.bind(ipcMain)
 
   ipcMain.handle = ((channel, listener) => {
-    return originalHandle(channel, async (event, ...args) => {
-      const startedAt = performance.now()
-      let outcome = 'ok'
-      const stats = getChannelStats(channel)
-      stats.active += 1
-      stats.maxActive = Math.max(stats.maxActive, stats.active)
+    return originalHandle(channel, (event, ...args) =>
+      withSpan(`ipc.${channel}`, { 'ipc.channel': channel }, async (span) => {
+        const startedAt = performance.now()
+        let outcome: 'ok' | 'error' = 'ok'
+        const stats = getChannelStats(channel)
+        stats.active += 1
+        stats.maxActive = Math.max(stats.maxActive, stats.active)
 
-      try {
-        return await listener(event, ...args)
-      } catch (error) {
-        outcome = 'error'
-        stats.errors += 1
-        throw error
-      } finally {
-        const durationMs = performance.now() - startedAt
-        stats.active -= 1
-        stats.count += 1
-        stats.totalMs += durationMs
-        stats.maxMs = Math.max(stats.maxMs, durationMs)
-        const thresholdMs = getIpcThresholdMs(channel)
-        if (durationMs >= thresholdMs) {
-          console.warn(
-            `[perf][ipc] ${channel} ${durationMs.toFixed(1)}ms outcome=${outcome} ${summarizeArgs(args)}`
-          )
+        try {
+          return await listener(event, ...args)
+        } catch (error) {
+          outcome = 'error'
+          stats.errors += 1
+          throw error
+        } finally {
+          const durationMs = performance.now() - startedAt
+          span?.setAttributes({ 'ipc.outcome': outcome, 'ipc.duration_ms': durationMs })
+          stats.active -= 1
+          stats.count += 1
+          stats.totalMs += durationMs
+          stats.maxMs = Math.max(stats.maxMs, durationMs)
+          recordDuration('polycode.ipc.duration', durationMs, { channel, outcome })
+          count('polycode.ipc.calls', { channel, outcome })
+          recordFeatureUsage(channel, outcome)
+          const thresholdMs = getIpcThresholdMs(channel)
+          if (durationMs >= thresholdMs) {
+            console.warn(
+              `[perf][ipc] ${channel} ${durationMs.toFixed(1)}ms outcome=${outcome} ${summarizeArgs(args)}`
+            )
+          }
         }
-      }
-    })
+      })
+    )
   }) as typeof ipcMain.handle
 }
 
@@ -143,6 +151,7 @@ export function installMainThreadStallMonitor(): void {
     expectedAt = now + MAIN_THREAD_STALL_SAMPLE_MS
 
     if (driftMs >= MAIN_THREAD_STALL_THRESHOLD_MS) {
+      recordDuration('polycode.event_loop.stall', driftMs, { process: 'main' })
       console.warn(`[perf][main-thread] event-loop-stall ${driftMs.toFixed(1)}ms`)
     }
   }, MAIN_THREAD_STALL_SAMPLE_MS).unref()

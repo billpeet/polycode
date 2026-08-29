@@ -19,6 +19,10 @@ export default defineConfig({
       externalizeDepsPlugin({ exclude: ['@sentry/electron'] }),
       ...(sentryPlugin ? [sentryPlugin] : []),
     ],
+    define: {
+      __OTLP_ENDPOINT__: JSON.stringify(process.env.POLYCODE_OTLP_ENDPOINT ?? ''),
+      __OTLP_HEADERS__: JSON.stringify(process.env.POLYCODE_OTLP_HEADERS ?? ''),
+    },
     build: { sourcemap: true },
   },
   preload: {
