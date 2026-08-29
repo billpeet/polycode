@@ -23,6 +23,31 @@ interface ProxyResult {
   value?: unknown
 }
 
+const RPC_TIMEOUT_MS = 10_000
+const RESPONSE_DIAGNOSTIC_LIMIT = 240
+const RECONNECT_BASE_DELAY_MS = 2_000
+const RECONNECT_MAX_DELAY_MS = 30_000
+
+export class RemoteUnavailableError extends Error {
+  readonly code = 'REMOTE_UNAVAILABLE'
+
+  constructor(
+    readonly hostId: string,
+    message: string,
+    options?: ErrorOptions,
+  ) {
+    super(message, options)
+    this.name = 'RemoteUnavailableError'
+  }
+}
+
+class RemoteProtocolError extends Error {
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'RemoteProtocolError'
+  }
+}
+
 let activeClient: RemoteControlClient | null = null
 
 function readHosts(): RemoteHost[] {
@@ -86,17 +111,42 @@ function errorMessage(error: unknown): string {
 }
 
 async function readJsonResponse(response: Response): Promise<RpcResponse> {
-  try {
-    return await response.json() as RpcResponse
-  } catch {
-    return {}
+  const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  const raw = await response.text()
+  const diagnostic = raw.replace(/\s+/g, ' ').trim().slice(0, RESPONSE_DIAGNOSTIC_LIMIT)
+
+  if (!contentType.includes('application/json')) {
+    const mediaType = contentType.split(';', 1)[0] || 'an unknown content type'
+    throw new RemoteProtocolError(
+      `Remote host returned ${mediaType} instead of JSON (HTTP ${response.status})${diagnostic ? `: ${diagnostic}` : ''}`,
+    )
   }
+
+  try {
+    return JSON.parse(raw) as RpcResponse
+  } catch (error) {
+    throw new RemoteProtocolError(
+      `Remote host returned invalid JSON (HTTP ${response.status})${diagnostic ? `: ${diagnostic}` : ''}`,
+      { cause: error },
+    )
+  }
+}
+
+function hostnameMismatchMessage(baseUrl: string): string {
+  const hostname = new URL(baseUrl).hostname
+  return `The remote host rejected hostname "${hostname}". Use a URL whose hostname matches the remote server bind host.`
+}
+
+function isTransportError(error: unknown): boolean {
+  return error instanceof TypeError || (error instanceof DOMException && error.name === 'AbortError')
 }
 
 export class RemoteControlClient {
   private eventAbort: AbortController | null = null
   private reconnectTimer: NodeJS.Timeout | null = null
   private streamGeneration = 0
+  private unavailable: { hostId: string; error: RemoteUnavailableError } | null = null
+  private reconnectAttempt = 0
 
   constructor(private readonly window: BrowserWindow) {
     this.restartEventStream()
@@ -195,6 +245,7 @@ export class RemoteControlClient {
   async invokeIfActive(channel: string, args: unknown[]): Promise<ProxyResult> {
     const host = this.getActiveHost()
     if (!host || !this.shouldProxy(channel)) return { handled: false }
+    if (this.unavailable?.hostId === host.id) throw this.unavailable.error
     return { handled: true, value: await this.invoke(host, channel, args) }
   }
 
@@ -211,6 +262,7 @@ export class RemoteControlClient {
         })
         const body = await readJsonResponse(response)
         if (response.ok && body.ok) return { ok: true }
+        if (response.status === 421) return { ok: false, error: hostnameMismatchMessage(normalized.baseUrl) }
         return { ok: false, error: body.error ?? `HTTP ${response.status}` }
       } finally {
         clearTimeout(timer)
@@ -221,19 +273,33 @@ export class RemoteControlClient {
   }
 
   private async invoke(host: RemoteHost, channel: string, args: unknown[]): Promise<unknown> {
-    const response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${host.token}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ channel, args }),
-    })
-    const body = await readJsonResponse(response)
-    if (!response.ok || !body.ok) {
-      throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+    try {
+      const response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${host.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ channel, args }),
+        signal: controller.signal,
+      })
+      const body = await readJsonResponse(response)
+      if (response.status === 421) {
+        throw this.markUnavailable(host, hostnameMismatchMessage(host.baseUrl))
+      }
+      if (!response.ok || !body.ok) {
+        throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
+      }
+      this.markAvailable(host.id)
+      return body.value
+    } catch (error) {
+      if (!isTransportError(error)) throw error
+      throw this.markUnavailable(host, controller.signal.aborted ? 'Remote host request timed out' : errorMessage(error), error)
+    } finally {
+      clearTimeout(timer)
     }
-    return body.value
   }
 
   private restartEventStream(): void {
@@ -244,6 +310,8 @@ export class RemoteControlClient {
     }
     this.eventAbort?.abort()
     this.eventAbort = null
+    this.unavailable = null
+    this.reconnectAttempt = 0
 
     const host = this.getActiveHost()
     if (!host) return
@@ -278,6 +346,8 @@ export class RemoteControlClient {
         throw new Error(`Remote event stream failed with HTTP ${response.status}`)
       }
 
+      this.markAvailable(host.id)
+
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let buffer = ''
@@ -296,14 +366,36 @@ export class RemoteControlClient {
       }
     } catch (error) {
       if (!controller.signal.aborted) {
+        if (isTransportError(error)) this.markUnavailable(host, errorMessage(error), error)
         console.warn('[remote-control] Event stream disconnected:', errorMessage(error))
       }
     } finally {
       if (this.eventAbort === controller) this.eventAbort = null
       if (generation === this.streamGeneration && !controller.signal.aborted) {
-        this.connectEventStream(host, generation, 2000)
+        const delay = Math.min(
+          RECONNECT_BASE_DELAY_MS * (2 ** this.reconnectAttempt),
+          RECONNECT_MAX_DELAY_MS,
+        )
+        this.reconnectAttempt += 1
+        this.connectEventStream(host, generation, delay)
       }
     }
+  }
+
+  private markUnavailable(host: RemoteHost, detail: string, cause?: unknown): RemoteUnavailableError {
+    if (this.unavailable?.hostId === host.id) return this.unavailable.error
+    const error = new RemoteUnavailableError(
+      host.id,
+      `Remote host "${host.label}" is unavailable: ${detail}`,
+      cause === undefined ? undefined : { cause },
+    )
+    this.unavailable = { hostId: host.id, error }
+    return error
+  }
+
+  private markAvailable(hostId: string): void {
+    if (this.unavailable?.hostId === hostId) this.unavailable = null
+    this.reconnectAttempt = 0
   }
 
   private handleSseFrame(frame: string): void {
