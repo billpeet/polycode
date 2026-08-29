@@ -3,7 +3,11 @@ import { app } from 'electron'
 import path from 'path'
 import { runMigrations } from './migrations'
 
-let db: Database.Database
+let db: Database.Database | undefined
+
+export function getDatabasePath(): string {
+  return path.join(app.getPath('userData'), 'polycode.db')
+}
 
 export function getDb(): Database.Database {
   if (!db) {
@@ -13,20 +17,24 @@ export function getDb(): Database.Database {
 }
 
 export function initDb(): void {
-  const userDataPath = app.getPath('userData')
-  const dbPath = path.join(userDataPath, 'polycode.db')
+  const database = new Database(getDatabasePath())
 
-  db = new Database(dbPath)
+  try {
+    // Enable WAL mode for better concurrent read performance
+    database.pragma('journal_mode = WAL')
+    database.pragma('foreign_keys = ON')
 
-  // Enable WAL mode for better concurrent read performance
-  db.pragma('journal_mode = WAL')
-  db.pragma('foreign_keys = ON')
-
-  runMigrations(db)
+    runMigrations(database)
+    db = database
+  } catch (error) {
+    database.close()
+    throw error
+  }
 }
 
 export function closeDb(): void {
   if (db) {
     db.close()
+    db = undefined
   }
 }

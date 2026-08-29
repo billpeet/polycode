@@ -16,10 +16,22 @@ const migrations: Migration[] = [
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
 
+export class DatabaseSchemaTooNewError extends Error {
+  constructor(
+    public readonly databaseSchemaVersion: number,
+    public readonly supportedSchemaVersion: number
+  ) {
+    super(
+      `Database schema version ${databaseSchemaVersion} is newer than supported version ${supportedSchemaVersion}`
+    )
+    this.name = 'DatabaseSchemaTooNewError'
+  }
+}
+
 export function runMigrations(database: Database.Database): void {
   const currentVersion = database.pragma('user_version', { simple: true }) as number
   if (currentVersion > LATEST_SCHEMA_VERSION) {
-    throw new Error(`Database schema version ${currentVersion} is newer than supported version ${LATEST_SCHEMA_VERSION}`)
+    throw new DatabaseSchemaTooNewError(currentVersion, LATEST_SCHEMA_VERSION)
   }
 
   for (const migration of migrations) {
