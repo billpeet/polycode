@@ -216,6 +216,7 @@ export const CHANNEL_REGISTRY = {
   'dialog:open-files': { local: true, remote: false },
   'settings:get': { local: true, remote: false },
   'settings:set': { local: true, remote: false },
+  'clipboard:writeText': { local: true, remote: false },
   'shell:copyPath': { local: true, remote: false },
   'shell:openExternal': { local: true, remote: false },
   'shell:openInExplorer': { local: true, remote: false },

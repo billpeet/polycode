@@ -224,6 +224,7 @@ export interface ChannelContract {
   'attachments:cleanup': [[threadId: string], void]
   'attachments:getFileInfo': [[filePath: string], { size: number; mimeType: string } | null]
   'dialog:open-files': [[], string[]]
+  'clipboard:writeText': [[text: string], void]
   'shell:copyPath': [[dirPath: string], void]
   'shell:openExternal': [[url: string], void]
   'shell:openInExplorer': [[dirPath: string], void]

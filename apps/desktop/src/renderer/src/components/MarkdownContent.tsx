@@ -8,6 +8,7 @@ import {
   handleMarkdownFileLinkClick,
 } from '../lib/markdownFileLinks'
 import { escapeAttr, renderMarkdownLink } from '../lib/markdownLinkRenderer'
+import { writeClipboardText } from '../lib/clipboard'
 import { useFilesStore } from '../stores/files'
 import { useUiStore } from '../stores/ui'
 
@@ -101,7 +102,8 @@ export default function MarkdownContent({ content, className = '' }: Props) {
         e.preventDefault()
         e.stopPropagation()
         const btn = (e.target as HTMLElement).closest('.file-path-copy-btn') as HTMLElement
-        void navigator.clipboard.writeText(copyPath).then(() => {
+        void writeClipboardText(copyPath).then((didCopy) => {
+          if (!didCopy) return
           btn.classList.add('copied')
           btn.setAttribute('title', 'Copied')
           btn.setAttribute('aria-label', 'Copied')
@@ -124,7 +126,8 @@ export default function MarkdownContent({ content, className = '' }: Props) {
       const decoded = decodeAttr(encoded)
       const label = btn.querySelector('.btn-label') as HTMLElement | null
 
-      navigator.clipboard.writeText(decoded).then(() => {
+      void writeClipboardText(decoded).then((didCopy) => {
+        if (!didCopy) return
         if (label) label.textContent = 'copied!'
         btn.classList.add('copied')
         setTimeout(() => {

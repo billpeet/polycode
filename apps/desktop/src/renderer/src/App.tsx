@@ -25,6 +25,7 @@ import { reportReactCommit } from './lib/perf'
 import { getCurrentLocationId } from './lib/currentLocation'
 import UiErrorBoundary from './components/UiErrorBoundary'
 import { useDatabaseSync } from './hooks/useDatabaseSync'
+import { writeClipboardText } from './lib/clipboard'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
@@ -108,11 +109,7 @@ export default function App() {
         const selectionText = window.getSelection?.()?.toString() ?? ''
         if (selectionText) {
           e.preventDefault()
-          try {
-            await navigator.clipboard.writeText(selectionText)
-          } catch {
-            // Fall through to the platform handler if clipboard access is denied.
-          }
+          await writeClipboardText(selectionText)
         }
         return
       }

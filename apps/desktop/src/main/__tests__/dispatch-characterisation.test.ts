@@ -4249,6 +4249,15 @@ const VSCODE_CANDIDATE = IS_WIN ? 'code.cmd' : 'code'
 const spawnEntry = (cmd: string, argv: unknown[], options: unknown): string =>
   `proc.spawn([${JSON.stringify(cmd)},${JSON.stringify(argv)},${JSON.stringify(options)}])`
 
+describe('clipboard:* — local-only, and defined entirely by the side effect', () => {
+  it('clipboard:writeText writes arbitrary renderer text to the native clipboard', async () => {
+    await expectLocalOnly('clipboard:writeText', ['copied text'])
+    expect(await viaIpc('clipboard:writeText', ['copied text'])).toEqual([
+      'clipboard.writeText(["copied text"])',
+    ])
+  })
+})
+
 describe('shell:* — local-only, and defined entirely by the side effect', () => {
   it('shell:copyPath writes the path to the clipboard', async () => {
     await expectLocalOnly('shell:copyPath', ['C:/repo'])

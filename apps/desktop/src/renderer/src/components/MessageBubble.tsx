@@ -5,6 +5,7 @@ import ThinkingBlock from './ThinkingBlock'
 import { MessageEntry } from './MessageStream'
 import { parseFileMentions } from './FileMention'
 import { markdownToPlainText } from '../lib/markdownToPlainText'
+import { writeClipboardText } from '../lib/clipboard'
 
 interface Props {
   entry: MessageEntry
@@ -20,9 +21,11 @@ export default function MessageBubble({ entry }: Props) {
 
   const handleCopy = (format: 'text' | 'markdown') => {
     const content = format === 'markdown' ? message.content : markdownToPlainText(message.content)
-    navigator.clipboard.writeText(content).then(() => {
-      setCopied(format)
-      setTimeout(() => setCopied(null), 1800)
+    void writeClipboardText(content).then((didCopy) => {
+      if (didCopy) {
+        setCopied(format)
+        setTimeout(() => setCopied(null), 1800)
+      }
     })
   }
 

@@ -3,6 +3,7 @@ import { Terminal as XTerm } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminal'
+import { writeClipboardText } from '../lib/clipboard'
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   if (event.altKey) return false
@@ -67,7 +68,7 @@ export default function TerminalContent({ threadId, locationId }: Props) {
     term.open(containerRef.current)
     term.attachCustomKeyEventHandler((event) => {
       if (!isTerminalCopyShortcut(event) || !term.hasSelection()) return true
-      void navigator.clipboard.writeText(term.getSelection())
+      void writeClipboardText(term.getSelection())
       return false
     })
 

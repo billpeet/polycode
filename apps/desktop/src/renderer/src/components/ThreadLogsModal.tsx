@@ -1,6 +1,7 @@
 import { useCallback, useState, useEffect, useRef } from 'react'
 import { ThreadLogEntry } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { writeClipboardText } from '../lib/clipboard'
 
 const TYPE_COLORS: Record<string, string> = {
   message_sent: '#63b3ed',
@@ -135,9 +136,10 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
 
   async function copyToClipboard() {
     const text = filtered.map((e) => JSON.stringify(e)).join('\n')
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+    if (await writeClipboardText(text)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   useEffect(() => {
