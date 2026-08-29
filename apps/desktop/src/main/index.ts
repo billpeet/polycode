@@ -1,9 +1,11 @@
 import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain, powerMonitor } from 'electron'
 import { join } from 'path'
+import { copyFile } from 'fs/promises'
 import { pathToFileURL } from 'url'
 import * as Sentry from '@sentry/electron/main'
 import { initUpdater } from './updater'
-import { initDb, closeDb } from './db/index'
+import { closeDb, getDatabasePath } from './db/index'
+import { startDatabase, type DatabaseRequiresNewerApp } from './db/startup'
 import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
@@ -137,6 +139,56 @@ if (!isDev) {
 let isQuitting = false
 let runLifecycle: RunLifecycle | null = null
 
+async function recoverFromNewerDatabase(result: DatabaseRequiresNewerApp): Promise<void> {
+  const appVersion = app.getVersion()
+  while (true) {
+    const { response } = await dialog.showMessageBox({
+      type: 'warning',
+      title: 'A newer PolyCode version is required',
+      message: 'This database was opened by a newer version of PolyCode.',
+      detail:
+        `Database schema: ${result.databaseSchemaVersion}\n` +
+        `This PolyCode version: ${appVersion} (supports schema ${result.supportedSchemaVersion})\n\n` +
+        `Install a PolyCode version newer than ${appVersion} to open it. The database was not changed.`,
+      buttons: ['Install Latest Version', 'Back Up Database…', 'Exit'],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    })
+
+    if (response === 0) {
+      await shell.openExternal('https://github.com/billpeet/polycode/releases/latest')
+      break
+    }
+    if (response === 2) break
+
+    const sourcePath = getDatabasePath()
+    const backup = await dialog.showSaveDialog({
+      title: 'Back up PolyCode database',
+      defaultPath: `${sourcePath}.backup`,
+      filters: [{ name: 'SQLite database', extensions: ['db', 'backup'] }],
+    })
+    if (!backup.canceled && backup.filePath) {
+      try {
+        await copyFile(sourcePath, backup.filePath)
+        await dialog.showMessageBox({
+          type: 'info',
+          title: 'Backup complete',
+          message: 'Your PolyCode database was backed up successfully.',
+          detail: backup.filePath,
+        })
+      } catch (error) {
+        dialog.showErrorBox(
+          'Backup failed',
+          error instanceof Error ? error.message : String(error)
+        )
+      }
+    }
+  }
+
+  app.quit()
+}
+
 // Register custom protocol for serving attachment files
 protocol.registerSchemesAsPrivileged([
   {
@@ -265,7 +317,7 @@ function createWindow(): BrowserWindow {
   return win
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   const telemetryEnabled = initializeObservability(observabilityConfigFromEnv(app.getVersion()))
   console.info(`[telemetry] OTLP export ${telemetryEnabled ? 'enabled' : 'disabled'}`)
   installIpcProfiling()
@@ -279,7 +331,11 @@ app.whenReady().then(() => {
     return net.fetch(pathToFileURL(filePath).toString())
   })
 
-  initDb()
+  const databaseStartup = startDatabase()
+  if (databaseStartup.status === 'requires-newer-app') {
+    await recoverFromNewerDatabase(databaseStartup)
+    return
+  }
   resetRunningThreads()
 
   const win = createWindow()
