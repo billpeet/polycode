@@ -46,7 +46,13 @@ describe('auto-updater transient failures', () => {
 
   async function initialise() {
     const updater = await import('../updater')
-    updater.initUpdater(() => ({ webContents: { send: H.send } }) as unknown as import('electron').BrowserWindow)
+    updater.initUpdater(() => ({
+      isDestroyed: () => false,
+      webContents: {
+        isDestroyed: () => false,
+        send: H.send,
+      },
+    }) as unknown as import('electron').BrowserWindow)
     return updater
   }
 
