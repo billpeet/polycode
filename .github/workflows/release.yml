@@ -87,6 +87,10 @@ jobs:
           POLYCODE_OTLP_ENDPOINT: https://otlp.biap.cc
           POLYCODE_OTLP_HEADERS: ${{ secrets.POLYCODE_OTLP_HEADERS }}
 
+      - name: Verify packaged native module ABI
+        working-directory: apps/desktop
+        run: pnpm run verify:electron-abi
+
       - name: Build installer and upload draft release
         working-directory: apps/desktop
         run: pnpm exec electron-builder --win --publish always --config.publish.releaseType=draft

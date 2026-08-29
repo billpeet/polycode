@@ -90,15 +90,22 @@ const abi = `v${abiNumber}`
 // version short-circuit the download.
 const bindingDir = path.join(bsq3Dir, 'lib', 'binding', `node-${abi}-win32-x64`)
 const bindingNode = path.join(bindingDir, 'better_sqlite3.node')
+const buildReleaseDir = path.join(bsq3Dir, 'build', 'Release')
+const genericPrebuilt = path.join(bsq3Dir, 'prebuilds', 'win32-x64')
+
+// These ABI-less locations are the ones packaged by electron-builder and found
+// first by bindings.js. Remove them before selecting the Electron prebuild so a
+// failed preparation can never leave a host-Node binary looking shippable.
+fs.rmSync(buildReleaseDir, { recursive: true, force: true })
+fs.rmSync(genericPrebuilt, { recursive: true, force: true })
 
 if (fs.existsSync(bindingNode)) {
-  // Refresh the generic copies in case they hold a binary for a different ABI
-  const buildReleaseDir = path.join(bsq3Dir, 'build', 'Release')
+  // Refresh the generic copies from the ABI-specific source of truth.
   fs.mkdirSync(buildReleaseDir, { recursive: true })
   fs.copyFileSync(bindingNode, path.join(buildReleaseDir, 'better_sqlite3.node'))
-  const genericPrebuilt = path.join(bsq3Dir, 'prebuilds', 'win32-x64', 'build', 'Release')
-  fs.mkdirSync(genericPrebuilt, { recursive: true })
-  fs.copyFileSync(bindingNode, path.join(genericPrebuilt, 'better_sqlite3.node'))
+  const genericPrebuiltRelease = path.join(genericPrebuilt, 'build', 'Release')
+  fs.mkdirSync(genericPrebuiltRelease, { recursive: true })
+  fs.copyFileSync(bindingNode, path.join(genericPrebuiltRelease, 'better_sqlite3.node'))
   console.log(`[postinstall] better-sqlite3 prebuilt already present (electron ${abi}).`)
   process.exit(0)
 }
@@ -106,7 +113,7 @@ if (fs.existsSync(bindingNode)) {
 const tarball = `better-sqlite3-v${bsq3Version}-electron-${abi}-win32-x64.tar.gz`
 const url = `https://github.com/WiseLibs/better-sqlite3/releases/download/v${bsq3Version}/${tarball}`
 // Two places bindings looks: prebuilds/ and lib/binding/
-const prebuildsDir = path.join(bsq3Dir, 'prebuilds', 'win32-x64')
+const prebuildsDir = genericPrebuilt
 // Download into the extraction dir and extract with cwd set so tar only ever
 // sees a bare filename — GNU tar interprets "C:\..." as a remote host.
 const tmp = path.join(prebuildsDir, tarball)
@@ -130,12 +137,15 @@ downloadFile(url, tmp, (err) => {
   }
   fs.unlinkSync(tmp)
   const src = path.join(prebuildsDir, 'build', 'Release', 'better_sqlite3.node')
+  if (!fs.existsSync(src)) {
+    console.error(`[postinstall] Expected Electron prebuild is missing: ${src}`)
+    process.exit(1)
+  }
   // Copy to lib/binding/ path that bindings.js resolves at runtime
   const dst = path.join(bindingDir, 'better_sqlite3.node')
   fs.copyFileSync(src, dst)
   // Overwrite build/Release/ so the Electron prebuilt wins over any
   // node-gyp artefact compiled against the host Node.js version
-  const buildReleaseDir = path.join(bsq3Dir, 'build', 'Release')
   fs.mkdirSync(buildReleaseDir, { recursive: true })
   fs.copyFileSync(src, path.join(buildReleaseDir, 'better_sqlite3.node'))
   console.log('[postinstall] better-sqlite3 prebuilt installed.')
