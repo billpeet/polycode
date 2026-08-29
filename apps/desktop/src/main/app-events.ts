@@ -12,8 +12,13 @@ const appEventBus = new EventEmitter()
 appEventBus.setMaxListeners(0)
 
 export function emitAppEvent(window: BrowserWindow, channel: string, ...args: unknown[]): void {
-  window.webContents.send(channel, ...args)
+  sendToRenderer(window, channel, ...args)
   appEventBus.emit('event', { channel, args } satisfies AppEvent)
+}
+
+export function sendToRenderer(window: BrowserWindow, channel: string, ...args: unknown[]): void {
+  if (window.isDestroyed() || window.webContents.isDestroyed()) return
+  window.webContents.send(channel, ...args)
 }
 
 export function onAppEvent(listener: AppEventListener): () => void {

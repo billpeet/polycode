@@ -2,7 +2,7 @@ import { randomUUID } from 'crypto'
 import { BrowserWindow } from 'electron'
 import { isRemoteChannel } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
-import { emitAppEvent } from '../app-events'
+import { emitAppEvent, sendToRenderer } from '../app-events'
 import {
   RemoteConnectionStatus,
   RemoteHost,
@@ -325,8 +325,7 @@ export class RemoteControlClient {
     try {
       const event = JSON.parse(dataLines.join('\n')) as { channel?: unknown; args?: unknown }
       if (typeof event.channel !== 'string' || !Array.isArray(event.args)) return
-      if (this.window.webContents.isDestroyed()) return
-      this.window.webContents.send(event.channel, ...event.args)
+      sendToRenderer(this.window, event.channel, ...event.args)
     } catch {
       // Ignore malformed frames from a stale or incompatible host.
     }

@@ -204,7 +204,7 @@ import {
   suggestUniquePath,
 } from '../project-admin'
 import { projectFaviconDataUrl, projectFaviconOverrideDataUrl, storeProjectFaviconPath } from '../project-favicon'
-import { emitAppEvent } from '../app-events'
+import { emitAppEvent, sendToRenderer } from '../app-events'
 import {
   amendCommit,
   applyStash,
@@ -771,8 +771,8 @@ export const channelHandlers = {
     // left to pass through. Both pre-fold paths discarded it too.
     session.sendMessage(content, options)
 
-    if (ctx.origin === 'remote' && !ctx.window.webContents.isDestroyed()) {
-      ctx.window.webContents.send(`thread:output:${threadId}`, {
+    if (ctx.origin === 'remote') {
+      sendToRenderer(ctx.window, `thread:output:${threadId}`, {
         type: 'text',
         content,
         metadata: { role: 'user', source: 'remote_client' },
