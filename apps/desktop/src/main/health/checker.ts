@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
-import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult } from '../../shared/types'
+import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult, parseProviderId } from '../../shared/types'
 import {
   createRunner,
   shellEscape,
@@ -160,11 +160,13 @@ function buildPosixPresenceCheck(cmd: string): string {
 }
 
 export function invalidateCliHealthCache(
-  provider: Provider,
+  providerId: string,
   connectionType: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): void {
+  const provider = parseProviderId(providerId)
+  if (!provider) return
   const prefix = `${provider}:${getTransportCacheKey(connectionType, ssh, wsl)}`
   for (const key of cliCache.keys()) {
     if (key === `version:${prefix}` || key === `health:${prefix}`) {
@@ -362,11 +364,21 @@ async function runUpdate(
 }
 
 export async function checkCliHealth(
-  provider: Provider,
+  providerId: string,
   connectionType: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<CliHealthResult> {
+  const provider = parseProviderId(providerId)
+  if (!provider) {
+    return {
+      installed: false,
+      currentVersion: null,
+      latestVersion: null,
+      upToDate: null,
+      error: `Unsupported provider: ${String(providerId)}`,
+    }
+  }
   return readWithDynamicCache(
     getHealthCacheKey(provider, connectionType, ssh, wsl),
     async () => {
@@ -402,11 +414,13 @@ export async function checkCliHealth(
 }
 
 export async function updateCli(
-  provider: Provider,
+  providerId: string,
   connectionType: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<CliUpdateResult> {
+  const provider = parseProviderId(providerId)
+  if (!provider) return { success: false, output: `Unsupported provider: ${String(providerId)}` }
   const result = await runUpdate(provider, connectionType, ssh, wsl)
   return {
     success: result.exitCode === 0,
