@@ -37,6 +37,7 @@ import {
   shutdownObservability,
   type TelemetryAttributes,
 } from './observability'
+import { getAppLifecycleState, shutdownApp, waitForAppOperations } from './app-lifecycle'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 
@@ -377,35 +378,37 @@ app.on('window-all-closed', () => {
   }
 })
 
-let shutdownStarted = false
-let shutdownComplete = false
-
 app.on('before-quit', (event) => {
-  if (shutdownComplete) return
+  if (getAppLifecycleState() !== 'running') return
 
   event.preventDefault()
-  if (shutdownStarted) return
-
-  shutdownStarted = true
-  isQuitting = true
-  runLifecycle?.stop()
-  sessionManager.stopAll()
-  stopWebhookServer()
-  stopRemoteControlClient()
-  stopRemoteControlServer()
-  browserSessionManager.stopAll()
-  stopPlanWatcher()
-  stopAllFileWatches()
-  ptyManager.killAll()
-
-  void Promise.allSettled([
-    commandManager.stopAll(),
-    shutdownObservability(),
-  ]).finally(() => {
-    cleanupAllAttachments()
-    closeDb()
-    flushAppLogs()
-    shutdownComplete = true
-    app.quit()
+  void shutdownApp({
+    stopProducers: () => {
+      isQuitting = true
+      runLifecycle?.stop()
+      sessionManager.stopAll()
+      stopWebhookServer()
+      stopRemoteControlClient()
+      stopRemoteControlServer()
+      browserSessionManager.stopAll()
+      stopPlanWatcher()
+      stopAllFileWatches()
+      ptyManager.killAll()
+    },
+    awaitProducers: async () => {
+      await Promise.allSettled([
+        commandManager.stopAll(),
+        shutdownObservability(),
+        waitForAppOperations(),
+      ])
+    },
+    closeDatabase: () => {
+      cleanupAllAttachments()
+      closeDb()
+    },
+    finish: () => {
+      flushAppLogs()
+      app.quit()
+    },
   })
 })

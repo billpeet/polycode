@@ -1,10 +1,15 @@
 import { BrowserWindow } from 'electron'
 import { REMOTE_CHANNELS, isRemoteChannel } from '@polycode/shared'
 import { invokeChannelHandler, isMigratedChannel } from '../ipc/channel-handlers'
+import { runAppOperation } from '../app-lifecycle'
 
 export const CONTROL_RPC_CHANNELS: ReadonlySet<string> = new Set(REMOTE_CHANNELS)
 
 export async function handleControlRpc(window: BrowserWindow, channel: string, args: unknown[]): Promise<unknown> {
+  return runAppOperation(() => handleControlRpcWhileRunning(window, channel, args))
+}
+
+async function handleControlRpcWhileRunning(window: BrowserWindow, channel: string, args: unknown[]): Promise<unknown> {
   // Channels folded into the typed handler map. The `isRemoteChannel` guard derives
   // reachability from the registry rather than from which switch happens to have a
   // case, so a local-only channel stays unreachable from this transport even once it
