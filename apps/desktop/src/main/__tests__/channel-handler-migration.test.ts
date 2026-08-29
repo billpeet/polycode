@@ -92,6 +92,7 @@ describe('channel handler map migration', () => {
       'shell:openExternal',
       'attachments:getFileInfo',
       'attachments:saveFromPath',
+      'clipboard:writeText',
       'shell:copyPath',
       'shell:openInExplorer',
       'shell:openInVsCode',

@@ -1989,6 +1989,7 @@ export const channelHandlers = {
   // Explorer window, a native file dialog or a terminal belongs to the machine the user is
   // sitting at, and forwarding it to a phone would open it on the wrong desk.
 
+  'clipboard:writeText': (_ctx, text) => clipboard.writeText(text),
   'shell:copyPath': (_ctx, dirPath) => clipboard.writeText(dirPath),
 
   // The one place in the map that deliberately drops its callee's result. `shell.openPath`

@@ -9,6 +9,7 @@ import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { registerUrlLinks } from '../lib/xtermLinks'
+import { writeClipboardText } from '../lib/clipboard'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 
 const EMPTY_PINNED: string[] = []
@@ -135,7 +136,7 @@ function CommandLogPanel({
 
       event.preventDefault()
       event.stopPropagation()
-      void navigator.clipboard.writeText(term.getSelection())
+      void writeClipboardText(term.getSelection())
     }
 
     window.addEventListener('keydown', onKeyDown, true)
@@ -229,7 +230,7 @@ function CommandLogPanel({
     term.open(containerRef.current)
     term.attachCustomKeyEventHandler((event) => {
       if (!isTerminalCopyShortcut(event) || !term.hasSelection()) return true
-      void navigator.clipboard.writeText(term.getSelection())
+      void writeClipboardText(term.getSelection())
       return false
     })
 

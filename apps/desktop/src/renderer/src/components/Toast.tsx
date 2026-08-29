@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useToastStore, Toast } from '../stores/toast'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { writeClipboardText } from '../lib/clipboard'
 
 function ErrorDetailsModal({ toast, onClose }: { toast: Toast; onClose: () => void }) {
   const backdropClose = useBackdropClose(onClose)
@@ -9,9 +10,10 @@ function ErrorDetailsModal({ toast, onClose }: { toast: Toast; onClose: () => vo
   const title = toast.title ?? 'Error Details'
 
   async function copyDetails() {
-    await navigator.clipboard.writeText(detailText)
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 2000)
+    if (await writeClipboardText(detailText)) {
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    }
   }
 
   return (
