@@ -18,6 +18,17 @@ export default defineConfig({
           environment: 'node',
         },
       },
+      {
+        // packages/shared has no test runner of its own and is consumed as raw
+        // TypeScript by both apps. Running its suite here keeps protocol and
+        // presentation logic shared by desktop and mobile covered by `pnpm test`.
+        test: {
+          name: 'shared',
+          root: '../../packages/shared',
+          include: ['src/**/*.test.ts'],
+          environment: 'node',
+        },
+      },
     ],
   },
 })

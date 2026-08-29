@@ -1,5 +1,5 @@
-import { isWoken } from '@polycode/shared'
-import { QueueThread, ThreadStatus } from '../types/ipc'
+import { isWoken } from './snooze'
+import type { QueueThread, ThreadStatus } from './types'
 
 /**
  * The Queue's display groups, in render order:

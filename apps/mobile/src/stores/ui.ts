@@ -7,17 +7,22 @@ import { createJSONStorage, persist } from 'zustand/middleware'
  * are expanded in the sidebar, and whether the sidebar drawer is open.
  * Selection/expansion persist across launches (like the desktop sidebar).
  */
+/** Which list the user works from: the project tree, or the cross-project Queue. */
+export type SidebarViewMode = 'tree' | 'queue'
+
 interface UiState {
   selectedProjectId: string | null
   selectedThreadId: string | null
   expandedProjectIds: string[]
   sidebarOpen: boolean
+  sidebarViewMode: SidebarViewMode
 
   selectThread: (projectId: string, threadId: string) => void
   clearSelection: () => void
   toggleProject: (projectId: string) => void
   expandProject: (projectId: string) => void
   setSidebarOpen: (open: boolean) => void
+  setSidebarViewMode: (mode: SidebarViewMode) => void
 }
 
 export const useUiStore = create<UiState>()(
@@ -27,6 +32,7 @@ export const useUiStore = create<UiState>()(
       selectedThreadId: null,
       expandedProjectIds: [],
       sidebarOpen: false,
+      sidebarViewMode: 'tree',
 
       selectThread: (projectId, threadId) =>
         set({ selectedProjectId: projectId, selectedThreadId: threadId, sidebarOpen: false }),
@@ -48,6 +54,8 @@ export const useUiStore = create<UiState>()(
         })),
 
       setSidebarOpen: (open) => set({ sidebarOpen: open }),
+
+      setSidebarViewMode: (mode) => set({ sidebarViewMode: mode }),
     }),
     {
       name: 'polycode.ui',
@@ -56,6 +64,7 @@ export const useUiStore = create<UiState>()(
         selectedProjectId: s.selectedProjectId,
         selectedThreadId: s.selectedThreadId,
         expandedProjectIds: s.expandedProjectIds,
+        sidebarViewMode: s.sidebarViewMode,
       }),
     },
   ),
