@@ -87,9 +87,15 @@ jobs:
           POLYCODE_OTLP_ENDPOINT: https://otlp.biap.cc
           POLYCODE_OTLP_HEADERS: ${{ secrets.POLYCODE_OTLP_HEADERS }}
 
-      - name: Build installer and publish to GitHub
+      - name: Build installer and upload draft release
         working-directory: apps/desktop
-        run: pnpm exec electron-builder --win --publish always
+        run: pnpm exec electron-builder --win --publish always --config.publish.releaseType=draft
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      # All updater assets exist before the release becomes visible to clients.
+      - name: Publish complete release
+        run: gh release edit "v${{ steps.version.outputs.version }}" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
