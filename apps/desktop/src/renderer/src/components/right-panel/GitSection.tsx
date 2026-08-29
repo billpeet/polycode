@@ -15,7 +15,7 @@ import CreatePrModal from './CreatePrModal'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../../lib/gitRefreshCoordinator'
 import { formatErrorDetails } from '../../lib/errorDetails'
-import { getCachedForge, refreshForge, type ForgeRefreshResult } from '../../lib/forgeRefresh'
+import { getCachedForge, refreshForge, type ForgeCapability, type ForgeRefreshResult } from '../../lib/forgeRefresh'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
 function joinRepoPath(repoPath: string, relPath: string): string {
@@ -33,6 +33,7 @@ type RepoLinkCacheEntry = {
 }
 
 type PullRequestCacheEntry = {
+  capability: ForgeCapability
   provider: 'azure' | 'github' | null
   pageUrl: string | null
   openPrs: PullRequest[]
@@ -774,6 +775,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
   const openPrs = prCache?.openPrs ?? []
   const currentPr = gitStatus ? (prCache?.currentByBranch[gitStatus.branch] ?? null) : null
   const prProvider = prCache?.provider ?? null
+  const prCapability = prCache?.capability ?? null
   const prPageUrl = prCache?.pageUrl ?? null
   const effectiveDefaultBranch = prCache?.defaultBranch ?? defaultBranch
   const prsLoadedForCurrentBranch = !!(projectPath && gitStatus && prCache?.loadedBranches[gitStatus.branch])
@@ -808,6 +810,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     setPrCacheByPath((cache) => ({
       ...cache,
       [projectPath]: {
+        capability: result.capability,
         provider: result.provider,
         pageUrl: result.pageUrl,
         openPrs: result.openPrs,
@@ -1305,10 +1308,10 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             </button>
             <div className="flex shrink-0 items-center gap-1">
               {prPageUrl && <a href={prPageUrl} target="_blank" rel="noreferrer" className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors" style={{ color: 'var(--color-text-muted)' }} title="Open pull requests page">Open</a>}
-              <button onClick={() => void refreshPullRequests({ force: true })} disabled={loadingPrs} className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Retry pull request refresh now">{loadingPrs ? 'Refreshing…' : 'Retry'}</button>
+              <button onClick={() => void refreshPullRequests({ force: true })} disabled={loadingPrs || (prCapability?.available === false && prCapability.reason === 'not-repository')} className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Retry pull request refresh now">{loadingPrs ? 'Refreshing…' : 'Retry'}</button>
             </div>
           </div>
-          {!prsCollapsed && (prError ? <p className="text-[11px] leading-relaxed" style={{ color: '#f87171' }}>{prError}</p> : <>
+          {!prsCollapsed && (prError ? <p className="text-[11px] leading-relaxed" style={{ color: '#f87171' }}>{prError}</p> : prCapability && !prCapability.available ? <div className="rounded px-2 py-2" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{prCapability.message}</p>{prCapability.setupCommand && <button onClick={() => void navigator.clipboard.writeText(prCapability.setupCommand!).catch(() => undefined)} className="mt-2 rounded px-2 py-1 text-[10px] hover:bg-white/10" style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Copy setup command</button>}</div> : <>
             <div className="mb-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
               <p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-text-muted)', opacity: 0.8 }}>Current PR</p>
               {currentPr ? <div className="mt-1">
@@ -1324,7 +1327,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             {otherOpenPrsAll.length > 5 && <input type="text" value={prSearch} onChange={(e) => setPrSearch(e.target.value)} placeholder={`Search ${otherOpenPrsAll.length} pull requests…`} className="mb-2 w-full rounded px-2 py-1 text-[11px] outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />}
             <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p><PullRequestDetails pr={pr} /></div><div className="flex shrink-0 overflow-hidden rounded" style={{ background: 'var(--color-claude)' }}><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : checkingOutPrWorktreeId === pr.id ? 'Creating…' : 'C/O'}</button><button onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setPrCheckoutMenu({ pr, x: rect.right - 180, y: rect.bottom }) }} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-1 py-1 text-[10px] transition-opacity disabled:opacity-40 hover:bg-black/10" style={{ borderLeft: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} title="More checkout options" aria-label={`More checkout options for PR #${pr.id}`} aria-haspopup="menu"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true"><path d="M0 2l4 4 4-4z" /></svg></button></div></div>)}</div>
             {prCheckoutMenu && <ContextMenu x={prCheckoutMenu.x} y={prCheckoutMenu.y} onClose={() => setPrCheckoutMenu(null)} items={[{ id: 'checkout-worktree', label: 'Checkout in worktree', onSelect: () => handleCheckoutPrInWorktree(prCheckoutMenu.pr) }]} />}
-            <button onClick={() => setShowCreatePr(true)} disabled={!prProvider} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
+            <button onClick={() => setShowCreatePr(true)} disabled={!prProvider || prCapability?.available !== true} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
             {!currentPrIsMerged && postPrActionButton}
           </>)}
         </div>}

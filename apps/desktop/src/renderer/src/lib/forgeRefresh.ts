@@ -5,12 +5,22 @@ const BASE_BACKOFF_MS = 30_000
 const MAX_BACKOFF_MS = 15 * 60_000
 
 export type ForgeRefreshResult = {
+  capability: ForgeCapability
   provider: 'azure' | 'github' | null
   defaultBranch: string
   pageUrl: string | null
   openPrs: PullRequest[]
   current: PullRequest | null
 }
+
+export type ForgeCapability =
+  | { available: true; provider: 'azure' | 'github' }
+  | {
+    available: false
+    reason: 'not-repository' | 'no-provider' | 'azure-cli-missing' | 'azure-project-missing'
+    message: string
+    setupCommand?: string
+  }
 
 type Metadata = Pick<ForgeRefreshResult, 'provider' | 'defaultBranch' | 'pageUrl'> & { expiresAt: number }
 type Failure = { attempts: number; retryAt: number; deterministic: boolean; message: string }
@@ -27,6 +37,19 @@ function keyFor(repoPath: string): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+const AZURE_SETUP_COMMAND = 'azdevops setup --org <org> --token <pat> --project <project>'
+
+function azureSetupCapability(error: unknown): ForgeCapability | null {
+  const message = errorMessage(error)
+  if (/azdevops cli not found|enoent|is not recognized/i.test(message)) {
+    return { available: false, reason: 'azure-cli-missing', message, setupCommand: AZURE_SETUP_COMMAND }
+  }
+  if (/default azure project|set a default azure project|project.*(?:required|missing)/i.test(message)) {
+    return { available: false, reason: 'azure-project-missing', message, setupCommand: AZURE_SETUP_COMMAND }
+  }
+  return null
 }
 
 export function isDeterministicForgeError(error: unknown): boolean {
@@ -77,18 +100,40 @@ export function refreshForge(
 
   const request = (async () => {
     try {
+      const isRepo = await window.api.invoke('git:isRepo', repoPath)
+      if (!isRepo) {
+        metadataByPath.delete(key)
+        failureByPath.delete(key)
+        const result: ForgeRefreshResult = {
+          capability: { available: false, reason: 'not-repository', message: 'No Git repository found.' },
+          provider: null,
+          defaultBranch: 'main',
+          pageUrl: null,
+          openPrs: [],
+          current: null,
+        }
+        resultByPath.set(key, { ...result, branch })
+        options?.onList?.(result)
+        return result
+      }
       const metadata = await getMetadata(repoPath, force)
       if (!metadata.provider) {
         failureByPath.delete(key)
-        const result = { ...metadata, openPrs: [], current: null }
+        const result: ForgeRefreshResult = {
+          ...metadata,
+          capability: { available: false, reason: 'no-provider', message: 'No supported Git hosting remote found.' },
+          openPrs: [],
+          current: null,
+        }
         resultByPath.set(key, { ...result, branch })
         options?.onList?.(result)
         return result
       }
       const openPrs = await window.api.invoke('forge:pr:list', repoPath)
       const previous = resultByPath.get(key)
-      const listed = {
+      const listed: ForgeRefreshResult = {
         ...metadata,
+        capability: { available: true, provider: metadata.provider },
         openPrs,
         current: previous?.branch === branch ? previous.current : null,
       }
@@ -104,10 +149,19 @@ export function refreshForge(
         : window.api.invoke('forge:pr:current', repoPath, branch).catch(() => listed.current)
       const [enrichedPrs, current] = await Promise.all([enrichment, currentRequest])
       failureByPath.delete(key)
-      const result = { ...metadata, openPrs: enrichedPrs, current }
+      const result: ForgeRefreshResult = { ...listed, openPrs: enrichedPrs, current }
       resultByPath.set(key, { ...result, branch })
       return result
     } catch (error) {
+      const metadata = metadataByPath.get(key)
+      const setup = metadata?.provider === 'azure' ? azureSetupCapability(error) : null
+      if (setup && metadata) {
+        failureByPath.delete(key)
+        const result: ForgeRefreshResult = { ...metadata, capability: setup, openPrs: [], current: null }
+        resultByPath.set(key, { ...result, branch })
+        options?.onList?.(result)
+        return result
+      }
       const previousAttempts = failureByPath.get(key)?.attempts ?? 0
       const attempts = previousAttempts + 1
       const deterministic = isDeterministicForgeError(error)
