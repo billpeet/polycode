@@ -14,6 +14,7 @@ import { restartRemoteControlServer } from '../remote/server'
 import { MIGRATED_CHANNELS, filePathToDataUrl, invokeChannelHandler } from './channel-handlers'
 import type { LocalHandlerContext } from './channel-handlers'
 import type { RunLifecycle } from '../runs/lifecycle'
+import { getAppLifecycleState, runAppOperation } from '../app-lifecycle'
 
 export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLifecycle): void {
   commandManager.init(window)
@@ -41,9 +42,11 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
     handler: (...args: T) => unknown | Promise<unknown>,
   ): void => {
     ipcMain.handle(channel, async (_event, ...args: T) => {
-      const proxied = await remoteClient.invokeIfActive(channel, args)
-      if (proxied.handled) return proxied.value
-      return handler(...args)
+      return runAppOperation(async () => {
+        const proxied = await remoteClient.invokeIfActive(channel, args)
+        if (proxied.handled) return proxied.value
+        return handler(...args)
+      })
     })
   }
 
@@ -72,23 +75,25 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
     // and it is forwarding — an adapter concern — so it stays here rather than in the map.
     if (channel === 'attachments:saveFromPath') {
       ipcMain.handle(channel, async (_event, sourcePath: string, threadId: string) => {
-        // Encode only when there is actually a host to upload to. `invokeIfActive` returns
-        // `handled: true` exactly when `getActiveHost() && shouldProxy(...)`, so hoisting
-        // that condition is equivalent — and it keeps the local path to a single read of
-        // the file, which the map handler does. Computing the data URL unconditionally
-        // here would read and base64 every attachment twice on the common path.
-        if (remoteClient.getActiveHost() && remoteClient.shouldProxy('attachments:save')) {
-          const dataUrl = filePathToDataUrl(sourcePath)
-          const proxied = await remoteClient.invokeIfActive('attachments:save', [
-            dataUrl,
-            basename(sourcePath),
-            threadId,
-          ])
-          if (proxied.handled && proxied.value && typeof proxied.value === 'object') {
-            return { ...proxied.value, dataUrl }
+        return runAppOperation(async () => {
+          // Encode only when there is actually a host to upload to. `invokeIfActive` returns
+          // `handled: true` exactly when `getActiveHost() && shouldProxy(...)`, so hoisting
+          // that condition is equivalent — and it keeps the local path to a single read of
+          // the file, which the map handler does. Computing the data URL unconditionally
+          // here would read and base64 every attachment twice on the common path.
+          if (remoteClient.getActiveHost() && remoteClient.shouldProxy('attachments:save')) {
+            const dataUrl = filePathToDataUrl(sourcePath)
+            const proxied = await remoteClient.invokeIfActive('attachments:save', [
+              dataUrl,
+              basename(sourcePath),
+              threadId,
+            ])
+            if (proxied.handled && proxied.value && typeof proxied.value === 'object') {
+              return { ...proxied.value, dataUrl }
+            }
           }
-        }
-        return invokeLocally(sourcePath, threadId)
+          return invokeLocally(sourcePath, threadId)
+        })
       })
       continue
     }
@@ -102,7 +107,9 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
     if (isRemoteChannel(channel)) {
       proxyable(channel, invokeLocally)
     } else {
-      ipcMain.handle(channel, (_event, ...args: unknown[]) => invokeLocally(...args))
+      ipcMain.handle(channel, (_event, ...args: unknown[]) => {
+        return runAppOperation(() => invokeLocally(...args))
+      })
     }
   }
 
@@ -123,13 +130,17 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
   // sits outside the fold by design; the matching `invoke` registrations are folded.
 
   ipcMain.on('terminal:write', (_event, terminalId: string, data: string) => {
-    void remoteClient.invokeIfActive('terminal:write', [terminalId, data]).then((proxied) => {
+    if (getAppLifecycleState() !== 'running') return
+    void runAppOperation(async () => {
+      const proxied = await remoteClient.invokeIfActive('terminal:write', [terminalId, data])
       if (!proxied.handled) ptyManager.write(terminalId, data)
     })
   })
 
   ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
-    void remoteClient.invokeIfActive('terminal:resize', [terminalId, cols, rows]).then((proxied) => {
+    if (getAppLifecycleState() !== 'running') return
+    void runAppOperation(async () => {
+      const proxied = await remoteClient.invokeIfActive('terminal:resize', [terminalId, cols, rows])
       if (!proxied.handled) ptyManager.resize(terminalId, cols, rows)
     })
   })
