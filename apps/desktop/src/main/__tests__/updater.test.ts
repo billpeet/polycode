@@ -5,6 +5,7 @@ type Listener = (...args: unknown[]) => void
 const H = vi.hoisted(() => ({
   listeners: new Map<string, Listener>(),
   checkForUpdates: vi.fn<() => Promise<unknown>>(),
+  quitAndInstall: vi.fn(),
   captureException: vi.fn(),
   send: vi.fn(),
 }))
@@ -19,7 +20,7 @@ vi.mock('electron-updater', () => ({
     autoDownload: false,
     autoInstallOnAppQuit: false,
     checkForUpdates: H.checkForUpdates,
-    quitAndInstall: vi.fn(),
+    quitAndInstall: H.quitAndInstall,
     on: (event: string, listener: Listener) => H.listeners.set(event, listener),
   },
 }))
@@ -34,6 +35,7 @@ describe('auto-updater transient failures', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {})
     H.listeners.clear()
     H.checkForUpdates.mockReset().mockResolvedValue(undefined)
+    H.quitAndInstall.mockReset()
     H.captureException.mockReset()
     H.send.mockReset()
     vi.resetModules()
@@ -111,5 +113,33 @@ describe('auto-updater transient failures', () => {
       tags: { source: 'auto-updater' },
     })
     expect(H.checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it('does not apply an older downloaded update after a newer release is found', async () => {
+    const updater = await initialise()
+
+    H.listeners.get('update-available')?.({ version: '1.2.3' })
+    H.listeners.get('update-downloaded')?.({ version: '1.2.3' })
+    expect(updater.getUpdateState()).toMatchObject({ version: '1.2.3', ready: true })
+
+    H.listeners.get('update-available')?.({ version: '1.2.4' })
+
+    expect(updater.getUpdateState()).toMatchObject({
+      version: '1.2.4',
+      ready: false,
+      downloading: true,
+    })
+    expect(updater.applyUpdate()).toBe(false)
+    expect(H.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('installs a downloaded update silently', async () => {
+    const updater = await initialise()
+    H.listeners.get('update-downloaded')?.({ version: '1.2.4' })
+
+    expect(updater.applyUpdate()).toBe(true)
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(H.quitAndInstall).toHaveBeenCalledWith(true, true)
   })
 })

@@ -116,7 +116,7 @@ export function checkForUpdates(): void {
 export function applyUpdate(): boolean {
   if (!updateState.ready) return false
   // Defer so the IPC reply reaches the renderer before the app quits
-  setImmediate(() => autoUpdater.quitAndInstall())
+  setImmediate(() => autoUpdater.quitAndInstall(true, true))
   return true
 }
 
@@ -133,7 +133,14 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
 
   autoUpdater.on('update-not-available', () => {
     resetTransientRetries()
-    setState({ checking: false, available: false, downloading: false })
+    setState({
+      checking: false,
+      available: false,
+      downloading: false,
+      ready: false,
+      progress: undefined,
+      version: undefined,
+    })
   })
 
   autoUpdater.on('update-available', (info) => {
@@ -142,6 +149,7 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
       checking: false,
       available: true,
       downloading: true,
+      ready: false,
       progress: 0,
       version: info.version,
     })
