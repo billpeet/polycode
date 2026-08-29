@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { RepoLocation, SshConfig, WslConfig, ConnectionType, LocationPool } from '../types/ipc'
 import { useThreadStore } from './threads'
+import { useBrowserStore } from './browser'
 
 interface LocationStore {
   byProject: Record<string, RepoLocation[]>
@@ -104,6 +105,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
 
   remove: async (id, projectId) => {
     await window.api.invoke('locations:delete', id)
+    useBrowserStore.getState().discardLocation(id)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -178,6 +180,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
     }))
     try {
       await window.api.invoke('locations:removeWorktree', id)
+      useBrowserStore.getState().discardLocation(id)
     } catch (error) {
       useThreadStore.setState({
         byProject: threadSnapshot.byProject,

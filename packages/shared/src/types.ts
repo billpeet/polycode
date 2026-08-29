@@ -90,6 +90,10 @@ export interface BrowserSessionConfig {
   sshLabel: string | null
 }
 
+export type BrowserPrepareSessionResult =
+  | { ok: true; session: BrowserSessionConfig }
+  | { ok: false; code: 'LOCATION_NOT_FOUND' }
+
 export interface RemoteServerConfig {
   enabled: boolean
   host: string
