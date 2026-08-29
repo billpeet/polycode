@@ -1,6 +1,6 @@
 import { session, Session } from 'electron'
 import { getLocationById } from '../db/queries'
-import type { RepoLocation, SshConfig, BrowserSessionConfig } from '../../shared/types'
+import type { RepoLocation, SshConfig, BrowserPrepareSessionResult } from '../../shared/types'
 import { browserPartitionFor, sshLabelFor } from '../../shared/browser'
 import { SshTunnelPool } from './port-forward'
 import { startBrowserProxy, BrowserProxy } from './proxy-server'
@@ -46,9 +46,9 @@ class BrowserSessionManager {
   /** Sessions already configured not to prompt the page for permissions. */
   private hardened = new WeakSet<Session>()
 
-  async prepareSession(locationId: string): Promise<BrowserSessionConfig> {
+  async prepareSession(locationId: string): Promise<BrowserPrepareSessionResult> {
     const location = getLocationById(locationId)
-    if (!location) throw new Error(`Location ${locationId} not found`)
+    if (!location) return { ok: false, code: 'LOCATION_NOT_FOUND' }
 
     const partition = browserPartitionFor(locationId)
     const guestSession = session.fromPartition(partition)
@@ -64,7 +64,7 @@ class BrowserSessionManager {
       await guestSession.setProxy({ mode: 'direct' })
       this.prepared.add(locationId)
       this.locationKeys.delete(locationId)
-      return { partition, proxied: false, sshLabel: null }
+      return { ok: true, session: { partition, proxied: false, sshLabel: null } }
     }
 
     const key = proxyKeyFor(ssh)
@@ -83,7 +83,7 @@ class BrowserSessionManager {
       proxyRules: `http=127.0.0.1:${entry.proxy.port};https=127.0.0.1:${entry.proxy.port}`,
       proxyBypassRules: '<-loopback>',
     })
-    return { partition, proxied: true, sshLabel: entry.label }
+    return { ok: true, session: { partition, proxied: true, sshLabel: entry.label } }
   }
 
   releaseSession(locationId: string): void {

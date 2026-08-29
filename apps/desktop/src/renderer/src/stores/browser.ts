@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { BrowserSessionConfig } from '../types/ipc'
 import { useUiStore } from './ui'
+import { useToastStore } from './toast'
 
 export interface BrowserTab {
   id: string
@@ -29,6 +30,7 @@ interface BrowserStore {
   closeTab: (locationId: string, tabId: string) => Promise<void>
   activateTab: (locationId: string, tabId: string) => void
   updateTab: (locationId: string, tabId: string, patch: Partial<BrowserTab>) => void
+  discardLocation: (locationId: string) => void
 }
 
 let tabCounter = 0
@@ -47,6 +49,12 @@ function makeTab(url: string | null): BrowserTab {
   }
 }
 
+function withoutKey<T>(record: Record<string, T>, key: string): Record<string, T> {
+  const next = { ...record }
+  delete next[key]
+  return next
+}
+
 export const useBrowserStore = create<BrowserStore>((set, get) => ({
   tabsByLocation: {},
   activeByLocation: {},
@@ -58,7 +66,13 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     const state = get()
     let session = state.sessionByLocation[locationId]
     if (!session) {
-      session = await window.api.invoke('browser:prepareSession', locationId)
+      const result = await window.api.invoke('browser:prepareSession', locationId)
+      if (!result.ok) {
+        get().discardLocation(locationId)
+        useToastStore.getState().add({ type: 'info', message: 'That project location no longer exists.' })
+        return
+      }
+      session = result.session
       set((s) => ({ sessionByLocation: { ...s.sessionByLocation, [locationId]: session! } }))
     }
 
@@ -106,7 +120,13 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     const state = get()
     let session = state.sessionByLocation[locationId]
     if (!session) {
-      session = await window.api.invoke('browser:prepareSession', locationId)
+      const result = await window.api.invoke('browser:prepareSession', locationId)
+      if (!result.ok) {
+        get().discardLocation(locationId)
+        useToastStore.getState().add({ type: 'info', message: 'That project location no longer exists.' })
+        return
+      }
+      session = result.session
       set((s) => ({ sessionByLocation: { ...s.sessionByLocation, [locationId]: session! } }))
     }
 
@@ -161,5 +181,16 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
       next[index] = { ...next[index], ...patch }
       return { tabsByLocation: { ...s.tabsByLocation, [locationId]: next } }
     })
+  },
+
+  discardLocation: (locationId) => {
+    set((s) => ({
+      tabsByLocation: withoutKey(s.tabsByLocation, locationId),
+      activeByLocation: withoutKey(s.activeByLocation, locationId),
+      visibleByLocation: withoutKey(s.visibleByLocation, locationId),
+      sessionByLocation: withoutKey(s.sessionByLocation, locationId),
+    }))
+    useUiStore.getState().clearLocationAuxTab(locationId)
+    void window.api.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
   },
 }))
