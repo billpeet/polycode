@@ -14,8 +14,10 @@ export function buildOpenCodeArgs(
   sessionId: string | null,
   model: string | undefined,
   reasoningLevel?: ReasoningLevel,
+  yoloMode = false,
 ): string[] {
   const args: string[] = ['run', '--format', 'json']
+  if (yoloMode) args.push('--auto')
   if (sessionId) args.push('--session', sessionId)
   if (model) args.push('--model', model)
   if (reasoningLevel && reasoningLevel !== 'off') args.push('--variant', reasoningLevel)
@@ -38,13 +40,20 @@ export class OpenCodeDriver extends BaseDriver {
   protected buildCommand(
     content: string,
     _runnerType: 'local' | 'wsl' | 'ssh',
-    _options?: MessageOptions  // plan mode is Claude-specific; ignored for OpenCode
+    options?: MessageOptions  // plan mode is Claude-specific; ignored for OpenCode
   ): SpawnCommand {
     // OpenCode always reads the prompt from stdin — no positional prompt arg.
     // No preamble needed (opencode is typically installed as a standalone binary).
     return {
       binary: 'opencode',
-      args: buildOpenCodeArgs(this.sessionId, this.options.model, this.options.reasoningLevel),
+      args: buildOpenCodeArgs(
+        this.sessionId,
+        this.options.model,
+        this.options.reasoningLevel,
+        options?.permissionMode === 'yolo' || options?.yoloMode === true ||
+          (options?.permissionMode == null && options?.yoloMode == null &&
+            (this.options.permissionMode === 'yolo' || this.options.yoloMode === true)),
+      ),
       workDir: this.options.workingDir,
       stdinContent: content,
     }

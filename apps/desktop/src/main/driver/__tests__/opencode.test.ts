@@ -63,6 +63,33 @@ describe('buildOpenCodeArgs', () => {
     expect(args).toContain('--format')
     expect(args[args.indexOf('--format') + 1]).toBe('json')
   })
+
+  it('adds --auto in yolo mode', () => {
+    expect(buildOpenCodeArgs(null, undefined, undefined, true)).toEqual([
+      'run', '--format', 'json', '--auto',
+    ])
+  })
+
+  it('does not add --auto outside yolo mode', () => {
+    expect(buildOpenCodeArgs(null, undefined, undefined, false)).not.toContain('--auto')
+  })
+})
+
+describe('OpenCodeDriver permission mode', () => {
+  it('uses the per-message yolo mode', () => {
+    const driver = makeDriver()
+    const command = (driver as any).buildCommand('hello', 'local', { permissionMode: 'yolo' })
+    expect(command.args).toContain('--auto')
+  })
+
+  it('lets a per-message ask mode override the initial yolo mode', () => {
+    const driver = makeDriver({ permissionMode: 'yolo', yoloMode: true })
+    const command = (driver as any).buildCommand('hello', 'local', {
+      permissionMode: 'ask',
+      yoloMode: false,
+    })
+    expect(command.args).not.toContain('--auto')
+  })
 })
 
 // ── Session ID capture ────────────────────────────────────────────────────────

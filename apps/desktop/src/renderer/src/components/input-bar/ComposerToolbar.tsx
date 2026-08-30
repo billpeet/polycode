@@ -85,6 +85,12 @@ export default function ComposerToolbar({
         { mode: 'yolo', label: 'Yolo', title: 'Bypass Claude approval checks entirely' },
       ]
     }
+    if (currentThread?.provider === 'opencode') {
+      return [
+        { mode: 'ask', label: 'Ask', title: 'Use the permissions configured in OpenCode' },
+        { mode: 'yolo', label: 'Yolo', title: 'Auto-approve OpenCode permission requests' },
+      ]
+    }
     if (currentThread?.provider === 'cursor' || currentThread?.provider === 'grok') {
       return [
         { mode: 'ask', label: 'Ask', title: 'Ask before privileged provider actions' },
