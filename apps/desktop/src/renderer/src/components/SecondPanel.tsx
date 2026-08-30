@@ -1,12 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useFilesStore } from '../stores/files'
-import { useTerminalStore } from '../stores/terminal'
-import { useBrowserStore, type BrowserTab } from '../stores/browser'
-import { useCommandStore } from '../stores/commands'
-import { useThreadStore } from '../stores/threads'
-import { usePlanStore } from '../stores/plans'
 import { useUiStore } from '../stores/ui'
-import type { LocationAuxTab } from '../stores/ui'
+import { useAvailableAuxTabs, AUX_TAB_LABELS, type AuxTab } from '../hooks/useAvailableAuxTabs'
 import { DiffPane, FilePane } from './FilePreview'
 import TerminalContent from './Terminal'
 import BrowserContent from './Browser'
@@ -14,27 +9,6 @@ import CommandLogsContent from './CommandLogs'
 import Assassin from './Assassin'
 import PlanPane from './PlanPane'
 import PanelErrorBoundary from './PanelErrorBoundary'
-
-type Tab = 'diff' | 'file' | 'terminal' | 'commands' | 'plan' | 'browser'
-
-// Stable reference for absent browser tabs: an inline `[]` in a selector
-// allocates a fresh array per getSnapshot call, which useSyncExternalStore
-// reads as "the store changed" — an infinite re-render loop.
-const EMPTY_BROWSER_TABS: BrowserTab[] = []
-
-const TAB_LABELS: Record<Tab, string> = {
-  diff: 'Git Diff',
-  file: 'File Preview',
-  terminal: 'Terminal',
-  commands: 'Command Logs',
-  plan: 'Plan',
-  browser: 'Browser',
-}
-
-function toPanelTab(tab: LocationAuxTab): Tab | null {
-  if (tab === 'command') return 'commands'
-  return tab
-}
 
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
@@ -99,62 +73,33 @@ function useResize(defaultWidth: number) {
 // ─── SecondPanel ──────────────────────────────────────────────────────────────
 
 export default function SecondPanel({ threadId }: { threadId: string }) {
-  const currentLocationId = useThreadStore((s) => {
-    if (!s.selectedThreadId) return null
-    for (const threads of Object.values(s.byProject)) {
-      const t = threads.find((t) => t.id === s.selectedThreadId)
-      if (t) return t.location_id ?? null
-    }
-    return null
-  })
+  const layoutMode = useUiStore((s) => s.layoutMode)
+  const isFull = layoutMode === 'full'
+  const chatTabActive = useUiStore((s) => s.isChatTabActive(threadId))
+  const setChatTabActive = useUiStore((s) => s.setChatTabActive)
+
+  const {
+    tabs: availableTabs,
+    locationId: currentLocationId,
+    has,
+    requestedTab,
+    requestedTabVersion,
+  } = useAvailableAuxTabs(threadId)
+
+  const { diff: hasDiff, file: hasFile, terminal: hasTerminal, commands: hasCommands, plan: showPlan, browser: hasBrowser } = has
 
   const selectedFilePath = useFilesStore((s) => currentLocationId ? (s.selectedFilePathByLocation[currentLocationId] ?? null) : s.selectedFilePath)
   const diffView = useFilesStore((s) => currentLocationId ? (s.diffViewByLocation[currentLocationId] ?? null) : s.diffView)
-  const loadingDiff = useFilesStore((s) => currentLocationId ? (s.loadingDiffByLocation[currentLocationId] ?? false) : s.loadingDiff)
 
-  const isTerminalOpen = useTerminalStore((s) =>
-    currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
-  )
+  const activeTab = useUiStore((s) => (s.activeAuxTabByThread[threadId] ?? null) as AuxTab | null)
+  const setActiveAuxTab = useUiStore((s) => s.setActiveAuxTab)
 
-  const browserTabs = useBrowserStore((s) =>
-    currentLocationId ? (s.tabsByLocation[currentLocationId] ?? EMPTY_BROWSER_TABS) : EMPTY_BROWSER_TABS
-  )
-  const isBrowserOpen = useBrowserStore((s) =>
-    currentLocationId ? (s.visibleByLocation[currentLocationId] ?? false) : false
-  )
-
-  const selectedInstance = useCommandStore((s) =>
-    currentLocationId ? (s.selectedInstanceByLocation[currentLocationId] ?? null) : null
-  )
-  const hasPinnedCommands = useCommandStore((s) =>
-    currentLocationId ? ((s.pinnedInstancesByLocation[currentLocationId] ?? []).length > 0) : false
-  )
-
-  const planVisible = usePlanStore((s) => s.visibleByThread[threadId] ?? false)
-  const hasPlan = usePlanStore((s) => !!s.planByThread[threadId])
-  const requestedAuxTab = useUiStore((s) =>
-    currentLocationId ? (s.locationAuxTabByLocation[currentLocationId] ?? null) : null
-  )
-  const requestedAuxTabVersion = useUiStore((s) =>
-    currentLocationId ? (s.locationAuxTabRequestByLocation[currentLocationId] ?? 0) : 0
-  )
-
-  const hasDiff = !!(diffView || loadingDiff)
-  const hasFile = !!selectedFilePath
-  const hasTerminal = isTerminalOpen
-  const hasCommands = !!(selectedInstance || hasPinnedCommands)
-  const showPlan = planVisible && hasPlan
-  const hasBrowser = isBrowserOpen && browserTabs.length > 0
-
-  const availableTabs: Tab[] = []
-  if (showPlan) availableTabs.push('plan')
-  if (hasDiff) availableTabs.push('diff')
-  if (hasFile) availableTabs.push('file')
-  if (hasTerminal) availableTabs.push('terminal')
-  if (hasCommands) availableTabs.push('commands')
-  if (hasBrowser) availableTabs.push('browser')
-
-  const [activeTab, setActiveTab] = useState<Tab | null>(null)
+  // Selecting any aux tab must also drop the chat tab, otherwise both would
+  // claim to be active in full layout.
+  const activateTab = useCallback((tab: AuxTab) => {
+    if (tab !== 'chat') setActiveAuxTab(threadId, tab)
+    setChatTabActive(threadId, tab === 'chat')
+  }, [setActiveAuxTab, setChatTabActive, threadId])
 
   // Auto-switch to a tab when it first becomes available
   const prevHasDiff = useRef(hasDiff)
@@ -165,37 +110,36 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
   const prevHasBrowser = useRef(hasBrowser)
 
   useEffect(() => {
-    if (hasDiff && !prevHasDiff.current) setActiveTab('diff')
+    if (hasDiff && !prevHasDiff.current) activateTab('diff')
     prevHasDiff.current = hasDiff
-  }, [hasDiff])
+  }, [hasDiff, activateTab])
 
   useEffect(() => {
-    if (hasFile && !prevHasFile.current) setActiveTab('file')
+    if (hasFile && !prevHasFile.current) activateTab('file')
     prevHasFile.current = hasFile
-  }, [hasFile])
+  }, [hasFile, activateTab])
 
   useEffect(() => {
-    if (hasTerminal && !prevHasTerminal.current) setActiveTab('terminal')
+    if (hasTerminal && !prevHasTerminal.current) activateTab('terminal')
     prevHasTerminal.current = hasTerminal
-  }, [hasTerminal])
+  }, [hasTerminal, activateTab])
 
   useEffect(() => {
-    if (hasCommands && !prevHasCommands.current) setActiveTab('commands')
+    if (hasCommands && !prevHasCommands.current) activateTab('commands')
     prevHasCommands.current = hasCommands
-  }, [hasCommands])
+  }, [hasCommands, activateTab])
 
   useEffect(() => {
-    if (showPlan && !prevShowPlan.current) setActiveTab('plan')
+    if (showPlan && !prevShowPlan.current) activateTab('plan')
     prevShowPlan.current = showPlan
-  }, [showPlan])
+  }, [showPlan, activateTab])
 
   useEffect(() => {
-    if (hasBrowser && !prevHasBrowser.current) setActiveTab('browser')
+    if (hasBrowser && !prevHasBrowser.current) activateTab('browser')
     prevHasBrowser.current = hasBrowser
-  }, [hasBrowser])
+  }, [hasBrowser, activateTab])
 
   useEffect(() => {
-    const requestedTab = toPanelTab(requestedAuxTab)
     if (!requestedTab) return
     const isAvailable =
       requestedTab === 'diff' ? hasDiff
@@ -204,42 +148,66 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       : requestedTab === 'commands' ? hasCommands
       : requestedTab === 'browser' ? hasBrowser
       : false
-    if (isAvailable) queueMicrotask(() => setActiveTab(requestedTab))
-  }, [requestedAuxTab, requestedAuxTabVersion, hasDiff, hasFile, hasTerminal, hasCommands, showPlan, hasBrowser])
+    if (isAvailable) queueMicrotask(() => activateTab(requestedTab))
+  }, [requestedTab, requestedTabVersion, hasDiff, hasFile, hasTerminal, hasCommands, showPlan, hasBrowser, activateTab])
 
   const { width, handleMouseDown } = useResize(Math.round(window.innerWidth * 0.3))
 
+  // In split layout an empty panel collapses entirely. In full layout the panel
+  // is the whole workspace, so it always renders — the Chat tab is always there.
   if (availableTabs.length === 0) return null
 
-  // If the active tab is no longer available, fall back to the first available
-  const currentTab = activeTab && availableTabs.includes(activeTab) ? activeTab : availableTabs[0]
+  // Full layout shows exactly one surface at a time. When Chat is the active
+  // tab the chat pane takes the window, so this panel must shrink to its tab
+  // bar — otherwise both claim flex:1 and the window splits in two, which is
+  // the very thing full mode exists to avoid.
+  const collapsedToTabBar = isFull && chatTabActive
 
-  const showTabs = availableTabs.length > 1
+  // The chat tab wins while it is active; otherwise fall back to the first
+  // available tab when the active one has gone away.
+  const currentTab: AuxTab =
+    isFull && chatTabActive ? 'chat'
+    : activeTab && activeTab !== 'chat' && availableTabs.includes(activeTab) ? activeTab
+    : (availableTabs.find((t) => t !== 'chat') ?? availableTabs[0])
+
+  // Tab buttons only earn their space when there is a choice to make; the bar
+  // itself always renders, because it carries expand/retract.
+  const showTabButtons = availableTabs.length > 1
 
   return (
     <div
-      className="flex flex-col h-full border-l"
+      className={`flex flex-col h-full ${isFull ? '' : 'border-l'}`}
       style={{
         position: 'relative',
         background: currentTab === 'terminal' ? '#0f0f0f' : 'var(--color-surface)',
         borderColor: 'var(--color-border)',
-        minWidth: 200,
-        width,
-        flexShrink: 0,
+        // Full layout: the panel is the workspace, so it takes the room the
+        // collapsed chat pane gave up — unless Chat itself is the active tab,
+        // in which case it shrinks to just its tab bar and the chat pane takes
+        // the window. Split layout keeps its resizable width.
+        ...(isFull
+          ? (collapsedToTabBar
+              ? { flex: '0 0 auto', width: '100%', height: 'auto', minWidth: 0 }
+              : { flex: 1, minWidth: 0 })
+          : { minWidth: 200, width, flexShrink: 0 }),
       }}
     >
-      <ResizeHandle onMouseDown={handleMouseDown} />
+      {!isFull && <ResizeHandle onMouseDown={handleMouseDown} />}
 
-      {/* Tab bar — only when 2+ panels are active */}
-      {showTabs && (
-        <div
-          className="flex flex-shrink-0 border-b"
-          style={{ borderColor: 'var(--color-border)' }}
-        >
-          {availableTabs.map((tab) => (
+      {/*
+        Always present: besides the tabs it carries expand/retract, which has to
+        be reachable with a single pane open (expanding one command log is the
+        main reason to go full page) and with only the Chat tab (otherwise there
+        is no way back but the keyboard shortcut).
+      */}
+      <div
+        className="flex flex-shrink-0 border-b items-center"
+        style={{ borderColor: 'var(--color-border)' }}
+      >
+        {showTabButtons && availableTabs.map((tab) => (
             <button
               key={tab}
-              onClick={() => setActiveTab(tab)}
+              onClick={() => activateTab(tab)}
               className="px-3 py-1.5 text-xs transition-colors whitespace-nowrap"
               style={{
                 color: currentTab === tab ? 'var(--color-text)' : 'var(--color-text-muted)',
@@ -250,11 +218,47 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
                 background: 'transparent',
               }}
             >
-              {TAB_LABELS[tab]}
+              {AUX_TAB_LABELS[tab]}
             </button>
           ))}
-        </div>
-      )}
+
+          {/*
+            Expand/retract lives here rather than in the thread header: it only
+            means anything when there are tabs to expand, and this bar is
+            exactly where those tabs are.
+          */}
+          <button
+            onClick={() => useUiStore.getState().toggleLayoutMode()}
+            className="ml-auto mr-1.5 rounded p-0.5 hover:opacity-70 transition-opacity flex-shrink-0"
+            style={{
+              color: 'var(--color-text-muted)',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              lineHeight: 1,
+            }}
+            title={
+              isFull
+                ? 'Retract to split view (Ctrl+Shift+L)'
+                : 'Expand to full page (Ctrl+Shift+L)'
+            }
+            aria-label={isFull ? 'Retract to split view' : 'Expand to full page'}
+          >
+            {isFull ? (
+              // Retract: arrows pulling inward.
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9.5 6.5h4M9.5 6.5v-4M9.5 6.5L14 2" />
+                <path d="M6.5 9.5h-4M6.5 9.5v4M6.5 9.5L2 14" />
+              </svg>
+            ) : (
+              // Expand: arrows pushing outward.
+              <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M10 2h4v4M14 2l-4.5 4.5" />
+                <path d="M6 14H2v-4M2 14l4.5-4.5" />
+              </svg>
+            )}
+          </button>
+      </div>
 
       {/* Plan preview */}
       {currentTab === 'plan' && showPlan && (

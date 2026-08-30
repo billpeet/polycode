@@ -11,6 +11,7 @@ import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
 import { useLocationStore } from './stores/locations'
 import { useUiStore } from './stores/ui'
+import { useAvailableAuxTabs, type AuxTab } from './hooks/useAvailableAuxTabs'
 import { useTerminalStore } from './stores/terminal'
 import { useYouTrackStore } from './stores/youtrack'
 import { useFavouritesStore, formatFavourite, Favourite } from './stores/favourites'
@@ -57,6 +58,17 @@ export default function App() {
     selectedThreadId ? (s.todoPanelOpenByThread[selectedThreadId] ?? true) : false
   )
 
+  const layoutMode = useUiStore((s) => s.layoutMode)
+  const chatTabActive = useUiStore((s) =>
+    selectedThreadId ? (s.chatTabActiveByThread[selectedThreadId] ?? true) : true
+  )
+  // Shared with SecondPanel so the Ctrl+Tab cycle and the rendered tab bar can
+  // never disagree about which tabs exist.
+  const { tabs: auxTabs } = useAvailableAuxTabs(selectedThreadId ?? '')
+  // In full layout the chat only shows when its tab is selected; in split it is
+  // always visible. Note this controls *visibility*, never mounting — see below.
+  const chatVisible = layoutMode === 'split' || chatTabActive
+
   const fetchYouTrackServers = useYouTrackStore((s) => s.fetch)
   const loadFavourites = useFavouritesStore((s) => s.load)
 
@@ -78,6 +90,7 @@ export default function App() {
       fetchProjects(),
       fetchYouTrackServers(),
       loadFavourites(),
+      useUiStore.getState().loadLayoutMode(),
     ]).then(([savedProjectId, savedThreadId]) => {
       if (!savedProjectId) return
       const project = useProjectStore.getState().projects.find((p) => p.id === savedProjectId)
@@ -204,6 +217,9 @@ export default function App() {
         }
 
         await threadState.archive(currentThread.id, selectedProjectId)
+      } else if ((e.key === 'l' || e.key === 'L') && !e.altKey && e.shiftKey) {
+        e.preventDefault()
+        useUiStore.getState().toggleLayoutMode()
       } else if (e.key === 'k' || e.key === 'K') {
         e.preventDefault()
         window.dispatchEvent(new CustomEvent('focus-input'))
@@ -223,6 +239,43 @@ export default function App() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [selectedProjectId])
+
+  // Ctrl+Tab / Ctrl+Shift+Tab cycles aux tabs in full layout. Registered on the
+  // capture phase so a focused xterm — which binds its own key handling — cannot
+  // swallow it first.
+  useEffect(() => {
+    if (layoutMode !== 'full' || !selectedThreadId || auxTabs.length < 2) return
+
+
+    function handler(e: KeyboardEvent): void {
+      if (e.key !== 'Tab' || !(e.ctrlKey || e.metaKey) || e.altKey) return
+      e.preventDefault()
+      e.stopPropagation()
+
+      const ui = useUiStore.getState()
+      const threadId = selectedThreadId as string
+      const current: AuxTab = ui.isChatTabActive(threadId)
+        ? 'chat'
+        : ((ui.activeAuxTabByThread[threadId] as AuxTab | undefined)
+            ?? auxTabs.find((t) => t !== 'chat')
+            ?? 'chat')
+
+      const index = auxTabs.indexOf(current)
+      const next = auxTabs[
+        (((index === -1 ? 0 : index) + (e.shiftKey ? -1 : 1)) + auxTabs.length) % auxTabs.length
+      ]
+
+      if (next === 'chat') {
+        ui.setChatTabActive(threadId, true)
+      } else {
+        ui.setActiveAuxTab(threadId, next)
+        ui.setChatTabActive(threadId, false)
+      }
+    }
+
+    window.addEventListener('keydown', handler, true)
+    return () => window.removeEventListener('keydown', handler, true)
+  }, [layoutMode, selectedThreadId, auxTabs])
 
   useEffect(() => {
     return window.api.on('remote:active-changed', () => {
@@ -366,18 +419,47 @@ export default function App() {
           <main className="flex flex-1 overflow-hidden">
             {selectedThreadId ? (
               <>
-                <div className="flex flex-1 flex-col overflow-hidden">
-                  <Profiler id="ThreadView" onRender={reportReactCommit}>
-                    <UiErrorBoundary context="Thread workspace" resetKeys={[selectedThreadId]}>
-                      <ThreadView threadId={selectedThreadId} />
+                {/*
+                  The chat pane stays mounted in both layouts and is hidden with
+                  CSS, never unmounted. ThreadView owns the thread:output IPC
+                  subscriptions and MessageStream's virtualizer state, so
+                  swapping it in and out on a layout toggle would drop events and
+                  reset scroll position. Width 0 (rather than display:none) keeps
+                  the element measurable, so the virtualizer's height cache does
+                  not fill with zeroes while hidden.
+                */}
+                {/*
+                  Split lays chat and the aux panel side by side. Full stacks
+                  them, so the aux tab bar sits above whichever single surface
+                  is showing — the panel body, or the chat when its tab is
+                  active. Same two children either way; only the axis changes.
+                */}
+                <div
+                  className={`flex flex-1 overflow-hidden ${layoutMode === 'full' ? 'flex-col' : 'flex-row'}`}
+                >
+                  <div
+                    className="flex flex-col overflow-hidden"
+                    style={{
+                      // order (not DOM position) puts the tab bar above the chat
+                      // in full layout, so the chat element is never moved in the
+                      // tree and never remounts.
+                      order: layoutMode === 'full' ? 1 : 0,
+                      ...(chatVisible ? { flex: 1 } : { flex: 0, width: 0, height: 0 }),
+                    }}
+                    aria-hidden={!chatVisible}
+                  >
+                    <Profiler id="ThreadView" onRender={reportReactCommit}>
+                      <UiErrorBoundary context="Thread workspace" resetKeys={[selectedThreadId]}>
+                        <ThreadView threadId={selectedThreadId} />
+                      </UiErrorBoundary>
+                    </Profiler>
+                  </div>
+                  <Profiler id="SecondPanel" onRender={reportReactCommit}>
+                    <UiErrorBoundary context="Auxiliary panel" resetKeys={[selectedThreadId]}>
+                      <SecondPanel threadId={selectedThreadId} />
                     </UiErrorBoundary>
                   </Profiler>
                 </div>
-                <Profiler id="SecondPanel" onRender={reportReactCommit}>
-                  <UiErrorBoundary context="Auxiliary panel" resetKeys={[selectedThreadId]}>
-                    <SecondPanel threadId={selectedThreadId} />
-                  </UiErrorBoundary>
-                </Profiler>
                 {isTodoPanelOpen && (
                   <Profiler id="RightPanel" onRender={reportReactCommit}>
                     <UiErrorBoundary context="Right panel" resetKeys={[selectedThreadId]}>
