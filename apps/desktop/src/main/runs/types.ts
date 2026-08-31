@@ -133,6 +133,12 @@ export interface RunSessions {
    * interacting with an escalated Run). Returns an unsubscribe function.
    */
   onCompletion(listener: (threadId: string, status: ThreadStatus) => void): () => void
+  /**
+   * True when the thread's provider still has detached background work. A Run
+   * whose turn ended while such work is live is not finished, and its worktree
+   * must not be removed.
+   */
+  hasLiveBackgroundWork(threadId: string): boolean
   discard(threadId: string): void
 }
 

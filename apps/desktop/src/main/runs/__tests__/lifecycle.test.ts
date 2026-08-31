@@ -223,6 +223,25 @@ describe('evaluation (ADR-0001)', () => {
     expect(routine.enabled).toBe(true)
   })
 
+  it('escalates — never removes the worktree — when the run goes idle with background tasks live', async () => {
+    // The turn ending is not the same as the work ending: a detached command or
+    // subagent may still be writing into the worktree, and may yet wake the
+    // thread. Removing it here would destroy live work.
+    const h = harness()
+    h.store.addRoutine(makeRoutine())
+    h.sessions.liveBackgroundWork.add('run-1')
+    await h.lifecycle.tick()
+    await settle()
+    const run = [...h.store.runs.values()][0]
+    // Guard against the id guess above silently disarming this test.
+    expect(h.sessions.liveBackgroundWork.has(run.id)).toBe(true)
+    expect(run.state).toBe('escalated')
+    expect(run.detail).toContain('background tasks still running')
+    expect(h.worktrees.removed).toHaveLength(0)
+    expect(h.sessions.discarded).not.toContain(run.id)
+    expect(h.store.transitions.map((t) => t.to)).not.toContain('success')
+  })
+
   it('escalates unshipped work with a detail naming the parts, keeping the worktree', async () => {
     const h = harness()
     h.store.addRoutine(makeRoutine())

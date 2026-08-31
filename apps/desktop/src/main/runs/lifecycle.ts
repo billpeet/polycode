@@ -264,6 +264,19 @@ export class RunLifecycle {
         this.escalate(run.id, run.routineId, NON_IDLE_REASONS[status] ?? `The run ended in state "${status}".`)
         return
       }
+      // The turn is over, but detached background work (a backgrounded command,
+      // a subagent) may still be writing into the worktree and may yet wake the
+      // thread. Removing the worktree here would destroy live work, so escalate
+      // instead — the worktree is kept, and because escalated Runs stay watched,
+      // a later completion with nothing live still promotes this to success.
+      if (this.deps.sessions.hasLiveBackgroundWork(run.id)) {
+        this.escalate(
+          run.id,
+          run.routineId,
+          'The run went idle with background tasks still running. The worktree has been kept.'
+        )
+        return
+      }
       const current = this.deps.store.getRun(run.id)
       const worktree = current?.locationId ? this.deps.worktrees.get(current.locationId) : null
       if (!worktree) {

@@ -29,6 +29,10 @@ export function createRunSessions(getWindow: () => BrowserWindow | null): RunSes
       })
     },
 
+    hasLiveBackgroundWork(threadId) {
+      return sessionManager.get(threadId)?.hasLiveBackgroundWork() ?? false
+    },
+
     discard(threadId) {
       sessionManager.remove(threadId)
     },

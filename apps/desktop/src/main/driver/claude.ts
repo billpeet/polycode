@@ -77,6 +77,20 @@ class AsyncMessageQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
+/**
+ * Claude reports two different things through the same task_* frames: real
+ * sub-agents, and shell commands it detached because they outran their
+ * foreground timeout. Only the former is a conversational participant.
+ *
+ * A sub-agent is identified by task_type 'local_agent' or by declaring a
+ * subagent_type. A detached command declares neither, and its description is
+ * the command line itself — which is why presenting one as an agent produces a
+ * participant named after a shell pipeline.
+ */
+function isAgentTask(message: { task_type?: string; subagent_type?: string }): boolean {
+  return message.task_type === 'local_agent' || message.subagent_type != null
+}
+
 let sdkModulePromise: Promise<typeof import('@anthropic-ai/claude-agent-sdk')> | null = null
 
 async function getSdk() {
@@ -104,6 +118,8 @@ export class ClaudeDriver implements CLIDriver {
     parentToolUseId: string
     description?: string
     subagentType?: string
+    /** See isAgentTask: 'command' is a detached shell command, not a participant. */
+    kind: 'agent' | 'command'
     status: 'running' | 'completed' | 'failed' | 'stopped'
   }>()
   private taskIdToParent = new Map<string, string>()
@@ -206,6 +222,10 @@ export class ClaudeDriver implements CLIDriver {
 
   isRunning(): boolean {
     return this.currentTurn !== null
+  }
+
+  hasLiveBackgroundWork(): boolean {
+    return this.activeBackgroundTaskIds.size > 0
   }
 
   getPid(): number | null {
@@ -534,6 +554,7 @@ export class ClaudeDriver implements CLIDriver {
           const input = (block.input ?? {}) as Record<string, unknown>
           const existing = this.agentRegistry.get(toolId)
           this.agentRegistry.set(toolId, {
+            kind: 'agent',
             parentToolUseId: toolId,
             taskId: existing?.taskId,
             description: typeof input.description === 'string' ? input.description : existing?.description,
@@ -575,6 +596,13 @@ export class ClaudeDriver implements CLIDriver {
   ): Record<string, unknown> {
     if (!parentToolUseId) return { agent_scope: 'main' }
     const entry = this.agentRegistry.get(parentToolUseId)
+    // A backgrounded shell command is not a sub-agent. Subagent scope is what
+    // makes the renderer bucket a message into an agent group and give it a
+    // tab, so a command reported with that scope surfaces as a participant
+    // labelled with its own command line.
+    if (entry?.kind === 'command') {
+      return { agent_scope: 'main', task_kind: 'command' }
+    }
     const subagentType = overrides?.subagentType ?? entry?.subagentType
     const description = overrides?.description ?? entry?.description
     const meta: Record<string, unknown> = {
@@ -672,6 +700,11 @@ export class ClaudeDriver implements CLIDriver {
         if (startedParent) {
           const existing = this.agentRegistry.get(startedParent)
           this.agentRegistry.set(startedParent, {
+            // A Task/Agent tool call already registered as 'agent'; never let a
+            // later frame demote it. Otherwise only task_type 'local_agent' (or
+            // a declared subagent_type) is a real sub-agent — everything else
+            // arriving on these frames is a detached shell command.
+            kind: existing?.kind ?? (isAgentTask(message) ? 'agent' : 'command'),
             parentToolUseId: startedParent,
             taskId: message.task_id,
             description: existing?.description ?? message.description,
@@ -692,6 +725,7 @@ export class ClaudeDriver implements CLIDriver {
             tool_use_id: message.tool_use_id,
             task_type: message.task_type,
             subagent_type: message.subagent_type,
+            task_kind: isAgentTask(message) ? 'agent' : 'command',
             ...this.agentMeta(message.tool_use_id ?? null),
           },
         })
@@ -833,6 +867,17 @@ export class ClaudeDriver implements CLIDriver {
       message.state === 'idle'
   }
 
+  /**
+   * session_state_changed:idle is the SDK's authoritative turn-over signal: it
+   * is emitted only after held-back background/subagent output has been
+   * flushed. It therefore ends the turn unconditionally.
+   *
+   * It must NOT be gated on activeBackgroundTaskIds. A task that never emits a
+   * terminal task_notification — a detached Bash command, an endless watch
+   * loop, a subagent killed with its parent shell — would otherwise pin the
+   * turn open forever, leaving the Thread reported as running long after
+   * Claude went idle.
+   */
   private handleSuccessfulTurnBoundary(): void {
     if (this.queuedTurnCount > 0) {
       this.queuedTurnCount -= 1
@@ -840,7 +885,14 @@ export class ClaudeDriver implements CLIDriver {
     }
 
     if (this.activeBackgroundTaskIds.size > 0) {
-      return
+      // Not an error: these are detached and may still wake the thread. Logged
+      // because a task that never reports back is otherwise invisible —
+      // skip_transcript tasks render no bubble at all.
+      console.warn('[ClaudeDriver] turn completed with background tasks still live', {
+        threadId: this.options.threadId,
+        sessionId: this.sessionId,
+        taskIds: [...this.activeBackgroundTaskIds],
+      })
     }
 
     this.finishTurn()
@@ -855,8 +907,11 @@ export class ClaudeDriver implements CLIDriver {
     // Claude can emit a successful main-agent result while background subagents
     // are still running. In that case the result is only the main agent pausing;
     // task notifications followed by session_state_changed:idle mark the actual
-    // end of the turn. Completing here would cancel the still-live Agent calls
-    // and make PolyCode report the thread as finished prematurely.
+    // end of the turn. Completing here would cut the turn short and drop the
+    // subagent output that has yet to be flushed.
+    //
+    // Deferring is safe: the idle frame above always follows and is no longer
+    // gated, so a task that never reports back can no longer strand the turn.
     if (this.activeBackgroundTaskIds.size > 0) {
       return
     }
@@ -865,6 +920,10 @@ export class ClaudeDriver implements CLIDriver {
   }
 
   private formatTaskStarted(message: Extract<SDKSystemMessage, { subtype: 'task_started' }>): string {
+    if (!isAgentTask(message)) {
+      return `**Background command started:**${message.description ? `
+${message.description}` : ''}`
+    }
     const label = message.subagent_type ?? message.task_type ?? 'subagent'
     return `**Subagent started:** ${label}${message.description ? `\n${message.description}` : ''}`
   }

@@ -402,6 +402,17 @@ export class Session {
     return driver?.isRunning() ?? false
   }
 
+  /**
+   * True when the active driver still has detached background work. Distinct
+   * from isRunning(): a Thread can be idle and awaiting the user while a
+   * backgrounded task is live and may yet wake it.
+   */
+  hasLiveBackgroundWork(): boolean {
+    if (!this.activeSessionId) return false
+    const driver = this.drivers.get(this.activeSessionId)
+    return driver?.hasLiveBackgroundWork?.() ?? false
+  }
+
   getPid(): number | null {
     if (this.shellProcess && this.shellProcess.exitCode == null && this.shellProcess.signalCode == null) {
       return this.shellProcess.pid ?? null

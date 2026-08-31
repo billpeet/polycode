@@ -450,6 +450,111 @@ describe('ClaudeDriver live input', () => {
     expect((driver as any).activeBackgroundTaskIds.size).toBe(0)
   })
 
+  it('reports a detached shell command as a background command, not a sub-agent', async () => {
+    // Claude detaches any Bash call that outruns its foreground timeout and
+    // reports it through the same task_* frames as a real sub-agent. Stamping
+    // those with subagent scope made the renderer group them as conversational
+    // participants — the thread view grew a tab labelled with the raw grep.
+    const driver = makeDriver()
+    const events: OutputEvent[] = []
+
+    ;(driver as any).currentTurn = { onEvent: (e: OutputEvent) => events.push(e), onDone: () => {} }
+    ;(driver as any).query = {
+      [Symbol.asyncIterator]: async function* () {
+        yield {
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'a32995dc9ab170fe7',
+          tool_use_id: 'toolu_agent',
+          task_type: 'local_agent',
+          subagent_type: 'general-purpose',
+          description: 'Review port-forward.ts',
+          session_id: 'sdk-session',
+          uuid: 'task-started-agent',
+        }
+        yield {
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'bbycjq409',
+          tool_use_id: 'toolu_bash',
+          task_type: 'local_bash',
+          description: 'grep -rn "port-forward" --include=*.ts .',
+          session_id: 'sdk-session',
+          uuid: 'task-started-bash',
+        }
+        yield { type: 'result', subtype: 'success', usage: {}, modelUsage: {}, session_id: 'sdk-session', uuid: 'r' }
+        yield { type: 'system', subtype: 'session_state_changed', state: 'idle', session_id: 'sdk-session', uuid: 'i' }
+      },
+    }
+
+    await (driver as any).consumeStream()
+
+    const [agentEvent, commandEvent] = events
+    // The real sub-agent keeps subagent scope, so it still gets its own group.
+    expect(agentEvent.metadata?.agent_scope).toBe('subagent')
+    expect(agentEvent.metadata?.agent_subagent_type).toBe('general-purpose')
+    expect(agentEvent.content).toContain('Subagent started')
+
+    // The detached command must not be scoped as a participant: messageParentKey
+    // returns null for anything not scoped 'subagent', which is what keeps it
+    // out of the tab strip.
+    expect(commandEvent.metadata?.agent_scope).toBe('main')
+    expect(commandEvent.metadata?.agent_parent_tool_use_id).toBeUndefined()
+    expect(commandEvent.metadata?.task_kind).toBe('command')
+    expect(commandEvent.content).toContain('Background command started')
+    expect(commandEvent.content).not.toContain('Subagent')
+  })
+
+  it('completes the turn on idle even when a background task never reports back', async () => {
+    // Regression: a Bash command detached after its 120s timeout, an endless
+    // watch loop, or a subagent killed with its parent shell never emits a
+    // terminal task_notification. Gating the idle frame on that set pinned the
+    // turn open indefinitely and PolyCode reported the Thread as still running.
+    const driver = makeDriver()
+    const done = vi.fn(() => {})
+
+    ;(driver as any).currentTurn = { onEvent: () => {}, onDone: done }
+    ;(driver as any).query = {
+      [Symbol.asyncIterator]: async function* () {
+        yield {
+          type: 'system',
+          subtype: 'task_started',
+          task_id: 'orphan-1',
+          tool_use_id: 'tool-orphan-1',
+          description: 'Open the design schedule Gantt via dev login',
+          task_type: 'local_bash',
+          session_id: 'sdk-session',
+          uuid: 'task-started-1',
+        }
+        yield {
+          type: 'result',
+          subtype: 'success',
+          usage: { input_tokens: 1, output_tokens: 2, cache_creation_input_tokens: 0, cache_read_input_tokens: 0 },
+          modelUsage: {},
+          session_id: 'sdk-session',
+          uuid: 'result-1',
+        }
+        // No task_notification for orphan-1 — it never reports back.
+        yield {
+          type: 'system',
+          subtype: 'session_state_changed',
+          state: 'idle',
+          session_id: 'sdk-session',
+          uuid: 'idle-1',
+        }
+      },
+    }
+
+    await (driver as any).consumeStream()
+
+    expect(done).toHaveBeenCalledTimes(1)
+    expect(done.mock.calls[0]?.[0]).toBeUndefined()
+    expect((driver as any).currentTurn).toBeNull()
+    // The task stays tracked: it is detached, not finished, and Run cleanup
+    // must still see it.
+    expect((driver as any).hasLiveBackgroundWork()).toBe(true)
+  })
+
   it('completes a turn on Claude idle state when no result frame arrives', async () => {
     const driver = makeDriver()
     const done = vi.fn(() => {})

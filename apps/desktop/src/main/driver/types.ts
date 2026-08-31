@@ -26,6 +26,13 @@ export interface CLIDriver {
   forceStop?(): void
   /** Returns true if the process is currently running */
   isRunning(): boolean
+  /**
+   * True when the provider has detached background work (subagents,
+   * backgrounded commands) that outlives the current turn. Turn completion
+   * never depends on this — it exists so callers that destroy the working
+   * copy, such as Run cleanup, do not pull it out from under live work.
+   */
+  hasLiveBackgroundWork?(): boolean
   /** Returns the OS PID of the running process, or null if not running */
   getPid(): number | null
   /** Send a control_response to the running process (for interactive permission approval).

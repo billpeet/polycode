@@ -182,6 +182,8 @@ export class FakeSessions implements RunSessions {
   prompts: Array<{ threadId: string; prompt: string }> = []
   discarded: string[] = []
   refusal: Error | null = null
+  /** Thread ids whose provider still has detached background work. */
+  liveBackgroundWork = new Set<string>()
   /** Status runToCompletion resolves with; 'never' leaves the turn pending. */
   completionStatus: ThreadStatus | 'never' = 'idle'
   private pending = new Map<string, (status: ThreadStatus) => void>()
@@ -212,6 +214,10 @@ export class FakeSessions implements RunSessions {
   /** Simulate a completion the lifecycle did not initiate (a user turn). */
   emitCompletion(threadId: string, status: ThreadStatus): void {
     for (const listener of [...this.listeners]) listener(threadId, status)
+  }
+
+  hasLiveBackgroundWork(threadId: string): boolean {
+    return this.liveBackgroundWork.has(threadId)
   }
 
   discard(threadId: string): void {
