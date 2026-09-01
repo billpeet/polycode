@@ -24,6 +24,17 @@ interface ProxyResult {
 }
 
 const RPC_TIMEOUT_MS = 10_000
+// Channels whose host-side handler does the filesystem work inline (worktree removal is a
+// `git worktree remove --force` plus a recursive delete of a directory that routinely holds
+// `node_modules`). A 10s budget guarantees these fail on the client while the host happily
+// finishes the job minutes later.
+const SLOW_RPC_TIMEOUT_MS = 300_000
+const SLOW_RPC_CHANNELS: ReadonlySet<string> = new Set([
+  'locations:createWorktree',
+  'locations:removeWorktree',
+  'locations:clone',
+  'projects:createFull',
+])
 const RESPONSE_DIAGNOSTIC_LIMIT = 240
 const RECONNECT_BASE_DELAY_MS = 2_000
 const RECONNECT_MAX_DELAY_MS = 30_000
@@ -38,6 +49,20 @@ export class RemoteUnavailableError extends Error {
   ) {
     super(message, options)
     this.name = 'RemoteUnavailableError'
+  }
+}
+
+/**
+ * The request outlived its timeout budget, but the host is demonstrably reachable (the event
+ * stream is up). Unlike `RemoteUnavailableError` this does NOT open the circuit: the host may
+ * still be executing the very operation the client gave up waiting for.
+ */
+export class RemoteRequestTimeoutError extends Error {
+  readonly code = 'REMOTE_REQUEST_TIMEOUT'
+
+  constructor(message: string, options?: ErrorOptions) {
+    super(message, options)
+    this.name = 'RemoteRequestTimeoutError'
   }
 }
 
@@ -147,6 +172,8 @@ export class RemoteControlClient {
   private streamGeneration = 0
   private unavailable: { hostId: string; error: RemoteUnavailableError } | null = null
   private reconnectAttempt = 0
+  /** True while an SSE event stream has an open, reading response to the active host. */
+  private streamConnected = false
 
   constructor(private readonly window: BrowserWindow) {
     this.restartEventStream()
@@ -160,6 +187,7 @@ export class RemoteControlClient {
     }
     this.eventAbort?.abort()
     this.eventAbort = null
+    this.streamConnected = false
   }
 
   getHosts(): RemoteHost[] {
@@ -274,7 +302,8 @@ export class RemoteControlClient {
 
   private async invoke(host: RemoteHost, channel: string, args: unknown[]): Promise<unknown> {
     const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), RPC_TIMEOUT_MS)
+    const timeoutMs = SLOW_RPC_CHANNELS.has(channel) ? SLOW_RPC_TIMEOUT_MS : RPC_TIMEOUT_MS
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
     try {
       const response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
         method: 'POST',
@@ -296,6 +325,16 @@ export class RemoteControlClient {
       return body.value
     } catch (error) {
       if (!isTransportError(error)) throw error
+      if (controller.signal.aborted && this.streamConnected) {
+        // The event stream to the same host is open, so this is not transport loss — the
+        // request simply outlived its budget and may still be running host-side. Throwing
+        // RemoteUnavailableError here would poison every later call behind the cached
+        // circuit, while the host completes the operation in the background.
+        throw new RemoteRequestTimeoutError(
+          `Remote host "${host.label}" did not answer "${channel}" within ${Math.round(timeoutMs / 1000)}s; the operation may still be running on the host.`,
+          { cause: error },
+        )
+      }
       throw this.markUnavailable(host, controller.signal.aborted ? 'Remote host request timed out' : errorMessage(error), error)
     } finally {
       clearTimeout(timer)
@@ -316,6 +355,7 @@ export class RemoteControlClient {
     const host = this.getActiveHost()
     if (!host) return
 
+    this.streamConnected = false
     const generation = this.streamGeneration
     this.connectEventStream(host, generation, 0)
   }
@@ -347,6 +387,7 @@ export class RemoteControlClient {
       }
 
       this.markAvailable(host.id)
+      this.streamConnected = true
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -370,7 +411,10 @@ export class RemoteControlClient {
         console.warn('[remote-control] Event stream disconnected:', errorMessage(error))
       }
     } finally {
-      if (this.eventAbort === controller) this.eventAbort = null
+      if (this.eventAbort === controller) {
+        this.eventAbort = null
+        this.streamConnected = false
+      }
       if (generation === this.streamGeneration && !controller.signal.aborted) {
         const delay = Math.min(
           RECONNECT_BASE_DELAY_MS * (2 ** this.reconnectAttempt),

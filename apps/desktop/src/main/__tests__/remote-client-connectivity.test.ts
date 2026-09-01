@@ -15,6 +15,7 @@ vi.mock('../db/queries', () => ({
 vi.mock('../app-events', () => ({ emitAppEvent: () => {}, sendToRenderer: () => {} }))
 
 const { RemoteControlClient, RemoteUnavailableError } = await import('../remote/client')
+const { RemoteRequestTimeoutError } = await import('../remote/client')
 
 const host = {
   id: 'host-1',
@@ -105,6 +106,77 @@ describe('RemoteControlClient connectivity failures', () => {
     await verdict
     await expect(client.invokeIfActive('threads:list', [])).rejects.toMatchObject({ code: 'REMOTE_UNAVAILABLE' })
     expect(H.fetch).toHaveBeenCalledTimes(1)
+    client.stop()
+  })
+
+  /** A never-ending SSE event-stream response, so the client considers the host reachable. */
+  function openEventStream(): Response {
+    const body = new ReadableStream({ start: () => {} }) // never closes
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+  }
+
+  function mockHealthyHostWithHungRpc(): void {
+    H.fetch.mockImplementation((url, init) => {
+      if (String(url).endsWith('/api/remote/events')) return Promise.resolve(openEventStream())
+      return new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      })
+    })
+  }
+
+  /** Like activeClient(), but the settings exist before construction, so the SSE stream starts. */
+  function healthyClient(): InstanceType<typeof RemoteControlClient> {
+    H.settings.set('remote:hosts', JSON.stringify([host]))
+    H.settings.set('remote:activeHostId', host.id)
+    return new RemoteControlClient(window as unknown as import('electron').BrowserWindow)
+  }
+
+  it('gives slow channels (worktree removal) a long budget while the host stays healthy', async () => {
+    vi.useFakeTimers()
+    mockHealthyHostWithHungRpc()
+    const client = healthyClient()
+    // Give the event stream a moment to connect.
+    await vi.advanceTimersByTimeAsync(0)
+
+    let outcome: unknown
+    const request = client.invokeIfActive('locations:removeWorktree', ['loc1']).then(
+      () => (outcome = 'resolved'),
+      (error: unknown) => (outcome = error),
+    )
+
+    // The 10s default budget must not fire for a slow channel.
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(outcome).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(289_000)
+    expect(outcome).toBeUndefined()
+
+    await vi.advanceTimersByTimeAsync(1_000)
+    await request
+    expect(outcome).toMatchObject({ code: 'REMOTE_REQUEST_TIMEOUT' })
+    client.stop()
+  })
+
+  it('does not poison the circuit when a healthy host answers too slowly', async () => {
+    vi.useFakeTimers()
+    mockHealthyHostWithHungRpc()
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(0)
+
+    const first = client.invokeIfActive('projects:list', []).then(
+      () => 'resolved',
+      (error: { code?: string }) => `rejected:${error.code}`,
+    )
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await first).toBe('rejected:REMOTE_REQUEST_TIMEOUT')
+
+    // The second call must hit fetch again rather than the cached circuit error.
+    const second = client.invokeIfActive('projects:list', []).then(
+      () => 'resolved',
+      (error: Error) => error.name,
+    )
+    await vi.advanceTimersByTimeAsync(10_000)
+    expect(await second).toBe('RemoteRequestTimeoutError')
+    expect(H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/rpc')).length).toBe(2)
     client.stop()
   })
 })
