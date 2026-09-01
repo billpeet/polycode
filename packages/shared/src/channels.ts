@@ -86,6 +86,7 @@ export const CHANNEL_REGISTRY = {
   'messages:listBySession': { local: true, remote: true },
   'git:branch': { local: true, remote: true },
   'git:status': { local: true, remote: true },
+  'git:workingTreeFacts': { local: true, remote: true },
   'git:head': { local: true, remote: true },
   'git:commit': { local: true, remote: true },
   'git:lastCommit': { local: true, remote: true },

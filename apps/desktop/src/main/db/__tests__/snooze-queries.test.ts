@@ -11,7 +11,9 @@ vi.mock('../index', () => ({ getDb: () => database }))
 
 const {
   archiveThread,
+  archiveThreadsForLocation,
   createThread,
+  countLiveThreadsForLocation,
   listActiveThreadsForLocation,
   listQueueThreads,
   listSnoozedQueueThreads,
@@ -20,6 +22,7 @@ const {
   snoozeThread,
   snoozedThreadCount,
   unsnoozeThread,
+  worktreeCleanupCandidate,
 } = await import('../queries')
 
 const PAST = '2020-01-01T00:00:00.000Z'
@@ -52,6 +55,16 @@ function makeThread(name: string): string {
     .prepare('INSERT INTO messages (id, thread_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)')
     .run(`msg-${thread.id}`, thread.id, 'user', 'hello', new Date().toISOString())
   return thread.id
+}
+
+function makeRunThread(name: string, routineId: string, atLocation: string = locationId): string {
+  const now = new Date().toISOString()
+  database
+    .prepare("INSERT INTO routines (id, project_id, location_id, name, prompt, trigger_type, created_at, updated_at) VALUES (?, ?, ?, ?, ?, 'manual', ?, ?)")
+    .run(routineId, 'p1', atLocation, 'Routine', 'prompt', now, now)
+  // A non-escalated run is hidden by the visibility filter, which is exactly
+  // why it must not be missed when its location is destroyed.
+  return createThread('p1', name, atLocation, 'claude-code', 'claude-opus-4-8', null, { routineId }).id
 }
 
 describe('snooze query predicates', () => {
@@ -143,5 +156,84 @@ describe('snooze query predicates', () => {
     snoozeThread(id, FUTURE)
 
     expect(database.prepare('SELECT updated_at FROM threads WHERE id = ?').pluck().get(id)).toBe(before)
+  })
+})
+
+describe('archiveThreadsForLocation', () => {
+  it('archives every live thread at the location, including snoozed, message-less, and hidden run threads', () => {
+    const user = makeThread('User thread')
+    const snoozed = makeThread('Snoozed thread')
+    snoozeThread(snoozed, FUTURE)
+    const messageLess = createThread('p1', 'Never used', locationId).id
+    const run = makeRunThread('Run thread', 'routine-1')
+
+    // The visibility filter hides the run thread from the active list — the
+    // archive must be broader than the list.
+    expect(listActiveThreadsForLocation(locationId).map((t) => t.id).sort()).toEqual(
+      [user, snoozed, messageLess].sort(),
+    )
+
+    expect(archiveThreadsForLocation(locationId)).toBe(4)
+
+    for (const id of [user, snoozed, messageLess, run]) {
+      expect(listActiveThreadsForLocation(locationId).map((t) => t.id)).not.toContain(id)
+    }
+    // Archiving discards a snooze: a thread is never both snoozed and archived.
+    expect(snoozedThreadCount('p1')).toBe(0)
+  })
+
+  it('leaves other locations and already-archived threads untouched', () => {
+    const now = new Date().toISOString()
+    database
+      .prepare('INSERT INTO repo_locations (id, project_id, label, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run('loc-2', 'p1', 'Elsewhere', 'C:/elsewhere', now, now)
+    const mine = makeThread('Mine')
+    const otherLocation = createThread('p1', 'Other location', 'loc-2').id
+    const alreadyArchived = makeThread('Already gone')
+    archiveThread(alreadyArchived)
+
+    expect(archiveThreadsForLocation(locationId)).toBe(1)
+    expect(listActiveThreadsForLocation('loc-2').map((t) => t.id)).toEqual([otherLocation])
+    expect(database.prepare('SELECT archived FROM threads WHERE id = ?').pluck().get(mine)).toBe(1)
+    expect(database.prepare('SELECT archived FROM threads WHERE id = ?').pluck().get(alreadyArchived)).toBe(1)
+  })
+})
+
+describe('worktreeCleanupCandidate', () => {
+  function makeWorktree(id: string): void {
+    const now = new Date().toISOString()
+    database
+      .prepare('INSERT INTO repo_locations (id, project_id, label, path, is_worktree, connection_type, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?, ?)')
+      .run(id, 'p1', 'Feature', 'C:/repo-worktrees/feature', 'local', now, now)
+  }
+
+  it('names an empty local worktree as the cleanup candidate', () => {
+    makeWorktree('loc-wt')
+    expect(worktreeCleanupCandidate('loc-wt')).toEqual({
+      id: 'loc-wt',
+      label: 'Feature',
+      path: 'C:/repo-worktrees/feature',
+    })
+  })
+
+  it('returns null while any live thread remains, including snoozed and hidden run threads', () => {
+    makeWorktree('loc-wt')
+    makeRunThread('Run thread', 'routine-wt', 'loc-wt')
+    expect(worktreeCleanupCandidate('loc-wt')).toBeNull()
+
+    const snoozed = makeThread('Snoozed')
+    // Re-point at the worktree: makeThread uses the module-level fixture location.
+    database.prepare('UPDATE threads SET location_id = ? WHERE id = ?').run('loc-wt', snoozed)
+    snoozeThread(snoozed, FUTURE)
+
+    // ADR-0002: a snoozed thread's work is live — it blocks cleanup like any
+    // other thread, and the snooze filter must not make the location look empty.
+    expect(countLiveThreadsForLocation('loc-wt')).toBe(2)
+    expect(worktreeCleanupCandidate('loc-wt')).toBeNull()
+  })
+
+  it('returns null for a non-worktree location or a missing thread location', () => {
+    expect(worktreeCleanupCandidate(locationId)).toBeNull()
+    expect(worktreeCleanupCandidate(null)).toBeNull()
   })
 })

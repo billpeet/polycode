@@ -37,6 +37,17 @@ const H = vi.hoisted(() => {
      * (locked after the first message).
      */
     threadHasMessages: false,
+    /**
+     * What `db.getThreadById` answers — the thread row `threads:archive` reads
+     * before archiving/deleting it, so its `location_id` can drive the
+     * worktree-candidate check. `null` is the "no such thread" branch.
+     */
+    thread: null as Record<string, unknown> | null,
+    /**
+     * What `db.worktreeCleanupCandidate` answers for that location: non-null
+     * when the closed thread was the last live one at a local worktree.
+     */
+    worktreeCandidate: null as Record<string, unknown> | null,
     threadWsl: { use_wsl: false, wsl_distro: null },
     /** Whether `sessionManager.get` finds a live session for the thread. */
     hasSession: true,
@@ -321,6 +332,8 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   getThreadWsl: H.stub('db.getThreadWsl', () => H.state.threadWsl),
   threadExists: H.stub('db.threadExists', () => H.state.threadExists),
   threadHasMessages: H.stub('db.threadHasMessages', () => H.state.threadHasMessages),
+  getThreadById: H.stub('db.getThreadById', () => H.state.thread),
+  worktreeCleanupCandidate: H.stub('db.worktreeCleanupCandidate', () => H.state.worktreeCandidate),
   listLocations: H.stub('db.listLocations', () => (H.state.location ? [H.state.location] : [])),
   listThreads: H.stub('db.listThreads', [{ id: 't1', name: 'Thread one' }]),
   listArchivedThreads: H.stub('db.listArchivedThreads', [{ id: 't-old', name: 'Old thread' }]),
@@ -519,6 +532,7 @@ vi.mock('../git', () => H.autoModule('git', {
     current: 'feature/x', local: ['feature/x', 'main'], remote: ['origin/main'],
   }),
   isGitRepoCached: H.stub('git.isGitRepoCached', true),
+  getWorkingTreeFacts: H.stub('git.getWorkingTreeFacts', { dirty: false, unpushedCommits: 2 }),
   getRemoteUrl: H.stub('git.getRemoteUrl', 'https://example.test/r.git'),
   detectGitHostingProviderCached: H.stub('git.detectGitHostingProviderCached', 'github'),
   getCachedDefaultBranch: H.stub('git.getCachedDefaultBranch', 'main'),
@@ -2087,32 +2101,70 @@ describe('threads:* — sessionManager.remove runs before the write', () => {
     expect(rpc).toEqual(ipc)
     expect(ipc).toEqual([
       'sessionManager.remove(["t1"])',
+      'db.getThreadById(["t1"])',
       'db.threadHasMessages(["t1"])',
       'db.archiveThread(["t1"])',
+      // The thread row is gone or archived by now; the candidate check gets the
+      // location read beforehand, which defaults to null in this fixture.
+      'db.worktreeCleanupCandidate([null])',
     ])
-    expect(await resultViaIpc('threads:archive', ['t1'])).toBe('archived')
-    expect(await resultViaControlRpc('threads:archive', ['t1'])).toBe('archived')
+    expect(await resultViaIpc('threads:archive', ['t1'])).toEqual({ outcome: 'archived', worktree: null })
+    expect(await resultViaControlRpc('threads:archive', ['t1'])).toEqual({ outcome: 'archived', worktree: null })
   })
 
   it('threads:archive deletes an empty thread outright instead of archiving it', async () => {
     // The other branch: an untouched thread is not worth keeping, so archive means delete.
     // Both the call made and the discriminated result differ, and both are pinned — the
-    // literal is what the renderer branches on to decide which toast to show.
+    // outcome literal is what the renderer branches on to decide which toast to show.
     const ipc = await viaIpc('threads:archive', ['t1'])
     const rpc = await viaControlRpc('threads:archive', ['t1'])
 
     expect(rpc).toEqual(ipc)
     expect(ipc).toEqual([
       'sessionManager.remove(["t1"])',
+      'db.getThreadById(["t1"])',
       'db.threadHasMessages(["t1"])',
       'db.deleteThread(["t1"])',
+      'db.worktreeCleanupCandidate([null])',
     ])
-    expect(await resultViaIpc('threads:archive', ['t1'])).toBe('deleted')
-    expect(await resultViaControlRpc('threads:archive', ['t1'])).toBe('deleted')
+    expect(await resultViaIpc('threads:archive', ['t1'])).toEqual({ outcome: 'deleted', worktree: null })
+    expect(await resultViaControlRpc('threads:archive', ['t1'])).toEqual({ outcome: 'deleted', worktree: null })
 
     // Neither branch returns the callee's value — the literal is the contract's result
     // type, so `archiveThread`/`deleteThread`'s sentinel must NOT leak through.
     expect(await resultViaIpc('threads:archive', ['t1'])).not.toBe('RET_deleteThread')
+  })
+
+  it('threads:archive hands the renderer an empty local worktree as a cleanup candidate', async () => {
+    // The archived thread sat at a worktree location, and the candidate query says no
+    // live thread is left there: the result carries the worktree so the renderer can
+    // offer to delete it after checking the git state is clean.
+    H.state.threadHasMessages = true
+    H.state.thread = { id: 't1', location_id: 'loc1' }
+    H.state.worktreeCandidate = { id: 'loc1', label: 'Feature', path: 'C:/repo-worktrees/feature' }
+
+    const ipc = await viaIpc('threads:archive', ['t1'])
+    const rpc = await viaControlRpc('threads:archive', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.remove(["t1"])',
+      'db.getThreadById(["t1"])',
+      'db.threadHasMessages(["t1"])',
+      'db.archiveThread(["t1"])',
+      'db.worktreeCleanupCandidate(["loc1"])',
+    ])
+    expect(await resultViaIpc('threads:archive', ['t1'])).toEqual({
+      outcome: 'archived',
+      worktree: { id: 'loc1', label: 'Feature', path: 'C:/repo-worktrees/feature' },
+    })
+    expect(await resultViaControlRpc('threads:archive', ['t1'])).toEqual({
+      outcome: 'archived',
+      worktree: { id: 'loc1', label: 'Feature', path: 'C:/repo-worktrees/feature' },
+    })
+
+    H.state.thread = null
+    H.state.worktreeCandidate = null
   })
 })
 
@@ -2142,7 +2194,7 @@ describe('location-pools:* — both transports agree', () => {
 })
 
 /**
- * The 27 `git:*` read channels.
+ * The 28 `git:*` read channels.
  *
  * This used to be "the channels that do not invalidate the git cache", against a second batch
  * of 24 that did. No `git:*` handler invalidates any more: every `git.ts` mutation clears its
@@ -2249,6 +2301,10 @@ describe('git:* — the reads, and the three mutations that sit among them', () 
   const cases: Array<[channel: string, args: unknown[], call: string, result: unknown]> = [
     ['git:branch', ['C:/repo'], `git.getCachedGitBranch(["C:/repo",${hosts}])`, 'feature/x'],
     ['git:status', ['C:/repo'], `git.getCachedGitStatus(["C:/repo",${hosts}])`, { branch: 'feature/x' }],
+    [
+      'git:workingTreeFacts', ['C:/repo'], `git.getWorkingTreeFacts(["C:/repo",${hosts}])`,
+      { dirty: false, unpushedCommits: 2 },
+    ],
     [
       'git:lastCommit', ['C:/repo'], `git.getCachedLastCommit(["C:/repo",${hosts}])`,
       { hash: 'abc123', subject: 'Last commit' },

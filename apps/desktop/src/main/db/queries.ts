@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
 import { foldMessages } from '@polycode/shared'
-import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState } from '../../shared/types'
+import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState, WorktreeCleanupCandidate } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -518,6 +518,21 @@ export function listActiveThreadsForLocation(locationId: string): Thread[] {
 }
 
 /**
+ * Every non-archived thread at a location, regardless of presentation.
+ *
+ * Like `listActiveThreadsForLocation` this omits the snooze filter (ADR-0002:
+ * a snoozed thread's work is live), and it also omits the run-visibility
+ * filter: a hidden (non-escalated) Run at a location is just as blocked
+ * against destroying that location as a visible thread is.
+ */
+export function countLiveThreadsForLocation(locationId: string): number {
+  const row = getDb()
+    .prepare('SELECT COUNT(*) AS n FROM threads t WHERE t.location_id = ? AND t.archived = 0')
+    .get(locationId) as { n: number }
+  return row.n
+}
+
+/**
  * The Queue: every attention-relevant thread across unarchived projects.
  * Archived threads and archived projects are excluded; Runs appear only when
  * escalated (the standard visibility rule). Rows carry denormalized project
@@ -690,6 +705,37 @@ export function unarchiveThread(id: string): void {
   getDb()
     .prepare('UPDATE threads SET archived = 0, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id)
+}
+
+/**
+ * Archive every live thread at a location in one statement. Used when a
+ * worktree location is triggered for deletion: the threads must leave the
+ * Queue at the moment deletion starts, not after location teardown (commands,
+ * sessions, git worktree removal) completes.
+ *
+ * Deliberately ignores the run-visibility filter: a location being destroyed
+ * has no thread left to hide, so non-escalated Runs are archived too. Like
+ * archiveThread, it discards snoozes — a thread is never both snoozed and
+ * archived. Returns the number of threads archived.
+ */
+export function archiveThreadsForLocation(locationId: string): number {
+  const result = getDb()
+    .prepare('UPDATE threads SET archived = 1, snoozed_until = NULL, updated_at = ? WHERE location_id = ? AND archived = 0')
+    .run(new Date().toISOString(), locationId)
+  return result.changes
+}
+
+/**
+ * The worktree a just-closed thread leaves behind, when it is one: a local
+ * worktree location with no live threads left. The renderer offers to delete
+ * it — the git-clean check happens there, right before prompting.
+ */
+export function worktreeCleanupCandidate(locationId: string | null): WorktreeCleanupCandidate | null {
+  if (!locationId) return null
+  const location = getLocationById(locationId)
+  if (!location || !location.is_worktree || location.connection_type !== 'local') return null
+  if (countLiveThreadsForLocation(location.id) > 0) return null
+  return { id: location.id, label: location.label || location.path, path: location.path }
 }
 
 export interface CreateThreadOptions {

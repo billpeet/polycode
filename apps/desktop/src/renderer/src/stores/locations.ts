@@ -154,9 +154,11 @@ export const useLocationStore = create<LocationStore>((set) => ({
           ...s.byProject,
           [projectId]: (s.byProject[projectId] ?? []).filter((thread) => !worktreeThreadIds.has(thread.id))
         },
+        // Every thread at the location is archived (not deleted), so all of
+        // them move to the archived count.
         archivedCountByProject: {
           ...s.archivedCountByProject,
-          [projectId]: (s.archivedCountByProject[projectId] ?? 0) + removedThreads.filter((thread) => thread.has_messages).length
+          [projectId]: (s.archivedCountByProject[projectId] ?? 0) + removedThreads.length
         },
         selectedThreadId: s.selectedThreadId && worktreeThreadIds.has(s.selectedThreadId) ? null : s.selectedThreadId,
         statusMap: nextStatusMap,

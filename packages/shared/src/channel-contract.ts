@@ -5,6 +5,8 @@ import type {
   QueueThread,
   Message,
   GitStatus,
+  ThreadArchiveResult,
+  WorkingTreeFacts,
   GitFileChange,
   GitBranches,
   GitCompareResult,
@@ -121,7 +123,7 @@ export interface ChannelContract {
   'threads:updateName': [[id: string, name: string], void]
   'threads:archivedCount': [[projectId: string], number]
   'threads:listArchived': [[projectId: string, limit?: number, offset?: number], Thread[]]
-  'threads:archive': [[id: string], 'archived' | 'deleted']
+  'threads:archive': [[id: string], ThreadArchiveResult]
   'threads:unarchive': [[id: string], void]
   'threads:snoozedCount': [[projectId: string], number]
   'threads:listSnoozed': [[projectId: string, limit?: number, offset?: number], Thread[]]
@@ -151,6 +153,7 @@ export interface ChannelContract {
   'dialog:open-favicon': [[], string | null]
   'git:branch': [[repoPath: string], string | null]
   'git:status': [[repoPath: string], GitStatus | null]
+  'git:workingTreeFacts': [[repoPath: string], WorkingTreeFacts]
   'git:head': [[repoPath: string], string | null]
   'git:commit': [[repoPath: string, message: string], void]
   'git:lastCommit': [[repoPath: string], LastCommitInfo | null]

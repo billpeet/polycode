@@ -230,6 +230,24 @@ They are not all proven contributors to the observed freezes.
 - Prioritize any synchronous operation whose timing correlates with a main-thread stall.
 - Convert proven hot paths to asynchronous I/O or isolate them in worker processes.
 
+### P0: Worktree deletion ran a synchronous recursive delete on the main thread
+
+`removeWorktreeLocation` fell back to `rmSync(path, { recursive: true })` whenever
+`git worktree remove --force` could not clean the directory — the common case on Windows
+(Directory not empty, Permission denied, Filename too long). Worktrees routinely hold tens
+of thousands of files (per-worktree `node_modules`), so the delete ran for seconds to
+minutes entirely on Electron's main process: the whole UI, and the composer in particular,
+froze until the worktree was gone.
+
+**Resolution**
+
+- `removeWorktreeDirectoryBestEffort` now awaits `fs.promises.rm`, which executes on the
+  libuv threadpool; the main process stays responsive for the full deletion.
+- The same handler now archives every thread at the location up front (`
+  archiveThreadsForLocation`), so the Queue empties the moment deletion is triggered rather
+  than after teardown, and message-less threads are archived instead of hard-deleted so
+  the worktree's threads stay recoverable.
+
 ## Remediation tracker
 
 | Priority | Work item | State | Success signal |
@@ -243,7 +261,8 @@ They are not all proven contributors to the observed freezes.
 | P1 | Add forge caching and failure backoff | Monitoring | Failing forge calls do not recur every refresh cycle |
 | P1 | Add visibility/focus-aware polling | Not started | No periodic git/forge work from hidden views |
 | P1 | Add per-command timing within composite git operations | Not started | Slow outer IPC calls identify their slow child command |
-| P2 | Audit remaining synchronous main-process I/O | Not started | Proven hot paths have owners and disposition |
+| P2 | Audit remaining synchronous main-process I/O | In progress | Proven hot paths have owners and disposition |
+| P0 | Delete worktree directories off the main thread (`fs.promises.rm`) | Monitoring | No main-process stall correlated with `locations:removeWorktree` |
 | P2 | Evaluate workers after deduplication | Not started | Worker proposal tied to measured CPU/blocking work |
 
 States should be one of: `Not started`, `In progress`, `Monitoring`, `Complete`, or `Rejected`.
@@ -283,6 +302,7 @@ Suggested initial targets:
 | 2026-08-07 | Made git status refresh selected-repository-only and watcher-driven; cached last-commit by exact HEAD; moved fallback status polling to five minutes and staggered remote fetch by 30 seconds | Automated type checking, linting, and coordinator tests | 211 status and 204 last-commit calls; status/remote/branch work often overlapped | Only active repository is watched/refreshed; last-commit runs only when `rev-parse HEAD` changes; remote/status work is serial and offset | Implementation complete; profiling required to measure call-count and stall reduction |
 | 2026-08-07 | Removed unsupported GitHub `reviewThreads` JSON field; cached forge metadata; added deterministic failure suppression, transient exponential backoff, request deduplication, and forced manual retry | Automated type checking, linting, and backoff tests | 42 of 43 list/current calls failed and were retried automatically | Deterministic failures stop automatic calls; transient retries back off from 30 seconds to 15 minutes; panel Retry bypasses suppression | Implementation complete; profiling required to confirm failing calls no longer recur |
 | 2026-08-07 | Serialized favicon discovery globally; persisted positive and negative results across restarts; reduced recursive fallback to depth four and 1,500 entries | Automated type checking, linting, favicon discovery/cache tests | Startup could run 14 recursive scans concurrently and stall main for 14.6 seconds | At most one uncached discovery runs; cached paths are revalidated by mtime; negative results expire after 24 hours | Implementation complete; startup profiling required before deciding whether traversal also needs a worker |
+| 2026-08-07 | Replaced the synchronous `rmSync` fallback in worktree removal with `fs.promises.rm`; archive all threads at the location before teardown | Deleting a worktree holding tens of thousands of files on Windows, where `git worktree remove` commonly fails its own directory cleanup | `rmSync` ran on the main process for the full recursive delete: UI and composer frozen until deletion finished | Deletion runs on the threadpool; the Queue empties immediately at trigger time because archiving precedes git teardown | Implementation complete; awaiting a repro session with a large worktree to confirm no `locations:removeWorktree`-correlated stall |
 
 ## Open questions
 

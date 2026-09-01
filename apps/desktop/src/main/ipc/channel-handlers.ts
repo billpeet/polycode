@@ -148,6 +148,7 @@ import {
   updateThreadUnread,
   updateThreadWsl,
   updateThreadYoloMode,
+  worktreeCleanupCandidate,
 } from '../db/queries'
 import { sessionManager } from '../session/manager'
 // `import type` on purpose: the lifecycle instance reaches the map through the
@@ -233,6 +234,7 @@ import {
   getCompareToBranchDiff,
   getCompareToMainFileDiff,
   getFileDiff,
+  getWorkingTreeFacts,
   getRemoteUrl,
   gitFetchRemoteCached,
   gitInit,
@@ -881,17 +883,20 @@ export const channelHandlers = {
 
   // The only channel in this batch with a real branch. An archive request for a thread
   // that was never used deletes it outright, and the caller is told which happened so it
-  // can word its confirmation correctly. The `'archived' | 'deleted'` literal *is* the
-  // contract's result, so — unlike everything else here — neither branch passes its
-  // callee's value through; doing so would return a `void`.
+  // can word its confirmation correctly. The `outcome` literal *is* the contract's result,
+  // so — unlike everything else here — neither branch passes its callee's value through;
+  // doing so would return a `void`.
+  //
+  // The thread is read before the delete branch removes its row: its location id drives
+  // the worktree-candidate check, which tells the renderer when the last thread at a
+  // local worktree just closed so it can offer to delete the now-empty worktree.
   'threads:archive': (_ctx, id) => {
     sessionManager.remove(id)
-    if (threadHasMessages(id)) {
-      archiveThread(id)
-      return 'archived'
-    }
-    deleteThread(id)
-    return 'deleted'
+    const thread = getThreadById(id)
+    const outcome = threadHasMessages(id) ? 'archived' as const : 'deleted' as const
+    if (outcome === 'archived') archiveThread(id)
+    else deleteThread(id)
+    return { outcome, worktree: worktreeCleanupCandidate(thread?.location_id ?? null) }
   },
 
   'threads:unarchive': (_ctx, id) => unarchiveThread(id),
@@ -1023,6 +1028,11 @@ export const channelHandlers = {
   'git:status': (_ctx, repoPath) => {
     const { ssh, wsl } = getConfigForPath(repoPath)
     return getCachedGitStatus(repoPath, ssh, wsl)
+  },
+
+  'git:workingTreeFacts': (_ctx, repoPath) => {
+    const { ssh, wsl } = getConfigForPath(repoPath)
+    return getWorkingTreeFacts(repoPath, ssh, wsl)
   },
 
   'git:head': (_ctx, repoPath) => {

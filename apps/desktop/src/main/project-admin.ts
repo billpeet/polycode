@@ -2,16 +2,16 @@
  * Project and location provisioning logic shared by the local IPC handlers
  * and the remote-control RPC surface (extracted from ipc/handlers.ts).
  */
-import { existsSync, mkdirSync, rmSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
+import { rm } from 'fs/promises'
 import { homedir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
 import {
-  archiveThread,
+  archiveThreadsForLocation,
   createLocation,
   createProject,
   createWorktreeLocation,
   deleteLocation,
-  deleteThread,
   getLocationById,
   getSetting,
   listActiveThreadsForLocation,
@@ -163,10 +163,14 @@ export function isWorktreeDirectoryCleanupError(error: unknown): boolean {
   )
 }
 
-function removeWorktreeDirectoryBestEffort(path: string): void {
+async function removeWorktreeDirectoryBestEffort(path: string): Promise<void> {
   if (!existsSync(path)) return
   try {
-    rmSync(path, { recursive: true, force: true })
+    // `rm`, not `rmSync`: a worktree routinely holds tens of thousands of
+    // files, and a synchronous recursive delete runs on Electron's main
+    // process, freezing the whole UI — composer included — until the
+    // directory is gone. The promise-based API deletes on the threadpool.
+    await rm(path, { recursive: true, force: true })
   } catch (removeError) {
     const code = removeError && typeof removeError === 'object' && 'code' in removeError
       ? String((removeError as { code?: unknown }).code)
@@ -263,20 +267,25 @@ export async function createLocalWorktree(parentLocationId: string, label?: stri
   return location
 }
 
-/** Remove a worktree location: archive/delete its threads, remove the git worktree, drop the row. */
+/** Remove a worktree location: archive its threads, remove the git worktree, drop the row. */
 export async function removeWorktreeLocation(id: string): Promise<void> {
   const location = getLocationById(id)
   if (!location) return
   if (!location.is_worktree) throw new Error('Location is not a worktree.')
   if (location.connection_type !== 'local') throw new Error('Worktree removal is currently supported for local locations only.')
+  const threads = listActiveThreadsForLocation(location.id)
+  // Archive everything up front, before any teardown: the threads must leave
+  // the Queue the moment deletion is triggered, not after commands, sessions,
+  // and the git worktree have been removed (which can take a long time or
+  // fail). Every thread is archived rather than deleting the message-less
+  // ones, so the whole worktree stays recoverable from the archive view.
+  const archived = archiveThreadsForLocation(location.id)
+  if (archived > 0) {
+    console.log(`[worktree] Archived ${archived} thread(s) at "${location.path}" before removal.`)
+  }
   await commandManager.stopAllForLocation(location.id)
-  for (const thread of listActiveThreadsForLocation(location.id)) {
+  for (const thread of threads) {
     sessionManager.remove(thread.id)
-    if (thread.has_messages) {
-      archiveThread(thread.id)
-    } else {
-      deleteThread(thread.id)
-    }
   }
   const parent = location.parent_location_id ? getLocationById(location.parent_location_id) : null
   const gitCwd = parent?.path && existsSync(parent.path) ? parent.path : location.path
@@ -287,7 +296,7 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
     if (parent?.path && existsSync(parent.path)) {
       await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
     }
-    removeWorktreeDirectoryBestEffort(location.path)
+    await removeWorktreeDirectoryBestEffort(location.path)
   }
   deleteLocation(id)
 }

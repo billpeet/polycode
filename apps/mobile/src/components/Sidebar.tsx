@@ -430,7 +430,7 @@ export function Sidebar() {
 
   const handleLocationLongPress = useCallback((projectId: string, location: RepoLocation) => {
     if (!location.is_worktree) return
-    Alert.alert('Remove worktree?', `Remove "${location.label || location.path}"? Threads with messages are archived; the worktree directory is deleted.`, [
+    Alert.alert('Remove worktree?', `Remove "${location.label || location.path}"? Threads are archived; the worktree directory is deleted.`, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: 'Remove',

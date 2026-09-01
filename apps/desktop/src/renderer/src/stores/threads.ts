@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, QueueThread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary } from '../types/ipc'
+import { Thread, QueueThread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary, ThreadArchiveResult } from '../types/ipc'
 import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 
@@ -83,7 +83,8 @@ interface ThreadStore {
   fetchArchived: (projectId: string, page?: number) => Promise<void>
   create: (projectId: string, name: string, locationId: string) => Promise<void>
   remove: (id: string, projectId: string) => Promise<void>
-  archive: (id: string, projectId: string) => Promise<void>
+  /** Archives (or deletes, if never used) and returns what happened, so the caller can offer worktree cleanup when the location emptied. */
+  archive: (id: string, projectId: string) => Promise<ThreadArchiveResult>
   unarchive: (id: string, projectId: string) => Promise<void>
   toggleShowArchived: (projectId: string) => void
   setArchivedPage: (projectId: string, page: number) => Promise<void>
@@ -787,7 +788,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
     try {
       const result = await window.api.invoke('threads:archive', id)
-      if (result === 'deleted') {
+      if (result.outcome === 'deleted') {
         set((s) => {
           const prevCount = s.archivedCountByProject[projectId] ?? 0
           return {
@@ -800,6 +801,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       } else if (wasArchivedExpanded) {
         await get().setArchivedPage(projectId, currentArchivedPage)
       }
+      return result
     } catch (error) {
       set({
         byProject: snapshot.byProject,

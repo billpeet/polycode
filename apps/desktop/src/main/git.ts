@@ -12,7 +12,7 @@ import {
   generateCommitMessageText,
   generatePullRequestText as generatePullRequestTextFromModel,
 } from './git-text-model'
-import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry } from '../shared/types'
+import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, WorkingTreeFacts } from '../shared/types'
 import { createRunner, expectSuccess } from './driver/runner'
 import { runGit } from './git-runner'
 import { parseCommitLog, parseNameStatus, parsePorcelainStatus } from './git-parsers'
@@ -443,6 +443,26 @@ export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl
 
 export function getCachedGitStatus(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitStatus | null> {
   return readWithCache('status', repoPath, () => getGitStatus(repoPath, ssh, wsl), ssh, wsl)
+}
+
+/**
+ * ADR-0001 working-tree facts: is anything uncommitted (staged, unstaged, or
+ * untracked), and how many commits exist that no remote has. This is the same
+ * mechanical check the Run lifecycle uses to call a worktree clean.
+ *
+ * Deliberately uncached, and `rev-list --count HEAD --not --remotes` rather
+ * than upstream ahead/behind: these facts decide whether a worktree may be
+ * destroyed, so they always hit git directly, and a worktree with commits but
+ * no upstream must read as unpushed rather than clean.
+ */
+export async function getWorkingTreeFacts(
+  repoPath: string,
+  ssh?: SshConfig | null,
+  wsl?: WslConfig | null,
+): Promise<WorkingTreeFacts> {
+  const porcelain = await git(repoPath, ['status', '--porcelain'], ssh, wsl)
+  const unpushed = await git(repoPath, ['rev-list', '--count', 'HEAD', '--not', '--remotes'], ssh, wsl)
+  return { dirty: porcelain.trim() !== '', unpushedCommits: parseInt(unpushed.trim(), 10) || 0 }
 }
 
 export async function commitChanges(repoPath: string, message: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {

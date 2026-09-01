@@ -533,6 +533,34 @@ export interface GitStatus {
   hasUpstream: boolean
 }
 
+/**
+ * ADR-0001 working-tree facts: whether anything is uncommitted (staged,
+ * unstaged, or untracked) and how many commits exist that no remote has.
+ * Unlike `GitStatus.ahead`, `unpushedCommits` does not depend on an upstream
+ * being configured. Deliberately uncached — callers decide on destruction.
+ */
+export interface WorkingTreeFacts {
+  dirty: boolean
+  unpushedCommits: number
+}
+
+/** A local worktree location whose last live thread has just closed. */
+export interface WorktreeCleanupCandidate {
+  id: string
+  label: string
+  path: string
+}
+
+/**
+ * What `threads:archive` did. `worktree` is set when the closed thread was
+ * the last live thread at a local worktree location, so the renderer can
+ * offer to delete the now-empty worktree.
+ */
+export interface ThreadArchiveResult {
+  outcome: 'archived' | 'deleted'
+  worktree: WorktreeCleanupCandidate | null
+}
+
 export interface GitBranches {
   current: string
   local: string[]

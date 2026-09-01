@@ -6,7 +6,7 @@ import { useThreadStore } from '../stores/threads'
 import { useToastStore } from '../stores/toast'
 import { useUiStore } from '../stores/ui'
 import { useYouTrackStore } from '../stores/youtrack'
-import { Project, QueueThread, RepoLocation, Thread, ThreadStatus } from '../types/ipc'
+import { Project, QueueThread, RepoLocation, Thread, ThreadStatus, WorktreeCleanupCandidate, WorkingTreeFacts } from '../types/ipc'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { subscribeToSidebarBranches } from '../lib/sidebarBranchRefresh'
 import CollapsedSidebar from './sidebar/CollapsedSidebar'
@@ -352,8 +352,9 @@ export default function Sidebar() {
     if (useThreadStore.getState().selectedThreadId === thread.id) {
       selectThread(null)
     }
-    await archiveThread(thread.id, thread.project_id)
+    const result = await archiveThread(thread.id, thread.project_id)
     void fetchQueue()
+    await offerWorktreeCleanup(result.worktree, thread.project_id)
   }
 
   async function handleQueueUnarchiveThread(thread: QueueThread): Promise<void> {
@@ -455,6 +456,47 @@ export default function Sidebar() {
     }
   }
 
+  /**
+   * After the last thread at a worktree closes, offer to delete the worktree
+   * when its git state is clean — nothing uncommitted (staged, unstaged, or
+   * untracked) and nothing unpushed. An unreadable git state never prompts:
+   * unknown is never treated as clean.
+   */
+  async function offerWorktreeCleanup(worktree: WorktreeCleanupCandidate | null, projectId: string): Promise<void> {
+    if (!worktree) return
+    let facts: WorkingTreeFacts | null = null
+    try {
+      facts = await window.api.invoke('git:workingTreeFacts', worktree.path)
+    } catch {
+      return
+    }
+    if (!facts || facts.dirty || facts.unpushedCommits > 0) return
+    if (!window.confirm(
+      `"${worktree.label}" has no threads left, and its worktree has no uncommitted or unpushed changes.\n\nDelete the worktree?\n\n${worktree.path}`
+    )) return
+    try {
+      await removeWorktreeLocation(worktree.id, projectId)
+      await fetchThreads(projectId)
+      // The composer may have been re-pointed at the deleted worktree when the
+      // thread was archived — discard the draft rather than leave it there.
+      const draftId = useThreadStore.getState().draftNewThreadId
+      if (draftId) {
+        const draft = Object.values(useThreadStore.getState().byProject)
+          .flat()
+          .find((candidate) => candidate.id === draftId)
+        if (draft?.location_id === worktree.id) useThreadStore.getState().discardDraftThread()
+      }
+    } catch (err) {
+      addToast({
+        type: 'error',
+        title: 'Delete Worktree Failed',
+        message: err instanceof Error ? err.message : 'Failed to delete worktree',
+        details: formatErrorDetails({ action: 'locations:removeWorktree', projectId, location: worktree }, err),
+        duration: 0,
+      })
+    }
+  }
+
   async function handleDeleteProject(projectId: string): Promise<void> {
     await removeProject(projectId)
     setConfirmDelete(null)
@@ -519,7 +561,8 @@ export default function Sidebar() {
       }
     }
 
-    await archiveThread(thread.id, projectId)
+    const result = await archiveThread(thread.id, projectId)
+    await offerWorktreeCleanup(result.worktree, projectId)
   }
 
   async function handleUnarchiveThread(thread: Thread, projectId: string): Promise<void> {
