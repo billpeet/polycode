@@ -172,10 +172,11 @@ describe('RemoteControlClient connectivity failures', () => {
     // The second call must hit fetch again rather than the cached circuit error.
     const second = client.invokeIfActive('projects:list', []).then(
       () => 'resolved',
-      (error: Error) => error.name,
+      (error: unknown) => error,
     )
     await vi.advanceTimersByTimeAsync(10_000)
-    expect(await second).toBe('RemoteRequestTimeoutError')
+    const secondError = await second
+    expect(secondError).toBeInstanceOf(RemoteRequestTimeoutError)
     expect(H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/rpc')).length).toBe(2)
     client.stop()
   })
