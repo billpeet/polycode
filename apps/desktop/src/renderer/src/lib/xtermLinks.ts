@@ -1,4 +1,5 @@
 import type { Terminal, ILink, IBufferRange } from '@xterm/xterm'
+import { isLoopbackHost } from '../../../shared/browser'
 
 /**
  * Clickable URLs in xterm-backed log panes.
@@ -44,6 +45,19 @@ export function findUrlMatches(lineText: string): UrlMatch[] {
     }
   }
   return matches
+}
+
+/**
+ * Command-log links need the internal browser only when its remote-control
+ * tunnel is required to reach a loopback service on the controlled host.
+ */
+export function shouldOpenCommandLogLinkInternally(url: string, remoteControlActive: boolean): boolean {
+  if (!remoteControlActive) return false
+  try {
+    return isLoopbackHost(new URL(url).hostname)
+  } catch {
+    return false
+  }
 }
 
 /** One physical xterm row's contribution to a logical line. */

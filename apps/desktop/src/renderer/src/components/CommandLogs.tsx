@@ -8,7 +8,7 @@ import { useBrowserStore } from '../stores/browser'
 import { useProjectStore } from '../stores/projects'
 import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
-import { registerUrlLinks } from '../lib/xtermLinks'
+import { registerUrlLinks, shouldOpenCommandLogLinkInternally } from '../lib/xtermLinks'
 import { writeClipboardText } from '../lib/clipboard'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 
@@ -234,13 +234,15 @@ function CommandLogPanel({
       return false
     })
 
-    // URLs printed by the command become links and open in the internal
-    // browser — which, for an SSH location, tunnels loopback to the session
-    // host and relays everything else direct.
+    // The internal browser is useful here only for loopback services reached
+    // through remote control. Other URLs belong in the system browser.
     const disposeLinks = registerUrlLinks(term, (url) => {
-      if (locationId) {
-        void useBrowserStore.getState().open(locationId, url)
-      }
+      void window.api.invoke('remote:getActiveHost').then((activeHost) => {
+        if (locationId && shouldOpenCommandLogLinkInternally(url, activeHost !== null)) {
+          return useBrowserStore.getState().open(locationId, url)
+        }
+        return window.api.invoke('shell:openExternal', url)
+      })
     })
 
     xtermRef.current = term

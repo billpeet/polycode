@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { findUrlMatches, rangeForOffset, type LineSegment } from '../xtermLinks'
+import {
+  findUrlMatches,
+  rangeForOffset,
+  shouldOpenCommandLogLinkInternally,
+  type LineSegment,
+} from '../xtermLinks'
 
 describe('findUrlMatches', () => {
   it('finds a portless https *.localhost URL at end of line', () => {
@@ -42,6 +47,28 @@ describe('findUrlMatches', () => {
   it('keeps query strings and fragments but stops at whitespace', () => {
     const matches = findUrlMatches('PORTLESS_URL=https://app.localhost/x?y=1#z done')
     expect(matches[0].url).toBe('https://app.localhost/x?y=1#z')
+  })
+})
+
+describe('shouldOpenCommandLogLinkInternally', () => {
+  it.each([
+    'http://localhost:3000',
+    'https://app.localhost/path',
+    'http://127.0.0.1:8080',
+    'http://[::1]:5173',
+  ])('uses the internal browser for %s during remote control', (url) => {
+    expect(shouldOpenCommandLogLinkInternally(url, true)).toBe(true)
+  })
+
+  it('uses the external browser for loopback URLs without remote control', () => {
+    expect(shouldOpenCommandLogLinkInternally('http://localhost:3000', false)).toBe(false)
+  })
+
+  it.each([
+    'https://example.com/docs',
+    'http://localhost.example.com',
+  ])('uses the external browser for %s during remote control', (url) => {
+    expect(shouldOpenCommandLogLinkInternally(url, true)).toBe(false)
   })
 })
 
