@@ -3,6 +3,7 @@ import {
   browserPartitionFor,
   isLoopbackHost,
   normalizeBrowserUrl,
+  shouldTrustBrowserCertificate,
   sshLabelFor,
 } from '../../../shared/browser'
 
@@ -29,6 +30,17 @@ describe('isLoopbackHost', () => {
     '',
   ])('rejects non-loopback host "%s"', (host) => {
     expect(isLoopbackHost(host)).toBe(false)
+  })
+})
+
+describe('shouldTrustBrowserCertificate', () => {
+  it('trusts portless authority errors for localhost subdomains', () => {
+    expect(shouldTrustBrowserCertificate('app.localhost', 'net::ERR_CERT_AUTHORITY_INVALID')).toBe(true)
+  })
+
+  it('does not trust other certificate errors or public hosts', () => {
+    expect(shouldTrustBrowserCertificate('app.localhost', 'net::ERR_CERT_DATE_INVALID')).toBe(false)
+    expect(shouldTrustBrowserCertificate('example.com', 'net::ERR_CERT_AUTHORITY_INVALID')).toBe(false)
   })
 })
 

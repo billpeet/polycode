@@ -1,7 +1,7 @@
 import { session, Session } from 'electron'
 import { getLocationById } from '../db/queries'
 import type { RepoLocation, SshConfig, BrowserPrepareSessionResult, RemoteHost } from '../../shared/types'
-import { browserPartitionFor, sshLabelFor } from '../../shared/browser'
+import { browserPartitionFor, shouldTrustBrowserCertificate, sshLabelFor } from '../../shared/browser'
 import { SshTunnelPool } from './port-forward'
 import { startBrowserProxy, BrowserProxy } from './proxy-server'
 import { RemoteTunnelPool } from './remote-forward'
@@ -127,6 +127,9 @@ class BrowserSessionManager {
       callback(false)
     })
     guestSession.setPermissionCheckHandler(() => false)
+    guestSession.setCertificateVerifyProc((request, callback) => {
+      callback(shouldTrustBrowserCertificate(request.hostname, request.verificationResult) ? 0 : -3)
+    })
   }
 
   stopAll(): void {

@@ -22,6 +22,15 @@ export function isLoopbackHost(host: string): boolean {
   return normalized.endsWith('.localhost')
 }
 
+/**
+ * Portless development certificates are trusted on the session host, but a
+ * remote browser guest validates the same certificate on this machine. Allow
+ * only the CA error for loopback names used by local development servers.
+ */
+export function shouldTrustBrowserCertificate(host: string, verificationResult: string): boolean {
+  return verificationResult === 'net::ERR_CERT_AUTHORITY_INVALID' && isLoopbackHost(host)
+}
+
 /** Hostname(:port)? with an optional path — loose enough for "localhost:5173". */
 const HOST_LIKE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9-]+)*(:\d+)?([/?#].*)?$/i
 
