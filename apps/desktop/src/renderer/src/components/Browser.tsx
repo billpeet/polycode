@@ -442,7 +442,9 @@ export default function BrowserContent({ locationId }: Props) {
             key={tab.id}
             className="flex flex-col flex-1 overflow-hidden relative"
             style={{
-              flex: tab.id === activeId ? '1 1 0%' : '0 0 0%',
+              // 0px, not 0%: a percentage basis against an indefinite
+              // container height falls back to the content size.
+              flex: tab.id === activeId ? '1 1 0%' : '0 0 0px',
               height: tab.id === activeId ? 'auto' : 0,
               visibility: tab.id === activeId ? 'visible' : 'hidden',
             }}

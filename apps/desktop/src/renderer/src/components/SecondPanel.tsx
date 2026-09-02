@@ -9,6 +9,7 @@ import CommandLogsContent from './CommandLogs'
 import Assassin from './Assassin'
 import PlanPane from './PlanPane'
 import PanelErrorBoundary from './PanelErrorBoundary'
+import { auxPaneStyle } from './auxPaneStyle'
 
 // ─── Resize handle ────────────────────────────────────────────────────────────
 
@@ -294,15 +295,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       )}
 
       {/* Terminal — kept mounted while open to preserve PTY; hidden behind other tabs via height:0 */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          flex: currentTab === 'terminal' ? 1 : 0,
-          height: currentTab === 'terminal' ? 'auto' : 0,
-        }}
-      >
+      <div style={auxPaneStyle(currentTab === 'terminal')}>
         {hasTerminal && currentLocationId && (
           <PanelErrorBoundary context={`Terminal (${currentLocationId})`}>
             <TerminalContent threadId={threadId} locationId={currentLocationId} />
@@ -311,15 +304,7 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
       </div>
 
       {/* Browser — kept mounted while open to preserve guest pages; hidden behind other tabs via height:0 */}
-      <div
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-          flex: currentTab === 'browser' ? 1 : 0,
-          height: currentTab === 'browser' ? 'auto' : 0,
-        }}
-      >
+      <div style={auxPaneStyle(currentTab === 'browser')}>
         {hasBrowser && currentLocationId && (
           <PanelErrorBoundary context={`Browser (${currentLocationId})`}>
             <BrowserContent locationId={currentLocationId} />
