@@ -241,6 +241,8 @@ export const CHANNEL_REGISTRY = {
   'remote:getActiveHost': { local: true, remote: false },
   'remote:testHost': { local: true, remote: false },
   'remote:getPairingInfo': { local: true, remote: false },
+  'remote:getConnectionState': { local: true, remote: false },
+  'remote:reconnect': { local: true, remote: false },
   'window:close': { local: true, remote: false },
   'window:is-maximized': { local: true, remote: false },
   'window:maximize': { local: true, remote: false },

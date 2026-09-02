@@ -3,16 +3,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const H = vi.hoisted(() => ({
   settings: new Map<string, string>(),
   fetch: vi.fn<typeof fetch>(),
+  appEvents: [] as Array<{ channel: string; args: unknown[] }>,
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: class {},
+  powerMonitor: { on: () => {}, off: () => {} },
 }))
 vi.mock('../db/queries', () => ({
   getSetting: (key: string) => H.settings.get(key) ?? null,
   setSetting: (key: string, value: string) => H.settings.set(key, value),
 }))
-vi.mock('../app-events', () => ({ emitAppEvent: () => {}, sendToRenderer: () => {} }))
+vi.mock('../app-events', () => ({
+  emitAppEvent: (_window: unknown, channel: string, ...args: unknown[]) =>
+    H.appEvents.push({ channel, args }),
+  sendToRenderer: () => {},
+}))
 
 const { RemoteControlClient, RemoteUnavailableError } = await import('../remote/client')
 const { RemoteRequestTimeoutError } = await import('../remote/client')
@@ -45,6 +51,7 @@ describe('RemoteControlClient connectivity failures', () => {
   beforeEach(() => {
     H.settings.clear()
     H.fetch.mockReset()
+    H.appEvents.length = 0
     vi.stubGlobal('fetch', H.fetch)
   })
 
@@ -109,9 +116,31 @@ describe('RemoteControlClient connectivity failures', () => {
     client.stop()
   })
 
-  /** A never-ending SSE event-stream response, so the client considers the host reachable. */
+  /**
+   * A healthy SSE event-stream response: never closes, and — like the real host — writes a
+   * keepalive comment every 25s so the client's stall watchdog sees activity. Driven by
+   * fake timers in the tests that use it.
+   */
   function openEventStream(): Response {
-    const body = new ReadableStream({ start: () => {} }) // never closes
+    const body = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        setInterval(() => controller.enqueue(new TextEncoder().encode(`: ${Date.now()}\n\n`)), 25_000)
+      },
+    })
+    return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
+  }
+
+  /**
+   * An SSE response that connects but then never sends a byte — a half-open connection.
+   * Wired to the request's abort signal the way real fetch is: aborting rejects a pending
+   * `reader.read()`.
+   */
+  function silentEventStream(signal: AbortSignal | null | undefined): Response {
+    const body = new ReadableStream({
+      start: (controller) => {
+        signal?.addEventListener('abort', () => controller.error(new DOMException('aborted', 'AbortError')))
+      },
+    })
     return new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } })
   }
 
@@ -178,6 +207,66 @@ describe('RemoteControlClient connectivity failures', () => {
     const secondError = await second
     expect(secondError).toBeInstanceOf(RemoteRequestTimeoutError)
     expect(H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/rpc')).length).toBe(2)
+    client.stop()
+  })
+
+  function connectionPhases(): string[] {
+    return H.appEvents
+      .filter((event) => event.channel === 'remote:connection-changed')
+      .map((event) => (event.args[0] as { phase: string }).phase)
+  }
+
+  function eventStreamConnects(): number {
+    return H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/events')).length
+  }
+
+  it('emits connecting → connected transitions for the renderer', async () => {
+    vi.useFakeTimers()
+    H.fetch.mockImplementation(() => Promise.resolve(openEventStream()))
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(connectionPhases()).toEqual(['connecting', 'connected'])
+    client.stop()
+  })
+
+  it('keeps a keepalive-fed stream connected without spurious reconnects', async () => {
+    vi.useFakeTimers()
+    H.fetch.mockImplementation(() => Promise.resolve(openEventStream()))
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(120_000)
+
+    expect(eventStreamConnects()).toBe(1)
+    expect(connectionPhases()).toEqual(['connecting', 'connected'])
+    client.stop()
+  })
+
+  it('detects a half-open stream via the stall watchdog and reconnects', async () => {
+    vi.useFakeTimers()
+    H.fetch.mockImplementation((_url, init) => Promise.resolve(silentEventStream(init?.signal)))
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(eventStreamConnects()).toBe(1)
+
+    // No bytes ever arrive. The watchdog (15s checks, 60s budget) must abort and redial.
+    await vi.advanceTimersByTimeAsync(80_000)
+    expect(eventStreamConnects()).toBeGreaterThanOrEqual(2)
+    expect(connectionPhases()).toContain('reconnecting')
+    expect(connectionPhases().at(-1)).toBe('connected')
+    client.stop()
+  })
+
+  it('reports the open circuit as an unavailable connection state', async () => {
+    H.fetch.mockRejectedValue(new TypeError('fetch failed'))
+    const client = activeClient()
+
+    await expect(client.invokeIfActive('projects:list', [])).rejects.toBeInstanceOf(RemoteUnavailableError)
+    const last = H.appEvents
+      .filter((event) => event.channel === 'remote:connection-changed')
+      .at(-1)?.args[0] as { phase: string; hostId: string; error: string | null }
+    expect(last.phase).toBe('unavailable')
+    expect(last.hostId).toBe(host.id)
+    expect(last.error).toContain('unavailable')
     client.stop()
   })
 })

@@ -1,10 +1,24 @@
 import { useEffect, useState } from 'react'
-import { RemoteHost } from '../types/ipc'
+import { RemoteConnectionPhase, RemoteHost } from '../types/ipc'
+import { initRemoteConnectionStore, useRemoteConnectionStore } from '../stores/remoteConnection'
+
+const PHASE_DOT: Record<RemoteConnectionPhase, { color: string; label: string; pulse?: boolean }> = {
+  local: { color: 'var(--color-text-muted)', label: 'Local instance' },
+  connecting: { color: '#fbbf24', label: 'Connecting to remote host…', pulse: true },
+  connected: { color: '#4ade80', label: 'Connected to remote host' },
+  reconnecting: { color: '#fbbf24', label: 'Reconnecting to remote host…', pulse: true },
+  unavailable: { color: '#f87171', label: 'Remote host unreachable' },
+}
 
 export default function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false)
   const [hosts, setHosts] = useState<RemoteHost[]>([])
   const [activeHost, setActiveHost] = useState<RemoteHost | null>(null)
+  const connection = useRemoteConnectionStore((s) => s.connection)
+
+  useEffect(() => {
+    initRemoteConnectionStore()
+  }, [])
 
   useEffect(() => {
     window.api.invoke('window:is-maximized').then((maximized) => {
@@ -92,6 +106,23 @@ export default function TitleBar() {
         >
           PolyCode
         </span>
+        {activeHost && (() => {
+          const dot = PHASE_DOT[connection.phase]
+          const title = connection.error ? `${dot.label} — ${connection.error}` : dot.label
+          return (
+            <span
+              title={title}
+              className={dot.pulse ? 'animate-pulse' : undefined}
+              style={{
+                width: 8,
+                height: 8,
+                borderRadius: '50%',
+                background: dot.color,
+                flexShrink: 0,
+              }}
+            />
+          )
+        })()}
         <select
           value={activeHost?.id ?? 'local'}
           onChange={(event) => switchHost(event.target.value)}

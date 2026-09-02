@@ -6,6 +6,7 @@ import SecondPanel from './components/SecondPanel'
 import ToastStack from './components/Toast'
 import TitleBar from './components/TitleBar'
 import { UpdateBanner } from './components/UpdateBanner'
+import { RemoteConnectionBanner } from './components/RemoteConnectionBanner'
 import { SidebarProvider } from './components/ui/sidebar-context'
 import { useProjectStore } from './stores/projects'
 import { useThreadStore } from './stores/threads'
@@ -409,6 +410,7 @@ export default function App() {
         <UiErrorBoundary context="Application header">
           <TitleBar />
           <UpdateBanner />
+          <RemoteConnectionBanner />
         </UiErrorBoundary>
         <div className="flex flex-1 overflow-hidden">
           <Profiler id="Sidebar" onRender={reportReactCommit}>

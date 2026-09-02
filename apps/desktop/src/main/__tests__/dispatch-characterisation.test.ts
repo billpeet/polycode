@@ -865,6 +865,7 @@ vi.mock('electron', () => ({
     writeText: H.stub('clipboard.writeText', 'RET_writeText'),
   },
   BrowserWindow: class {},
+  powerMonitor: { on: () => {}, off: () => {} },
 }))
 
 /** `window.on(...)` registrations — the titlebar push listeners, not channels. */

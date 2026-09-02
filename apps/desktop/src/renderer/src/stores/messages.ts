@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { eventRole, foldMessages } from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
+import { isRemoteTransportError } from '../lib/remoteErrors'
 
 interface MessageStore {
   messagesByThread: Record<string, Message[]>
@@ -25,7 +26,16 @@ export const useMessageStore = create<MessageStore>((set) => ({
   messagesBySession: {},
 
   fetch: async (threadId) => {
-    const messages = await window.api.invoke('messages:list', threadId)
+    let messages: Message[]
+    try {
+      messages = await window.api.invoke('messages:list', threadId)
+    } catch (error) {
+      // A routine connectivity transition (remote host offline or slow) is not a defect:
+      // keep the last-good transcript on screen and let the connection banner explain.
+      // Anything else still propagates. (Issue #48.)
+      if (isRemoteTransportError(error)) return
+      throw error
+    }
     set((s) => {
       const serverIds = new Set(messages.map((message: Message) => message.id))
       const pendingUserMessages = (s.messagesByThread[threadId] ?? [])
@@ -40,7 +50,13 @@ export const useMessageStore = create<MessageStore>((set) => ({
   },
 
   fetchBySession: async (sessionId) => {
-    const messages = await window.api.invoke('messages:listBySession', sessionId)
+    let messages: Message[]
+    try {
+      messages = await window.api.invoke('messages:listBySession', sessionId)
+    } catch (error) {
+      if (isRemoteTransportError(error)) return
+      throw error
+    }
     set((s) => ({ messagesBySession: { ...s.messagesBySession, [sessionId]: messages } }))
   },
 

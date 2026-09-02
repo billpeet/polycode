@@ -2161,7 +2161,7 @@ export const channelHandlers = {
 
   // ── Remote control ─────────────────────────────────────────────────────────
   //
-  // All eleven, in registry order. They are `{ local: true, remote: false }` to a channel:
+  // All thirteen, in registry order. They are `{ local: true, remote: false }` to a channel:
   // they configure *this* desktop's remote-control server and *this* desktop's list of
   // hosts, so serving them to a remote caller would let a paired phone re-point or unpair
   // the desktop it is talking through.
@@ -2226,6 +2226,13 @@ export const channelHandlers = {
   'remote:testHost': (ctx, input) => ctx.remoteClient.testHost(input),
 
   'remote:getPairingInfo': () => getPairingInfo(),
+
+  // Seeds the renderer's connection store on startup; live transitions arrive as
+  // `remote:connection-changed` events emitted by the client itself.
+  'remote:getConnectionState': (ctx) => ctx.remoteClient.getConnectionState(),
+
+  // User-initiated retry from the offline banner: drops the circuit and redials.
+  'remote:reconnect': (ctx) => ctx.remoteClient.reconnect(),
 } satisfies ChannelHandlerMap
 
 export type MigratedChannel = keyof typeof channelHandlers
