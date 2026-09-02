@@ -5,6 +5,16 @@ interface RemoteConnectionStore {
   connection: RemoteConnectionState
   /** True while a user-initiated retry is in flight. */
   retrying: boolean
+  /**
+   * Bumped when the event stream recovers after a gap (reconnecting/unavailable →
+   * connected). SSE has no replay, so anything the host emitted during the gap is gone;
+   * views that render pushed data re-key their fetch effects on this nonce to catch up.
+   * The initial connect after activating a host does NOT bump it — `remote:active-changed`
+   * already resets and refetches everything.
+   */
+  reconnectNonce: number
+  /** Number of in-flight IPC calls past the preload's slow threshold. */
+  slowCalls: number
   retry: () => Promise<void>
 }
 
@@ -13,12 +23,26 @@ const INITIAL: RemoteConnectionState = {
   phase: 'local',
   reconnectAttempt: 0,
   error: null,
+  latencyMs: null,
   changedAt: new Date(0).toISOString(),
+}
+
+/** Whether moving from `previous` to `next` is a stream recovery that may have lost events. */
+export function isReconnectRecovery(
+  previous: RemoteConnectionState,
+  next: RemoteConnectionState,
+): boolean {
+  return next.phase === 'connected'
+    && next.hostId !== null
+    && next.hostId === previous.hostId
+    && (previous.phase === 'reconnecting' || previous.phase === 'unavailable')
 }
 
 export const useRemoteConnectionStore = create<RemoteConnectionStore>((set) => ({
   connection: INITIAL,
   retrying: false,
+  reconnectNonce: 0,
+  slowCalls: 0,
 
   retry: async () => {
     set({ retrying: true })
@@ -45,7 +69,16 @@ export function initRemoteConnectionStore(): void {
 
   window.api.on('remote:connection-changed', (...args) => {
     const connection = args[0] as RemoteConnectionState | undefined
-    if (connection) useRemoteConnectionStore.setState({ connection })
+    if (!connection) return
+    useRemoteConnectionStore.setState((s) => ({
+      connection,
+      reconnectNonce: isReconnectRecovery(s.connection, connection)
+        ? s.reconnectNonce + 1
+        : s.reconnectNonce,
+    }))
+  })
+  window.api.onSlowInvoke((pendingSlowCalls) => {
+    useRemoteConnectionStore.setState({ slowCalls: pendingSlowCalls })
   })
   void window.api.invoke('remote:getConnectionState')
     .then((connection) => useRemoteConnectionStore.setState({ connection }))

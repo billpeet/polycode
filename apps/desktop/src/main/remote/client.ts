@@ -3,6 +3,7 @@ import { BrowserWindow, powerMonitor } from 'electron'
 import { isRemoteChannel } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
+import { count, recordDuration } from '../observability'
 import {
   RemoteConnectionState,
   RemoteConnectionStatus,
@@ -45,6 +46,12 @@ const RECONNECT_MAX_DELAY_MS = 30_000
 // without this watchdog `streamConnected` would stay true forever and no reconnect fires.
 const STREAM_STALL_TIMEOUT_MS = 60_000
 const STREAM_STALL_CHECK_INTERVAL_MS = 15_000
+// Lightweight GET /api/remote/health round trip, published as `latencyMs` on the
+// connection state so the UI can show how far away the host actually is.
+const LATENCY_PROBE_INTERVAL_MS = 30_000
+const LATENCY_PROBE_TIMEOUT_MS = 5_000
+// Ignore sub-jitter changes so the probe doesn't emit a connection-changed every 30s.
+const LATENCY_EMIT_DELTA_MS = 15
 
 export class RemoteUnavailableError extends Error {
   readonly code = 'REMOTE_UNAVAILABLE'
@@ -186,8 +193,11 @@ export class RemoteControlClient {
     phase: 'local',
     reconnectAttempt: 0,
     error: null,
+    latencyMs: null,
     changedAt: new Date().toISOString(),
   }
+  private latencyMs: number | null = null
+  private latencyTimer: NodeJS.Timeout | null = null
   /**
    * OS sleep is the canonical way to half-open the SSE stream's TCP connection. The stall
    * watchdog would notice within a minute; restarting on resume closes the gap immediately.
@@ -203,6 +213,7 @@ export class RemoteControlClient {
 
   stop(): void {
     powerMonitor.off('resume', this.handleResume)
+    this.stopLatencyProbe()
     this.streamGeneration += 1
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -224,7 +235,7 @@ export class RemoteControlClient {
   }
 
   private setConnectionState(
-    next: Omit<RemoteConnectionState, 'changedAt' | 'hostId'> & { hostId?: string | null },
+    next: Omit<RemoteConnectionState, 'changedAt' | 'hostId' | 'latencyMs'> & { hostId?: string | null },
   ): void {
     const hostId = next.hostId !== undefined ? next.hostId : this.getActiveHost()?.id ?? null
     const current = this.connectionState
@@ -233,15 +244,66 @@ export class RemoteControlClient {
       && current.phase === next.phase
       && current.reconnectAttempt === next.reconnectAttempt
       && current.error === next.error
+      && current.latencyMs === this.latencyMs
     ) return
     this.connectionState = {
       hostId,
       phase: next.phase,
       reconnectAttempt: next.reconnectAttempt,
       error: next.error,
+      latencyMs: this.latencyMs,
       changedAt: new Date().toISOString(),
     }
     emitAppEvent(this.window, 'remote:connection-changed', this.connectionState)
+  }
+
+  /** Re-emit the current state with a fresh latency reading, without a phase transition. */
+  private publishLatency(latencyMs: number): void {
+    const previous = this.latencyMs
+    this.latencyMs = latencyMs
+    if (previous !== null && Math.abs(previous - latencyMs) < LATENCY_EMIT_DELTA_MS) return
+    const { hostId, phase, reconnectAttempt, error } = this.connectionState
+    this.setConnectionState({ hostId, phase, reconnectAttempt, error })
+  }
+
+  private startLatencyProbe(host: RemoteHost): void {
+    this.stopLatencyProbe()
+    const probe = (): void => void this.probeLatency(host)
+    this.latencyTimer = setInterval(probe, LATENCY_PROBE_INTERVAL_MS)
+    probe()
+  }
+
+  private stopLatencyProbe(): void {
+    if (this.latencyTimer) {
+      clearInterval(this.latencyTimer)
+      this.latencyTimer = null
+    }
+  }
+
+  private async probeLatency(host: RemoteHost): Promise<void> {
+    // The probe only reports how far away a *reachable* host is. When the circuit is open
+    // or the stream is down, the watchdog and RPC paths own the failure story.
+    if (!this.streamConnected || this.unavailable?.hostId === host.id) return
+    if (this.getActiveHost()?.id !== host.id) return
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), LATENCY_PROBE_TIMEOUT_MS)
+    const startedAt = Date.now()
+    try {
+      const response = await fetch(endpoint(host.baseUrl, '/api/remote/health'), {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${host.token}` },
+        signal: controller.signal,
+      })
+      if (!response.ok) return
+      await response.text()
+      const latencyMs = Date.now() - startedAt
+      recordDuration('polycode.remote.health.rtt', latencyMs, { 'remote.host': host.label })
+      this.publishLatency(latencyMs)
+    } catch {
+      // A failed probe is not a connectivity verdict — the stall watchdog is.
+    } finally {
+      clearTimeout(timer)
+    }
   }
 
   getHosts(): RemoteHost[] {
@@ -358,6 +420,10 @@ export class RemoteControlClient {
     const controller = new AbortController()
     const timeoutMs = SLOW_RPC_CHANNELS.has(channel) ? SLOW_RPC_TIMEOUT_MS : RPC_TIMEOUT_MS
     const timer = setTimeout(() => controller.abort(), timeoutMs)
+    const startedAt = Date.now()
+    // Remote round trips were previously invisible in telemetry: perf.ts times the outer
+    // ipcMain.handle span, where a proxied call just looks like a slow local one.
+    let outcome = 'ok'
     try {
       const response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
         method: 'POST',
@@ -378,7 +444,11 @@ export class RemoteControlClient {
       this.markAvailable(host.id)
       return body.value
     } catch (error) {
-      if (!isTransportError(error)) throw error
+      if (!isTransportError(error)) {
+        outcome = 'error'
+        throw error
+      }
+      outcome = controller.signal.aborted && this.streamConnected ? 'timeout' : 'unavailable'
       if (controller.signal.aborted && this.streamConnected) {
         // The event stream to the same host is open, so this is not transport loss — the
         // request simply outlived its budget and may still be running host-side. Throwing
@@ -392,6 +462,10 @@ export class RemoteControlClient {
       throw this.markUnavailable(host, controller.signal.aborted ? 'Remote host request timed out' : errorMessage(error), error)
     } finally {
       clearTimeout(timer)
+      recordDuration('polycode.remote.rpc.duration', Date.now() - startedAt, {
+        'rpc.channel': channel,
+        'rpc.outcome': outcome,
+      })
     }
   }
 
@@ -405,6 +479,9 @@ export class RemoteControlClient {
     this.eventAbort = null
     this.unavailable = null
     this.reconnectAttempt = 0
+
+    this.stopLatencyProbe()
+    this.latencyMs = null
 
     const host = this.getActiveHost()
     if (!host) {
@@ -461,6 +538,7 @@ export class RemoteControlClient {
       this.markAvailable(host.id)
       this.streamConnected = true
       this.setConnectionState({ hostId: host.id, phase: 'connected', reconnectAttempt: 0, error: null })
+      this.startLatencyProbe(host)
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -500,6 +578,7 @@ export class RemoteControlClient {
           RECONNECT_MAX_DELAY_MS,
         )
         this.reconnectAttempt += 1
+        count('polycode.remote.stream.reconnect', { 'reconnect.reason': stalled ? 'stall' : 'drop' })
         this.setConnectionState({
           hostId: host.id,
           phase: this.unavailable?.hostId === host.id ? 'unavailable' : 'reconnecting',

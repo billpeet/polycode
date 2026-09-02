@@ -13,6 +13,7 @@ export interface WindowApi {
 
   on(channel: string, callback: (...args: unknown[]) => void): () => void
   send(channel: string, ...args: unknown[]): void
+  onSlowInvoke(callback: (pendingSlowCalls: number) => void): () => void
 }
 
 declare global {

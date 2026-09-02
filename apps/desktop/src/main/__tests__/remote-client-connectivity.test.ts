@@ -256,6 +256,33 @@ describe('RemoteControlClient connectivity failures', () => {
     client.stop()
   })
 
+  it('probes host latency and publishes it on the connection state', async () => {
+    vi.useFakeTimers()
+    H.fetch.mockImplementation((url) => {
+      if (String(url).endsWith('/api/remote/health')) {
+        return Promise.resolve(jsonResponse(200, { ok: true, app: 'polycode', version: '1.0.0' }))
+      }
+      return Promise.resolve(openEventStream())
+    })
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(0)
+
+    const latencies = H.appEvents
+      .filter((event) => event.channel === 'remote:connection-changed')
+      .map((event) => (event.args[0] as { latencyMs: number | null }).latencyMs)
+    // The immediate probe after connect publishes a reading (0ms under fake timers).
+    expect(latencies.at(-1)).toBe(0)
+    expect(client.getConnectionState().phase).toBe('connected')
+
+    // Subsequent probes fire on the 30s interval without a phase transition.
+    const healthCalls = () =>
+      H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/health')).length
+    const before = healthCalls()
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(healthCalls()).toBe(before + 1)
+    client.stop()
+  })
+
   it('reports the open circuit as an unavailable connection state', async () => {
     H.fetch.mockRejectedValue(new TypeError('fetch failed'))
     const client = activeClient()

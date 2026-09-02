@@ -14,6 +14,7 @@ import MessageStream from './MessageStream'
 import InputBar from './InputBar'
 import { formatErrorDetails } from '../lib/errorDetails'
 import UiErrorBoundary from './UiErrorBoundary'
+import { useRemoteConnectionStore } from '../stores/remoteConnection'
 
 interface Props {
   threadId: string
@@ -57,18 +58,24 @@ function ThreadViewContent({ threadId }: Props) {
 
   const cleanupRef = useRef<Array<() => void>>([])
 
+  // Desktop SSE has no replay: any thread:output/status/complete emitted while the remote
+  // event stream was down is simply gone. Re-keying the fetch effects below on this nonce
+  // makes a stream recovery behave like a remount — transcript, sessions and canonical
+  // status are refetched, so a thread can't be left visually "running" forever.
+  const reconnectNonce = useRemoteConnectionStore((s) => s.reconnectNonce)
+
   // Fetch sessions when thread changes
   useEffect(() => {
     if (isPendingThread) return
     fetchSessions(threadId)
-  }, [threadId, fetchSessions, isPendingThread])
+  }, [threadId, fetchSessions, isPendingThread, reconnectNonce])
 
   // Reconcile canonical status when a thread view mounts. Per-thread push
   // events can be missed while another thread is selected.
   useEffect(() => {
     if (isPendingThread || !threadProjectId) return
     void fetchThreads(threadProjectId)
-  }, [fetchThreads, isPendingThread, threadProjectId])
+  }, [fetchThreads, isPendingThread, threadProjectId, reconnectNonce])
 
   // Fetch messages when active session changes, and sync todos from persisted messages
   useEffect(() => {
@@ -85,7 +92,7 @@ function ThreadViewContent({ threadId }: Props) {
       }
     }
     doFetch()
-  }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession, isPendingThread])
+  }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession, isPendingThread, reconnectNonce])
 
   useEffect(() => {
     if (isPendingThread) return

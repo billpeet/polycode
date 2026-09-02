@@ -27,6 +27,7 @@ import { reportReactCommit } from './lib/perf'
 import { getCurrentLocationId } from './lib/currentLocation'
 import UiErrorBoundary from './components/UiErrorBoundary'
 import { useDatabaseSync } from './hooks/useDatabaseSync'
+import { useRemoteConnectionStore } from './stores/remoteConnection'
 import { writeClipboardText } from './lib/clipboard'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
@@ -364,6 +365,15 @@ export default function App() {
       void fetchProjects()
     })
   }, [fetchProjects])
+
+  // Stream recovery: SSE has no replay, so thread status/queue pushes emitted while the
+  // remote event stream was down never arrived. ThreadView refetches the open thread on
+  // this nonce; the queue is the other push-driven surface and is reconciled here.
+  const reconnectNonce = useRemoteConnectionStore((s) => s.reconnectNonce)
+  useEffect(() => {
+    if (reconnectNonce === 0) return
+    void useThreadStore.getState().fetchQueue()
+  }, [reconnectNonce])
 
   // 4. Persist selections whenever they change
   useEffect(() => {

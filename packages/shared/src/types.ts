@@ -136,6 +136,11 @@ export interface RemoteConnectionState {
   reconnectAttempt: number
   /** Human-readable reason when the host is unreachable, otherwise null. */
   error: string | null
+  /**
+   * Round-trip time of the most recent health probe against the active host, in
+   * milliseconds. Null until the first probe answers, and reset on host change.
+   */
+  latencyMs: number | null
   /** ISO timestamp of the transition into this state. */
   changedAt: string
 }
