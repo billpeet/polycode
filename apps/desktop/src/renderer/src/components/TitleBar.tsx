@@ -15,6 +15,7 @@ export default function TitleBar() {
   const [hosts, setHosts] = useState<RemoteHost[]>([])
   const [activeHost, setActiveHost] = useState<RemoteHost | null>(null)
   const connection = useRemoteConnectionStore((s) => s.connection)
+  const slowCalls = useRemoteConnectionStore((s) => s.slowCalls)
 
   useEffect(() => {
     initRemoteConnectionStore()
@@ -108,19 +109,31 @@ export default function TitleBar() {
         </span>
         {activeHost && (() => {
           const dot = PHASE_DOT[connection.phase]
-          const title = connection.error ? `${dot.label} — ${connection.error}` : dot.label
+          const latency = connection.phase === 'connected' && connection.latencyMs !== null
+            ? `${Math.round(connection.latencyMs)}ms`
+            : null
+          const title = [
+            latency ? `${dot.label} · ${latency}` : dot.label,
+            connection.error,
+          ].filter(Boolean).join(' — ')
           return (
-            <span
-              title={title}
-              className={dot.pulse ? 'animate-pulse' : undefined}
-              style={{
-                width: 8,
-                height: 8,
-                borderRadius: '50%',
-                background: dot.color,
-                flexShrink: 0,
-              }}
-            />
+            <span title={title} style={{ display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              <span
+                className={dot.pulse ? 'animate-pulse' : undefined}
+                style={{
+                  width: 8,
+                  height: 8,
+                  borderRadius: '50%',
+                  background: dot.color,
+                  flexShrink: 0,
+                }}
+              />
+              {latency && (
+                <span style={{ fontSize: 10, color: 'var(--color-text-muted)', userSelect: 'none' }}>
+                  {latency}
+                </span>
+              )}
+            </span>
           )
         })()}
         <select
@@ -146,6 +159,20 @@ export default function TitleBar() {
             </option>
           ))}
         </select>
+        {/*
+          Perceived-latency signal: at least one in-flight IPC call has been waiting on the
+          remote host past the preload's slow threshold. One subtle global spinner instead
+          of per-component ones — the delay is network distance, not any single view's work.
+          Only rendered while remote is active; local slow calls mean local work, and the
+          offline/reconnecting states already have the banner.
+        */}
+        {activeHost && slowCalls > 0 && connection.phase === 'connected' && (
+          <span
+            className="status-spinner"
+            title={`Waiting for remote host (${slowCalls} slow ${slowCalls === 1 ? 'request' : 'requests'})…`}
+            style={{ width: 10, height: 10, flexShrink: 0 }}
+          />
+        )}
       </div>
 
       <div style={{ flex: 1 }} />
