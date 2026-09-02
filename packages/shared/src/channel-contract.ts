@@ -54,6 +54,7 @@ import type {
   RemoteHost,
   RemoteHostInput,
   RemoteConnectionStatus,
+  RemoteConnectionState,
   RemotePairingInfo,
   BrowserPrepareSessionResult,
   Routine,
@@ -302,6 +303,8 @@ export interface ChannelContract {
   'remote:getActiveHost': [[], RemoteHost | null]
   'remote:testHost': [[input: RemoteHostInput], RemoteConnectionStatus]
   'remote:getPairingInfo': [[], RemotePairingInfo]
+  'remote:getConnectionState': [[], RemoteConnectionState]
+  'remote:reconnect': [[], RemoteConnectionState]
   'terminal:write': [[terminalId: string, data: string], void]
   'terminal:resize': [[terminalId: string, cols: number, rows: number], void]
   'attachments:readDataUrl': [[threadId: string, filename: string], string | null]

@@ -96,6 +96,8 @@ describe('remote control RPC channel contract', () => {
       'remote:getActiveHost',
       'remote:testHost',
       'remote:getPairingInfo',
+      'remote:getConnectionState',
+      'remote:reconnect',
     ])
   })
 

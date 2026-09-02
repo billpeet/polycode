@@ -117,6 +117,29 @@ export interface RemoteConnectionStatus {
   error?: string
 }
 
+/**
+ * Live connectivity to the active remote host, as observed by the desktop's
+ * remote-control client. `local` means no remote host is active; the other
+ * phases describe the SSE event stream, which is the de-facto liveness signal.
+ */
+export type RemoteConnectionPhase =
+  | 'local'
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'unavailable'
+
+export interface RemoteConnectionState {
+  hostId: string | null
+  phase: RemoteConnectionPhase
+  /** Consecutive failed event-stream (re)connect attempts against the current host. */
+  reconnectAttempt: number
+  /** Human-readable reason when the host is unreachable, otherwise null. */
+  error: string | null
+  /** ISO timestamp of the transition into this state. */
+  changedAt: string
+}
+
 /** LAN info used to render the mobile pairing QR code on the desktop. */
 export interface RemotePairingInfo {
   addresses: string[]

@@ -9,6 +9,44 @@ function thinking(content: string, metadata: Record<string, unknown>): OutputEve
   return { type: 'thinking', content, metadata }
 }
 
+describe('message store remote transport failures', () => {
+  const invoke = vi.fn()
+  const cached = [{
+    id: 'm1', thread_id: THREAD, session_id: null, role: 'assistant' as const,
+    content: 'cached', metadata: null, created_at: '2026-01-01T00:00:00.000Z',
+  }]
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('window', { api: { invoke } })
+    useMessageStore.setState({
+      messagesByThread: { [THREAD]: cached },
+      messagesBySession: { 'session-1': cached },
+    })
+  })
+
+  it('keeps the last-good transcript when messages:list hits an offline remote host', async () => {
+    invoke.mockRejectedValue(new Error(
+      "Error invoking remote method 'messages:list': RemoteUnavailableError: Remote host \"Futura-GPC\" is unavailable: Remote host request timed out",
+    ))
+    await expect(useMessageStore.getState().fetch(THREAD)).resolves.toBeUndefined()
+    expect(useMessageStore.getState().messagesByThread[THREAD]).toEqual(cached)
+  })
+
+  it('keeps the last-good session transcript on a remote request timeout', async () => {
+    invoke.mockRejectedValue(new Error(
+      "Error invoking remote method 'messages:listBySession': RemoteRequestTimeoutError: Remote host \"Futura-GPC\" did not answer \"messages:listBySession\" within 10s; the operation may still be running on the host.",
+    ))
+    await expect(useMessageStore.getState().fetchBySession('session-1')).resolves.toBeUndefined()
+    expect(useMessageStore.getState().messagesBySession['session-1']).toEqual(cached)
+  })
+
+  it('still propagates unexpected errors', async () => {
+    invoke.mockRejectedValue(new Error('SQLITE_CORRUPT: database disk image is malformed'))
+    await expect(useMessageStore.getState().fetch(THREAD)).rejects.toThrow('SQLITE_CORRUPT')
+  })
+})
+
 describe('message store streaming merge', () => {
   beforeEach(() => {
     useMessageStore.setState({ messagesByThread: {}, messagesBySession: {} })

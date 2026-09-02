@@ -21,6 +21,7 @@ vi.mock('electron', () => ({
   ipcMain: { handle: () => {}, on: () => {} },
   app: { getPath: () => 'C:/tmp', getVersion: () => '0.0.0', isPackaged: false },
   BrowserWindow: class {},
+  powerMonitor: { on: () => {}, off: () => {} },
 }))
 vi.mock('../db/queries', () => ({
   getSetting: () => null,

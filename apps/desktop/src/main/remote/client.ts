@@ -1,9 +1,10 @@
 import { randomUUID } from 'crypto'
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, powerMonitor } from 'electron'
 import { isRemoteChannel } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
 import {
+  RemoteConnectionState,
   RemoteConnectionStatus,
   RemoteHost,
   RemoteHostInput,
@@ -38,6 +39,12 @@ const SLOW_RPC_CHANNELS: ReadonlySet<string> = new Set([
 const RESPONSE_DIAGNOSTIC_LIMIT = 240
 const RECONNECT_BASE_DELAY_MS = 2_000
 const RECONNECT_MAX_DELAY_MS = 30_000
+// The host writes a `: keepalive` comment every 25s (server.ts), so a healthy stream is
+// never silent for long. Two missed keepalives plus slack means the TCP connection is
+// half-open (laptop sleep, Wi-Fi drop) even though `reader.read()` is still pending —
+// without this watchdog `streamConnected` would stay true forever and no reconnect fires.
+const STREAM_STALL_TIMEOUT_MS = 60_000
+const STREAM_STALL_CHECK_INTERVAL_MS = 15_000
 
 export class RemoteUnavailableError extends Error {
   readonly code = 'REMOTE_UNAVAILABLE'
@@ -174,12 +181,28 @@ export class RemoteControlClient {
   private reconnectAttempt = 0
   /** True while an SSE event stream has an open, reading response to the active host. */
   private streamConnected = false
+  private connectionState: RemoteConnectionState = {
+    hostId: null,
+    phase: 'local',
+    reconnectAttempt: 0,
+    error: null,
+    changedAt: new Date().toISOString(),
+  }
+  /**
+   * OS sleep is the canonical way to half-open the SSE stream's TCP connection. The stall
+   * watchdog would notice within a minute; restarting on resume closes the gap immediately.
+   */
+  private readonly handleResume = (): void => {
+    if (this.getActiveHost()) this.restartEventStream()
+  }
 
   constructor(private readonly window: BrowserWindow) {
+    powerMonitor.on('resume', this.handleResume)
     this.restartEventStream()
   }
 
   stop(): void {
+    powerMonitor.off('resume', this.handleResume)
     this.streamGeneration += 1
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer)
@@ -188,6 +211,37 @@ export class RemoteControlClient {
     this.eventAbort?.abort()
     this.eventAbort = null
     this.streamConnected = false
+  }
+
+  getConnectionState(): RemoteConnectionState {
+    return this.connectionState
+  }
+
+  /** User-initiated retry: drop the circuit and dial the active host again from scratch. */
+  reconnect(): RemoteConnectionState {
+    this.restartEventStream()
+    return this.connectionState
+  }
+
+  private setConnectionState(
+    next: Omit<RemoteConnectionState, 'changedAt' | 'hostId'> & { hostId?: string | null },
+  ): void {
+    const hostId = next.hostId !== undefined ? next.hostId : this.getActiveHost()?.id ?? null
+    const current = this.connectionState
+    if (
+      current.hostId === hostId
+      && current.phase === next.phase
+      && current.reconnectAttempt === next.reconnectAttempt
+      && current.error === next.error
+    ) return
+    this.connectionState = {
+      hostId,
+      phase: next.phase,
+      reconnectAttempt: next.reconnectAttempt,
+      error: next.error,
+      changedAt: new Date().toISOString(),
+    }
+    emitAppEvent(this.window, 'remote:connection-changed', this.connectionState)
   }
 
   getHosts(): RemoteHost[] {
@@ -353,9 +407,13 @@ export class RemoteControlClient {
     this.reconnectAttempt = 0
 
     const host = this.getActiveHost()
-    if (!host) return
+    if (!host) {
+      this.setConnectionState({ hostId: null, phase: 'local', reconnectAttempt: 0, error: null })
+      return
+    }
 
     this.streamConnected = false
+    this.setConnectionState({ hostId: host.id, phase: 'connecting', reconnectAttempt: 0, error: null })
     const generation = this.streamGeneration
     this.connectEventStream(host, generation, 0)
   }
@@ -376,6 +434,20 @@ export class RemoteControlClient {
     const controller = new AbortController()
     this.eventAbort = controller
 
+    // Stall watchdog. Armed before the fetch so a connect that hangs forever is also
+    // bounded. `stalled` distinguishes a watchdog abort (reconnect) from an intentional
+    // one (stop / restart), which the finally block must not resurrect.
+    let lastActivityAt = Date.now()
+    let stalled = false
+    let streamError: string | null = null
+    const watchdog = setInterval(() => {
+      if (Date.now() - lastActivityAt <= STREAM_STALL_TIMEOUT_MS) return
+      stalled = true
+      streamError = `No data from remote host for ${Math.round(STREAM_STALL_TIMEOUT_MS / 1000)}s`
+      console.warn(`[remote-control] Event stream stalled (${streamError}); forcing reconnect`)
+      controller.abort()
+    }, STREAM_STALL_CHECK_INTERVAL_MS)
+
     try {
       const response = await fetch(endpoint(host.baseUrl, '/api/remote/events'), {
         method: 'GET',
@@ -388,6 +460,7 @@ export class RemoteControlClient {
 
       this.markAvailable(host.id)
       this.streamConnected = true
+      this.setConnectionState({ hostId: host.id, phase: 'connected', reconnectAttempt: 0, error: null })
 
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
@@ -396,6 +469,9 @@ export class RemoteControlClient {
       while (generation === this.streamGeneration) {
         const { done, value } = await reader.read()
         if (done) break
+        // Any bytes count as liveness — including the `: keepalive` comments the frame
+        // parser below deliberately discards.
+        lastActivityAt = Date.now()
         buffer += decoder.decode(value, { stream: true })
         let separator = buffer.indexOf('\n\n')
         while (separator !== -1) {
@@ -407,20 +483,31 @@ export class RemoteControlClient {
       }
     } catch (error) {
       if (!controller.signal.aborted) {
-        if (isTransportError(error)) this.markUnavailable(host, errorMessage(error), error)
-        console.warn('[remote-control] Event stream disconnected:', errorMessage(error))
+        streamError = errorMessage(error)
+        if (isTransportError(error)) this.markUnavailable(host, streamError, error)
+        console.warn('[remote-control] Event stream disconnected:', streamError)
       }
     } finally {
+      clearInterval(watchdog)
       if (this.eventAbort === controller) {
         this.eventAbort = null
         this.streamConnected = false
       }
-      if (generation === this.streamGeneration && !controller.signal.aborted) {
+      // A stalled abort is the watchdog's, not stop()/restart's, so it must reconnect.
+      if (generation === this.streamGeneration && (!controller.signal.aborted || stalled)) {
         const delay = Math.min(
           RECONNECT_BASE_DELAY_MS * (2 ** this.reconnectAttempt),
           RECONNECT_MAX_DELAY_MS,
         )
         this.reconnectAttempt += 1
+        this.setConnectionState({
+          hostId: host.id,
+          phase: this.unavailable?.hostId === host.id ? 'unavailable' : 'reconnecting',
+          reconnectAttempt: this.reconnectAttempt,
+          error: this.unavailable?.hostId === host.id
+            ? this.unavailable.error.message
+            : streamError,
+        })
         this.connectEventStream(host, generation, delay)
       }
     }
@@ -434,12 +521,21 @@ export class RemoteControlClient {
       cause === undefined ? undefined : { cause },
     )
     this.unavailable = { hostId: host.id, error }
+    this.setConnectionState({
+      hostId: host.id,
+      phase: 'unavailable',
+      reconnectAttempt: this.reconnectAttempt,
+      error: error.message,
+    })
     return error
   }
 
   private markAvailable(hostId: string): void {
     if (this.unavailable?.hostId === hostId) this.unavailable = null
     this.reconnectAttempt = 0
+    if (this.streamConnected && this.getActiveHost()?.id === hostId) {
+      this.setConnectionState({ hostId, phase: 'connected', reconnectAttempt: 0, error: null })
+    }
   }
 
   private handleSseFrame(frame: string): void {
