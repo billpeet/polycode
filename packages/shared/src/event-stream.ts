@@ -185,8 +185,10 @@ export class RemoteEventStream {
     }, this.stallCheckIntervalMs)
 
     try {
+      let baseUrl = target.baseUrl
+      while (baseUrl.endsWith('/')) baseUrl = baseUrl.slice(0, -1)
       const response = await this.fetchFn(
-        `${target.baseUrl.replace(/\/+$/, '')}/api/remote/events`,
+        `${baseUrl}/api/remote/events`,
         {
           method: 'GET',
           headers: { Authorization: `Bearer ${target.token}` },
