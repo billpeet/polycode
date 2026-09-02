@@ -1,4 +1,15 @@
+import { APP_SHUTTING_DOWN_CODE, appShuttingDownMessage } from '@polycode/shared'
+
 export type AppLifecycleState = 'running' | 'closing' | 'closed'
+
+export class AppShuttingDownError extends Error {
+  readonly code = APP_SHUTTING_DOWN_CODE
+
+  constructor() {
+    super(appShuttingDownMessage())
+    this.name = 'AppShuttingDownError'
+  }
+}
 
 let state: AppLifecycleState = 'running'
 let activeOperations = 0
@@ -19,7 +30,7 @@ export function finishAppShutdown(): void {
 }
 
 export function assertAppRunning(): void {
-  if (state !== 'running') throw new Error('PolyCode is shutting down')
+  if (state !== 'running') throw new AppShuttingDownError()
 }
 
 export async function runAppOperation<T>(operation: () => T | Promise<T>): Promise<T> {
