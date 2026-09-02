@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { BrowserWindow, powerMonitor } from 'electron'
-import { isRemoteChannel } from '@polycode/shared'
+import { isRemoteChannel, RemoteEventStream } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
 import { count, recordDuration } from '../observability'
@@ -38,14 +38,8 @@ const SLOW_RPC_CHANNELS: ReadonlySet<string> = new Set([
   'projects:createFull',
 ])
 const RESPONSE_DIAGNOSTIC_LIMIT = 240
-const RECONNECT_BASE_DELAY_MS = 2_000
-const RECONNECT_MAX_DELAY_MS = 30_000
-// The host writes a `: keepalive` comment every 25s (server.ts), so a healthy stream is
-// never silent for long. Two missed keepalives plus slack means the TCP connection is
-// half-open (laptop sleep, Wi-Fi drop) even though `reader.read()` is still pending —
-// without this watchdog `streamConnected` would stay true forever and no reconnect fires.
-const STREAM_STALL_TIMEOUT_MS = 60_000
-const STREAM_STALL_CHECK_INTERVAL_MS = 15_000
+// Reconnect backoff and the stall watchdog live in @polycode/shared's RemoteEventStream,
+// which this client and the mobile app both consume.
 // Lightweight GET /api/remote/health round trip, published as `latencyMs` on the
 // connection state so the UI can show how far away the host actually is.
 const LATENCY_PROBE_INTERVAL_MS = 30_000
@@ -181,13 +175,53 @@ function isTransportError(error: unknown): boolean {
 }
 
 export class RemoteControlClient {
-  private eventAbort: AbortController | null = null
-  private reconnectTimer: NodeJS.Timeout | null = null
-  private streamGeneration = 0
   private unavailable: { hostId: string; error: RemoteUnavailableError } | null = null
   private reconnectAttempt = 0
+  /** Host the event stream is currently pointed at — callback context for the shared stream. */
+  private streamHost: RemoteHost | null = null
+  /**
+   * The shared SSE client (frame parsing, backoff, generation guard, stall watchdog).
+   * The callbacks map its lifecycle onto this client's connection-state machine and
+   * circuit breaker; `onConnecting` is deliberately not registered — this client emits
+   * `connecting` once per restart and `reconnecting` for retries, not per dial.
+   */
+  private readonly eventStream = new RemoteEventStream({
+    onEvent: (event) => sendToRenderer(this.window, event.channel, ...event.args),
+    onConnected: () => {
+      const host = this.streamHost
+      if (!host) return
+      this.markAvailable(host.id)
+      this.setConnectionState({ hostId: host.id, phase: 'connected', reconnectAttempt: 0, error: null })
+      this.startLatencyProbe(host)
+    },
+    onStreamError: (message, cause) => {
+      const host = this.streamHost
+      if (host && isTransportError(cause)) this.markUnavailable(host, message, cause)
+      console.warn('[remote-control] Event stream disconnected:', message)
+    },
+    onDisconnected: (info) => {
+      const host = this.streamHost
+      if (!host) return
+      if (info.stalled) {
+        console.warn(`[remote-control] Event stream stalled (${info.error}); forcing reconnect`)
+      }
+      this.reconnectAttempt = info.attempt
+      count('polycode.remote.stream.reconnect', { 'reconnect.reason': info.stalled ? 'stall' : 'drop' })
+      const open = this.unavailable
+      const circuitOpen = open?.hostId === host.id
+      this.setConnectionState({
+        hostId: host.id,
+        phase: circuitOpen ? 'unavailable' : 'reconnecting',
+        reconnectAttempt: info.attempt,
+        error: circuitOpen && open ? open.error.message : info.error,
+      })
+    },
+  })
+
   /** True while an SSE event stream has an open, reading response to the active host. */
-  private streamConnected = false
+  private get streamConnected(): boolean {
+    return this.eventStream.connected
+  }
   private connectionState: RemoteConnectionState = {
     hostId: null,
     phase: 'local',
@@ -214,14 +248,8 @@ export class RemoteControlClient {
   stop(): void {
     powerMonitor.off('resume', this.handleResume)
     this.stopLatencyProbe()
-    this.streamGeneration += 1
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
-    this.eventAbort?.abort()
-    this.eventAbort = null
-    this.streamConnected = false
+    this.eventStream.stop()
+    this.streamHost = null
   }
 
   getConnectionState(): RemoteConnectionState {
@@ -470,13 +498,7 @@ export class RemoteControlClient {
   }
 
   private restartEventStream(): void {
-    this.streamGeneration += 1
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer)
-      this.reconnectTimer = null
-    }
-    this.eventAbort?.abort()
-    this.eventAbort = null
+    this.eventStream.stop()
     this.unavailable = null
     this.reconnectAttempt = 0
 
@@ -484,112 +506,14 @@ export class RemoteControlClient {
     this.latencyMs = null
 
     const host = this.getActiveHost()
+    this.streamHost = host
     if (!host) {
       this.setConnectionState({ hostId: null, phase: 'local', reconnectAttempt: 0, error: null })
       return
     }
 
-    this.streamConnected = false
     this.setConnectionState({ hostId: host.id, phase: 'connecting', reconnectAttempt: 0, error: null })
-    const generation = this.streamGeneration
-    this.connectEventStream(host, generation, 0)
-  }
-
-  private connectEventStream(host: RemoteHost, generation: number, delayMs: number): void {
-    if (delayMs > 0) {
-      this.reconnectTimer = setTimeout(() => {
-        this.reconnectTimer = null
-        void this.runEventStream(host, generation)
-      }, delayMs)
-      return
-    }
-    void this.runEventStream(host, generation)
-  }
-
-  private async runEventStream(host: RemoteHost, generation: number): Promise<void> {
-    if (generation !== this.streamGeneration) return
-    const controller = new AbortController()
-    this.eventAbort = controller
-
-    // Stall watchdog. Armed before the fetch so a connect that hangs forever is also
-    // bounded. `stalled` distinguishes a watchdog abort (reconnect) from an intentional
-    // one (stop / restart), which the finally block must not resurrect.
-    let lastActivityAt = Date.now()
-    let stalled = false
-    let streamError: string | null = null
-    const watchdog = setInterval(() => {
-      if (Date.now() - lastActivityAt <= STREAM_STALL_TIMEOUT_MS) return
-      stalled = true
-      streamError = `No data from remote host for ${Math.round(STREAM_STALL_TIMEOUT_MS / 1000)}s`
-      console.warn(`[remote-control] Event stream stalled (${streamError}); forcing reconnect`)
-      controller.abort()
-    }, STREAM_STALL_CHECK_INTERVAL_MS)
-
-    try {
-      const response = await fetch(endpoint(host.baseUrl, '/api/remote/events'), {
-        method: 'GET',
-        headers: { Authorization: `Bearer ${host.token}` },
-        signal: controller.signal,
-      })
-      if (!response.ok || !response.body) {
-        throw new Error(`Remote event stream failed with HTTP ${response.status}`)
-      }
-
-      this.markAvailable(host.id)
-      this.streamConnected = true
-      this.setConnectionState({ hostId: host.id, phase: 'connected', reconnectAttempt: 0, error: null })
-      this.startLatencyProbe(host)
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-
-      while (generation === this.streamGeneration) {
-        const { done, value } = await reader.read()
-        if (done) break
-        // Any bytes count as liveness — including the `: keepalive` comments the frame
-        // parser below deliberately discards.
-        lastActivityAt = Date.now()
-        buffer += decoder.decode(value, { stream: true })
-        let separator = buffer.indexOf('\n\n')
-        while (separator !== -1) {
-          const frame = buffer.slice(0, separator)
-          buffer = buffer.slice(separator + 2)
-          this.handleSseFrame(frame)
-          separator = buffer.indexOf('\n\n')
-        }
-      }
-    } catch (error) {
-      if (!controller.signal.aborted) {
-        streamError = errorMessage(error)
-        if (isTransportError(error)) this.markUnavailable(host, streamError, error)
-        console.warn('[remote-control] Event stream disconnected:', streamError)
-      }
-    } finally {
-      clearInterval(watchdog)
-      if (this.eventAbort === controller) {
-        this.eventAbort = null
-        this.streamConnected = false
-      }
-      // A stalled abort is the watchdog's, not stop()/restart's, so it must reconnect.
-      if (generation === this.streamGeneration && (!controller.signal.aborted || stalled)) {
-        const delay = Math.min(
-          RECONNECT_BASE_DELAY_MS * (2 ** this.reconnectAttempt),
-          RECONNECT_MAX_DELAY_MS,
-        )
-        this.reconnectAttempt += 1
-        count('polycode.remote.stream.reconnect', { 'reconnect.reason': stalled ? 'stall' : 'drop' })
-        this.setConnectionState({
-          hostId: host.id,
-          phase: this.unavailable?.hostId === host.id ? 'unavailable' : 'reconnecting',
-          reconnectAttempt: this.reconnectAttempt,
-          error: this.unavailable?.hostId === host.id
-            ? this.unavailable.error.message
-            : streamError,
-        })
-        this.connectEventStream(host, generation, delay)
-      }
-    }
+    this.eventStream.start({ baseUrl: host.baseUrl, token: host.token })
   }
 
   private markUnavailable(host: RemoteHost, detail: string, cause?: unknown): RemoteUnavailableError {
@@ -617,30 +541,6 @@ export class RemoteControlClient {
     }
   }
 
-  private handleSseFrame(frame: string): void {
-    const lines = frame.split(/\r?\n/)
-    let eventName = 'message'
-    const dataLines: string[] = []
-
-    for (const line of lines) {
-      if (!line || line.startsWith(':')) continue
-      if (line.startsWith('event:')) {
-        eventName = line.slice(6).trim()
-      } else if (line.startsWith('data:')) {
-        dataLines.push(line.slice(5).trimStart())
-      }
-    }
-
-    if (eventName !== 'app' || dataLines.length === 0) return
-
-    try {
-      const event = JSON.parse(dataLines.join('\n')) as { channel?: unknown; args?: unknown }
-      if (typeof event.channel !== 'string' || !Array.isArray(event.args)) return
-      sendToRenderer(this.window, event.channel, ...event.args)
-    } catch {
-      // Ignore malformed frames from a stale or incompatible host.
-    }
-  }
 }
 
 /**
