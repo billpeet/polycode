@@ -10,6 +10,7 @@ import { useThreadStore } from '../stores/threads'
 import { useLocationStore } from '../stores/locations'
 import { registerUrlLinks, shouldOpenCommandLogLinkInternally } from '../lib/xtermLinks'
 import { writeClipboardText } from '../lib/clipboard'
+import { settleBackgroundIpc } from '../lib/backgroundIpc'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 
 const EMPTY_PINNED: string[] = []
@@ -328,10 +329,15 @@ function CommandLogPanel({
   const [loadedPid, setLoadedPid] = useState<number | null>(null)
 
   useEffect(() => {
+    let cancelled = false
     if (status === 'running' || status === 'stopping') {
-      window.api.invoke('commands:getPid', commandId, locationId).then((p) => setLoadedPid(p))
-      void fetchPorts(commandId, locationId)
+      void settleBackgroundIpc(window.api.invoke('commands:getPid', commandId, locationId))
+        .then((pid) => {
+          if (!cancelled && pid !== undefined) setLoadedPid(pid)
+        })
+      void settleBackgroundIpc(fetchPorts(commandId, locationId))
     }
+    return () => { cancelled = true }
   }, [commandId, locationId, status, fetchPorts])
 
   const isActive = status === 'running' || status === 'stopping'

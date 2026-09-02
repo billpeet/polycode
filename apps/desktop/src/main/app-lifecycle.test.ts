@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { appShuttingDownMessage } from '@polycode/shared'
 import {
   assertAppRunning,
+  AppShuttingDownError,
   getAppLifecycleState,
   resetAppLifecycleForTest,
   runAppOperation,
@@ -28,7 +30,13 @@ describe('application shutdown lifecycle', () => {
     })
 
     expect(getAppLifecycleState()).toBe('closing')
-    expect(() => assertAppRunning()).toThrow('PolyCode is shutting down')
+    expect(() => assertAppRunning()).toThrow(appShuttingDownMessage())
+    try {
+      assertAppRunning()
+    } catch (error) {
+      expect(error).toBeInstanceOf(AppShuttingDownError)
+      expect((error as AppShuttingDownError).code).toBe('APP_SHUTTING_DOWN')
+    }
     expect(events).toEqual(['watchers-and-timers-stopped', 'commands-stopping'])
 
     releaseProducers()

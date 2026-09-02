@@ -2,6 +2,8 @@ import { create } from 'zustand'
 import { Thread, QueueThread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary, ThreadArchiveResult } from '../types/ipc'
 import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
+import { isAppShuttingDownError } from '@polycode/shared'
+import { settleBackgroundIpc } from '../lib/backgroundIpc'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 const STALE_THREAD_SELECTION_MESSAGE = 'The selected project location is no longer available.'
@@ -414,6 +416,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         },
       }))
     } catch (err) {
+      if (isAppShuttingDownError(err)) return
       console.error('Failed to fetch queue threads', err)
     }
   },
@@ -968,7 +971,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
     })
     if (id && wasUnread) {
-      void window.api.invoke('threads:setUnread', id, false)
+      void settleBackgroundIpc(window.api.invoke('threads:setUnread', id, false))
     }
   },
 
@@ -995,7 +998,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     const current = !!get().unreadByThread[threadId]
     if (current === nextUnread) return
     set((s) => ({ unreadByThread: { ...s.unreadByThread, [threadId]: nextUnread } }))
-    void window.api.invoke('threads:setUnread', threadId, nextUnread)
+    void settleBackgroundIpc(window.api.invoke('threads:setUnread', threadId, nextUnread))
   },
 
   setName: (threadId, name) =>

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { appShuttingDownMessage } from '@polycode/shared'
 import type { Thread } from '../../types/ipc'
 import { useMessageStore } from '../messages'
 import { useThreadStore } from '../threads'
@@ -112,6 +113,61 @@ describe('thread action rollback', () => {
 
     expect(useThreadStore.getState().statusMap['thread-main']).toBe('permission_pending')
     expect(useThreadStore.getState().runStartedAtByThread['thread-main']).toBeUndefined()
+  })
+})
+
+describe('thread background IPC during application shutdown', () => {
+  const invoke = vi.fn()
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('window', { api: { invoke } })
+    useThreadStore.setState({
+      byProject: { 'project-1': [makeThread({ unread: true })] },
+      selectedThreadId: null,
+      statusMap: {},
+      unreadByThread: { 'thread-main': true },
+      queueThreads: [],
+    })
+  })
+
+  it('selecting an unread thread settles a shutdown rejection', async () => {
+    invoke.mockRejectedValue(new Error(appShuttingDownMessage()))
+
+    useThreadStore.getState().select('thread-main')
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+
+    expect(useThreadStore.getState().unreadByThread['thread-main']).toBe(false)
+  })
+
+  it('updating unread state settles a shutdown rejection', async () => {
+    invoke.mockRejectedValue(new Error(appShuttingDownMessage()))
+
+    useThreadStore.getState().setUnread('thread-main', false)
+    await new Promise<void>((resolve) => queueMicrotask(resolve))
+
+    expect(useThreadStore.getState().unreadByThread['thread-main']).toBe(false)
+  })
+
+  it('does not log an expected shutdown rejection while refreshing the queue', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    invoke.mockRejectedValue(new Error(appShuttingDownMessage()))
+
+    await useThreadStore.getState().fetchQueue()
+
+    expect(consoleError).not.toHaveBeenCalled()
+    consoleError.mockRestore()
+  })
+
+  it('still logs an unexpected failure while refreshing the queue', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const error = new Error('IPC unavailable')
+    invoke.mockRejectedValue(error)
+
+    await useThreadStore.getState().fetchQueue()
+
+    expect(consoleError).toHaveBeenCalledWith('Failed to fetch queue threads', error)
+    consoleError.mockRestore()
   })
 })
 
