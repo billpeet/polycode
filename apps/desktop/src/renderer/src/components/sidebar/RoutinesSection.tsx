@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Pencil, Play, Plus, X } from 'lucide-react'
 import { Routine, Thread } from '../../types/ipc'
 import RoutineEditModal from '../RoutineEditModal'
+import { formatDateTime } from '../../lib/locale'
 
 const RUNS_SHOWN = 10
 
@@ -169,7 +170,7 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
                       title={run.run_detail ?? undefined}
                     >
                       {runStateIcon(run)}
-                      <span className="truncate">{new Date(run.created_at).toLocaleString()}</span>
+                      <span className="truncate">{formatDateTime(run.created_at)}</span>
                     </button>
                     {run.run_state === 'escalated' && (
                       <button

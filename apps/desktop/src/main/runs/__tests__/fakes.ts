@@ -42,6 +42,7 @@ export class FakeStore implements RunStore {
   routines = new Map<string, Routine>()
   runs = new Map<string, Run>()
   transitions: Array<{ runId: string; to: RunState; detail: string | null }> = []
+  spawnedNames: string[] = []
   private spawnCounter = 0
 
   addRoutine(routine: Routine): Routine {
@@ -73,7 +74,8 @@ export class FakeStore implements RunStore {
     if (routine) routine.enabled = false
   }
 
-  spawnRun(routine: Routine, _name: string): Run {
+  spawnRun(routine: Routine, name: string): Run {
+    this.spawnedNames.push(name)
     const run: Run = {
       id: `run-${++this.spawnCounter}`,
       routineId: routine.id,

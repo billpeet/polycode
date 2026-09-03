@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatWakeTime, resolveSnoozePreset, SNOOZE_PRESETS } from '@polycode/shared'
+import { systemLocale } from '../../lib/locale'
 
 export { timeUntil } from '@polycode/shared'
 
@@ -72,7 +73,7 @@ export default function SnoozeMenu({
           >
             <span>{preset.label}</span>
             <span className="flex-shrink-0 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
-              {formatWakeTime(at, now)}
+              {formatWakeTime(at, now, systemLocale())}
             </span>
           </button>
         )

@@ -9,6 +9,8 @@ export { ANTHROPIC_MODELS, OPENAI_MODELS, CURSOR_MODELS, GROK_MODELS, PROVIDERS,
 
 /** Shape of window.api exposed by preload */
 export interface WindowApi {
+  /** OS regional-format locale, which may differ from the app's UI language. */
+  systemLocale?: string
   invoke<C extends LocalChannel>(channel: C, ...args: ChannelArgs<C>): Promise<ChannelResult<C>>
 
   on(channel: string, callback: (...args: unknown[]) => void): () => void

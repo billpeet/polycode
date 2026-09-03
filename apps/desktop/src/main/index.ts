@@ -230,6 +230,7 @@ function createWindow(): BrowserWindow {
     icon: join(__dirname, '../../resources/icon.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
+      additionalArguments: [`--polycode-system-locale=${app.getSystemLocale()}`],
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
@@ -367,6 +368,7 @@ app.whenReady().then(async () => {
     sessions: createRunSessions(() => win),
     notifier: electronRunNotifier,
     clock: { now: () => new Date() },
+    formatTimestamp: (at) => at.toLocaleString(app.getSystemLocale()),
     onChange: () => {
       if (!win.isDestroyed()) emitAppEvent(win, 'routines:changed')
     },

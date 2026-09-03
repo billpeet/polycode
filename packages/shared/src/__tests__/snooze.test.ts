@@ -104,6 +104,12 @@ describe('resolveSnoozePreset', () => {
 })
 
 describe('formatWakeTime', () => {
+  it('accepts the client regional locale', () => {
+    const now = new Date(2026, 8, 1, 12, 0, 0)
+    const at = new Date(2026, 8, 10, 18, 0, 0)
+    expect(formatWakeTime(at, now, 'en-AU')).toMatch(/^10 Sept/)
+  })
+
   it('labels today with only a time', () => {
     const now = new Date(2026, 7, 10, 12, 0, 0)
     expect(formatWakeTime(new Date(2026, 7, 10, 18, 0, 0), now)).not.toMatch(/Tomorrow|,/)

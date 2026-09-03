@@ -4,6 +4,11 @@ import { getHeapStatistics } from 'node:v8'
 
 export type IpcListener = (...args: unknown[]) => void
 
+const SYSTEM_LOCALE_ARG = '--polycode-system-locale='
+const systemLocale = process.argv
+  .find((arg) => arg.startsWith(SYSTEM_LOCALE_ARG))
+  ?.slice(SYSTEM_LOCALE_ARG.length)
+
 // ── Slow-invoke signal ───────────────────────────────────────────────────────
 //
 // Every request/response call already flows through api.invoke, which makes this the one
@@ -44,6 +49,8 @@ function trackSlowInvoke(promise: Promise<unknown>): void {
 }
 
 const api = {
+  systemLocale,
+
   /**
    * Request/response calls are allowlisted from the channel registry, which makes it a
    * runtime trust boundary rather than only a typing convenience. Anything renderer code

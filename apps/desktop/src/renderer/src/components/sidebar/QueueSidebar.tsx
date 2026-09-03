@@ -6,6 +6,7 @@ import { bucketQueueThreads } from '@polycode/shared'
 import { getThreadStatusColor, relativeTime, SidebarResizeHandle, ViewModeSwitch } from './shared'
 import SnoozeMenu, { timeUntil } from './SnoozeMenu'
 import ProjectFavicon from '../ProjectFavicon'
+import { formatDateTime } from '../../lib/locale'
 
 interface QueueSidebarProps {
   queueThreads: QueueThread[]
@@ -115,7 +116,7 @@ function QueueRow({
             </span>
           )}
           {isSnoozed && thread.snoozed_until && (
-            <span className="flex flex-shrink-0 items-center gap-1 rounded px-1" style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }} title={new Date(thread.snoozed_until).toLocaleString()}>
+            <span className="flex flex-shrink-0 items-center gap-1 rounded px-1" style={{ background: 'var(--color-surface-2)', color: 'var(--color-text-muted)' }} title={formatDateTime(thread.snoozed_until)}>
               <Clock size={9} />
               {timeUntil(thread.snoozed_until)}
             </span>

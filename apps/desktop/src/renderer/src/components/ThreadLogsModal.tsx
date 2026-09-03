@@ -2,6 +2,7 @@ import { useCallback, useState, useEffect, useRef } from 'react'
 import { ThreadLogEntry } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { writeClipboardText } from '../lib/clipboard'
+import { formatTime } from '../lib/locale'
 
 const TYPE_COLORS: Record<string, string> = {
   message_sent: '#63b3ed',
@@ -23,7 +24,7 @@ function typeColor(type: string): string {
 function formatTs(ts: string): string {
   try {
     const d = new Date(ts)
-    return d.toLocaleTimeString(undefined, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
+    return formatTime(d, { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 })
   } catch {
     return ts
   }

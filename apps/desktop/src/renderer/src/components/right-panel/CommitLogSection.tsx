@@ -4,6 +4,7 @@ import { useToastStore } from '../../stores/toast'
 import { CommitLogEntry, GitFileChange } from '../../types/ipc'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { formatErrorDetails } from '../../lib/errorDetails'
+import { formatDateTime } from '../../lib/locale'
 
 /** Format an ISO timestamp as a short relative-age label (e.g. "2h ago"). Matches StashSection's style. */
 function shortRelativeTime(iso: string): string {
@@ -194,7 +195,7 @@ export function CommitLogSection({
                   <button
                     onClick={() => void toggleCommit(commit.sha)}
                     className="w-full flex items-center gap-2 px-4 py-1 hover:bg-white/5 transition-colors text-left"
-                    title={`${commit.shortSha}${isMerge ? ' (merge)' : ''}\n${commit.authorName} <${commit.authorEmail}>\n${new Date(commit.authorDate).toLocaleString()}\n\n${commit.subject}`}
+                    title={`${commit.shortSha}${isMerge ? ' (merge)' : ''}\n${commit.authorName} <${commit.authorEmail}>\n${formatDateTime(commit.authorDate)}\n\n${commit.subject}`}
                   >
                     <svg width="7" height="7" viewBox="0 0 8 8" fill="currentColor" style={{ transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s', flexShrink: 0, color: 'var(--color-text-muted)' }}>
                       <path d="M0 2l4 4 4-4z" />

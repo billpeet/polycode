@@ -75,13 +75,29 @@ function harness(clockAt = new Date('2026-08-14T03:05:00')) {
   const changes = { count: 0 }
   worktrees.parents.set('loc-parent', { path: '/repo', connectionType: 'local' })
   const lifecycle = new RunLifecycle(
-    { store, git, worktrees, sessions, notifier, clock, onChange: () => changes.count++ },
+    {
+      store,
+      git,
+      worktrees,
+      sessions,
+      notifier,
+      clock,
+      formatTimestamp: (at) => at.toLocaleString('en-AU'),
+      onChange: () => changes.count++,
+    },
     { tickIntervalMs: null }
   )
   return { lifecycle, store, git, worktrees, sessions, notifier, clock, changes }
 }
 
 describe('firing', () => {
+  it('uses the host regional format in the persisted run name', async () => {
+    const h = harness(new Date('2026-09-04T07:52:36'))
+    h.store.addRoutine(makeRoutine({ name: 'Sentry triage' }))
+    await h.lifecycle.runNow('routine-1')
+    expect(h.store.spawnedNames).toEqual(['Sentry triage — 04/09/2026, 7:52:36 am'])
+  })
+
   it('fires a due cron routine and advances the watermark', async () => {
     const h = harness()
     const routine = h.store.addRoutine(makeRoutine())

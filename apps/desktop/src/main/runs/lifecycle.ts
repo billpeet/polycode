@@ -203,7 +203,7 @@ export class RunLifecycle {
    */
   private async fire(routine: Routine): Promise<string> {
     const firedAt = this.deps.clock.now()
-    const run = this.deps.store.spawnRun(routine, `${routine.name} — ${firedAt.toLocaleString()}`)
+    const run = this.deps.store.spawnRun(routine, `${routine.name} — ${this.deps.formatTimestamp(firedAt)}`)
     this.deps.onChange()
 
     try {

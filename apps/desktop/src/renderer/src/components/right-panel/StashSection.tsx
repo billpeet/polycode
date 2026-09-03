@@ -3,6 +3,7 @@ import { useGitStore } from '../../stores/git'
 import { useToastStore } from '../../stores/toast'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { StashEntry } from '../../types/ipc'
+import { formatDateTime } from '../../lib/locale'
 
 /** Format an ISO timestamp as a short relative-age label (e.g. "2h ago"). */
 function shortRelativeTime(iso: string): string {
@@ -182,7 +183,7 @@ export function StashSection({ projectPath }: { projectPath: string }) {
           <ul>
             {stashes.map((entry) => {
               const age = shortRelativeTime(entry.createdAt)
-              const tooltip = `${entry.ref}${entry.branch ? ` (${entry.branch})` : ''}\n${entry.message}\n${new Date(entry.createdAt).toLocaleString()}`
+              const tooltip = `${entry.ref}${entry.branch ? ` (${entry.branch})` : ''}\n${entry.message}\n${formatDateTime(entry.createdAt)}`
               return (
                 <li
                   key={entry.ref}

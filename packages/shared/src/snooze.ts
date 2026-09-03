@@ -42,16 +42,16 @@ export function isWoken(thread: SnoozableThread, now: Date = new Date()): boolea
  * "This evening" at 9pm must read "Tomorrow, 6:00 PM", not "This evening".
  * Otherwise you snooze for 21 hours believing you snoozed for 3.
  */
-export function formatWakeTime(at: Date, now: Date = new Date()): string {
-  const time = at.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+export function formatWakeTime(at: Date, now: Date = new Date(), locales?: Intl.LocalesArgument): string {
+  const time = at.toLocaleTimeString(locales, { hour: 'numeric', minute: '2-digit' })
   const startOfToday = new Date(now)
   startOfToday.setHours(0, 0, 0, 0)
   const dayOffset = Math.round((new Date(at).setHours(0, 0, 0, 0) - startOfToday.getTime()) / 86_400_000)
 
   if (dayOffset === 0) return time
   if (dayOffset === 1) return `Tomorrow, ${time}`
-  if (dayOffset < 7) return `${at.toLocaleDateString(undefined, { weekday: 'long' })}, ${time}`
-  return `${at.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}, ${time}`
+  if (dayOffset < 7) return `${at.toLocaleDateString(locales, { weekday: 'long' })}, ${time}`
+  return `${at.toLocaleDateString(locales, { month: 'short', day: 'numeric' })}, ${time}`
 }
 
 /** How long until a wake time, for rows in a Snoozed section. */

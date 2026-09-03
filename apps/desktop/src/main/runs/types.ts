@@ -154,6 +154,8 @@ export interface RunLifecycleDeps {
   sessions: RunSessions
   notifier: RunNotifier
   clock: RunClock
+  /** Formats a Run's persisted display timestamp using the host OS regional format. */
+  formatTimestamp: (at: Date) => string
   /** Refresh hint for the renderer (`routines:changed`) — not a domain event. */
   onChange: () => void
 }
