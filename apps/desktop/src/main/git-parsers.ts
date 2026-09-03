@@ -7,6 +7,74 @@ function isFileStatus(value: string): value is GitFileChange['status'] {
   return FILE_STATUSES.includes(value as GitFileChange['status'])
 }
 
+/** Decode the C-style path quoting used by Git's human-readable output formats. */
+function decodeGitPath(value: string): string {
+  if (value.length < 2 || value[0] !== '"' || value.at(-1) !== '"') return value
+
+  const bytes: number[] = []
+  const escapes: Record<string, number> = {
+    a: 0x07,
+    b: 0x08,
+    t: 0x09,
+    n: 0x0a,
+    v: 0x0b,
+    f: 0x0c,
+    r: 0x0d,
+    '"': 0x22,
+    '\\': 0x5c,
+  }
+
+  for (let index = 1; index < value.length - 1; index += 1) {
+    const character = value[index] ?? ''
+    if (character !== '\\') {
+      const codePoint = value.codePointAt(index)
+      if (codePoint === undefined) continue
+      bytes.push(...Buffer.from(String.fromCodePoint(codePoint)))
+      if (codePoint > 0xffff) index += 1
+      continue
+    }
+
+    const escaped = value[++index] ?? ''
+    if (escaped in escapes) {
+      bytes.push(escapes[escaped]!)
+      continue
+    }
+    if (/[0-7]/.test(escaped)) {
+      let octal = escaped
+      while (octal.length < 3 && /[0-7]/.test(value[index + 1] ?? '')) octal += value[++index]
+      bytes.push(Number.parseInt(octal, 8))
+      continue
+    }
+    bytes.push(...Buffer.from(escaped))
+  }
+
+  return Buffer.from(bytes).toString('utf8')
+}
+
+function splitPorcelainRename(value: string): [string, string] | null {
+  let quoted = false
+  let escaped = false
+  for (let index = 0; index <= value.length - 4; index += 1) {
+    const character = value[index]
+    if (escaped) {
+      escaped = false
+      continue
+    }
+    if (quoted && character === '\\') {
+      escaped = true
+      continue
+    }
+    if (character === '"') {
+      quoted = !quoted
+      continue
+    }
+    if (!quoted && value.slice(index, index + 4) === ' -> ') {
+      return [value.slice(0, index), value.slice(index + 4)]
+    }
+  }
+  return null
+}
+
 export function parseNameStatus(output: string): GitFileChange[] {
   if (!output) return []
   const files: GitFileChange[] = []
@@ -17,11 +85,11 @@ export function parseNameStatus(output: string): GitFileChange[] {
     if (status === 'R') {
       const oldPath = parts[1]
       const newPath = parts[2]
-      if (newPath) files.push({ status, path: newPath, oldPath, staged: false })
+      if (newPath) files.push({ status, path: decodeGitPath(newPath), oldPath: oldPath ? decodeGitPath(oldPath) : oldPath, staged: false })
       continue
     }
     const path = parts[1]
-    if (path) files.push({ status, path, staged: false })
+    if (path) files.push({ status, path: decodeGitPath(path), staged: false })
   }
   return files
 }
@@ -35,24 +103,24 @@ export function parsePorcelainStatus(output: string): GitFileChange[] {
     const rest = line.slice(3).trimEnd()
 
     if (stagedCode === 'R' || unstagedCode === 'R') {
-      const arrowIndex = rest.indexOf(' -> ')
+      const rename = splitPorcelainRename(rest)
       files.push({
         status: 'R',
-        path: arrowIndex === -1 ? rest : rest.slice(arrowIndex + 4),
-        oldPath: arrowIndex === -1 ? '' : rest.slice(0, arrowIndex),
+        path: decodeGitPath(rename?.[1] ?? rest),
+        oldPath: rename ? decodeGitPath(rename[0]) : '',
         staged: stagedCode === 'R',
       })
       continue
     }
 
     if (isFileStatus(stagedCode) && stagedCode !== '?') {
-      files.push({ status: stagedCode, path: rest, staged: true })
+      files.push({ status: stagedCode, path: decodeGitPath(rest), staged: true })
     }
     if (isFileStatus(unstagedCode) && unstagedCode !== '?') {
-      files.push({ status: unstagedCode, path: rest, staged: false })
+      files.push({ status: unstagedCode, path: decodeGitPath(rest), staged: false })
     }
     if (stagedCode === '?' && unstagedCode === '?') {
-      files.push({ status: '?', path: rest, staged: false })
+      files.push({ status: '?', path: decodeGitPath(rest), staged: false })
     }
   }
   return files

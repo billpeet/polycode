@@ -20,6 +20,19 @@ describe('git parsers', () => {
     ])
   })
 
+  it('decodes Git-quoted paths from porcelain and name-status output', () => {
+    expect(parsePorcelainStatus(' M "AutoCad Utils.csproj"\nR  "old -> project.csproj" -> "new project.csproj"\n?? "caf\\303\\251.txt"')).toEqual([
+      { status: 'M', path: 'AutoCad Utils.csproj', staged: false },
+      { status: 'R', path: 'new project.csproj', oldPath: 'old -> project.csproj', staged: true },
+      { status: '?', path: 'café.txt', staged: false },
+    ])
+
+    expect(parseNameStatus('M\t"AutoCad Utils.csproj"\nR100\t"old project.csproj"\t"new project.csproj"')).toEqual([
+      { status: 'M', path: 'AutoCad Utils.csproj', staged: false },
+      { status: 'R', path: 'new project.csproj', oldPath: 'old project.csproj', staged: false },
+    ])
+  })
+
   it('parses commit records including merges and tabs in subjects', () => {
     const line = 'abcdef\tabc123\tAda\tada@example.com\t2026-07-29T09:00:00Z\tparent1 parent2\tSubject\twith tab'
     expect(parseCommitLog(`${line}\nmalformed`)).toEqual([{
