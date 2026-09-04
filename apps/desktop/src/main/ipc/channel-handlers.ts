@@ -1215,10 +1215,13 @@ export const channelHandlers = {
   },
 
   /**
-   * `invalidateRepoGitCache` is passed as a *reference*, not a call: the watcher fires it
-   * every time it sees the repo change. Calling it here instead would invalidate once,
-   * immediately, and hand the watcher `undefined` — a mistake the recorded call log alone
-   * cannot see, so the characterisation test pins the callback's identity.
+   * The watcher used to receive `invalidateRepoGitCache` as a callback and fire it on every
+   * filesystem change it saw. During an active agent run the worktree changes continuously,
+   * so the git read cache's 5s status TTL (git.ts CACHE_POLICY) was wiped before it could
+   * ever serve a hit — every renderer refresh tick became a fresh `git status --porcelain` +
+   * `git diff --numstat`. The callback is gone: mutations invalidate their own scope inside
+   * `git.ts`, external changes are bounded by the TTL, and the watcher's only job is to tell
+   * the renderer *that* something changed (now throttled inside `startRepoGitWatch`).
    *
    * `ctx.window` is the watcher's event target, the same shape as `files:watchStart`: the IPC
    * path closed over the window `registerIpcHandlers` was given and the control-RPC path took
@@ -1227,8 +1230,7 @@ export const channelHandlers = {
    * Note what is absent: no `getConfigForPath`. The repo watcher is `fs.watch` underneath and
    * is keyed on the path alone — a remotely-hosted repo simply reports "not watching".
    */
-  'git:watchStart': (ctx, repoPath) =>
-    startRepoGitWatch(ctx.window, repoPath, invalidateRepoGitCache),
+  'git:watchStart': (ctx, repoPath) => startRepoGitWatch(ctx.window, repoPath),
 
   // Passing the `: void` callee's value through, per the rule above. Both pre-fold paths
   // discarded it — control-rpc.ts called it as a statement and followed it with

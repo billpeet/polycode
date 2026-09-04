@@ -130,13 +130,12 @@ const H = vi.hoisted(() => {
      */
     execFileFails: false,
     /**
-     * The third argument `git:watchStart` hands `startRepoGitWatch` — the invalidation
-     * callback the watcher fires on every repo change.
-     *
-     * Captured as a value rather than logged because the recorder renders a function as an
-     * empty slot (`JSON.stringify(fn)` is `undefined`), so the call log alone cannot tell
-     * `invalidateRepoGitCache` from any other function, nor from the `undefined` a *call*
-     * would leave in that slot.
+     * The third argument `git:watchStart` hands `startRepoGitWatch`. Historically this was
+     * the `invalidateRepoGitCache` callback; it is now asserted *absent* — the watcher
+     * wiping the git read cache on every filesystem change is the bug that disabled the
+     * status TTL during agent runs. Captured as a value because the recorder renders a
+     * function (and `undefined`) as an empty slot, so the call log alone cannot tell them
+     * apart.
      */
     repoWatchCallback: null as unknown,
   }
@@ -450,10 +449,10 @@ vi.mock('../file-watch', () => H.autoModule('fileWatch', {
   startFileWatch: H.stub('fileWatch.startFileWatch', true),
   // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
   stopFileWatch: H.stub('fileWatch.stopFileWatch', 'RET_stopFileWatch'),
-  // The repo watcher behind `git:watchStart`. It captures its `onChanged` argument so the
-  // callback's *identity* is assertable — see `H.state.repoWatchCallback`.
+  // The repo watcher behind `git:watchStart`. It captures a would-be third argument so the
+  // test can assert no invalidation callback is wired — see `H.state.repoWatchCallback`.
   startRepoGitWatch: H.stub('fileWatch.startRepoGitWatch', (...args: unknown[]) => {
-    H.state.repoWatchCallback = args[2]
+    H.state.repoWatchCallback = args.length > 2 ? args[2] : undefined
     return true
   }),
   // Sentinel for a `: void` callee — see "handlers pass the callee's result through".
@@ -2506,27 +2505,22 @@ describe('git:* — the reads, and the three mutations that sit among them', () 
     ])
   })
 
-  it('git:watchStart hands the window and the invalidation callback to the watcher', async () => {
-    // `invalidateRepoGitCache` is passed as a *reference*, not a call: the watcher fires it
-    // on every repo change it sees. Calling it here instead would invalidate once,
-    // immediately, and leave the watcher with `undefined` — and the recorded call would look
-    // almost identical, because the recorder renders a function argument as an empty slot.
-    // Hence the identity assertion, and the "no invalidateGitCache" one.
-    const { invalidateRepoGitCache } = await import('../ipc/thread-context')
-
+  it('git:watchStart hands the window — and no invalidation callback — to the watcher', async () => {
+    // The watcher used to receive `invalidateRepoGitCache` and fire it on every filesystem
+    // change, which wiped the 5s status TTL continuously during agent runs (see the handler
+    // comment). The callback's *absence* is now the pinned behaviour: the stub captures a
+    // would-be third argument, and there must not be one.
     const ipc = await viaIpc('git:watchStart', ['C:/repo'])
     const ipcCallback = H.state.repoWatchCallback
     const rpc = await viaControlRpc('git:watchStart', ['C:/repo'])
 
     expect(rpc).toEqual(ipc)
-    // The trailing comma inside the brackets is the callback's slot: present, but rendered
-    // empty because `JSON.stringify(fn)` is `undefined`. Its presence pins the argument
-    // count and order; `ipcCallback` below pins which function it is.
-    expect(ipc).toEqual([`fileWatch.startRepoGitWatch([${JSON.stringify(window)},"C:/repo",])`])
+    // Two arguments only: window and path. No trailing callback slot.
+    expect(ipc).toEqual([`fileWatch.startRepoGitWatch([${JSON.stringify(window)},"C:/repo"])`])
     // Both transports resolve the same BrowserWindow — the IPC path closed over the one
     // `registerIpcHandlers` was given, the control-RPC path took it as a parameter.
-    expect(ipcCallback).toBe(invalidateRepoGitCache)
-    expect(H.state.repoWatchCallback).toBe(invalidateRepoGitCache)
+    expect(ipcCallback).toBeUndefined()
+    expect(H.state.repoWatchCallback).toBeUndefined()
     // Keyed on the path alone: no getConfigForPath, and nothing invalidated up front.
     expect(ipc.some((entry) => entry.includes('getLocationByPath'))).toBe(false)
     expect(ipc.some((entry) => entry.includes('invalidateGitCache'))).toBe(false)

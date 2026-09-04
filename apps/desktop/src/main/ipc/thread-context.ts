@@ -86,12 +86,13 @@ export function getConfigForPath(path: string): { ssh: SshConfig | null; wsl: Ws
  * Invalidate a repo's git cache when all you have is its path.
  *
  * It used to be the trailing line of 24 `git:*` handlers; every `git.ts` mutation now
- * invalidates its own scope, so three consumers are left, and all three genuinely lack the
+ * invalidates its own scope, so two consumers are left, and both genuinely lack the
  * `ssh`/`wsl` pair that this function's `getLocationByPath` recovers:
  *
- * - `git:watchStart` passes it as a **callback** to `startRepoGitWatch`. The watcher fires it
- *   on every filesystem change it sees, from outside any git operation, so there is no call
- *   site that could hold a host config. This is the reason the helper still exists.
+ * (The repo watcher used to be the third — `git:watchStart` passed this as a callback fired
+ * on every filesystem change. That wiped the status TTL continuously during agent runs and
+ * is gone; external changes are now bounded by the TTL alone.)
+ *
  * - `forge:pr:checkout` — the mutation is a forge adapter method, not a `git.ts` function.
  * - `git:publishBranch`'s `finally` — a composite whose steps each self-invalidate; see the
  *   note on that handler for why the belt-and-braces call is kept.

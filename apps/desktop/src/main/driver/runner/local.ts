@@ -6,6 +6,17 @@ import { Runner, RunCommand, RunResult, RunScriptCommand, ScriptCommand, SpawnCo
 import { winQuote, augmentWindowsPath, getCmdExe, getPowerShellExe } from './utils'
 import { collectProcess } from './collect'
 
+/**
+ * Binaries safe to spawn without cmd.exe on Windows. Bare names resolve via CreateProcess's
+ * PATH search, which finds .exe but not .cmd/.bat shims — so this list is conservative:
+ * `git` (always git.exe) and anything the caller already resolved to an explicit .exe path.
+ * Everything else keeps the shell so npm-style .cmd wrappers continue to work.
+ */
+function isDirectWindowsExecutable(binary: string): boolean {
+  const lower = binary.toLowerCase()
+  return lower === 'git' || lower.endsWith('.exe')
+}
+
 export class LocalRunner implements Runner {
   readonly type = 'local' as const
 
@@ -74,6 +85,25 @@ export class LocalRunner implements Runner {
           stdio: ['pipe', 'pipe', 'pipe'],
         })
         proc.on('close', () => { try { unlinkSync(batchPath) } catch { /* ignore */ } })
+        if (stdinContent !== undefined) {
+          proc.stdin?.write(stdinContent)
+        }
+        if (!keepStdinOpen) proc.stdin?.end()
+        return proc
+      } else if (isDirectWindowsExecutable(binary)) {
+        // Real .exe binaries don't need cmd.exe: shell:true exists solely for npm-style
+        // .cmd wrappers. Routing git through the shell doubled the process count on the
+        // hottest spawn path in the app (cmd.exe + git.exe per invocation, ~100ms floor —
+        // Grafana showed git:head p50 at 101ms for what is a ~10ms rev-parse) and forced
+        // hand-rolled winQuote quoting. Direct spawn passes args verbatim.
+        console.log('[LocalRunner] Spawning (Windows/direct):', binary, args.join(' '))
+        const proc = spawn(binary, args, {
+          cwd: workDir,
+          env,
+          shell: false,
+          windowsHide: true,
+          stdio: ['pipe', 'pipe', 'pipe'],
+        })
         if (stdinContent !== undefined) {
           proc.stdin?.write(stdinContent)
         }

@@ -18,6 +18,23 @@ interface RepoWatchEntry {
 const watchers = new Map<string, FileWatchEntry>()
 const repoWatchers = new Map<string, RepoWatchEntry>()
 
+/**
+ * Trailing-throttle window for `git:repoChanged`. The old behaviour was a resettable 1s
+ * debounce: during an active agent run the worktree is written continuously, so the debounce
+ * either never settled or fired every ~1.75s forever — the renderer then ran its
+ * isRepo→status→head refresh chain on every tick (observed fleet-wide at up to ~850
+ * `git:status` IPC calls per second). A throttle guarantees at most one emit per window and
+ * always settles.
+ */
+const REPO_CHANGE_THROTTLE_MS = 5_000
+
+/**
+ * Path segments whose churn says nothing about git state the UI shows. `.git/objects` (and
+ * pack files under it) is written on every fetch/gc without changing status output;
+ * `node_modules` is the classic build-noise firehose.
+ */
+const REPO_NOISE_SEGMENT = /(^|[\\/])(node_modules|\.git[\\/]objects)([\\/]|$)/
+
 function closeWatchEntry(filePath: string, entry: FileWatchEntry): void {
   if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
   entry.watcher.close()
@@ -118,7 +135,7 @@ export function stopAllFileWatches(): void {
   }
 }
 
-export function startRepoGitWatch(win: BrowserWindow, repoPath: string, onChanged?: (repoPath: string) => void): boolean {
+export function startRepoGitWatch(win: BrowserWindow, repoPath: string): boolean {
   const existing = repoWatchers.get(repoPath)
   if (existing) {
     existing.refCount += 1
@@ -128,24 +145,28 @@ export function startRepoGitWatch(win: BrowserWindow, repoPath: string, onChange
   if (!existsSync(repoPath)) return false
 
   try {
-    const watcher = watch(repoPath, { recursive: true }, () => {
+    // Trailing throttle, not a debounce: the first change schedules one emit and later
+    // changes inside the window collapse into it. Freshness of the *data* behind the emit is
+    // the job of the git read cache's TTL (git.ts), which this watcher deliberately no longer
+    // invalidates — see the `git:watchStart` handler.
+    const watcher = watch(repoPath, { recursive: true }, (_eventType, changedName) => {
+      if (typeof changedName === 'string' && REPO_NOISE_SEGMENT.test(changedName)) return
+
       const current = repoWatchers.get(repoPath)
-      if (!current) return
-      if (current.debounceTimer) clearTimeout(current.debounceTimer)
+      if (!current || current.debounceTimer) return
 
       current.debounceTimer = setTimeout(() => {
         const latest = repoWatchers.get(repoPath)
         if (!latest) return
         latest.debounceTimer = null
 
-        onChanged?.(repoPath)
         if (!win.isDestroyed()) {
           emitAppEvent(win, 'git:repoChanged', {
             path: repoPath,
             changedAt: Date.now(),
           })
         }
-      }, 1000)
+      }, REPO_CHANGE_THROTTLE_MS)
     })
 
     repoWatchers.set(repoPath, { watcher, refCount: 1, debounceTimer: null })
