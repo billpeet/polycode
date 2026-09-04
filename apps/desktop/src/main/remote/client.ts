@@ -26,6 +26,15 @@ interface ProxyResult {
 }
 
 const RPC_TIMEOUT_MS = 10_000
+// Text generation runs an LLM subprocess on the host. Match system-text's own two-minute
+// command budget so the remote transport does not give up while that subprocess is healthy.
+const TEXT_GENERATION_RPC_TIMEOUT_MS = 120_000
+const TEXT_GENERATION_RPC_CHANNELS: ReadonlySet<string> = new Set([
+  'git:generateCommitMessage',
+  'git:generateCommitMessageWithContext',
+  'git:generateBranchName',
+  'git:generatePullRequestText',
+])
 // Channels whose host-side handler does the filesystem work inline (worktree removal is a
 // `git worktree remove --force` plus a recursive delete of a directory that routinely holds
 // `node_modules`). A 10s budget guarantees these fail on the client while the host happily
@@ -446,7 +455,11 @@ export class RemoteControlClient {
 
   private async invoke(host: RemoteHost, channel: string, args: unknown[]): Promise<unknown> {
     const controller = new AbortController()
-    const timeoutMs = SLOW_RPC_CHANNELS.has(channel) ? SLOW_RPC_TIMEOUT_MS : RPC_TIMEOUT_MS
+    const timeoutMs = SLOW_RPC_CHANNELS.has(channel)
+      ? SLOW_RPC_TIMEOUT_MS
+      : TEXT_GENERATION_RPC_CHANNELS.has(channel)
+        ? TEXT_GENERATION_RPC_TIMEOUT_MS
+        : RPC_TIMEOUT_MS
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     const startedAt = Date.now()
     // Remote round trips were previously invisible in telemetry: perf.ts times the outer

@@ -185,6 +185,31 @@ describe('RemoteControlClient connectivity failures', () => {
     client.stop()
   })
 
+  it.each([
+    'git:generateCommitMessage',
+    'git:generateCommitMessageWithContext',
+    'git:generateBranchName',
+    'git:generatePullRequestText',
+  ])('gives text generation channel %s a two-minute budget', async (channel) => {
+    vi.useFakeTimers()
+    mockHealthyHostWithHungRpc()
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(0)
+
+    let outcome: unknown
+    const request = client.invokeIfActive(channel, []).then(
+      () => (outcome = 'resolved'),
+      (error: unknown) => (outcome = error),
+    )
+
+    await vi.advanceTimersByTimeAsync(119_000)
+    expect(outcome).toBeUndefined()
+    await vi.advanceTimersByTimeAsync(1_000)
+    await request
+    expect(outcome).toMatchObject({ code: 'REMOTE_REQUEST_TIMEOUT' })
+    client.stop()
+  })
+
   it('does not poison the circuit when a healthy host answers too slowly', async () => {
     vi.useFakeTimers()
     mockHealthyHostWithHungRpc()
