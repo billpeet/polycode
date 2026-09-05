@@ -47,12 +47,36 @@ export function eventRole(event: OutputEvent): Message['role'] {
 }
 
 /**
- * Append a streamed message to a list, merging consecutive same-scope
+ * Fold accumulator. `tailMetadata` caches the parsed metadata of the last message so a
+ * long run of appends never re-parses the tail's JSON on every step.
+ */
+interface FoldState {
+  messages: Message[]
+  tailMetadata: Record<string, unknown> | null
+}
+
+function replaceTail(state: FoldState, message: Message, metadata: Record<string, unknown> | null): void {
+  state.messages[state.messages.length - 1] = message
+  state.tailMetadata = metadata
+}
+
+function pushTail(state: FoldState, message: Message, metadata: Record<string, unknown> | null): void {
+  state.messages.push(message)
+  state.tailMetadata = metadata
+}
+
+/**
+ * Append a streamed message to the accumulator, merging consecutive same-scope
  * text/thinking chunks and same-tool_use_id tool_result chunks into the
  * previous bubble. This encodes the streaming display rules shared by the
  * desktop renderer and the mobile app.
+ *
+ * Mutates `state` in place. The previous implementation rebuilt the array on
+ * every step (`[...messages, incoming]`), which made folding O(n²): a real 74k-row
+ * session took 28s to fold on the Electron main thread (the SQLite read took 0.3s),
+ * and the renderer re-folded the whole transcript on every streamed chunk.
  */
-function appendOrMergeMessage(messages: Message[], incoming: Message): Message[] {
+function appendOrMergeMessage(state: FoldState, incoming: Message): void {
   const nextMetadata = parseMetadata(incoming.metadata)
   const incomingType = nextMetadata?.type
 
@@ -64,15 +88,17 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
     incoming.content === LEGACY_CODEX_REASONING_SUMMARY_MARKER &&
     isCodexReasoningSummary(nextMetadata)
   ) {
-    return messages
+    return
   }
 
+  const { messages } = state
   const previous = messages[messages.length - 1]
   if (!previous || previous.role !== incoming.role) {
-    return [...messages, incoming]
+    pushTail(state, incoming, nextMetadata)
+    return
   }
 
-  const previousMetadata = parseMetadata(previous.metadata)
+  const previousMetadata = state.tailMetadata
 
   // Never merge across agent scopes: main-scope assistant text followed by
   // sub-agent assistant text (both role 'assistant') must stay separate bubbles.
@@ -83,20 +109,24 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
     // messages, never streaming chunks — don't merge them into the previous
     // bubble or fuse consecutive user messages together.
     if (nextMetadata?.role === 'user' || previousMetadata?.role === 'user') {
-      return [...messages, incoming]
+      pushTail(state, incoming, nextMetadata)
+      return
     }
     const previousType = previousMetadata?.type
     if ((!previousType || previousType === 'text') && sameScope) {
-      return [
-        ...messages.slice(0, -1),
+      replaceTail(
+        state,
         {
           ...previous,
           content: previous.content + incoming.content,
           created_at: incoming.created_at,
         },
-      ]
+        previousMetadata,
+      )
+      return
     }
-    return [...messages, incoming]
+    pushTail(state, incoming, nextMetadata)
+    return
   }
 
   if (incomingType === 'thinking') {
@@ -114,8 +144,8 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
         isCodexSummaryPair && !isSameCodexReasoningSummaryPart(previousMetadata, nextMetadata)
           ? '\n\n'
           : ''
-      return [
-        ...messages.slice(0, -1),
+      replaceTail(
+        state,
         {
           ...previous,
           content: previous.content + separator + incoming.content,
@@ -124,9 +154,12 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
           metadata: isCodexSummaryPair ? incoming.metadata : previous.metadata,
           created_at: incoming.created_at,
         },
-      ]
+        isCodexSummaryPair ? nextMetadata : previousMetadata,
+      )
+      return
     }
-    return [...messages, incoming]
+    pushTail(state, incoming, nextMetadata)
+    return
   }
 
   if (incomingType === 'tool_result') {
@@ -139,14 +172,13 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
     const previousToolUseId = typeof previousMetadata?.tool_use_id === 'string' ? previousMetadata.tool_use_id : null
     const nextToolUseId = typeof nextMetadata?.tool_use_id === 'string' ? nextMetadata.tool_use_id : null
     if (!previousIsToolResult || !previousToolUseId || !nextToolUseId || previousToolUseId !== nextToolUseId) {
-      return [...messages, incoming]
+      pushTail(state, incoming, nextMetadata)
+      return
     }
 
     if (nextMetadata?.authoritative === true) {
-      return [
-        ...messages.slice(0, -1),
-        { ...incoming, id: previous.id },
-      ]
+      replaceTail(state, { ...incoming, id: previous.id }, nextMetadata)
+      return
     }
 
     const previousContent = previous.content
@@ -155,24 +187,42 @@ function appendOrMergeMessage(messages: Message[], incoming: Message): Message[]
         ? incoming.content
         : previousContent + incoming.content
 
-    return [
-      ...messages.slice(0, -1),
+    replaceTail(
+      state,
       {
         ...previous,
         content: nextContent,
         metadata: incoming.metadata,
         created_at: incoming.created_at,
       },
-    ]
+      nextMetadata,
+    )
+    return
   }
 
-  return [...messages, incoming]
+  pushTail(state, incoming, nextMetadata)
 }
 
 /**
  * Fold persisted or streamed messages into their display form using the same
- * merge rules in every caller.
+ * merge rules in every caller. O(n); returns a new array.
  */
 export function foldMessages(messages: Message[]): Message[] {
-  return messages.reduce<Message[]>(appendOrMergeMessage, [])
+  const state: FoldState = { messages: [], tailMetadata: null }
+  for (const message of messages) appendOrMergeMessage(state, message)
+  return state.messages
+}
+
+/**
+ * Append one streamed message to an already-folded transcript, returning a new
+ * array (the input is not mutated, so it is safe for immutable stores). O(n) in
+ * the pointer copy only — it never re-folds the prefix, which is what made every
+ * streamed chunk O(n²) before.
+ */
+export function appendFoldedMessage(folded: Message[], incoming: Message): Message[] {
+  const messages = folded.slice()
+  const tail = messages[messages.length - 1]
+  const state: FoldState = { messages, tailMetadata: tail ? parseMetadata(tail.metadata) : null }
+  appendOrMergeMessage(state, incoming)
+  return state.messages
 }

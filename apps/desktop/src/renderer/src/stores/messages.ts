@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { eventRole, foldMessages } from '@polycode/shared'
+import { appendFoldedMessage, eventRole } from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
 import { isRemoteTransportError } from '../lib/remoteErrors'
 
@@ -77,7 +77,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
     set((s) => ({
       messagesByThread: {
         ...s.messagesByThread,
-        [threadId]: foldMessages([...(s.messagesByThread[threadId] ?? []), msg])
+        [threadId]: appendFoldedMessage(s.messagesByThread[threadId] ?? [], msg)
       }
     }))
   },
@@ -98,7 +98,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
     set((s) => ({
       messagesBySession: {
         ...s.messagesBySession,
-        [sessionId]: foldMessages([...(s.messagesBySession[sessionId] ?? []), msg])
+        [sessionId]: appendFoldedMessage(s.messagesBySession[sessionId] ?? [], msg)
       }
     }))
   },
