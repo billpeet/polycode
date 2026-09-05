@@ -11,7 +11,7 @@ import {
   type TextInputProps,
   type ViewStyle,
 } from 'react-native'
-import { colors } from '@/theme/colors'
+import { colors, radii } from '@/theme/colors'
 
 export function Card(props: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
   return <View style={[styles.card, props.style]}>{props.children}</View>
@@ -86,18 +86,26 @@ export function EmptyState(props: { title: string; subtitle?: string }) {
   )
 }
 
-export function Chip(props: { label: string; onPress?: () => void; active?: boolean; color?: string }) {
+export function Chip(props: {
+  label: string
+  onPress?: () => void
+  active?: boolean
+  /** Text/border colour when active; defaults to the accent. */
+  color?: string
+  /** Background when active; defaults to the accent tint. */
+  tint?: string
+}) {
   return (
     <Pressable
       onPress={props.onPress}
       disabled={!props.onPress}
       style={({ pressed }) => [
         styles.chip,
-        props.active && { borderColor: props.color ?? colors.claude, backgroundColor: colors.surface2 },
+        props.active && { borderColor: props.color ?? colors.accent, backgroundColor: props.tint ?? colors.accentTint },
         pressed && { opacity: 0.7 },
       ]}
     >
-      <Text style={[styles.chipText, props.active && { color: props.color ?? colors.claude }]} numberOfLines={1}>
+      <Text style={[styles.chipText, props.active && { color: props.color ?? colors.accent }]} numberOfLines={1}>
         {props.label}
       </Text>
     </Pressable>
@@ -107,7 +115,7 @@ export function Chip(props: { label: string; onPress?: () => void; active?: bool
 const styles = StyleSheet.create({
   card: {
     backgroundColor: colors.surface,
-    borderRadius: 12,
+    borderRadius: radii.card,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 14,
@@ -137,10 +145,10 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   input: {
-    backgroundColor: colors.surface,
+    backgroundColor: colors.surface2,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
     paddingVertical: 10,
     color: colors.text,
@@ -165,7 +173,7 @@ const styles = StyleSheet.create({
   chip: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 999,
+    borderRadius: radii.pill,
     paddingVertical: 5,
     paddingHorizontal: 11,
     backgroundColor: colors.surface,

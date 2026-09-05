@@ -1,3 +1,4 @@
+import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
@@ -19,10 +20,12 @@ import {
   SNOOZE_PRESETS,
   timeUntil,
 } from '@polycode/shared'
-import { QUEUE_PAGE_SIZE, useThreadsStore } from '@/stores/threads'
-import { useUiStore } from '@/stores/ui'
-import { colors } from '@/theme/colors'
+import { openThread } from '@/lib/navigation'
+import { QUEUE_BADGE_LABEL, queueBadgeKind } from '@/lib/queue-badge'
 import { relativeTime } from '@/lib/time'
+import { QUEUE_PAGE_SIZE, useThreadsStore } from '@/stores/threads'
+import { useUiStore, type QueueFilter } from '@/stores/ui'
+import { badge, colors, radii, sectionLabel } from '@/theme/colors'
 import { ThreadStatusIndicator } from './StatusDot'
 import { ActionSheet } from './ActionSheet'
 
@@ -31,8 +34,25 @@ const SEARCH_DEBOUNCE_MS = 200
 
 type SnoozeTarget = { thread: QueueThread }
 
+/** Desktop tree rule: a running thread's unread flag is not yet a claim on attention. */
+function isUnreadForAttention(thread: QueueThread): boolean {
+  return thread.unread && thread.status !== 'running' && thread.status !== 'stopping'
+}
+
+function matchesFilter(thread: QueueThread, filter: QueueFilter): boolean {
+  if (filter === 'all') return true
+  if (filter === 'unread') return isUnreadForAttention(thread)
+  return thread.project_id === filter.projectId
+}
+
+function matchesSearch(thread: QueueThread, term: string): boolean {
+  if (!term) return true
+  return thread.name.toLowerCase().includes(term) || thread.project_name.toLowerCase().includes(term)
+}
+
 /**
- * A single Queue row.
+ * A single Queue row: status, title, `project · location · when`, a preview
+ * line, and a badge naming what the thread is waiting on.
  *
  * Rows carry their project name because the Queue is cross-project — without
  * it "fix the parser" is ambiguous across three repos. Actions live behind a
@@ -47,13 +67,18 @@ function QueueRow(props: {
   onPress: (thread: QueueThread) => void
 }) {
   const { thread, woken } = props
-  const selectedThreadId = useUiStore((s) => s.selectedThreadId)
-  const selected = selectedThreadId === thread.id
   const snoozed = isSnoozed(thread)
+  const badgeKind = queueBadgeKind(thread)
 
-  const subtitle = [
+  const when =
+    snoozed && thread.snoozed_until
+      ? `⏰ ${timeUntil(thread.snoozed_until)}`
+      : relativeTime(thread.last_turn_completed_at ?? thread.updated_at)
+  const location = thread.location_label ?? thread.git_branch
+  const meta = [
     thread.project_name,
-    thread.location_is_worktree && thread.location_label ? `⎇ ${thread.location_label}` : thread.location_label,
+    location ? `${thread.location_is_worktree ? '⎇ ' : ''}${location}` : null,
+    when,
   ]
     .filter(Boolean)
     .join(' · ')
@@ -62,30 +87,31 @@ function QueueRow(props: {
     <Pressable
       onPress={() => props.onPress(thread)}
       onLongPress={() => props.onLongPress(thread)}
-      style={({ pressed }) => [
-        styles.row,
-        woken && styles.rowWoken,
-        selected && styles.rowSelected,
-        pressed && { opacity: 0.7 },
-      ]}
+      style={({ pressed }) => [styles.row, woken && styles.rowWoken, pressed && { opacity: 0.7 }]}
     >
-      <ThreadStatusIndicator status={thread.status} unread={thread.unread} size={7} />
-      <View style={styles.rowBody}>
-        <Text
-          style={[styles.rowName, thread.unread && { fontWeight: '700', color: '#ffffff' }]}
-          numberOfLines={1}
-        >
-          {thread.name}
-        </Text>
-        <Text style={styles.rowMeta} numberOfLines={1}>
-          {subtitle}
-        </Text>
+      <View style={styles.rowStatus}>
+        <ThreadStatusIndicator status={thread.status} unread={thread.unread} size={8} />
       </View>
-      {snoozed && thread.snoozed_until ? (
-        <Text style={styles.rowWhen}>⏰ {timeUntil(thread.snoozed_until)}</Text>
-      ) : (
-        <Text style={styles.rowWhen}>{relativeTime(thread.last_turn_completed_at ?? thread.updated_at)}</Text>
-      )}
+      <View style={styles.rowBody}>
+        <View style={styles.rowTitleLine}>
+          <Text style={[styles.rowName, thread.unread && styles.rowNameUnread]} numberOfLines={1}>
+            {thread.name}
+          </Text>
+          {badgeKind ? (
+            <View style={[styles.badge, { backgroundColor: badge[badgeKind].bg }]}>
+              <Text style={[styles.badgeText, { color: badge[badgeKind].fg }]}>{QUEUE_BADGE_LABEL[badgeKind]}</Text>
+            </View>
+          ) : null}
+        </View>
+        <Text style={styles.rowMeta} numberOfLines={1}>
+          {meta}
+        </Text>
+        {thread.preview ? (
+          <Text style={[styles.rowPreview, thread.preview_is_error && { color: colors.danger }]} numberOfLines={1}>
+            {thread.preview.replace(/\s+/g, ' ').trim()}
+          </Text>
+        ) : null}
+      </View>
     </Pressable>
   )
 }
@@ -94,9 +120,22 @@ function SectionHeader(props: { label: string; count: number }) {
   if (props.count === 0) return null
   return (
     <View style={styles.sectionHeader}>
-      <Text style={styles.sectionHeaderText}>{props.label}</Text>
+      <Text style={sectionLabel}>{props.label}</Text>
       <Text style={styles.sectionHeaderCount}>{props.count}</Text>
     </View>
+  )
+}
+
+function FilterChip(props: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={props.onPress}
+      style={({ pressed }) => [styles.filterChip, props.active && styles.filterChipActive, pressed && { opacity: 0.7 }]}
+    >
+      <Text style={[styles.filterChipText, props.active && { color: colors.accent }]} numberOfLines={1}>
+        {props.label}
+      </Text>
+    </Pressable>
   )
 }
 
@@ -106,18 +145,21 @@ function SectionHeader(props: { label: string; count: number }) {
  * Expansion is deliberately ephemeral (not persisted): these are places you
  * visit to retrieve something, not a view state you want restored on launch.
  * Paging and search both run server-side so the section never lies about what
- * exists beyond the first page.
+ * exists beyond the first page. The filter chips, by contrast, are applied
+ * client-side over each page — so a filtered page can look short, and "Show
+ * more" may be needed to reach matching rows further down.
  */
 function CollapsedQueueSection(props: {
   label: string
   variant: 'snoozed' | 'archived'
   search: string
+  filter: QueueFilter
   onSelect: (thread: QueueThread) => void
   onLongPress: (thread: QueueThread) => void
   /** Bumped by the parent whenever a mutation may have changed membership. */
   revision: number
 }) {
-  const { variant, search, revision } = props
+  const { variant, search, filter, revision } = props
   const [expanded, setExpanded] = useState(false)
   const [threads, setThreads] = useState<QueueThread[]>([])
   const [offset, setOffset] = useState(0)
@@ -166,6 +208,8 @@ function CollapsedQueueSection(props: {
     }
   }, [open, fetchPage, revision])
 
+  const visible = threads.filter((t) => matchesFilter(t, filter))
+
   return (
     <View>
       <Pressable style={styles.collapsedHeader} onPress={() => setExpanded((v) => !v)}>
@@ -175,16 +219,9 @@ function CollapsedQueueSection(props: {
       </Pressable>
       {open ? (
         <View>
-          {threads.length === 0 && !loading ? (
-            <Text style={styles.emptySection}>Nothing here.</Text>
-          ) : null}
-          {threads.map((thread) => (
-            <QueueRow
-              key={thread.id}
-              thread={thread}
-              onPress={props.onSelect}
-              onLongPress={props.onLongPress}
-            />
+          {visible.length === 0 && !loading ? <Text style={styles.emptySection}>Nothing here.</Text> : null}
+          {visible.map((thread) => (
+            <QueueRow key={thread.id} thread={thread} onPress={props.onSelect} onLongPress={props.onLongPress} />
           ))}
           {!exhausted && threads.length > 0 ? (
             <Pressable style={styles.showMore} onPress={() => void fetchPage(offset + QUEUE_PAGE_SIZE)}>
@@ -202,9 +239,11 @@ function CollapsedQueueSection(props: {
  *
  * Ordering is not decided here — `bucketQueueThreads` in @polycode/shared is
  * the single source of that truth, shared with the desktop so the two clients
- * cannot disagree about what needs the user first.
+ * cannot disagree about what needs the user first. Filter chips and search
+ * narrow the *input* to bucketing, so there is only one bucketing pass.
  */
 export function QueueView() {
+  const router = useRouter()
   const queueThreads = useThreadsStore((s) => s.queueThreads)
   const queueLoading = useThreadsStore((s) => s.queueLoading)
   const fetchQueue = useThreadsStore((s) => s.fetchQueue)
@@ -212,7 +251,8 @@ export function QueueView() {
   const wake = useThreadsStore((s) => s.wake)
   const archive = useThreadsStore((s) => s.archive)
   const unarchive = useThreadsStore((s) => s.unarchive)
-  const selectThread = useUiStore((s) => s.selectThread)
+  const filter = useUiStore((s) => s.queueFilter)
+  const setFilter = useUiStore((s) => s.setQueueFilter)
 
   const [rawSearch, setRawSearch] = useState('')
   const [search, setSearch] = useState('')
@@ -230,27 +270,26 @@ export function QueueView() {
     void fetchQueue()
   }, [fetchQueue])
 
+  // Project chips come from the Queue rows themselves rather than the
+  // Projects store, so they work before that store has loaded and never list
+  // a project with nothing in the Queue.
+  const projectChips = useMemo(() => {
+    const byId = new Map<string, string>()
+    for (const t of queueThreads) byId.set(t.project_id, t.project_name)
+    return [...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
+  }, [queueThreads])
+
+  const unreadCount = useMemo(() => queueThreads.filter(isUnreadForAttention).length, [queueThreads])
+
   // Live status arrives via SSE and is patched into `queueThreads` in place, so
   // rows stay current without a refetch; bucketing re-runs on every change.
-  const buckets = useMemo(() => bucketQueueThreads(queueThreads, {}), [queueThreads])
-
   const visible = useMemo(() => {
-    if (!search) return buckets
     const term = search.toLowerCase()
-    const match = (t: QueueThread) =>
-      t.name.toLowerCase().includes(term) || t.project_name.toLowerCase().includes(term)
-    return {
-      woken: buckets.woken.filter(match),
-      attention: buckets.attention.filter(match),
-      running: buckets.running.filter(match),
-      fresh: buckets.fresh.filter(match),
-    }
-  }, [buckets, search])
+    const input = queueThreads.filter((t) => matchesFilter(t, filter) && matchesSearch(t, term))
+    return bucketQueueThreads(input, {})
+  }, [queueThreads, filter, search])
 
-  const handleSelect = useCallback(
-    (thread: QueueThread) => selectThread(thread.project_id, thread.id),
-    [selectThread],
-  )
+  const handleSelect = useCallback((thread: QueueThread) => openThread(router, thread), [router])
 
   const runAction = useCallback(
     async (label: string, action: () => Promise<void>) => {
@@ -299,6 +338,8 @@ export function QueueView() {
     visible.running.length === 0 &&
     visible.fresh.length === 0
 
+  const activeProjectId = typeof filter === 'object' ? filter.projectId : null
+
   return (
     <View style={styles.container}>
       <TextInput
@@ -312,6 +353,30 @@ export function QueueView() {
         returnKeyType="search"
         clearButtonMode="while-editing"
       />
+
+      {/* flexGrow: 0 — a ScrollView otherwise claims a share of the column alongside the list. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0 }}
+        contentContainerStyle={styles.filterRow}
+        keyboardShouldPersistTaps="handled"
+      >
+        <FilterChip label="All" active={filter === 'all'} onPress={() => setFilter('all')} />
+        <FilterChip
+          label={unreadCount > 0 ? `Unread ${unreadCount}` : 'Unread'}
+          active={filter === 'unread'}
+          onPress={() => setFilter('unread')}
+        />
+        {projectChips.map((project) => (
+          <FilterChip
+            key={project.id}
+            label={project.name}
+            active={activeProjectId === project.id}
+            onPress={() => setFilter({ projectId: project.id })}
+          />
+        ))}
+      </ScrollView>
 
       <ScrollView
         style={styles.scroll}
@@ -331,7 +396,9 @@ export function QueueView() {
         {isEmpty && !search ? (
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>▤</Text>
-            <Text style={styles.emptyText}>Nothing needs your attention.</Text>
+            <Text style={styles.emptyText}>
+              {filter === 'all' ? 'Nothing needs your attention.' : 'Nothing matches this filter.'}
+            </Text>
           </View>
         ) : null}
 
@@ -341,13 +408,7 @@ export function QueueView() {
           bucket membership.
         */}
         {visible.woken.map((thread) => (
-          <QueueRow
-            key={thread.id}
-            thread={thread}
-            woken
-            onPress={handleSelect}
-            onLongPress={setActionTarget}
-          />
+          <QueueRow key={thread.id} thread={thread} woken onPress={handleSelect} onLongPress={setActionTarget} />
         ))}
 
         <SectionHeader label="Needs attention" count={visible.attention.length} />
@@ -370,6 +431,7 @@ export function QueueView() {
           label="Snoozed"
           variant="snoozed"
           search={search}
+          filter={filter}
           revision={revision}
           onSelect={handleSelect}
           onLongPress={setActionTarget}
@@ -378,6 +440,7 @@ export function QueueView() {
           label="Archived"
           variant="archived"
           search={search}
+          filter={filter}
           revision={revision}
           onSelect={handleSelect}
           onLongPress={setActionTarget}
@@ -423,64 +486,81 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.bg },
   search: {
     marginHorizontal: 12,
+    marginTop: 10,
     marginBottom: 8,
     paddingHorizontal: 12,
     paddingVertical: 8,
-    borderRadius: 8,
+    borderRadius: radii.input,
     backgroundColor: colors.surface,
     borderWidth: 1,
     borderColor: colors.border,
     color: colors.text,
     fontSize: 14,
   },
+  filterRow: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingBottom: 8 },
+  filterChip: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: radii.pill,
+    paddingVertical: 5,
+    paddingHorizontal: 12,
+    backgroundColor: colors.surface,
+    maxWidth: 160,
+  },
+  filterChipActive: { borderColor: colors.accent, backgroundColor: colors.accentTint },
+  filterChipText: { color: colors.textMuted, fontSize: 12, fontWeight: '600' },
   scroll: { flex: 1 },
-  scrollContent: { paddingBottom: 24 },
+  // Room for the floating New-thread button over the last row.
+  scrollContent: { paddingBottom: 96 },
   row: {
     flexDirection: 'row',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: 10,
+    marginHorizontal: 12,
+    marginVertical: 6,
     paddingVertical: 10,
-    paddingHorizontal: 14,
+    paddingHorizontal: 12,
+    backgroundColor: colors.surface,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
     borderLeftWidth: 2,
-    borderLeftColor: 'transparent',
+    borderLeftColor: colors.border,
   },
   // The woken marker: desktop paints a 2px accent rail down the left edge.
-  rowWoken: { borderLeftColor: colors.claude, backgroundColor: 'rgba(232, 123, 95, 0.06)' },
-  rowSelected: { backgroundColor: colors.surface2 },
-  rowBody: { flex: 1, gap: 2 },
-  rowName: { color: colors.text, fontSize: 14 },
+  rowWoken: { borderLeftColor: colors.accent, backgroundColor: 'rgba(232, 123, 95, 0.06)' },
+  rowStatus: { paddingTop: 4, width: 14, alignItems: 'center' },
+  rowBody: { flex: 1, gap: 3 },
+  rowTitleLine: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  rowName: { color: colors.text, fontSize: 14, flex: 1 },
+  rowNameUnread: { fontWeight: '700', color: '#ffffff' },
   rowMeta: { color: colors.textMuted, fontSize: 11 },
-  rowWhen: { color: colors.textMuted, fontSize: 11 },
+  rowPreview: { color: colors.textMuted, fontSize: 12.5, opacity: 0.9 },
+  badge: { borderRadius: 6, paddingHorizontal: 6, paddingVertical: 2 },
+  badgeText: { fontSize: 9.5, fontWeight: '800', letterSpacing: 0.6 },
   sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 6,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 2,
   },
-  sectionHeaderText: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
-  sectionHeaderCount: { color: colors.textMuted, fontSize: 11 },
+  sectionHeaderCount: { color: colors.textMuted, fontSize: 10, fontWeight: '600' },
   collapsedHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 14,
-    paddingTop: 16,
-    paddingBottom: 6,
+    paddingHorizontal: 16,
+    paddingTop: 14,
+    paddingBottom: 4,
   },
-  collapsedHeaderText: { color: colors.textMuted, fontSize: 12, fontWeight: '600', flex: 1 },
+  collapsedHeaderText: { ...sectionLabel, flex: 1 },
   chevron: { color: colors.textMuted, fontSize: 12 },
   chevronOpen: { transform: [{ rotate: '90deg' }] },
-  emptySection: { color: colors.textMuted, fontSize: 12, paddingHorizontal: 14, paddingVertical: 8 },
-  showMore: { paddingHorizontal: 14, paddingVertical: 10 },
-  showMoreText: { color: colors.claude, fontSize: 13 },
+  emptySection: { color: colors.textMuted, fontSize: 12, paddingHorizontal: 16, paddingVertical: 8 },
+  showMore: { paddingHorizontal: 16, paddingVertical: 10 },
+  showMoreText: { color: colors.accent, fontSize: 13 },
   empty: { alignItems: 'center', paddingTop: 64, gap: 10 },
   emptyIcon: { color: colors.textMuted, fontSize: 28 },
   emptyText: { color: colors.textMuted, fontSize: 14 },

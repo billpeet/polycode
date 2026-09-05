@@ -15,5 +15,5 @@ export default function Index() {
     )
   }
 
-  return <Redirect href={activeHostId ? '/home' : '/hosts'} />
+  return <Redirect href={activeHostId ? '/(tabs)/queue' : '/hosts'} />
 }

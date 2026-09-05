@@ -26,11 +26,12 @@ function HostCard(props: { host: HostMeta }) {
         if (activeHostId !== host.id) {
           // Switching hosts: reset everything scoped to the previous host.
           setActiveHost(host.id)
-          useUiStore.getState().clearSelection()
+          useUiStore.getState().setQueueFilter('all')
           useProjectsStore.getState().clear()
-          useThreadsStore.setState({ threadsByProject: {} })
+          useThreadsStore.setState({ threadsByProject: {}, queueThreads: [] })
         }
-        router.push('/home')
+        if (router.canGoBack()) router.back()
+        else router.replace('/(tabs)/queue')
       }}
       onLongPress={() => router.push({ pathname: '/hosts/[hostId]/edit', params: { hostId: host.id } })}
     >

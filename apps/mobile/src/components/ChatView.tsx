@@ -5,11 +5,9 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   DEFAULT_CONTEXT_LIMIT,
   MODEL_CONTEXT_LIMITS,
-  getModelsForProvider,
   type Message,
   type OutputEvent,
   type PermissionMode,
-  type Provider,
   type SlashCommand,
   type ThreadStatus,
 } from '@polycode/shared'
@@ -18,11 +16,11 @@ import { rpc } from '@/api/rpc'
 import { sseManager } from '@/api/sse'
 import { useHostsStore } from '@/stores/hosts'
 import { PermissionBanner, PlanBanner, QuestionBanner } from '@/components/Banners'
-import * as ImagePicker from 'expo-image-picker'
-import { InputBar, type PendingImage } from '@/components/InputBar'
+import { InputBar } from '@/components/InputBar'
+import { newClientMessageId, pickImages, saveAttachments, type PendingImage } from '@/lib/attachments'
+import { modelLabel } from '@/lib/models'
 import { MessageList } from '@/components/MessageList'
 import { PlanSheet } from '@/components/PlanSheet'
-import { StatusDot } from '@/components/StatusDot'
 import { SessionTabs } from '@/components/SessionTabs'
 import { effortLabel } from '@/components/ThreadControls'
 import { ThreadSettingsSheet } from '@/components/ThreadSettingsSheet'
@@ -38,10 +36,9 @@ import { useFavouritesStore } from '@/stores/favourites'
 import { usePlansStore } from '@/stores/plans'
 import { useProjectsStore } from '@/stores/projects'
 import { useSessionsStore } from '@/stores/sessions'
-import { useUiStore } from '@/stores/ui'
 import { useThreadsStore } from '@/stores/threads'
 import { useTodosStore } from '@/stores/todos'
-import { colors, statusLabel } from '@/theme/colors'
+import { colors, permissionAccent, statusColor, statusLabel } from '@/theme/colors'
 
 const EMPTY_MESSAGES: Message[] = []
 
@@ -54,15 +51,14 @@ function formatTokens(count: number): string {
   return String(count)
 }
 
-function modelLabel(provider: string, model: string): string {
-  const options = getModelsForProvider(provider as Provider)
-  return options.find((option) => option.id === model)?.label ?? model
-}
+export function ChatView(props: { threadId: string; projectId: string; onBack: () => void }) {
+  const { threadId, projectId, onBack } = props
 
-export function ChatView(props: { threadId: string; projectId: string; onOpenSidebar: () => void }) {
-  const { threadId, projectId, onOpenSidebar } = props
-
-  const thread = useThreadsStore((s) => s.findThread(threadId))
+  // The project list and the Queue are separate stores; the Queue row is the
+  // fallback so the header can name the project before `threads:list` lands.
+  const thread = useThreadsStore((s) => s.findThread(threadId) ?? s.queueThreads.find((t) => t.id === threadId))
+  const queueRow = useThreadsStore((s) => s.queueThreads.find((t) => t.id === threadId))
+  const projectName = useProjectsStore((s) => s.projects.find((p) => p.id === projectId)?.name) ?? queueRow?.project_name
   const fetchThreads = useThreadsStore((s) => s.fetch)
   const sendMessage = useThreadsStore((s) => s.send)
   const stopThread = useThreadsStore((s) => s.stop)
@@ -127,6 +123,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
     void fetchLocations(projectId).catch(() => undefined)
   }, [projectId, fetchLocations])
   const repoPath = location?.path ?? null
+  const locationName = location?.label ?? queueRow?.location_label ?? thread?.git_branch ?? null
 
   // Slash commands for the "/" popup (global + project scoped).
   useEffect(() => {
@@ -239,25 +236,18 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
   const totalTokens = usage?.total_tokens ?? thread?.total_tokens ?? 0
   const totalCostUsd = usage?.total_cost_usd ?? thread?.total_cost_usd ?? null
   const contextPercent = contextLimit > 0 ? Math.min(100, Math.round((contextTokens / contextLimit) * 100)) : 0
+  const usageStats = [
+    totalTokens > 0 ? `${formatTokens(totalTokens)} total` : null,
+    totalCostUsd != null ? `$${totalCostUsd.toFixed(4)}` : null,
+    contextTokens > 0 ? `${formatTokens(contextTokens)} ctx (${contextPercent}%)` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
-  const pickImages = async () => {
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      allowsMultipleSelection: true,
-      selectionLimit: 5,
-      base64: true,
-      quality: 0.8,
-    })
-    if (result.canceled) return
-    const picked: PendingImage[] = result.assets
-      .filter((asset) => asset.base64)
-      .map((asset, index) => ({
-        id: `${Date.now()}-${index}`,
-        name: asset.fileName ?? `image-${index + 1}.jpg`,
-        dataUrl: `data:${asset.mimeType ?? 'image/jpeg'};base64,${asset.base64}`,
-      }))
-    setAttachments((prev) => [...prev, ...picked])
-  }
+  const addImages = () =>
+    void pickImages()
+      .then((picked) => setAttachments((prev) => [...prev, ...picked]))
+      .catch((e: unknown) => Alert.alert('Could not pick image', errorText(e)))
 
   const handleSend = (content: string, planMode: boolean) => {
     const pending = attachments
@@ -265,24 +255,13 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
     void (async () => {
       try {
         // Desktop parity: save attachments host-side, reference as @ mentions.
-        let finalContent = content
-        const savedPaths: string[] = []
-        if (pending.length > 0) {
-          const connection = useHostsStore.getState().activeConnection()
-          if (!connection) throw new Error('No active host connection')
-          for (const attachment of pending) {
-            const { tempPath } = await rpc(connection, 'attachments:save', attachment.dataUrl, attachment.name, threadId)
-            savedPaths.push(tempPath)
-          }
-          const mentions = savedPaths.map((p) => `@${p}`).join(' ')
-          finalContent = finalContent ? `${mentions}\n\n${finalContent}` : mentions
-        }
-        const clientUserMessageId = `mobile-${Date.now()}-${Math.random().toString(36).slice(2)}`
-        appendUserMessage(threadId, finalContent, clientUserMessageId)
-        await sendMessage(threadId, finalContent, {
+        const prepared = await saveAttachments(threadId, content, pending)
+        const clientUserMessageId = newClientMessageId()
+        appendUserMessage(threadId, prepared.content, clientUserMessageId)
+        await sendMessage(threadId, prepared.content, {
           ...(planMode ? { planMode: true } : {}),
           clientUserMessageId,
-          attachments: savedPaths.map((path) => ({ path, detail: 'auto' as const })),
+          attachments: prepared.attachments,
         })
       } catch (error) {
         setAttachments(pending)
@@ -312,7 +291,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
             void useThreadsStore
               .getState()
               .archive(projectId, threadId)
-              .then(() => useUiStore.getState().clearSelection())
+              .then(onBack)
               .catch((e: unknown) => Alert.alert('Archive failed', errorText(e))),
         },
         {
@@ -328,7 +307,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
                   void useThreadsStore
                     .getState()
                     .remove(projectId, threadId)
-                    .then(() => useUiStore.getState().clearSelection())
+                    .then(onBack)
                     .catch((e: unknown) => Alert.alert('Delete failed', errorText(e))),
               },
             ]),
@@ -340,28 +319,18 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
     <View style={styles.screen}>
       {/* Header */}
       <View style={styles.header}>
-        <Pressable onPress={onOpenSidebar} hitSlop={10}>
-          <Text style={styles.menuIcon}>☰</Text>
+        <Pressable onPress={onBack} hitSlop={10} style={styles.back}>
+          <Text style={styles.backChevron}>‹</Text>
+          <Text style={styles.backText}>Queue</Text>
         </Pressable>
         <Pressable style={{ flex: 1, gap: 2 }} onLongPress={() => setShowThreadMenu(true)}>
           <Text style={styles.title} numberOfLines={1}>
             {thread?.name ?? 'Thread'}
           </Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <StatusDot status={status} size={7} />
-            <Text style={styles.statusText}>{statusLabel(status)}</Text>
-            {totalTokens > 0 ? (
-              <Text style={styles.statusText}>· {formatTokens(totalTokens)} total</Text>
-            ) : null}
-            {totalCostUsd != null ? (
-              <Text style={styles.statusText}>· ${totalCostUsd.toFixed(4)}</Text>
-            ) : null}
-            {contextTokens > 0 ? (
-              <Text style={styles.statusText}>
-                · {formatTokens(contextTokens)} ctx ({contextPercent}%)
-              </Text>
-            ) : null}
-          </View>
+          <Text style={styles.statusText} numberOfLines={1}>
+            <Text style={{ color: statusColor(status) }}>● </Text>
+            {[statusLabel(status), projectName, locationName ? `⎇ ${locationName}` : null].filter(Boolean).join(' · ')}
+          </Text>
         </Pressable>
         {plan ? (
           <Pressable onPress={() => setShowPlan(true)} hitSlop={8}>
@@ -438,16 +407,17 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
           onStop={handleStop}
           slashCommands={slashCommands}
           attachments={attachments}
-          onAddAttachment={() => void pickImages().catch((e: unknown) => Alert.alert('Could not pick image', errorText(e)))}
+          onAddAttachment={addImages}
           onRemoveAttachment={(id) => setAttachments((prev) => prev.filter((a) => a.id !== id))}
           accessories={
             thread ? (
               <>
                 <Chip
-                  label={`⚙ ${modelLabel(thread.provider, thread.model)} · ${effortLabel(thread.provider, thread.reasoning_level)}${thread.permission_mode === 'yolo' ? ' · YOLO' : thread.permission_mode === 'auto' ? ' · Auto' : ''}`}
+                  label={`⚙ ${modelLabel(thread.provider, thread.model)} · ${effortLabel(thread.provider, thread.reasoning_level)}`}
                   onPress={() => setShowSettings(true)}
                   active
-                  color={thread.permission_mode === 'yolo' ? colors.danger : undefined}
+                  color={thread.permission_mode !== 'ask' ? permissionAccent[thread.permission_mode].color : undefined}
+                  tint={thread.permission_mode !== 'ask' ? permissionAccent[thread.permission_mode].background : undefined}
                 />
                 {favourites.map((favourite, index) => {
                   const current: Favourite = {
@@ -492,6 +462,7 @@ export function ChatView(props: { threadId: string; projectId: string; onOpenSid
       {thread ? (
         <ThreadSettingsSheet
           thread={thread}
+          stats={usageStats || null}
           visible={showSettings}
           onClose={() => setShowSettings(false)}
           onSelectModel={(provider, model) =>
@@ -528,7 +499,9 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
   },
-  menuIcon: { color: colors.text, fontSize: 20 },
+  back: { flexDirection: 'row', alignItems: 'center', gap: 2 },
+  backChevron: { color: colors.accent, fontSize: 24, lineHeight: 26, marginTop: -2 },
+  backText: { color: colors.accent, fontSize: 15, fontWeight: '500' },
   headerIcon: { color: colors.textMuted, fontSize: 17 },
   title: { color: colors.text, fontSize: 16, fontWeight: '700' },
   statusText: { color: colors.textMuted, fontSize: 12 },
@@ -540,13 +513,4 @@ const styles = StyleSheet.create({
     paddingVertical: 6,
   },
   rateLimitText: { color: colors.warning, fontSize: 12, fontWeight: '500' },
-  controls: {
-    flexDirection: 'row',
-    gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    backgroundColor: colors.surface,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
 })

@@ -42,6 +42,8 @@ function makeThread(overrides: Partial<QueueThread>): QueueThread {
     project_name: 'Project',
     location_label: 'Local',
     location_is_worktree: false,
+    preview: null,
+    preview_is_error: false,
     ...overrides,
   }
 }

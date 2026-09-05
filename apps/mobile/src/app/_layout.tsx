@@ -116,8 +116,9 @@ export default function RootLayout() {
         }}
       >
         <Stack.Screen name="index" options={{ headerShown: false }} />
-        <Stack.Screen name="home" options={{ headerShown: false }} />
-        <Stack.Screen name="queue" options={{ headerShown: false }} />
+        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="thread/[threadId]" options={{ headerShown: false }} />
+        <Stack.Screen name="new-thread" options={{ headerShown: false, presentation: 'modal' }} />
         <Stack.Screen name="hosts/index" options={{ title: 'Hosts' }} />
         <Stack.Screen name="hosts/new" options={{ title: 'Add Host' }} />
         <Stack.Screen name="hosts/scan" options={{ title: 'Scan QR Code' }} />

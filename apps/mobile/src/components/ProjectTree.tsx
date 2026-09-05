@@ -1,46 +1,23 @@
 import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useState } from 'react'
-import {
-  Alert,
-  Animated,
-  Dimensions,
-  Modal,
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native'
-import { useSafeAreaInsets } from 'react-native-safe-area-context'
+import { Alert, Modal, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native'
 import type { Project, RepoLocation, Thread } from '@polycode/shared'
 import { formatWakeTime, resolveSnoozePreset, SNOOZE_PRESETS, timeUntil } from '@polycode/shared'
 import { rpc } from '@/api/rpc'
-import { sseManager, type ConnectionState } from '@/api/sse'
+import { locationLabel, worktreeParent } from '@/lib/locations'
+import { openNewThread, openThread } from '@/lib/navigation'
 import { useHostsStore } from '@/stores/hosts'
 import { useProjectsStore } from '@/stores/projects'
 import { useThreadsStore } from '@/stores/threads'
 import { useUiStore } from '@/stores/ui'
-import { colors } from '@/theme/colors'
+import { colors, radii, sectionLabel } from '@/theme/colors'
 import { ThreadStatusIndicator } from './StatusDot'
 import { ActionSheet } from './ActionSheet'
 import { CommandsPanel } from './CommandsPanel'
-import { NewProjectSheet, NewWorktreeSheet } from './ProjectAdmin'
+import { NewWorktreeSheet } from './ProjectAdmin'
 import { RenameThreadModal } from './ThreadModals'
 
-const SIDEBAR_WIDTH = Math.min(320, Dimensions.get('window').width * 0.85)
 const EMPTY_THREADS: Thread[] = []
-
-function locationLabel(location: RepoLocation): string {
-  const warning = location.is_worktree && location.worktree_valid === false ? '⚠ ' : ''
-  return `${warning}${location.is_worktree ? '⎇ ' : ''}${location.label || location.path}`
-}
-
-function ConnectionBadge() {
-  const [state, setState] = useState<ConnectionState>(sseManager.state)
-  useEffect(() => sseManager.onStateChange(setState), [])
-  const color = state === 'connected' ? colors.success : state === 'connecting' ? colors.warning : colors.danger
-  return <View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: color }} />
-}
 
 function ThreadRow(props: {
   projectId: string
@@ -48,29 +25,16 @@ function ThreadRow(props: {
   onLongPress: (projectId: string, thread: Thread) => void
 }) {
   const { projectId, thread } = props
-  const selectedThreadId = useUiStore((s) => s.selectedThreadId)
-  const selectThread = useUiStore((s) => s.selectThread)
-  const selected = selectedThreadId === thread.id
+  const router = useRouter()
 
   return (
     <Pressable
-      onPress={() => selectThread(projectId, thread.id)}
+      onPress={() => openThread(router, { id: thread.id, project_id: projectId })}
       onLongPress={() => props.onLongPress(projectId, thread)}
-      style={({ pressed }) => [
-        styles.threadRow,
-        selected && styles.threadRowSelected,
-        pressed && { opacity: 0.7 },
-      ]}
+      style={({ pressed }) => [styles.threadRow, pressed && { opacity: 0.7 }]}
     >
       <ThreadStatusIndicator status={thread.status} unread={thread.unread} size={7} />
-      <Text
-        style={[
-          styles.threadName,
-          selected && { color: colors.text },
-          thread.unread && { fontWeight: '700', color: '#ffffff' },
-        ]}
-        numberOfLines={1}
-      >
+      <Text style={[styles.threadName, thread.unread && { fontWeight: '700', color: '#ffffff' }]} numberOfLines={1}>
         {thread.name}
       </Text>
       {thread.unread ? <View style={styles.unreadDot} /> : null}
@@ -279,7 +243,7 @@ function ProjectSection(props: {
   })()
 
   return (
-    <View>
+    <View style={styles.projectCard}>
       <Pressable
         onPress={() => toggleProject(project.id)}
         onLongPress={() => props.onProjectLongPress(project)}
@@ -290,7 +254,7 @@ function ProjectSection(props: {
           {project.name}
         </Text>
         {threads.some((t) => t.status === 'running') ? (
-          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.claude }} />
+          <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: colors.accent }} />
         ) : null}
       </Pressable>
       {expanded ? (
@@ -298,30 +262,21 @@ function ProjectSection(props: {
           {grouped
             ? grouped.map((section, index) => (
                 <View key={section.location?.id ?? `other-${index}`}>
-                  <View style={styles.locationHeader}>
+                  <Pressable
+                    style={styles.locationHeader}
+                    onLongPress={() => section.location && props.onLocationLongPress(project.id, section.location)}
+                  >
                     <Text style={styles.locationLabel} numberOfLines={1}>
-                      {section.location
-                        ? locationLabel(section.location)
-                        : 'Other'}
+                      {section.location ? locationLabel(section.location) : 'Other'}
                     </Text>
-                  </View>
+                  </Pressable>
                   {section.threads.map((thread) => (
-                    <ThreadRow
-                      key={thread.id}
-                      projectId={project.id}
-                      thread={thread}
-                      onLongPress={props.onThreadLongPress}
-                    />
+                    <ThreadRow key={thread.id} projectId={project.id} thread={thread} onLongPress={props.onThreadLongPress} />
                   ))}
                 </View>
               ))
             : threads.map((thread) => (
-                <ThreadRow
-                  key={thread.id}
-                  projectId={project.id}
-                  thread={thread}
-                  onLongPress={props.onThreadLongPress}
-                />
+                <ThreadRow key={thread.id} projectId={project.id} thread={thread} onLongPress={props.onThreadLongPress} />
               ))}
           <Pressable
             onPress={() => props.onNewThread(project.id)}
@@ -358,71 +313,33 @@ function ProjectSection(props: {
   )
 }
 
-export function Sidebar() {
+/**
+ * The project → location → thread tree (the desktop sidebar's Tree mode),
+ * now a full tab rather than a drawer. Every overlay is mounted exactly once
+ * at the bottom, so a modal opened from any row has something to render it.
+ */
+export function ProjectTree() {
   const router = useRouter()
-  const insets = useSafeAreaInsets()
-  const open = useUiStore((s) => s.sidebarOpen)
-  const setSidebarOpen = useUiStore((s) => s.setSidebarOpen)
   const projects = useProjectsStore((s) => s.projects)
+  const projectsLoading = useProjectsStore((s) => s.loading)
   const fetchProjects = useProjectsStore((s) => s.fetch)
-  const activeHost = useHostsStore((s) => s.hosts.find((h) => h.id === s.activeHostId))
   const archive = useThreadsStore((s) => s.archive)
   const snooze = useThreadsStore((s) => s.snooze)
-  const setSidebarViewMode = useUiStore((s) => s.setSidebarViewMode)
 
   const [renameTarget, setRenameTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [actionTarget, setActionTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
-  const [locationPicker, setLocationPicker] = useState<{ projectId: string; locations: RepoLocation[] } | null>(null)
   const [archivedProjectId, setArchivedProjectId] = useState<string | null>(null)
   const [snoozedProjectId, setSnoozedProjectId] = useState<string | null>(null)
   const [snoozeTarget, setSnoozeTarget] = useState<{ projectId: string; thread: Thread } | null>(null)
   const [commandsProjectId, setCommandsProjectId] = useState<string | null>(null)
-  const [showNewProject, setShowNewProject] = useState(false)
   const [projectAction, setProjectAction] = useState<Project | null>(null)
   const [worktreeTarget, setWorktreeTarget] = useState<{ projectId: string; parentLocationId: string } | null>(null)
-
-  const [translateX] = useState(() => new Animated.Value(-SIDEBAR_WIDTH))
-  const [rendered, setRendered] = useState(open)
-
-  useEffect(() => {
-    if (open) {
-      const timeoutId = setTimeout(() => {
-        setRendered(true)
-        void fetchProjects()
-        Animated.timing(translateX, { toValue: 0, duration: 200, useNativeDriver: true }).start()
-      }, 0)
-      return () => clearTimeout(timeoutId)
-    } else {
-      Animated.timing(translateX, { toValue: -SIDEBAR_WIDTH, duration: 180, useNativeDriver: true }).start(
-        ({ finished }) => {
-          if (finished) setRendered(false)
-        },
-      )
-    }
-  }, [open, translateX, fetchProjects])
 
   const handleThreadLongPress = useCallback((projectId: string, thread: Thread) => {
     setActionTarget({ projectId, thread })
   }, [])
 
-  // Desktop parity: create instantly (auto-titled after the first message).
-  const quickCreateThread = useCallback(async (projectId: string, locationId?: string) => {
-    try {
-      let locs = useProjectsStore.getState().locationsByProject[projectId]
-      if (!locs || locs.length === 0) locs = await useProjectsStore.getState().fetchLocations(projectId)
-      const location = locationId
-        ? locs.find((l) => l.id === locationId)
-        : (locs.find((l) => l.checked_out) ?? locs[0])
-      if (!location) {
-        Alert.alert('No location', 'This project has no repo locations yet — add one on the desktop.')
-        return
-      }
-      const thread = await useThreadsStore.getState().create(projectId, 'New thread', location.id)
-      useUiStore.getState().selectThread(projectId, thread.id)
-    } catch (error) {
-      Alert.alert('Could not create thread', error instanceof Error ? error.message : String(error))
-    }
-  }, [])
+  const handleNewThread = useCallback((projectId: string) => openNewThread(router, projectId), [router])
 
   const handleProjectLongPress = useCallback((project: Project) => {
     setProjectAction(project)
@@ -442,6 +359,7 @@ export function Sidebar() {
             .then(() => Promise.all([
               useProjectsStore.getState().fetchLocations(projectId),
               useThreadsStore.getState().fetch(projectId),
+              useThreadsStore.getState().fetchQueue(),
             ]))
             .catch((error: unknown) => Alert.alert('Remove failed', error instanceof Error ? error.message : String(error)))
         },
@@ -449,30 +367,32 @@ export function Sidebar() {
     ])
   }, [])
 
-  const pickLocationForNewThread = useCallback((projectId: string) => {
-    const locations = useProjectsStore.getState().locationsByProject[projectId] ?? []
-    if (locations.length > 1) {
-      setLocationPicker({ projectId, locations })
-    } else {
-      void quickCreateThread(projectId)
-    }
-  }, [quickCreateThread])
-
-  /*
-   * Every overlay lives here and is rendered exactly once, by both the
-   * unmounted-drawer branch and the open-drawer branch below.
-   *
-   * These used to be inlined in each branch separately, which went wrong in
-   * both directions: the closed branch rendered seven of them twice (stacked
-   * Modals, with taps landing on whichever copy mounted last) while the open
-   * branch omitted them entirely — so tapping Snoozed, Archived, Commands or
-   * a project long-press set state that nothing was mounted to display. The
-   * drawer does not close on those taps, so that was the common path.
-   *
-   * Keep them in one shared element: two copies cannot drift back apart.
-   */
-  const overlays = (
+  return (
     <>
+      <ScrollView
+        contentContainerStyle={styles.list}
+        refreshControl={
+          <RefreshControl refreshing={projectsLoading} onRefresh={() => void fetchProjects()} tintColor={colors.textMuted} />
+        }
+      >
+        {projects.map((project) => (
+          <ProjectSection
+            key={project.id}
+            project={project}
+            onNewThread={handleNewThread}
+            onThreadLongPress={handleThreadLongPress}
+            onShowArchived={setArchivedProjectId}
+            onShowSnoozed={setSnoozedProjectId}
+            onShowCommands={setCommandsProjectId}
+            onProjectLongPress={handleProjectLongPress}
+            onLocationLongPress={handleLocationLongPress}
+          />
+        ))}
+        {projects.length === 0 && !projectsLoading ? (
+          <Text style={styles.emptyText}>No projects on this host.</Text>
+        ) : null}
+      </ScrollView>
+
       <RenameThreadModal target={renameTarget} onClose={() => setRenameTarget(null)} />
       <ActionSheet
         visible={actionTarget !== null}
@@ -497,12 +417,7 @@ export function Sidebar() {
                 { label: 'Snooze', onPress: () => setSnoozeTarget(actionTarget) },
                 {
                   label: 'Archive',
-                  onPress: () => {
-                    const { selectedThreadId, clearSelection } = useUiStore.getState()
-                    void archive(actionTarget.projectId, actionTarget.thread.id).then(() => {
-                      if (selectedThreadId === actionTarget.thread.id) clearSelection()
-                    })
-                  },
+                  onPress: () => void archive(actionTarget.projectId, actionTarget.thread.id),
                 },
                 {
                   label: 'Delete',
@@ -513,32 +428,11 @@ export function Sidebar() {
                       {
                         text: 'Delete',
                         style: 'destructive',
-                        onPress: () => {
-                          const { selectedThreadId, clearSelection } = useUiStore.getState()
-                          void useThreadsStore
-                            .getState()
-                            .remove(actionTarget.projectId, actionTarget.thread.id)
-                            .then(() => {
-                              if (selectedThreadId === actionTarget.thread.id) clearSelection()
-                            })
-                        },
+                        onPress: () => void useThreadsStore.getState().remove(actionTarget.projectId, actionTarget.thread.id),
                       },
                     ]),
                 },
               ]
-            : []
-        }
-      />
-      <ActionSheet
-        visible={locationPicker !== null}
-        title="New thread location"
-        onClose={() => setLocationPicker(null)}
-        options={
-          locationPicker
-            ? locationPicker.locations.map((location) => ({
-                label: locationLabel(location),
-                onPress: () => void quickCreateThread(locationPicker.projectId, location.id),
-              }))
             : []
         }
       />
@@ -567,7 +461,6 @@ export function Sidebar() {
       <SnoozedThreadsModal projectId={snoozedProjectId} onClose={() => setSnoozedProjectId(null)} />
       <ArchivedThreadsModal projectId={archivedProjectId} onClose={() => setArchivedProjectId(null)} />
       <CommandsPanel projectId={commandsProjectId} onClose={() => setCommandsProjectId(null)} />
-      <NewProjectSheet visible={showNewProject} onClose={() => setShowNewProject(false)} />
       <NewWorktreeSheet target={worktreeTarget} onClose={() => setWorktreeTarget(null)} />
       <ActionSheet
         visible={projectAction !== null}
@@ -583,7 +476,7 @@ export function Sidebar() {
                     void (async () => {
                       let locs = useProjectsStore.getState().locationsByProject[proj.id]
                       if (!locs) locs = await useProjectsStore.getState().fetchLocations(proj.id)
-                      const parent = locs.find((l) => l.connection_type === 'local' && !l.is_worktree)
+                      const parent = worktreeParent(locs)
                       if (!parent) {
                         Alert.alert('No local checkout', 'Worktrees are created from a local, non-worktree location.')
                         return
@@ -598,7 +491,7 @@ export function Sidebar() {
                     const conn = useHostsStore.getState().activeConnection()
                     if (!conn) return
                     void rpc(conn, 'projects:archive', projectAction.id)
-                      .then(() => useProjectsStore.getState().fetch())
+                      .then(() => Promise.all([useProjectsStore.getState().fetch(), useThreadsStore.getState().fetchQueue()]))
                       .catch((error: unknown) => Alert.alert('Archive failed', error instanceof Error ? error.message : String(error)))
                   },
                 },
@@ -614,12 +507,8 @@ export function Sidebar() {
                         onPress: () => {
                           const conn = useHostsStore.getState().activeConnection()
                           if (!conn) return
-                          const { selectedProjectId, clearSelection } = useUiStore.getState()
                           void rpc(conn, 'projects:delete', projectAction.id)
-                            .then(() => {
-                              if (selectedProjectId === projectAction.id) clearSelection()
-                              return useProjectsStore.getState().fetch()
-                            })
+                            .then(() => Promise.all([useProjectsStore.getState().fetch(), useThreadsStore.getState().fetchQueue()]))
                             .catch((error: unknown) => Alert.alert('Delete failed', error instanceof Error ? error.message : String(error)))
                         },
                       },
@@ -631,158 +520,49 @@ export function Sidebar() {
       />
     </>
   )
-
-  // Drawer fully closed and unmounted: overlays must still render, since a
-  // Modal opened from elsewhere (or left open as the drawer closed) outlives it.
-  if (!rendered && !open) {
-    return overlays
-  }
-
-  return (
-    <>
-      <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'auto' : 'none'}>
-        {/* Backdrop */}
-        <Pressable
-          style={[StyleSheet.absoluteFill, { backgroundColor: 'rgba(0,0,0,0.5)', opacity: open ? 1 : 0 }]}
-          onPress={() => setSidebarOpen(false)}
-        />
-        {/* Panel */}
-        <Animated.View
-          style={[
-            styles.panel,
-            { width: SIDEBAR_WIDTH, paddingTop: insets.top, paddingBottom: insets.bottom, transform: [{ translateX }] },
-          ]}
-        >
-          <View style={styles.header}>
-            <ConnectionBadge />
-            <Text style={styles.hostLabel} numberOfLines={1}>
-              {activeHost?.label ?? 'PolyCode'}
-            </Text>
-            <Pressable onPress={() => setShowNewProject(true)} hitSlop={8}>
-              <Text style={styles.hostsLink}>＋</Text>
-            </Pressable>
-            <Pressable onPress={() => router.push('/hosts')} hitSlop={8}>
-              <Text style={styles.hostsLink}>Hosts</Text>
-            </Pressable>
-          </View>
-          {/*
-            Entry to the Queue: the cross-project attention list. It gets a full
-            screen rather than a mode inside this drawer, since triage wants the
-            width for project name, status and wake time.
-          */}
-          <Pressable
-            style={({ pressed }) => [styles.queueLink, pressed && { opacity: 0.7 }]}
-            onPress={() => {
-              setSidebarViewMode('queue')
-              setSidebarOpen(false)
-              router.push('/queue')
-            }}
-          >
-            <Text style={styles.queueLinkIcon}>▤</Text>
-            <Text style={styles.queueLinkText}>Queue</Text>
-            <Text style={styles.queueLinkChevron}>›</Text>
-          </Pressable>
-          <ScrollView contentContainerStyle={{ paddingVertical: 6 }}>
-            {projects.map((project) => (
-              <ProjectSection
-                key={project.id}
-                project={project}
-                onNewThread={pickLocationForNewThread}
-                onThreadLongPress={handleThreadLongPress}
-                onShowArchived={setArchivedProjectId}
-                onShowSnoozed={setSnoozedProjectId}
-                onShowCommands={setCommandsProjectId}
-                onProjectLongPress={handleProjectLongPress}
-                onLocationLongPress={handleLocationLongPress}
-              />
-            ))}
-            {projects.length === 0 ? (
-              <Text style={styles.emptyText}>No projects on this host.</Text>
-            ) : null}
-          </ScrollView>
-        </Animated.View>
-      </View>
-      {overlays}
-    </>
-  )
 }
 
 const styles = StyleSheet.create({
-  queueLink: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  queueLinkIcon: { color: colors.claude, fontSize: 14 },
-  queueLinkText: { color: colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
-  queueLinkChevron: { color: colors.textMuted, fontSize: 16 },
-  panel: {
-    position: 'absolute',
-    top: 0,
-    bottom: 0,
-    left: 0,
+  // Room for the floating New-thread button over the last row.
+  list: { padding: 12, paddingBottom: 96, gap: 8 },
+  projectCard: {
     backgroundColor: colors.surface,
-    borderRightWidth: 1,
-    borderRightColor: colors.border,
+    borderRadius: radii.card,
+    borderWidth: 1,
+    borderColor: colors.border,
+    overflow: 'hidden',
   },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: colors.border,
-  },
-  hostLabel: { color: colors.text, fontSize: 15, fontWeight: '700', flex: 1 },
-  hostsLink: { color: colors.claude, fontSize: 13, fontWeight: '500' },
   projectRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingHorizontal: 14,
-    paddingVertical: 9,
+    paddingHorizontal: 12,
+    paddingVertical: 11,
   },
   projectChevron: { color: colors.textMuted, fontSize: 11, width: 12 },
   projectName: { color: colors.text, fontSize: 14, fontWeight: '600', flex: 1 },
-  threadList: { paddingBottom: 4 },
+  threadList: { paddingBottom: 6, borderTopWidth: 1, borderTopColor: colors.border },
   threadRow: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    paddingLeft: 34,
+    paddingLeft: 30,
     paddingRight: 12,
-    paddingVertical: 8,
-  },
-  threadRowSelected: {
-    backgroundColor: 'rgba(232, 123, 95, 0.10)',
-    borderRightWidth: 2,
-    borderRightColor: colors.claude,
+    paddingVertical: 9,
   },
   threadName: { color: colors.textMuted, fontSize: 13, flex: 1 },
-  unreadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.claude },
-  newThreadRow: { paddingLeft: 34, paddingVertical: 7 },
-  newThreadText: { color: colors.claude, fontSize: 12.5, fontWeight: '500' },
+  unreadDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: colors.accent },
+  newThreadRow: { paddingLeft: 30, paddingVertical: 7 },
+  newThreadText: { color: colors.accent, fontSize: 12.5, fontWeight: '500' },
   emptyText: { color: colors.textMuted, fontSize: 13, padding: 16 },
   archivedLink: { color: colors.textMuted, fontSize: 12.5, fontWeight: '500' },
-  locationHeader: { paddingLeft: 26, paddingTop: 7, paddingBottom: 2 },
-  locationLabel: {
-    color: colors.textMuted,
-    fontSize: 10.5,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-    opacity: 0.8,
-  },
+  locationHeader: { paddingLeft: 24, paddingTop: 8, paddingBottom: 2 },
+  locationLabel: { ...sectionLabel, opacity: 0.8 },
   modalBackdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   modalSheet: {
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: radii.sheet,
+    borderTopRightRadius: radii.sheet,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 18,
@@ -792,5 +572,5 @@ const styles = StyleSheet.create({
   modalTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
   archivedRow: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   archivedName: { color: colors.text, fontSize: 13.5, flex: 1 },
-  archivedAction: { color: colors.claude, fontSize: 13, fontWeight: '600' },
+  archivedAction: { color: colors.accent, fontSize: 13, fontWeight: '600' },
 })

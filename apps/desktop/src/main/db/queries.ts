@@ -532,6 +532,62 @@ export function countLiveThreadsForLocation(locationId: string): number {
   return row.n
 }
 
+type QueueThreadRow = ThreadRow & {
+  project_name: string
+  location_label: string | null
+  location_is_worktree: number
+  preview: string | null
+  preview_is_error: number
+}
+
+/**
+ * Assistant text rows are persisted one row per streamed chunk, so the row's
+ * preview is the concatenation of every text chunk since the user's last
+ * message rather than the last row alone. Text rows carry no `metadata.type`
+ * (subagent chunks carry agent metadata but still no `type`); tool, thinking
+ * and plan rows do, and are skipped. Only `role='system'` error rows count as
+ * errors, and only when nothing from the assistant is newer.
+ */
+const QUEUE_PREVIEW_ASSISTANT_TEXT = `(
+  SELECT substr(group_concat(m.content, ''), 1, 200)
+  FROM (
+    SELECT content FROM messages
+    WHERE thread_id = t.id AND role = 'assistant'
+      AND (metadata IS NULL OR json_extract(metadata, '$.type') IS NULL)
+      AND created_at > COALESCE((SELECT MAX(created_at) FROM messages WHERE thread_id = t.id AND role = 'user'), '')
+    ORDER BY created_at ASC, rowid ASC
+  ) m
+)`
+const QUEUE_PREVIEW_LAST_ERROR = `(
+  SELECT substr(content, 1, 200) FROM messages
+  WHERE thread_id = t.id AND role = 'system' AND json_extract(metadata, '$.type') = 'error'
+    AND created_at > COALESCE((SELECT MAX(created_at) FROM messages WHERE thread_id = t.id AND role = 'user'), '')
+    AND created_at >= COALESCE((SELECT MAX(created_at) FROM messages
+                                WHERE thread_id = t.id AND role = 'assistant'
+                                  AND (metadata IS NULL OR json_extract(metadata, '$.type') IS NULL)), '')
+  ORDER BY created_at DESC, rowid DESC LIMIT 1
+)`
+
+/** Shared projection for the three Queue lists (`listQueueThreads` and the collapsed sections). */
+const QUEUE_THREAD_COLUMNS = `t.*,
+              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
+              p.name AS project_name,
+              l.label AS location_label,
+              COALESCE(l.is_worktree, 0) AS location_is_worktree,
+              COALESCE(${QUEUE_PREVIEW_LAST_ERROR}, ${QUEUE_PREVIEW_ASSISTANT_TEXT}) AS preview,
+              (${QUEUE_PREVIEW_LAST_ERROR} IS NOT NULL) AS preview_is_error`
+
+function rowToQueueThread(r: QueueThreadRow): QueueThread {
+  return {
+    ...rowToThread(r),
+    project_name: r.project_name,
+    location_label: r.location_label ?? null,
+    location_is_worktree: r.location_is_worktree === 1,
+    preview: r.preview ?? null,
+    preview_is_error: r.preview_is_error === 1,
+  }
+}
+
 /**
  * The Queue: every attention-relevant thread across unarchived projects.
  * Archived threads and archived projects are excluded; Runs appear only when
@@ -543,24 +599,15 @@ export function countLiveThreadsForLocation(locationId: string): number {
 export function listQueueThreads(): QueueThread[] {
   const rows = getDb()
     .prepare(
-      `SELECT t.*,
-              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
-              p.name AS project_name,
-              l.label AS location_label,
-              COALESCE(l.is_worktree, 0) AS location_is_worktree
+      `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
        JOIN projects p ON p.id = t.project_id
        LEFT JOIN repo_locations l ON l.id = t.location_id
        WHERE t.archived = 0 AND p.archived_at IS NULL AND ${THREAD_VISIBILITY_FILTER} AND ${THREAD_NOT_SNOOZED}
        ORDER BY ${THREAD_TURN_ACTIVITY} DESC`
     )
-    .all(nowIso()) as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
-  return rows.map((r) => ({
-    ...rowToThread(r),
-    project_name: r.project_name,
-    location_label: r.location_label ?? null,
-    location_is_worktree: r.location_is_worktree === 1,
-  }))
+    .all(nowIso()) as QueueThreadRow[]
+  return rows.map(rowToQueueThread)
 }
 
 /**
@@ -575,11 +622,7 @@ export function listSnoozedQueueThreads(search: string | null, limit: number, of
   const query = search?.trim()
   const rows = getDb()
     .prepare(
-      `SELECT t.*,
-              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
-              p.name AS project_name,
-              l.label AS location_label,
-              COALESCE(l.is_worktree, 0) AS location_is_worktree
+      `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
        JOIN projects p ON p.id = t.project_id
        LEFT JOIN repo_locations l ON l.id = t.location_id
@@ -587,13 +630,8 @@ export function listSnoozedQueueThreads(search: string | null, limit: number, of
        ORDER BY t.snoozed_until ASC
        LIMIT ? OFFSET ?`
     )
-    .all(...(query ? [nowIso(), `%${query}%`, limit, offset] : [nowIso(), limit, offset])) as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
-  return rows.map((r) => ({
-    ...rowToThread(r),
-    project_name: r.project_name,
-    location_label: r.location_label ?? null,
-    location_is_worktree: r.location_is_worktree === 1,
-  }))
+    .all(...(query ? [nowIso(), `%${query}%`, limit, offset] : [nowIso(), limit, offset])) as QueueThreadRow[]
+  return rows.map(rowToQueueThread)
 }
 
 /**
@@ -606,11 +644,7 @@ export function listArchivedQueueThreads(search: string | null, limit: number, o
   const query = search?.trim()
   const rows = getDb()
     .prepare(
-      `SELECT t.*,
-              EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages,
-              p.name AS project_name,
-              l.label AS location_label,
-              COALESCE(l.is_worktree, 0) AS location_is_worktree
+      `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
        JOIN projects p ON p.id = t.project_id
        LEFT JOIN repo_locations l ON l.id = t.location_id
@@ -618,13 +652,8 @@ export function listArchivedQueueThreads(search: string | null, limit: number, o
        ORDER BY ${THREAD_TURN_ACTIVITY} DESC
        LIMIT ? OFFSET ?`
     )
-    .all(...(query ? [`%${query}%`, limit, offset] : [limit, offset])) as Array<ThreadRow & { project_name: string; location_label: string | null; location_is_worktree: number }>
-  return rows.map((r) => ({
-    ...rowToThread(r),
-    project_name: r.project_name,
-    location_label: r.location_label ?? null,
-    location_is_worktree: r.location_is_worktree === 1,
-  }))
+    .all(...(query ? [`%${query}%`, limit, offset] : [limit, offset])) as QueueThreadRow[]
+  return rows.map(rowToQueueThread)
 }
 
 export function archivedThreadCount(projectId: string): number {

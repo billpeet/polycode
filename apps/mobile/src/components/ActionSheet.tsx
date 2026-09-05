@@ -4,7 +4,7 @@
  */
 import { Modal, Pressable, StyleSheet, Text } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import { colors } from '@/theme/colors'
+import { colors, radii } from '@/theme/colors'
 
 export interface ActionSheetOption {
   label: string
@@ -53,8 +53,8 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: radii.sheet,
+    borderTopRightRadius: radii.sheet,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 14,
@@ -69,7 +69,7 @@ const styles = StyleSheet.create({
   },
   option: {
     backgroundColor: colors.surface2,
-    borderRadius: 10,
+    borderRadius: radii.input,
     paddingVertical: 13,
     alignItems: 'center',
   },

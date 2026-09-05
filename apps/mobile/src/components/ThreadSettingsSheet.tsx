@@ -3,57 +3,23 @@
  * permission mode in one sheet, plus favourite combos (desktop parity —
  * saved provider/model/effort presets for one-tap switching).
  */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Alert, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
-import {
-  getModelsForProvider,
-  PROVIDERS,
-  type ModelOption,
-  type PermissionMode,
-  type Provider,
-  type ReasoningLevel,
-  type Thread,
-} from '@polycode/shared'
-import { rpc } from '@/api/rpc'
+import { PROVIDERS, type PermissionMode, type Provider, type ReasoningLevel, type Thread } from '@polycode/shared'
+import { isProvider, useAvailableModels } from '@/lib/models'
+import { permissionOptionsForProvider } from '@/lib/permissions'
 import { useFavouritesStore, favouriteEquals, formatFavourite, type Favourite } from '@/stores/favourites'
-import { useHostsStore } from '@/stores/hosts'
-import { colors } from '@/theme/colors'
+import { colors, permissionAccent, radii, sectionLabel } from '@/theme/colors'
 import { effortLabel } from './ThreadControls'
 import { Chip } from './ui'
 
-type ModelsChannel =
-  | 'models:claudeAvailable'
-  | 'models:codexAvailable'
-  | 'models:opencodeAvailable'
-  | 'models:piAvailable'
-  | 'models:cursorAvailable'
-  | 'models:grokAvailable'
-
-const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
-  'claude-code': 'models:claudeAvailable',
-  codex: 'models:codexAvailable',
-  opencode: 'models:opencodeAvailable',
-  pi: 'models:piAvailable',
-  cursor: 'models:cursorAvailable',
-  grok: 'models:grokAvailable',
-}
-
 const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
-
-const PERMISSION_MODES: { id: PermissionMode; label: string }[] = [
-  { id: 'ask', label: 'Ask' },
-  { id: 'auto', label: 'Auto' },
-  { id: 'workspace', label: 'Workspace' },
-  { id: 'yolo', label: 'YOLO' },
-]
-
-function isProvider(value: string): value is Provider {
-  return PROVIDERS.some((p) => p.id === value)
-}
 
 function ThreadSettingsSheetContent(props: {
   thread: Thread
+  /** Token/cost/context summary shown under the title; null when nothing to show. */
+  stats?: string | null
   visible: boolean
   onClose: () => void
   onSelectModel: (provider: string, model: string) => void
@@ -63,29 +29,11 @@ function ThreadSettingsSheetContent(props: {
   const { thread, visible, onClose } = props
   const insets = useSafeAreaInsets()
   const [provider, setProvider] = useState<Provider>(isProvider(thread.provider) ? thread.provider : 'claude-code')
-  const [liveModels, setLiveModels] = useState<{ provider: Provider; models: ModelOption[] } | null>(null)
-  const models: ModelOption[] =
-    liveModels?.provider === provider ? liveModels.models : [...getModelsForProvider(provider)]
+  const models = useAvailableModels(provider, thread.id, visible)
   const favourites = useFavouritesStore((s) => s.favourites)
   const addFavourite = useFavouritesStore((s) => s.add)
   const removeFavourite = useFavouritesStore((s) => s.removeAt)
-
-  useEffect(() => {
-    if (!visible) return
-    const connection = useHostsStore.getState().activeConnection()
-    if (!connection) return
-    let cancelled = false
-    rpc(connection, MODEL_CHANNEL_BY_PROVIDER[provider], thread.id)
-      .then((available) => {
-        if (!cancelled && Array.isArray(available) && available.length > 0) {
-          setLiveModels({ provider, models: available })
-        }
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [visible, provider, thread.id])
+  const permissionOptions = permissionOptionsForProvider(thread.provider)
 
   const selectedModel = models.find((m) => m.id === thread.model)
   const effortLevels: ReasoningLevel[] =
@@ -105,6 +53,11 @@ function ThreadSettingsSheetContent(props: {
       <Pressable style={styles.backdrop} onPress={onClose}>
         <Pressable style={[styles.sheet, { paddingBottom: 16 + insets.bottom }]} onPress={() => undefined}>
           <ScrollView contentContainerStyle={{ gap: 16 }} style={{ maxHeight: 620 }} nestedScrollEnabled>
+            <View style={{ gap: 2 }}>
+              <Text style={styles.sheetTitle}>Thread settings</Text>
+              {props.stats ? <Text style={styles.stats}>{props.stats}</Text> : null}
+            </View>
+
             {/* Provider */}
             <View style={{ gap: 8 }}>
               <Text style={styles.sectionTitle}>Provider</Text>
@@ -156,13 +109,14 @@ function ThreadSettingsSheetContent(props: {
             <View style={{ gap: 8 }}>
               <Text style={styles.sectionTitle}>Permission Mode</Text>
               <View style={styles.chipWrap}>
-                {PERMISSION_MODES.map((mode) => (
+                {permissionOptions.map((option) => (
                   <Chip
-                    key={mode.id}
-                    label={mode.label}
-                    active={thread.permission_mode === mode.id}
-                    color={mode.id === 'yolo' ? colors.danger : undefined}
-                    onPress={() => props.onSelectPermissionMode(mode.id)}
+                    key={option.mode}
+                    label={option.label}
+                    active={thread.permission_mode === option.mode}
+                    color={permissionAccent[option.mode].color}
+                    tint={permissionAccent[option.mode].background}
+                    onPress={() => props.onSelectPermissionMode(option.mode)}
                   />
                 ))}
               </View>
@@ -219,25 +173,21 @@ const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'flex-end' },
   sheet: {
     backgroundColor: colors.surface,
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: radii.sheet,
+    borderTopRightRadius: radii.sheet,
     borderWidth: 1,
     borderColor: colors.border,
     padding: 18,
   },
-  sectionTitle: {
-    color: colors.textMuted,
-    fontSize: 11,
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: 0.6,
-  },
+  sheetTitle: { color: colors.text, fontSize: 16, fontWeight: '700' },
+  stats: { color: colors.textMuted, fontSize: 12 },
+  sectionTitle: sectionLabel,
   chipWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   modelRow: {
     backgroundColor: colors.surface2,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: radii.input,
     padding: 11,
     gap: 2,
   },
@@ -250,7 +200,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.surface2,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 10,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
     paddingVertical: 10,
   },
@@ -259,7 +209,7 @@ const styles = StyleSheet.create({
   saveFavourite: {
     borderWidth: 1,
     borderColor: colors.claude,
-    borderRadius: 10,
+    borderRadius: radii.input,
     paddingVertical: 10,
     alignItems: 'center',
   },

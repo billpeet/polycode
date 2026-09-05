@@ -3,41 +3,32 @@ import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
 
 /**
- * Workspace UI state: which thread is open in the main area, which projects
- * are expanded in the sidebar, and whether the sidebar drawer is open.
- * Selection/expansion persist across launches (like the desktop sidebar).
+ * Which Queue rows are shown: everything, only unread, or one project.
+ * Not persisted — a filter is a moment's intent, but it must survive a
+ * round-trip into a thread and back, which is why it lives here rather than
+ * in the Queue screen's local state.
  */
-/** Which list the user works from: the project tree, or the cross-project Queue. */
-export type SidebarViewMode = 'tree' | 'queue'
+export type QueueFilter = 'all' | 'unread' | { projectId: string }
 
+/**
+ * Workspace UI state. Which thread is open is the navigation stack's
+ * business (`/thread/[threadId]`); only tree expansion persists across
+ * launches, like the desktop sidebar.
+ */
 interface UiState {
-  selectedProjectId: string | null
-  selectedThreadId: string | null
   expandedProjectIds: string[]
-  sidebarOpen: boolean
-  sidebarViewMode: SidebarViewMode
+  queueFilter: QueueFilter
 
-  selectThread: (projectId: string, threadId: string) => void
-  clearSelection: () => void
   toggleProject: (projectId: string) => void
   expandProject: (projectId: string) => void
-  setSidebarOpen: (open: boolean) => void
-  setSidebarViewMode: (mode: SidebarViewMode) => void
+  setQueueFilter: (filter: QueueFilter) => void
 }
 
 export const useUiStore = create<UiState>()(
   persist(
     (set) => ({
-      selectedProjectId: null,
-      selectedThreadId: null,
       expandedProjectIds: [],
-      sidebarOpen: false,
-      sidebarViewMode: 'tree',
-
-      selectThread: (projectId, threadId) =>
-        set({ selectedProjectId: projectId, selectedThreadId: threadId, sidebarOpen: false }),
-
-      clearSelection: () => set({ selectedProjectId: null, selectedThreadId: null }),
+      queueFilter: 'all',
 
       toggleProject: (projectId) =>
         set((s) => ({
@@ -53,19 +44,22 @@ export const useUiStore = create<UiState>()(
             : [...s.expandedProjectIds, projectId],
         })),
 
-      setSidebarOpen: (open) => set({ sidebarOpen: open }),
-
-      setSidebarViewMode: (mode) => set({ sidebarViewMode: mode }),
+      setQueueFilter: (filter) => set({ queueFilter: filter }),
     }),
     {
       name: 'polycode.ui',
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (s) => ({
-        selectedProjectId: s.selectedProjectId,
-        selectedThreadId: s.selectedThreadId,
-        expandedProjectIds: s.expandedProjectIds,
-        sidebarViewMode: s.sidebarViewMode,
-      }),
+      version: 1,
+      partialize: (s) => ({ expandedProjectIds: s.expandedProjectIds }),
+      // v0 also persisted the selected thread and drawer mode; neither exists now.
+      migrate: (persisted) => {
+        const state = (persisted ?? {}) as { expandedProjectIds?: unknown }
+        return {
+          expandedProjectIds: Array.isArray(state.expandedProjectIds)
+            ? state.expandedProjectIds.filter((id): id is string => typeof id === 'string')
+            : [],
+        } as UiState
+      },
     },
   ),
 )

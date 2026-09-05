@@ -354,6 +354,10 @@ export interface QueueThread extends Thread {
   project_name: string
   location_label: string | null
   location_is_worktree: boolean
+  /** Latest assistant text (or the pending question) for the row's preview line; null when nothing to show. */
+  preview: string | null
+  /** True when `preview` is an error message. */
+  preview_is_error: boolean
 }
 
 /** How a Routine fires: on a cron schedule, once at a fixed time, or only manually. */

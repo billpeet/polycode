@@ -1,13 +1,10 @@
 import { useState, type ReactNode } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native'
 import type { SlashCommand, ThreadStatus } from '@polycode/shared'
-import { colors } from '@/theme/colors'
+import type { PendingImage } from '@/lib/attachments'
+import { colors, radii } from '@/theme/colors'
 
-export interface PendingImage {
-  id: string
-  name: string
-  dataUrl: string
-}
+export type { PendingImage }
 
 export function InputBar(props: {
   status: ThreadStatus
@@ -62,20 +59,6 @@ export function InputBar(props: {
           ))}
         </ScrollView>
       ) : null}
-      <ScrollView
-        horizontal
-        showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.topRow}
-        keyboardShouldPersistTaps="handled"
-      >
-        <Pressable onPress={() => setPlanMode((v) => !v)} hitSlop={6}>
-          <View style={[styles.planChip, planMode && styles.planChipActive]}>
-            <Text style={[styles.planChipText, planMode && { color: colors.info }]}>Plan mode</Text>
-          </View>
-        </Pressable>
-        {props.accessories}
-        {props.status === 'stopping' ? <Text style={styles.statusHint}>Stopping…</Text> : null}
-      </ScrollView>
       {attachments.length > 0 ? (
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.attachmentRow}>
           {attachments.map((attachment) => (
@@ -114,6 +97,22 @@ export function InputBar(props: {
           <Text style={styles.sendIcon}>➤</Text>
         </Pressable>
       </View>
+      {/* Parameter chips sit under the composer, as on the desktop toolbar. */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={{ flexGrow: 0 }}
+        contentContainerStyle={styles.chipRow}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Pressable onPress={() => setPlanMode((v) => !v)} hitSlop={6}>
+          <View style={[styles.planChip, planMode && styles.planChipActive]}>
+            <Text style={[styles.planChipText, planMode && { color: colors.accent }]}>Plan mode</Text>
+          </View>
+        </Pressable>
+        {props.accessories}
+        {props.status === 'stopping' ? <Text style={styles.statusHint}>Stopping…</Text> : null}
+      </ScrollView>
     </View>
   )
 }
@@ -128,7 +127,7 @@ const styles = StyleSheet.create({
     paddingBottom: 10,
     gap: 8,
   },
-  topRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
+  chipRow: { flexDirection: 'row', alignItems: 'center', gap: 8, paddingRight: 8 },
   slashPopup: {
     maxHeight: 220,
     borderWidth: 1,
@@ -149,11 +148,11 @@ const styles = StyleSheet.create({
   planChip: {
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 999,
-    paddingVertical: 3,
-    paddingHorizontal: 10,
+    borderRadius: radii.pill,
+    paddingVertical: 5,
+    paddingHorizontal: 11,
   },
-  planChipActive: { borderColor: colors.info, backgroundColor: 'rgba(96, 165, 250, 0.12)' },
+  planChipActive: { borderColor: colors.accent, backgroundColor: colors.accentTint },
   planChipText: { color: colors.textMuted, fontSize: 12, fontWeight: '500' },
   statusHint: { color: colors.warning, fontSize: 12 },
   row: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
@@ -188,7 +187,7 @@ const styles = StyleSheet.create({
     backgroundColor: colors.bg,
     borderWidth: 1,
     borderColor: colors.border,
-    borderRadius: 12,
+    borderRadius: radii.input,
     paddingHorizontal: 12,
     paddingVertical: 9,
     color: colors.text,

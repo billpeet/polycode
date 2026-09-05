@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import {
   getModelsForProvider,
@@ -9,31 +9,9 @@ import {
   type ReasoningLevel,
   type Thread,
 } from '@polycode/shared'
-import { rpc } from '@/api/rpc'
-import { useHostsStore } from '@/stores/hosts'
+import { isProvider, useAvailableModels } from '@/lib/models'
 import { colors } from '@/theme/colors'
 import { Chip } from './ui'
-
-type ModelsChannel =
-  | 'models:claudeAvailable'
-  | 'models:codexAvailable'
-  | 'models:opencodeAvailable'
-  | 'models:piAvailable'
-  | 'models:cursorAvailable'
-  | 'models:grokAvailable'
-
-const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
-  'claude-code': 'models:claudeAvailable',
-  codex: 'models:codexAvailable',
-  opencode: 'models:opencodeAvailable',
-  pi: 'models:piAvailable',
-  cursor: 'models:cursorAvailable',
-  grok: 'models:grokAvailable',
-}
-
-function isProvider(value: string): value is Provider {
-  return PROVIDERS.some((p) => p.id === value)
-}
 
 /** Bottom-sheet style picker for provider + model. */
 function ModelPickerSheetContent(props: {
@@ -45,28 +23,7 @@ function ModelPickerSheetContent(props: {
   const { thread, visible, onClose, onSelect } = props
   const initialProvider = isProvider(thread.provider) ? thread.provider : 'claude-code'
   const [provider, setProvider] = useState<Provider>(initialProvider)
-  const [liveModels, setLiveModels] = useState<{ provider: Provider; models: ModelOption[] } | null>(null)
-  const models: ModelOption[] =
-    liveModels?.provider === provider ? liveModels.models : [...getModelsForProvider(provider)]
-
-  useEffect(() => {
-    if (!visible) return
-    const connection = useHostsStore.getState().activeConnection()
-    if (!connection) return
-    let cancelled = false
-    rpc(connection, MODEL_CHANNEL_BY_PROVIDER[provider], thread.id)
-      .then((available) => {
-        if (!cancelled && Array.isArray(available) && available.length > 0) {
-          setLiveModels({ provider, models: available })
-        }
-      })
-      .catch(() => {
-        // Keep the static fallback.
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [visible, provider, thread.id])
+  const models = useAvailableModels(provider, thread.id, visible)
 
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose}>

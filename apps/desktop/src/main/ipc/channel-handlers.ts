@@ -855,7 +855,14 @@ export const channelHandlers = {
 
   // The Queue: cross-project attention list. Visibility rules (unarchived
   // projects, unarchived threads, escalated runs only) live in the query.
-  'threads:listQueue': (_ctx) => listQueueThreads(),
+  // Pending questions live only in memory, so the persisted preview is
+  // replaced with the question the user is actually being asked.
+  'threads:listQueue': (_ctx) =>
+    listQueueThreads().map((thread) => {
+      if (thread.status !== 'question_pending') return thread
+      const question = sessionManager.get(thread.id)?.getPendingQuestions()[0]?.question
+      return question ? { ...thread, preview: question, preview_is_error: false } : thread
+    }),
 
   // The Queue's collapsed Archived section: cross-project, searchable, paged.
   'threads:listQueueArchived': (_ctx, search, limit, offset) =>
