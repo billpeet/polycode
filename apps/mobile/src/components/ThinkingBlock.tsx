@@ -1,10 +1,33 @@
 import { memo, useState } from 'react'
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { colors } from '@/theme/colors'
+import { Markdown } from './Markdown'
 
 /** Desktop parity: purple accent, ◌ icon, 200-char collapsed preview. */
 const TRUNCATE_LENGTH = 200
 const EXPANDED_MAX_HEIGHT = 320
+
+/**
+ * The collapsed one-liner keeps only inline bold, as on the desktop: a full
+ * Markdown pass would introduce block layout (headings, lists) into a single
+ * truncated line, while dropping the markers would read as stray asterisks.
+ */
+function InlineBold(props: { text: string }) {
+  const parts = props.text.split(/(\*\*[^*]+\*\*)/g)
+  return (
+    <>
+      {parts.map((part, index) =>
+        part.startsWith('**') && part.endsWith('**') ? (
+          <Text key={index} style={styles.bold}>
+            {part.slice(2, -2)}
+          </Text>
+        ) : (
+          part
+        ),
+      )}
+    </>
+  )
+}
 
 export const ThinkingBlock = memo(function ThinkingBlock(props: { content: string; subagent?: boolean }) {
   const [expanded, setExpanded] = useState(false)
@@ -21,12 +44,12 @@ export const ThinkingBlock = memo(function ThinkingBlock(props: { content: strin
         </View>
         {expanded ? (
           <ScrollView style={{ maxHeight: EXPANDED_MAX_HEIGHT }} nestedScrollEnabled>
-            <Text style={styles.content} selectable>
-              {props.content}
-            </Text>
+            <Markdown variant="thinking">{props.content}</Markdown>
           </ScrollView>
         ) : (
-          <Text style={styles.content}>{preview}</Text>
+          <Text style={styles.content} numberOfLines={2}>
+            <InlineBold text={preview} />
+          </Text>
         )}
       </View>
     </Pressable>
@@ -56,4 +79,5 @@ const styles = StyleSheet.create({
   },
   chevron: { color: colors.textMuted, fontSize: 12 },
   content: { color: colors.textMuted, fontSize: 13, fontStyle: 'italic', lineHeight: 19 },
+  bold: { fontWeight: '600', color: colors.text },
 })

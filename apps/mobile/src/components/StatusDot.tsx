@@ -27,11 +27,12 @@ export function ThreadStatusIndicator(props: { status: ThreadStatus; unread: boo
 
   if (status === 'running' || status === 'stopping') {
     return (
-      <View style={{ width: size + 4, height: size + 4, alignItems: 'center', justifyContent: 'center' }}>
+      <View style={{ width: size + 6, height: size + 6, alignItems: 'center', justifyContent: 'center' }}>
+        {/* The native small spinner is 20px; scale it to roughly the dot's size rather than to a speck. */}
         <ActivityIndicator
           size="small"
           color={colors.claude}
-          style={{ transform: [{ scale: 0.55 }], opacity: status === 'stopping' ? 0.5 : 1 }}
+          style={{ transform: [{ scale: Math.max(0.55, (size + 6) / 20) }], opacity: status === 'stopping' ? 0.5 : 1 }}
         />
       </View>
     )

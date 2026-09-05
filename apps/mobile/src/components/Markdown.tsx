@@ -61,6 +61,15 @@ const markdownStyles = {
   tr: { borderColor: colors.border },
 }
 
-export const Markdown = memo(function Markdown(props: { children: string }) {
-  return <MarkdownDisplay style={markdownStyles}>{props.children}</MarkdownDisplay>
+/** Smaller, muted body for thinking blocks (desktop's `.thinking-markdown`). */
+const thinkingStyles = {
+  ...markdownStyles,
+  body: { color: colors.textMuted, fontSize: 13, lineHeight: 19 },
+  strong: { fontWeight: '600' as const, color: colors.text },
+}
+
+export const Markdown = memo(function Markdown(props: { children: string; variant?: 'default' | 'thinking' }) {
+  return (
+    <MarkdownDisplay style={props.variant === 'thinking' ? thinkingStyles : markdownStyles}>{props.children}</MarkdownDisplay>
+  )
 })
