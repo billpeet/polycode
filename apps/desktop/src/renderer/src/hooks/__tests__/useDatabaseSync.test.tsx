@@ -39,5 +39,19 @@ describe('useDatabaseSync', () => {
       expect(invoke).toHaveBeenCalledWith('messages:listBySession', 'session-1')
     })
   })
+
+  it('does not reload the transcript of a running thread — the stream and thread:complete own it', async () => {
+    useThreadStore.setState({ statusMap: { 'thread-1': 'running' } })
+    renderHook(() => useDatabaseSync())
+    invoke.mockClear()
+
+    act(() => window.dispatchEvent(new Event('focus')))
+
+    await waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('threads:list', 'project-1')
+    })
+    expect(invoke).not.toHaveBeenCalledWith('sessions:list', 'thread-1')
+    expect(invoke).not.toHaveBeenCalledWith('messages:listBySession', 'session-1')
+  })
 })
 // @vitest-environment happy-dom

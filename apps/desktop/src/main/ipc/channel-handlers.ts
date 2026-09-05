@@ -61,6 +61,7 @@
 import { spawn } from 'child_process'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
+import { access } from 'fs/promises'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { app, clipboard, dialog, shell } from 'electron'
@@ -606,7 +607,9 @@ export const channelHandlers = {
 
   'locations:list': (_ctx, projectId) => listSyncedLocations(projectId),
 
-  'locations:pathExists': (_ctx, path) => existsSync(path),
+  // Async on purpose: the renderer sweeps this across every visible location, and a sync
+  // stat on a slow/network path blocks every other IPC handler behind it.
+  'locations:pathExists': (_ctx, path) => access(path).then(() => true, () => false),
 
   // The optional pool/ssh/wsl arguments are passed through raw: db/queries.ts coalesces
   // every one of them before binding, so a `?? null` here would only be duplication.
