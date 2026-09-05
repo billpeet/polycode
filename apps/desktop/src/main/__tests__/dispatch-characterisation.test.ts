@@ -306,18 +306,6 @@ const H = vi.hoisted(() => {
   }
 })
 
-// `locations:pathExists` is async (`fs/promises.access`) so a slow or network path never
-// blocks the main process; it answers from the same `pathExists` switch as `existsSync`.
-vi.mock('fs/promises', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('fs/promises')>()
-  return {
-    ...actual,
-    access: async () => {
-      if (!H.state.pathExists) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
-    },
-  }
-})
-
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>()
   return {

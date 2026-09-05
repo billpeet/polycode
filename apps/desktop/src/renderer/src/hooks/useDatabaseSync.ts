@@ -66,13 +66,6 @@ export function useDatabaseSync(): void {
         const threadId = latestThreadState.selectedThreadId
         if (!threadId || threadId.startsWith('pending-thread-')) return
 
-        // A running Turn is already streaming into the transcript over push events, and
-        // `thread:complete` reconciles it against the database when the Turn ends. Reloading
-        // the whole transcript mid-stream is pure cost: on a large Thread it blocks the main
-        // process for seconds (Grafana: p99 4.4s) right while chunks are arriving, which the
-        // user sees as words trickling in and a frozen composer.
-        if (latestThreadState.statusMap[threadId] === 'running') return
-
         await useSessionStore.getState().fetch(threadId).catch(() => undefined)
         const sessionId = useSessionStore.getState().activeSessionByThread[threadId]
         if (sessionId) {
