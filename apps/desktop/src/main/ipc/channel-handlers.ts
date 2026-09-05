@@ -60,7 +60,7 @@
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { spawn } from 'child_process'
 import { randomBytes } from 'crypto'
-import { existsSync, readFileSync } from 'fs'
+import { readFileSync } from 'fs'
 import { access } from 'fs/promises'
 import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
