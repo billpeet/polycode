@@ -372,13 +372,13 @@ export class Session {
         } satisfies OutputEvent)
       }
     }
-    if (this.activeSessionId) {
-      const driver = this.drivers.get(this.activeSessionId)
+    for (const driver of this.drivers.values()) {
       driver?.forceStop?.()
       if (!driver?.forceStop) {
         driver?.stop()
       }
     }
+    this.drivers.clear()
     if (this.shellProcess) {
       killProcessTree(this.shellProcess)
       this.shellProcess = null

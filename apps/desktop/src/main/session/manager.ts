@@ -12,7 +12,7 @@ class SessionManager {
       // the session was first cached), recreate so the new driver is used.
       // Never interrupt a running session mid-message.
       if (!existing.isRunning() && existing.transportChanged(sshConfig, wslConfig)) {
-        existing.stop()
+        existing.forceReset()
         this.sessions.delete(threadId)
       } else {
         return existing
@@ -29,9 +29,8 @@ class SessionManager {
 
   remove(threadId: string): void {
     const session = this.sessions.get(threadId)
-    if (session?.isRunning()) {
-      session.stop()
-    }
+    // Idle providers can still own a process and a persistent thread writer.
+    session?.forceReset()
     this.sessions.delete(threadId)
   }
 
@@ -43,9 +42,7 @@ class SessionManager {
 
   stopAll(): void {
     for (const session of this.sessions.values()) {
-      if (session.isRunning()) {
-        session.stop()
-      }
+      session.forceReset()
     }
     this.sessions.clear()
   }

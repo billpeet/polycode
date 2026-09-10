@@ -2433,7 +2433,9 @@ class CodexAppServerDriver implements CLIDriver {
     this.output = null
     if (this.child && !this.child.killed) {
       try {
-        if (force && process.platform === 'win32' && this.child.pid != null) {
+        // On Windows the direct child is a launcher shell. Killing only it
+        // leaves the app-server alive and holding the thread's writer lock.
+        if (process.platform === 'win32' && this.child.pid != null) {
           killWindowsProcessTree(this.child.pid, { force: true })
         } else {
           this.child.kill(force ? 'SIGKILL' : undefined)

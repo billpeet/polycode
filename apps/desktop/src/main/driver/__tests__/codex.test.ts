@@ -1,4 +1,7 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { killWindowsProcessTree } from '../../process-control'
+
+vi.mock('../../process-control', () => ({ killWindowsProcessTree: vi.fn() }))
 import path from 'path'
 import {
   buildCodexEnvironment,
@@ -1467,6 +1470,20 @@ describe('CodexDriver app-server approvals', () => {
     expect(kills).toBe(1)
     expect((local as any).child).toBeNull()
     expect(driver.isRunning()).toBe(false)
+  })
+
+  it.runIf(process.platform === 'win32')('stops the whole launcher tree when an idle app-server is stopped', () => {
+    const { driver, local } = setupLocalDriver()
+    local.currentTurn = null
+    local.child.pid = 12345
+    const killLauncher = vi.fn()
+    local.child.kill = killLauncher
+
+    driver.stop()
+
+    expect(killWindowsProcessTree).toHaveBeenCalledWith(12345, { force: true })
+    expect(killLauncher).not.toHaveBeenCalled()
+    expect(driver.getPid()).toBeNull()
   })
 
   it('lists, terminates, and cleans background terminals through app-server', async () => {
