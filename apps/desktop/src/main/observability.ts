@@ -8,6 +8,7 @@ import {
   type Gauge,
   type Span,
 } from '@opentelemetry/api'
+import { createHash } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http'
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
@@ -28,6 +29,7 @@ export interface ObservabilityConfig {
   endpoint?: string
   headers?: Record<string, string>
   serviceVersion: string
+  serviceInstanceId?: string
   environment: string
   exportIntervalMs?: number
 }
@@ -63,13 +65,14 @@ export function parseOtlpHeaders(value: string | undefined): Record<string, stri
   )
 }
 
-export function observabilityConfigFromEnv(serviceVersion: string): ObservabilityConfig {
+export function observabilityConfigFromEnv(serviceVersion: string, userDataPath?: string): ObservabilityConfig {
   const packagedEndpoint = typeof __OTLP_ENDPOINT__ === 'undefined' ? '' : __OTLP_ENDPOINT__
   const packagedHeaders = typeof __OTLP_HEADERS__ === 'undefined' ? '' : __OTLP_HEADERS__
   return {
     endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || packagedEndpoint.trim() || undefined,
     headers: parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS ?? packagedHeaders),
     serviceVersion,
+    ...(userDataPath ? { serviceInstanceId: createHash('sha256').update(userDataPath).digest('hex') } : {}),
     environment: process.env.OTEL_ENVIRONMENT?.trim() || (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
   }
 }
@@ -83,6 +86,7 @@ export function initializeObservability(config: ObservabilityConfig): boolean {
     [ATTR_SERVICE_VERSION]: config.serviceVersion,
     'deployment.environment.name': config.environment,
     'process.type': 'electron-main',
+    ...(config.serviceInstanceId ? { 'service.instance.id': config.serviceInstanceId } : {}),
   })
   const exporterOptions = { headers: config.headers }
 
@@ -171,6 +175,27 @@ export async function withSpan<T>(
   const span = tracer.startSpan(name, { attributes: attributes as Attributes }, parentContext)
   try {
     return await activeSpans.run(span, operation, span)
+  } catch (error) {
+    span.setStatus({ code: SpanStatusCode.ERROR })
+    if (error instanceof Error) span.recordException(error)
+    throw error
+  } finally {
+    span.end()
+  }
+}
+
+/** Synchronous counterpart of withSpan, sharing the same async-local parent. */
+export function withSyncSpan<T>(
+  name: string,
+  attributes: TelemetryAttributes,
+  operation: (span: Span | undefined) => T
+): T {
+  if (!state) return operation(undefined)
+  const parent = activeSpans.getStore()
+  const parentContext = parent ? trace.setSpan(ROOT_CONTEXT, parent) : ROOT_CONTEXT
+  const span = state.tracerProvider.getTracer('polycode').startSpan(name, { attributes }, parentContext)
+  try {
+    return activeSpans.run(span, operation, span)
   } catch (error) {
     span.setStatus({ code: SpanStatusCode.ERROR })
     if (error instanceof Error) span.recordException(error)

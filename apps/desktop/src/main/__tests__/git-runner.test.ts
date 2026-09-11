@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { FakeRunner } from '../driver/runner/fake'
-import { GitCommandError, GitLockedError, extractLockPathFromStderr, runGit } from '../git-runner'
+import { GitCommandError, GitLockedError, extractLockPathFromStderr, gitSubcommand, runGit } from '../git-runner'
 
 describe('extractLockPathFromStderr', () => {
   it.each([
@@ -65,4 +65,13 @@ describe('runGit', () => {
     })
     expect(runner.runCommands).toHaveLength(1)
   })
+})
+
+it.each([
+  [['status', '--short'], 'status'],
+  [['-c', 'credential.interactive=never', 'fetch', '--all'], 'fetch'],
+  [['-C', '/private/path', '--no-pager', 'diff'], 'diff'],
+  [[], 'unknown'],
+])('names git subcommands without global option values', (args, expected) => {
+  expect(gitSubcommand(args)).toBe(expected)
 })

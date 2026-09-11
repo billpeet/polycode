@@ -1,3 +1,5 @@
+import { SpanStatusCode } from '@opentelemetry/api'
+import { withSpan } from './observability'
 import type { Runner } from './driver/runner'
 
 const GIT_LOCK_MAX_ATTEMPTS = 10
@@ -56,11 +58,26 @@ export async function runGit(
   let lastLockPath: string | null = null
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    const result = await runner.run({
-      binary: 'git',
-      args,
-      workDir,
-      maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
+    const subcommand = gitSubcommand(args)
+    const result = await withSpan(`git.${subcommand}`, {
+      'git.repository': workDir,
+      'git.subcommand': subcommand,
+      'git.attempt': attempt,
+    }, async (span) => {
+      const startedAt = performance.now()
+      try {
+        const result = await runner.run({
+          binary: 'git',
+          args,
+          workDir,
+          maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
+        })
+        span?.setAttribute('process.exit.code', result.exitCode ?? -1)
+        if (result.exitCode !== 0 || result.timedOut) span?.setStatus({ code: SpanStatusCode.ERROR })
+        return result
+      } finally {
+        span?.setAttribute('git.duration_ms', performance.now() - startedAt)
+      }
     })
     if (result.exitCode === 0) return result.stdout.trimEnd()
 
@@ -83,4 +100,17 @@ export async function runGit(
     `Git repository is locked${lastLockPath ? ` (${lastLockPath})` : ''}. Another git process may be running, or a previous one crashed and left a stale lock.`,
     lastLockPath,
   )
+}
+
+/** Skip global options so fetch with `-c key=value` is still named git.fetch. */
+export function gitSubcommand(args: string[]): string {
+  for (let index = 0; index < args.length; index++) {
+    const arg = args[index]
+    if (['-c', '-C', '--git-dir', '--work-tree', '--namespace', '--config-env', '--exec-path'].includes(arg)) {
+      index++
+    } else if (!arg.startsWith('-')) {
+      return /^[a-z][a-z0-9-]*$/.test(arg) ? arg : 'unknown'
+    }
+  }
+  return 'unknown'
 }

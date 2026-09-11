@@ -6,6 +6,7 @@ const IPC_PROFILING_PATCHED = Symbol.for('polycode.ipcProfilingPatched')
 const DEFAULT_IPC_THRESHOLD_MS = 50
 const HOT_IPC_THRESHOLD_MS = 16
 const MAIN_THREAD_STALL_THRESHOLD_MS = 250
+const SUSPECTED_SLEEP_THRESHOLD_MS = 30_000
 const MAIN_THREAD_STALL_SAMPLE_MS = 1000
 const IPC_SUMMARY_INTERVAL_MS = 10_000
 
@@ -150,7 +151,7 @@ export function installMainThreadStallMonitor(): void {
     const driftMs = now - expectedAt
     expectedAt = now + MAIN_THREAD_STALL_SAMPLE_MS
 
-    if (driftMs >= MAIN_THREAD_STALL_THRESHOLD_MS) {
+    if (driftMs >= MAIN_THREAD_STALL_THRESHOLD_MS && driftMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
       recordDuration('polycode.event_loop.stall', driftMs, { process: 'main' })
       console.warn(`[perf][main-thread] event-loop-stall ${driftMs.toFixed(1)}ms`)
     }

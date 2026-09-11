@@ -1,6 +1,7 @@
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import path from 'path'
+import { instrumentDatabase } from './telemetry'
 import { runMigrations } from './migrations'
 
 let db: Database.Database | undefined
@@ -25,6 +26,7 @@ export function initDb(): void {
     database.pragma('foreign_keys = ON')
 
     runMigrations(database)
+    instrumentDatabase(database)
     db = database
   } catch (error) {
     database.close()
