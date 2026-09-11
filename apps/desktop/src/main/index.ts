@@ -335,7 +335,7 @@ function createWindow(): BrowserWindow {
 }
 
 app.whenReady().then(async () => {
-  const telemetryEnabled = initializeObservability(observabilityConfigFromEnv(app.getVersion()))
+  const telemetryEnabled = initializeObservability(observabilityConfigFromEnv(app.getVersion(), app.getPath('userData')))
   console.info(`[telemetry] OTLP export ${telemetryEnabled ? 'enabled' : 'disabled'}`)
   startMemoryTelemetry()
   installIpcProfiling()

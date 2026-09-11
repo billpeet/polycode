@@ -47,3 +47,10 @@ describe('observability configuration', () => {
     })
   })
 })
+
+it('derives a stable anonymous installation identity from userData', () => {
+  const first = observabilityConfigFromEnv('1', '/users/alice/polycode').serviceInstanceId
+  expect(first).toMatch(/^[a-f0-9]{64}$/)
+  expect(observabilityConfigFromEnv('2', '/users/alice/polycode').serviceInstanceId).toBe(first)
+  expect(observabilityConfigFromEnv('1', '/users/bob/polycode').serviceInstanceId).not.toBe(first)
+})

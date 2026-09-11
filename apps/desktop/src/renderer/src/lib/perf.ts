@@ -1,5 +1,6 @@
 import type { ProfilerOnRenderCallback } from 'react'
 
+const SUSPECTED_SLEEP_THRESHOLD_MS = 30_000
 const DEFAULT_MIN_INTERVAL_MS = 5000
 const LONG_TASK_THRESHOLD_MS = 50
 const REACT_COMMIT_THRESHOLD_MS = 20
@@ -43,16 +44,18 @@ export function reportPerf(
   options: {
     thresholdMs?: number
     minIntervalMs?: number
+    logDetails?: Record<string, unknown>
+    throttleKey?: string
     level?: 'log' | 'info' | 'warn' | 'error' | 'debug'
   } = {}
 ): void {
   const thresholdMs = options.thresholdMs ?? REACT_COMMIT_THRESHOLD_MS
   if (durationMs < thresholdMs) return
 
-  const key = `${name}:${serializeDetails(details)}`
+  const key = options.throttleKey ?? `${name}:${serializeDetails(details)}`
   if (!shouldSend(key, options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS)) return
 
-  const detailText = serializeDetails(details)
+  const detailText = serializeDetails({ ...details, ...options.logDetails })
   window.api.send('log:write', {
     source: 'renderer',
     level: options.level ?? 'warn',
@@ -93,10 +96,19 @@ export const reportReactCommit: ProfilerOnRenderCallback = (
 export function installRendererPerfObservers(): void {
   if (typeof window === 'undefined') return
 
+  let previousHeapBytes = readUsedHeapBytes()
+
   if (typeof PerformanceObserver !== 'undefined') {
     try {
       const observer = new PerformanceObserver((list) => {
+        const heapBytes = readUsedHeapBytes()
+        const heapDetails = heapBytes === undefined ? {} : {
+          heapUsedBytes: heapBytes,
+          heapDeltaBytes: previousHeapBytes === undefined ? undefined : heapBytes - previousHeapBytes,
+        }
+        previousHeapBytes = heapBytes
         for (const entry of list.getEntries()) {
+          if (entry.duration > SUSPECTED_SLEEP_THRESHOLD_MS) continue
           reportPerf(
             'long-task',
             entry.duration,
@@ -104,7 +116,7 @@ export function installRendererPerfObservers(): void {
               entryType: entry.entryType,
               name: entry.name,
             },
-            { thresholdMs: LONG_TASK_THRESHOLD_MS, minIntervalMs: 2000 }
+            { thresholdMs: LONG_TASK_THRESHOLD_MS, minIntervalMs: 2000, throttleKey: 'long-task', logDetails: heapDetails }
           )
         }
       })
@@ -117,7 +129,7 @@ export function installRendererPerfObservers(): void {
   let previousFrameAt = performance.now()
   const tick = (now: number) => {
     const frameGapMs = now - previousFrameAt
-    if (document.visibilityState === 'visible' && frameGapMs >= FRAME_JANK_THRESHOLD_MS) {
+    if (document.visibilityState === 'visible' && frameGapMs >= FRAME_JANK_THRESHOLD_MS && frameGapMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
       reportPerf(
         'frame-jank',
         frameGapMs,
@@ -136,7 +148,7 @@ export function installRendererPerfObservers(): void {
     const now = performance.now()
     const driftMs = now - expectedHeartbeatAt
     expectedHeartbeatAt = now + HEARTBEAT_SAMPLE_MS
-    if (document.visibilityState === 'visible' && driftMs >= HEARTBEAT_STALL_THRESHOLD_MS) {
+    if (document.visibilityState === 'visible' && driftMs >= HEARTBEAT_STALL_THRESHOLD_MS && driftMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
       reportPerf(
         'event-loop-stall',
         driftMs,
@@ -145,4 +157,11 @@ export function installRendererPerfObservers(): void {
       )
     }
   }, HEARTBEAT_SAMPLE_MS)
+}
+
+// Chromium-only, approximate samples between observer deliveries; not proof of GC.
+function readUsedHeapBytes(): number | undefined {
+  const memory = (performance as Performance & { memory?: { usedJSHeapSize: number } }).memory
+  const bytes = memory?.usedJSHeapSize
+  return bytes !== undefined && Number.isFinite(bytes) && bytes >= 0 ? bytes : undefined
 }
