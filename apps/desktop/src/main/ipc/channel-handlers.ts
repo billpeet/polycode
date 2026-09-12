@@ -2249,18 +2249,6 @@ export const channelHandlers = {
 
   // User-initiated retry from the offline banner: drops the circuit and redials.
   'remote:reconnect': (ctx) => ctx.remoteClient.reconnect(),
-} satisfies ChannelHandlerMap
-
-export type MigratedChannel = keyof typeof channelHandlers
-
-export const MIGRATED_CHANNELS = Object.keys(channelHandlers) as MigratedChannel[]
-
-const MIGRATED_CHANNEL_SET: ReadonlySet<string> = new Set<string>(MIGRATED_CHANNELS)
-
-export function isMigratedChannel(channel: string): channel is MigratedChannel {
-  return MIGRATED_CHANNEL_SET.has(channel)
-}
-
 
   // ── Tailscale ─────────────────────────────────────────────────────────────
   //
@@ -2290,6 +2278,18 @@ export function isMigratedChannel(channel: string): channel is MigratedChannel {
   // Leaves the server config alone: the hostname allowlist is harmless without serve, and
   // the user may be about to expose again.
   'tailscale:disableServe': () => disableTailscaleServe(readRemoteServerConfig().port),
+} satisfies ChannelHandlerMap
+
+export type MigratedChannel = keyof typeof channelHandlers
+
+export const MIGRATED_CHANNELS = Object.keys(channelHandlers) as MigratedChannel[]
+
+const MIGRATED_CHANNEL_SET: ReadonlySet<string> = new Set<string>(MIGRATED_CHANNELS)
+
+export function isMigratedChannel(channel: string): channel is MigratedChannel {
+  return MIGRATED_CHANNEL_SET.has(channel)
+}
+
 /**
  * Transport-facing entry point. Both adapters funnel through here.
  *
