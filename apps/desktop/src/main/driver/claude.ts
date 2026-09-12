@@ -222,6 +222,16 @@ export class ClaudeDriver implements CLIDriver {
       .finally(() => this.finishTurn())
   }
 
+  forceStop(): void {
+    this.stopped = true
+    this.promptQueue?.close()
+    this.promptQueue = null
+    this.query?.close()
+    this.query = null
+    this.streamTask = null
+    this.finishTurn()
+  }
+
   isRunning(): boolean {
     return this.currentTurn !== null
   }

@@ -67,7 +67,7 @@ import { basename, join } from 'path'
 import { pathToFileURL } from 'url'
 import { app, clipboard, dialog, shell } from 'electron'
 import type { BrowserWindow } from 'electron'
-import type { Channel, ChannelArgs, ChannelResult, RemoteChannel } from '@polycode/shared'
+import { subscriptionUsageProviderFor, type Channel, type ChannelArgs, type ChannelResult, type RemoteChannel } from '@polycode/shared'
 import type { RemoteServerConfig, SshConfig, WslConfig } from '../../shared/types'
 import {
   archivedThreadCount,
@@ -100,6 +100,8 @@ import {
   hasActiveRun,
   hasEscalatedRun,
   getThreadModifiedFiles,
+  getThreadModel,
+  getThreadProvider,
   importThread,
   listArchivedProjects,
   listArchivedThreads,
@@ -198,6 +200,8 @@ import { disableTailscaleServe, enableTailscaleServe, getTailscaleStatus } from 
 // `import type`, and it has to stay that way — see `LocalHandlerContext` below and the
 // assertion in channel-handler-migration.test.ts that pins the `type` keyword.
 import type { RemoteControlClient } from '../remote/client'
+import { getGlmSubscriptionUsage } from '../subscription-usage'
+import { getClaudeSubscriptionUsage, getCodexSubscriptionUsage } from '../subscription-usage-readers'
 import {
   cloneLocation,
   createFullProject,
@@ -1752,6 +1756,19 @@ export const channelHandlers = {
 
   'subscription-usage:get': (ctx, threadId) => {
     if (!threadExists(threadId)) throw new Error('Thread not found')
+    const provider = getThreadProvider(threadId)
+    const usageProvider = subscriptionUsageProviderFor(provider, getThreadModel(threadId))
+    if (!usageProvider) throw new Error(`Subscription usage is unavailable for ${provider}`)
+    if (usageProvider === 'glm') return getGlmSubscriptionUsage()
+
+    // Direct Codex/Claude sessions already own an authenticated provider process.
+    // Generic harnesses (Pi/OpenCode) need a short-lived account reader instead.
+    if (usageProvider !== provider) {
+      const workingDir = getEffectiveWorkingDir(threadId)
+      return usageProvider === 'codex'
+        ? getCodexSubscriptionUsage(workingDir)
+        : getClaudeSubscriptionUsage(workingDir)
+    }
     const session = sessionManager.getOrCreate(
       threadId,
       getEffectiveWorkingDir(threadId),

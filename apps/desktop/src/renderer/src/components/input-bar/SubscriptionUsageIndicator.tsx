@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Gauge, RefreshCw } from 'lucide-react'
-import type { Provider, SubscriptionUsageSnapshot, SubscriptionUsageWindow } from '../../types/ipc'
+import { subscriptionUsageProviderFor, type Provider, type SubscriptionUsageSnapshot, type SubscriptionUsageWindow } from '../../types/ipc'
 import { client } from '../../lib/client'
 
 const REFRESH_INTERVAL_MS = 5 * 60 * 1000
@@ -55,8 +55,9 @@ function tightestWindow(windows: SubscriptionUsageWindow[]): SubscriptionUsageWi
   }, null)
 }
 
-export default function SubscriptionUsageIndicator({ threadId, provider }: { threadId: string; provider: Provider }) {
-  const supported = provider === 'codex' || provider === 'claude-code'
+export default function SubscriptionUsageIndicator({ threadId, provider, model }: { threadId: string; provider: Provider; model?: string }) {
+  const usageProvider = subscriptionUsageProviderFor(provider, model)
+  const supported = usageProvider !== null
   const [snapshot, setSnapshot] = useState<SubscriptionUsageSnapshot | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -85,7 +86,7 @@ export default function SubscriptionUsageIndicator({ threadId, provider }: { thr
       window.clearTimeout(initialRefresh)
       window.clearInterval(interval)
     }
-  }, [provider, refresh, supported])
+  }, [provider, model, refresh, supported])
 
   useEffect(() => {
     if (!open) return
@@ -100,7 +101,7 @@ export default function SubscriptionUsageIndicator({ threadId, provider }: { thr
     }
   }, [open])
 
-  const currentSnapshot = snapshot?.provider === provider ? snapshot : null
+  const currentSnapshot = snapshot?.provider === usageProvider ? snapshot : null
   const tightest = useMemo(() => tightestWindow(currentSnapshot?.windows ?? []), [currentSnapshot])
   if (!supported) return null
 
@@ -110,7 +111,7 @@ export default function SubscriptionUsageIndicator({ threadId, provider }: { thr
     : percent != null && percent >= 70
       ? '#fbbf24'
       : 'var(--color-text-muted)'
-  const providerLabel = provider === 'codex' ? 'OpenAI' : 'Anthropic'
+  const providerLabel = usageProvider === 'codex' ? 'OpenAI' : usageProvider === 'glm' ? 'Z.ai' : 'Anthropic'
 
   return (
     <div ref={rootRef} className="relative mb-2">
@@ -163,7 +164,7 @@ export default function SubscriptionUsageIndicator({ threadId, provider }: { thr
                 ? '#f87171'
                 : pace?.ahead || (used != null && used >= 70)
                   ? '#fbbf24'
-                  : provider === 'codex' ? '#60a5fa' : 'var(--color-claude)'
+                  : usageProvider === 'codex' ? '#60a5fa' : usageProvider === 'glm' ? '#34d399' : 'var(--color-claude)'
               return (
                 <div key={window.id}>
                   <div className="mb-1.5 flex items-baseline justify-between">

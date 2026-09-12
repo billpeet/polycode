@@ -459,7 +459,7 @@ export default function ComposerToolbar({
         />
       </span>
 
-      <SubscriptionUsageIndicator threadId={threadId} provider={currentProvider} />
+      <SubscriptionUsageIndicator threadId={threadId} provider={currentProvider} model={currentThread?.model} />
 
       {currentProvider === 'codex' && <BackgroundTerminals threadId={threadId} />}
 

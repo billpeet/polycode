@@ -1710,6 +1710,7 @@ class CodexAppServerDriver implements CLIDriver {
   private currentTurn: { onEvent: (event: OutputEvent) => void; onDone: (error?: Error) => void } | null = null
   private outstandingTurnCount = 0
   private activeTurnId: string | null = null
+  private initializedPromise: Promise<void> | null = null
   private readyPromise: Promise<void> | null = null
   private state = createCodexStreamState()
   private readonly threadStates = new Map<string, CodexStreamState>()
@@ -1850,7 +1851,7 @@ class CodexAppServerDriver implements CLIDriver {
   }
 
   async getSubscriptionUsage(): Promise<SubscriptionUsageSnapshot> {
-    await this.ensureReady()
+    await this.ensureInitialized()
     const response = await this.sendRequest('account/rateLimits/read', {})
     return normalizeCodexSubscriptionUsage(response)
   }
@@ -1936,6 +1937,39 @@ class CodexAppServerDriver implements CLIDriver {
     }
 
     this.readyPromise = (async () => {
+      await this.ensureInitialized()
+
+      const threadMethod = this.codexThreadId ? 'thread/resume' : 'thread/start'
+      const result = await this.sendRequest(threadMethod, buildCodexAppServerThreadParams({
+        workingDir: this.options.workingDir,
+        model: this.options.model,
+        permissionMode: this.options.permissionMode,
+        yoloMode: this.options.yoloMode,
+        ...(this.codexThreadId ? { threadId: this.codexThreadId } : {}),
+      }))
+      const record = result && typeof result === 'object' ? result as Record<string, unknown> : {}
+      const thread = record.thread && typeof record.thread === 'object' ? record.thread as Record<string, unknown> : undefined
+      const threadId = (thread?.id as string | undefined) ?? (record.threadId as string | undefined)
+      if (!threadId) {
+        throw new Error(`${threadMethod} did not return a thread id`)
+      }
+      this.codexThreadId = threadId
+      this.options.onSessionId?.(threadId)
+    })()
+
+    try {
+      await this.readyPromise
+    } catch (error) {
+      this.readyPromise = null
+      this.cleanupProcess()
+      throw error
+    }
+  }
+
+  private async ensureInitialized(): Promise<void> {
+    if (this.initializedPromise) return this.initializedPromise
+
+    this.initializedPromise = (async () => {
       const env = buildCodexEnvironment()
       this.child = spawn('codex', ['app-server'], {
         cwd: this.options.workingDir,
@@ -1966,29 +2000,12 @@ class CodexAppServerDriver implements CLIDriver {
         capabilities: { experimentalApi: true },
       })
       this.writeMessage({ method: 'initialized' })
-
-      const threadMethod = this.codexThreadId ? 'thread/resume' : 'thread/start'
-      const result = await this.sendRequest(threadMethod, buildCodexAppServerThreadParams({
-        workingDir: this.options.workingDir,
-        model: this.options.model,
-        permissionMode: this.options.permissionMode,
-        yoloMode: this.options.yoloMode,
-        ...(this.codexThreadId ? { threadId: this.codexThreadId } : {}),
-      }))
-      const record = result && typeof result === 'object' ? result as Record<string, unknown> : {}
-      const thread = record.thread && typeof record.thread === 'object' ? record.thread as Record<string, unknown> : undefined
-      const threadId = (thread?.id as string | undefined) ?? (record.threadId as string | undefined)
-      if (!threadId) {
-        throw new Error(`${threadMethod} did not return a thread id`)
-      }
-      this.codexThreadId = threadId
-      this.options.onSessionId?.(threadId)
     })()
 
     try {
-      await this.readyPromise
+      await this.initializedPromise
     } catch (error) {
-      this.readyPromise = null
+      this.initializedPromise = null
       this.cleanupProcess()
       throw error
     }
@@ -2453,6 +2470,7 @@ class CodexAppServerDriver implements CLIDriver {
       }
     }
     this.child = null
+    this.initializedPromise = null
     this.readyPromise = null
     this.activeTurnId = null
     this.state = createCodexStreamState()

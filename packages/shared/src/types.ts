@@ -278,7 +278,16 @@ export type GrokModelId = typeof GROK_MODELS[number]['id']
 
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok'
 
-export type SubscriptionUsageProvider = 'claude-code' | 'codex'
+export type SubscriptionUsageProvider = 'claude-code' | 'codex' | 'glm'
+
+export function subscriptionUsageProviderFor(provider: Provider | string, model?: string | null): SubscriptionUsageProvider | null {
+  if (provider === 'codex' || provider === 'claude-code') return provider
+  const namespace = model?.split('/', 1)[0]
+  if (namespace === 'openai' || namespace === 'openai-codex') return 'codex'
+  if (namespace === 'anthropic') return 'claude-code'
+  if (namespace === 'zai' || namespace === 'zai-coding-plan') return 'glm'
+  return null
+}
 
 export interface SubscriptionUsageWindow {
   id: string
@@ -293,7 +302,7 @@ export interface SubscriptionUsageSnapshot {
   plan: string | null
   windows: SubscriptionUsageWindow[]
   observedAt: number
-  source: 'codex-app-server' | 'claude-sdk'
+  source: 'codex-app-server' | 'claude-sdk' | 'glm-monitor'
   error?: 'not_authenticated' | 'unavailable' | 'schema_changed'
 }
 /**

@@ -1,4 +1,7 @@
 import type { SubscriptionUsageSnapshot, SubscriptionUsageWindow } from '../shared/types'
+import { readFileSync } from 'fs'
+import { homedir } from 'os'
+import path from 'path'
 
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -80,6 +83,76 @@ export function normalizeClaudeSubscriptionUsage(value: unknown): SubscriptionUs
     source: 'claude-sdk',
     ...(root?.rate_limits_available === false || windows.length === 0 ? { error: 'unavailable' as const } : {}),
   }
+}
+
+export function normalizeGlmSubscriptionUsage(value: unknown): SubscriptionUsageSnapshot {
+  const root = record(value)
+  const data = record(root?.data)
+  const limits = Array.isArray(data?.limits) ? data.limits : []
+  const windows = limits.flatMap((value): SubscriptionUsageWindow[] => {
+    const limit = record(value)
+    if (!limit || limit.type !== 'TOKENS_LIMIT') return []
+    const unit = finite(limit.unit)
+    const number = finite(limit.number)
+    const durationMinutes = unit === 3 && number === 5
+      ? 300
+      : unit === 6 && number === 1
+        ? 10_080
+        : null
+    const resetMilliseconds = finite(limit.nextResetTime)
+    return [{
+      id: durationMinutes === 300 ? 'five_hour' : durationMinutes === 10_080 ? 'seven_day' : `tokens_${unit ?? 'unknown'}_${number ?? 'unknown'}`,
+      label: durationMinutes === 300 ? '5 hour' : durationMinutes === 10_080 ? 'Weekly' : 'Token quota',
+      usedPercent: finite(limit.percentage),
+      durationMinutes,
+      resetsAt: resetMilliseconds == null ? null : resetMilliseconds / 1000,
+    }]
+  })
+
+  return {
+    provider: 'glm',
+    plan: null,
+    windows,
+    observedAt: Date.now(),
+    source: 'glm-monitor',
+    ...(windows.length > 0 ? {} : { error: 'unavailable' as const }),
+  }
+}
+
+function readOpenCodeZaiApiKey(): string | null {
+  const environmentKey = process.env.ZAI_API_KEY?.trim()
+  if (environmentKey) return environmentKey
+  const dataHome = process.env.XDG_DATA_HOME?.trim()
+  const candidates = [
+    ...(dataHome ? [path.join(dataHome, 'opencode', 'auth.json')] : []),
+    path.join(homedir(), '.local', 'share', 'opencode', 'auth.json'),
+  ]
+  for (const candidate of candidates) {
+    try {
+      const auth = record(JSON.parse(readFileSync(candidate, 'utf8')))
+      const credential = record(auth?.['zai-coding-plan'])
+      const key = typeof credential?.key === 'string' ? credential.key.trim() : ''
+      if (key) return key
+    } catch {
+      // Try the next conventional OpenCode credential location.
+    }
+  }
+  return null
+}
+
+export async function getGlmSubscriptionUsage(fetchImpl: typeof fetch = fetch): Promise<SubscriptionUsageSnapshot> {
+  const apiKey = readOpenCodeZaiApiKey()
+  if (!apiKey) throw new Error('Z.ai authentication required. Sign in to the Z.AI Coding Plan through OpenCode or set ZAI_API_KEY.')
+  const response = await fetchImpl('https://api.z.ai/api/monitor/usage/quota/limit', {
+    method: 'GET',
+    headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  })
+  if (response.status === 401 || response.status === 403) {
+    throw new Error('Z.ai authentication failed. Sign in to the Z.AI Coding Plan through OpenCode again.')
+  }
+  if (!response.ok) throw new Error(`Z.ai usage request failed (HTTP ${response.status}).`)
+  return normalizeGlmSubscriptionUsage(await response.json())
 }
 
 export function unavailableSubscriptionUsage(provider: 'claude-code' | 'codex'): SubscriptionUsageSnapshot {
