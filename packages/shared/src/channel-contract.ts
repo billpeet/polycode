@@ -56,6 +56,8 @@ import type {
   RemoteConnectionStatus,
   RemoteConnectionState,
   RemotePairingInfo,
+  TailscaleServeScheme,
+  TailscaleStatus,
   BrowserPrepareSessionResult,
   Routine,
   RoutineDraft,
@@ -309,6 +311,9 @@ export interface ChannelContract {
   'remote:reconnect': [[], RemoteConnectionState]
   'terminal:write': [[terminalId: string, data: string], void]
   'terminal:resize': [[terminalId: string, cols: number, rows: number], void]
+  'tailscale:getStatus': [[], TailscaleStatus]
+  'tailscale:enableServe': [[scheme: TailscaleServeScheme], TailscaleStatus]
+  'tailscale:disableServe': [[], TailscaleStatus]
   'attachments:readDataUrl': [[threadId: string, filename: string], string | null]
   'plans:getForThread': [
     [threadId: string],

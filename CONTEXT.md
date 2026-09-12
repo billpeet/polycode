@@ -20,6 +20,21 @@ A proposed merge from a source branch into a target branch on a Forge.
 
 A named request that a PolyCode client can send to a Remote Host or its own desktop.
 
+## Remote Host
+
+A desktop PolyCode instance whose remote-control server is enabled, so that other
+clients — another desktop, the mobile app, or a Web Client — can conduct its
+Threads over HTTP.
+
+## Web Client
+
+The desktop renderer running in a browser, served by a Remote Host from its own
+remote-control port and signed in with the host token. It has every capability
+the registry marks `remote: true` and none of the desktop-only ones (window
+controls, shell, native dialogs, the internal browser, the updater). Typically
+reached over a tailnet via `tailscale serve`, which the desktop can configure
+itself. See ADR 0004.
+
 ## Project Location
 
 A place where a Project's repository is checked out and Threads can be
