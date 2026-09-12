@@ -12,6 +12,7 @@ import {
   SessionStore,
   expiredSessionCookie,
   readSessionCookie,
+  resolveClientAddress,
   sessionCookie,
 } from './sessions'
 import { isStaticPath, serveStaticFile } from './static'
@@ -79,7 +80,7 @@ function forwardedProto(req: http.IncomingMessage): string | undefined {
 }
 
 function clientAddress(req: http.IncomingMessage): string {
-  return firstHeaderValue(req.headers['x-forwarded-for']) ?? req.socket.remoteAddress ?? 'unknown'
+  return resolveClientAddress(req.socket.remoteAddress, firstHeaderValue(req.headers['x-forwarded-for']))
 }
 
 type Credential = 'bearer' | 'session'

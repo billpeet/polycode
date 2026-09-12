@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { sanitizeMarkdownHtml } from '../lib/sanitizeMarkdown'
 import { getHighlighter, onReady } from '../lib/shiki'
 import { reportPerf } from '../lib/perf'
 import {
@@ -80,10 +80,7 @@ export default function MarkdownContent({ content, className = '' }: Props) {
     if (!ref.current) return
     const startedAt = performance.now()
     const raw = marked.parse(content) as string
-    const clean = DOMPurify.sanitize(raw, {
-      ADD_ATTR: ['data-code', 'data-file-path', 'data-line-number', 'style', 'tabindex'],
-      ADD_TAGS: ['button']
-    })
+    const clean = sanitizeMarkdownHtml(raw, { codeControls: true })
     ref.current.innerHTML = clean
     reportPerf(
       'markdown-content:render',

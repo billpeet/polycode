@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import { useFilesStore } from '../stores/files'
 import { useThreadStore } from '../stores/threads'
 import { marked } from 'marked'
-import DOMPurify from 'dompurify'
+import { sanitizeMarkdownHtml } from '../lib/sanitizeMarkdown'
 import { getHighlighter, onReady } from '../lib/shiki'
 import type { BundledLanguage, SpecialLanguage, ThemedToken } from 'shiki'
 import { PatchDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
@@ -340,7 +340,7 @@ function MarkdownPreview({ content }: { content: string }) {
     if (!ref.current) return
     const startedAt = performance.now()
     const raw = marked.parse(content) as string
-    const clean = DOMPurify.sanitize(raw)
+    const clean = sanitizeMarkdownHtml(raw)
     ref.current.innerHTML = clean
 
     // Add IDs to headings for TOC navigation

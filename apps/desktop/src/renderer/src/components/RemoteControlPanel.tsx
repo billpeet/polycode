@@ -274,6 +274,16 @@ function TailscaleSection({ serverPort, onChanged }: { serverPort: number; onCha
             Browsers on your tailnet can open this URL and sign in with the host token above.
             {status.serve.scheme === 'http' && ' Served without TLS: still encrypted by WireGuard, but the browser has no secure context.'}
           </p>
+          {status.serve.funnel && (
+            <p
+              className="rounded px-3 py-2 text-xs"
+              style={{ color: 'var(--color-error, #f87171)', border: '1px solid var(--color-error, #f87171)' }}
+            >
+              Tailscale Funnel is enabled for this port: this URL is reachable from the public internet, not just
+              your tailnet. Turn it off with{' '}
+              <span className="font-mono">tailscale funnel --{status.serve.scheme}={status.serve.port} off</span>.
+            </p>
+          )}
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-xs font-mono" style={{ color: 'var(--color-text)' }}>{status.serve.url}</span>
             <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} onClick={() => void copyUrl(status.serve!.url)}>

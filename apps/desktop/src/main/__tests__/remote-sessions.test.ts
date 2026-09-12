@@ -1,10 +1,13 @@
 import { describe, expect, it } from 'vitest'
 import {
   LoginRateLimiter,
+  SESSION_ABSOLUTE_LIFETIME_MS,
   SESSION_COOKIE,
+  SESSION_IDLE_TIMEOUT_MS,
   SessionStore,
   expiredSessionCookie,
   readSessionCookie,
+  resolveClientAddress,
   sessionCookie,
 } from '../remote/sessions'
 
@@ -34,6 +37,64 @@ describe('SessionStore', () => {
     store.clear()
     expect(store.has(b)).toBe(false)
     expect(store.size).toBe(0)
+  })
+})
+
+describe('SessionStore expiry', () => {
+  function store(): { store: SessionStore; advance: (ms: number) => void } {
+    let now = 1_000_000_000
+    return { store: new SessionStore(() => now), advance: (ms) => { now += ms } }
+  }
+
+  it('forgets a session left idle past the idle timeout', () => {
+    const { store: s, advance } = store()
+    const id = s.mint()
+
+    advance(SESSION_IDLE_TIMEOUT_MS - 1)
+    expect(s.has(id)).toBe(true)
+
+    advance(SESSION_IDLE_TIMEOUT_MS + 1)
+    expect(s.has(id)).toBe(false)
+    expect(s.size).toBe(0)
+  })
+
+  it('renews the idle clock on every use', () => {
+    const { store: s, advance } = store()
+    const id = s.mint()
+
+    // Three near-idle gaps total 21 days: past one idle timeout many times over, still
+    // inside the 30-day absolute lifetime.
+    for (let i = 0; i < 3; i++) {
+      advance(SESSION_IDLE_TIMEOUT_MS - 1)
+      expect(s.has(id)).toBe(true)
+    }
+  })
+
+  it('ends at the absolute lifetime however active it was', () => {
+    const { store: s, advance } = store()
+    const id = s.mint()
+    const step = SESSION_IDLE_TIMEOUT_MS / 2
+
+    let elapsed = 0
+    while (elapsed + step <= SESSION_ABSOLUTE_LIFETIME_MS) {
+      advance(step)
+      elapsed += step
+      expect(s.has(id)).toBe(true)
+    }
+    advance(step)
+    expect(s.has(id)).toBe(false)
+  })
+})
+
+describe('resolveClientAddress', () => {
+  it('honours X-Forwarded-For only when the peer is a loopback proxy', () => {
+    expect(resolveClientAddress('127.0.0.1', '100.64.0.9')).toBe('100.64.0.9')
+    expect(resolveClientAddress('::1', '100.64.0.9')).toBe('100.64.0.9')
+    expect(resolveClientAddress('::ffff:127.0.0.1', '100.64.0.9')).toBe('100.64.0.9')
+    expect(resolveClientAddress('192.168.1.20', '100.64.0.9')).toBe('192.168.1.20')
+    expect(resolveClientAddress('192.168.1.20', undefined)).toBe('192.168.1.20')
+    expect(resolveClientAddress('127.0.0.1', undefined)).toBe('127.0.0.1')
+    expect(resolveClientAddress(undefined, '100.64.0.9')).toBe('unknown')
   })
 })
 

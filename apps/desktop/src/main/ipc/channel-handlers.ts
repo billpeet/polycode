@@ -196,6 +196,7 @@ import { restartWebhookServer } from '../webhook/server'
 import { readWebhookConfig, saveWebhookConfig } from '../webhook/config'
 import { readRemoteServerConfig, saveRemoteServerConfig } from '../remote/config'
 import { getPairingInfo } from '../remote/lan'
+import { isOpenableExternalUrl } from '../external-url'
 import { disableTailscaleServe, enableTailscaleServe, getTailscaleStatus } from '../remote/tailscale'
 // `import type`, and it has to stay that way — see `LocalHandlerContext` below and the
 // assertion in channel-handler-migration.test.ts that pins the `type` keyword.
@@ -1944,10 +1945,11 @@ export const channelHandlers = {
   'browser:releaseSession': (_ctx, locationId) =>
     browserSessionManager.releaseSession(locationId),
 
-  // http/https only: this is the escape hatch for the browser panel's "open in
-  // system browser" button, not a general URL launcher.
+  // Web and mail schemes only: this is the escape hatch for the browser panel's "open in
+  // system browser" button, not a general URL launcher. Same allow-list as the
+  // will-navigate and window-open handlers in main/index.ts.
   'shell:openExternal': (_ctx, url) => {
-    if (!/^https?:\/\//i.test(url)) throw new Error(`Refusing to open non-http(s) URL: ${url}`)
+    if (!isOpenableExternalUrl(url)) throw new Error(`Refusing to open non-http(s) URL: ${url}`)
     return shell.openExternal(url)
   },
 

@@ -51,6 +51,8 @@ interface StatusJson {
 interface ServeConfigJson {
   TCP?: Record<string, { HTTPS?: boolean; HTTP?: boolean }>
   Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }>
+  /** Keyed like `Web`; true means `tailscale funnel` has published that host:port. */
+  AllowFunnel?: Record<string, boolean>
 }
 
 export interface ParsedStatus {
@@ -107,6 +109,7 @@ export function parseServeStatus(stdout: string, localPort: number): TailscaleSe
       scheme,
       port,
       url: `${scheme}://${host}${port === defaultPort ? '' : `:${port}`}`,
+      funnel: json.AllowFunnel?.[hostPort] === true,
     }
   }
   return null
@@ -179,6 +182,12 @@ export async function enableTailscaleServe(
   }
   if (scheme === 'https' && !before.httpsAvailable) {
     return { ...before, error: 'HTTPS certificates are not enabled for this tailnet' }
+  }
+  if (before.serve?.funnel) {
+    return {
+      ...before,
+      error: `Tailscale Funnel is enabled for this port, which would publish PolyCode to the internet. Turn it off first: tailscale funnel --${before.serve.scheme}=${before.serve.port} off`,
+    }
   }
   if (before.serve && before.serve.scheme !== scheme) {
     const off = await cli.run(serveOffArgs(before.serve))

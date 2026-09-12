@@ -15,6 +15,7 @@ import { startWebhookServer, stopWebhookServer } from './webhook/server'
 import { readWebhookConfig } from './webhook/config'
 import { startRemoteControlServer, stopRemoteControlServer } from './remote/server'
 import { readRemoteServerConfig } from './remote/config'
+import { isOpenableExternalUrl } from './external-url'
 import { stopRemoteControlClient } from './remote/client'
 import { browserSessionManager } from './browser/manager'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
@@ -294,7 +295,7 @@ function createWindow(): BrowserWindow {
 
   // Open external links in default browser
   win.webContents.setWindowOpenHandler(({ url }) => {
-    shell.openExternal(url)
+    if (isOpenableExternalUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
   })
 
@@ -320,7 +321,7 @@ function createWindow(): BrowserWindow {
       : pathToFileURL(join(__dirname, '../renderer/index.html')).toString()
     if (!url.startsWith(appUrl)) {
       event.preventDefault()
-      shell.openExternal(url)
+      if (isOpenableExternalUrl(url)) void shell.openExternal(url)
     }
   })
 
