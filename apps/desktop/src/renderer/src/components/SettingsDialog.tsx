@@ -1,3 +1,4 @@
+import { AzureDevOpsSettingsPanel } from './AzureDevOpsSettingsPanel'
 import { useState } from 'react'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { CliHealthPanel } from './CliHealthDialog'
@@ -6,11 +7,12 @@ import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
 import { WebhookPanel } from './WebhookPanel'
 import { RemoteControlPanel } from './RemoteControlPanel'
 
-type Tab = 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote'
+type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'health', label: 'Health Checks' },
   { id: 'slash', label: 'Slash Commands' },
+  { id: 'azure', label: 'Azure DevOps' },
   { id: 'youtrack', label: 'YouTrack' },
   { id: 'webhook', label: 'Webhook' },
   { id: 'remote', label: 'Remote' },
@@ -106,6 +108,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
             {activeTab === 'slash' && (
               <SlashCommandsPanel projectId={projectId} projectName={projectName} hideHeader />
             )}
+            {activeTab === 'azure' && <AzureDevOpsSettingsPanel />}
             {activeTab === 'youtrack' && <YouTrackSettingsPanel hideHeader />}
             {activeTab === 'webhook' && <WebhookPanel hideHeader />}
             {activeTab === 'remote' && <RemoteControlPanel hideHeader />}

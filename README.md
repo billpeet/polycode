@@ -51,6 +51,17 @@ PolyCode can also check and update these CLIs from the app for local, SSH, and W
 - Git, if you want git status/branch/stash/commit features.
 - Optional: WSL and/or SSH access for remote execution locations.
 
+### Azure DevOps
+
+Open **Settings > Azure DevOps** and save an Azure DevOps personal access token
+with **Code (Read & Write)** permissions. Polycode stores it encrypted using the
+operating system and calls the Azure DevOps REST API directly; no Azure CLI is
+required. Refresh the pull request panel after saving or replacing the token.
+The organization, project, and repository are inferred from the Git remote.
+Use a `dev.azure.com` HTTPS or v3 SSH remote, or a `visualstudio.com` HTTPS remote.
+For remote Polycode servers, save the token in the server host's desktop settings.
+Git fetch/push operations continue to use your existing Git authentication.
+
 ## Installation
 
 ```bash

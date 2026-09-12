@@ -111,6 +111,8 @@ describe('channel handler map migration', () => {
       'dialog:open-directory',
       'dialog:open-favicon',
       'dialog:open-files',
+      'azure:pat:status',
+      'azure:pat:set',
       'settings:get',
       'settings:set',
       'webhook:getConfig',

@@ -1,7 +1,6 @@
 import { resolveForgeRepoContext } from './forge-context'
-import { existsSync } from 'fs'
-import * as path from 'path'
 import { PullRequest, SshConfig, WslConfig } from '../shared/types'
+import { azureRequest } from './azure-devops-client'
 import { createRunner } from './driver/runner'
 import { runGit } from './git-runner'
 import {
@@ -11,116 +10,33 @@ import {
   normalizeAzureBranchName as normalizeBranchName,
 } from './forge-parsers'
 
-import type { AzureRepoContext, AzurePrInput as AzDevOpsPr } from './forge-parsers'
-
-interface LocalCommand {
-  cmd: string
-  args: string[]
-}
-
-async function runLocal(cmd: string, args: string[], cwd: string) {
-  const command = await resolveLocalCommand(cmd, args)
-  return createRunner({}).run({ binary: command.cmd, args: command.args, workDir: cwd })
-}
-
-async function resolveLocalCommand(cmd: string, args: string[]): Promise<LocalCommand> {
-  if (process.platform !== 'win32') return { cmd, args }
-
-  if (cmd !== 'azdevops') return { cmd, args }
-
-  const direct = await resolveWindowsAzDevOpsNodeCommand(args)
-  if (direct) return direct
-
-  return { cmd, args }
-}
-
-let windowsAzDevOpsCommand: Promise<LocalCommand | null> | undefined
-
-async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalCommand | null> {
-  windowsAzDevOpsCommand ??= discoverWindowsAzDevOpsNodeCommand()
-  const command = await windowsAzDevOpsCommand
-  return command ? { cmd: command.cmd, args: [...command.args, ...args] } : null
-}
-
-async function discoverWindowsAzDevOpsNodeCommand(): Promise<LocalCommand | null> {
-  try {
-    const result = await createRunner({}).run({
-      binary: 'where.exe',
-      args: ['azdevops.cmd'],
-      workDir: process.cwd(),
-    })
-    if (result.exitCode !== 0) return null
-    const cmdPath = result.stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
-    if (!cmdPath) return null
-
-    const baseDir = path.dirname(cmdPath)
-    const scriptPath = path.join(baseDir, 'node_modules', '@billpeet', 'azdevops-cli', 'bin', 'azdevops.js')
-    if (!existsSync(scriptPath)) return null
-
-    const adjacentNode = path.join(baseDir, 'node.exe')
-    return {
-      cmd: existsSync(adjacentNode) ? adjacentNode : 'node',
-      args: [scriptPath],
-    }
-  } catch {
-    return null
-  }
-}
+import type { AzureRepoContext, AzurePrInput } from './forge-parsers'
 
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)
 }
 
-async function runAzDevOps(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
-  const result = ssh || wsl
-    ? await createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }).run({
-      binary: 'azdevops',
-      args,
-      workDir: repoPath,
-    })
-    : await runLocal('azdevops', args, repoPath)
-  if (result.exitCode !== 0) {
-    if (/ENOENT|EINVAL|not found|is not recognized/i.test(result.stderr)) {
-      throw new Error('azdevops CLI not found. Install and configure it first: azdevops setup --org <org> --token <pat> --project <project>')
-    }
-    if (/project/i.test(result.stderr) && /required|missing|default/i.test(result.stderr)) {
-      throw new Error(`${result.stderr}\nSet a default Azure project: azdevops setup --org <org> --token <pat> --project <project>`)
-    }
-    throw new Error(result.stderr || 'Failed to execute azdevops CLI')
-  }
-  return result.stdout.trim()
-}
-
 async function enrichPullRequest(
-  repoPath: string,
   ctx: AzureRepoContext,
   pr: PullRequest,
-  ssh?: SshConfig | null,
-  wsl?: WslConfig | null,
 ): Promise<PullRequest> {
-  const args = ['pr', 'comments', '--repo', ctx.repo, '--id', String(pr.id), '--unresolved', '--format', 'json']
-  if (ctx.project) args.splice(4, 0, '--project', ctx.project)
   try {
-    const output = await runAzDevOps(repoPath, args, ssh, wsl)
-    const threads = JSON.parse(output) as unknown
-    return { ...pr, unresolvedCommentCount: Array.isArray(threads) ? threads.length : undefined }
+    const threads = await azureRequest<{ value: Array<{ status: number | string; isDeleted?: boolean }> }>(ctx, `pullrequests/${pr.id}/threads`)
+    return { ...pr, unresolvedCommentCount: threads.value.filter((thread) => !thread.isDeleted && (thread.status === 1 || thread.status === 'active')).length }
   } catch {
-    // Older CLI releases do not support `pr comments`; keep the base PR usable.
+    // Comment metadata is optional; keep the base PR usable during transient failures.
     return pr
   }
 }
 
 async function enrichPullRequests(
-  repoPath: string,
   ctx: AzureRepoContext,
   prs: PullRequest[],
-  ssh?: SshConfig | null,
-  wsl?: WslConfig | null,
 ): Promise<PullRequest[]> {
   const enriched: PullRequest[] = []
   for (let index = 0; index < prs.length; index += 5) {
     enriched.push(...await Promise.all(
-      prs.slice(index, index + 5).map((pr) => enrichPullRequest(repoPath, ctx, pr, ssh, wsl)),
+      prs.slice(index, index + 5).map((pr) => enrichPullRequest(ctx, pr)),
     ))
   }
   return enriched
@@ -137,31 +53,7 @@ export async function listOpenPullRequests(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<PullRequest[]> {
-  const ctx = await resolveRepoContext(repoPath, ssh, wsl)
-  const args = [
-    'pr', 'list',
-    '--repo', ctx.repo,
-    '--status', 'active',
-    '--top', '50',
-    '--format', 'json',
-  ]
-  if (ctx.project) {
-    args.splice(4, 0, '--project', ctx.project)
-  }
-  const output = await runAzDevOps(repoPath, args, ssh, wsl)
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(output)
-  } catch {
-    throw new Error('Failed to parse pull request list from azdevops CLI')
-  }
-
-  if (!Array.isArray(raw)) return []
-
-  return raw
-    .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
-    .filter((pr) => pr.id > 0)
+  return listPullRequestsByStatus(repoPath, 'active', ssh, wsl)
 }
 
 export async function enrichOpenPullRequests(
@@ -171,7 +63,7 @@ export async function enrichOpenPullRequests(
   wsl?: WslConfig | null,
 ): Promise<PullRequest[]> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
-  return enrichPullRequests(repoPath, ctx, prs, ssh, wsl)
+  return enrichPullRequests(ctx, prs)
 }
 
 async function listPullRequestsByStatus(
@@ -179,32 +71,14 @@ async function listPullRequestsByStatus(
   status: 'active' | 'completed',
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
+  branch?: string,
 ): Promise<PullRequest[]> {
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
-  const args = [
-    'pr', 'list',
-    '--repo', ctx.repo,
-    '--status', status,
-    '--top', '50',
-    '--format', 'json',
-  ]
-  if (ctx.project) {
-    args.splice(4, 0, '--project', ctx.project)
-  }
-  const output = await runAzDevOps(repoPath, args, ssh, wsl)
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(output)
-  } catch {
-    throw new Error('Failed to parse pull request list from azdevops CLI')
-  }
-
-  if (!Array.isArray(raw)) return []
-
-  return raw
-    .map((pr) => mapPr(pr as AzDevOpsPr, ctx.remoteUrl))
-    .filter((pr) => pr.id > 0)
+  const raw = await azureRequest<{ value: AzurePrInput[] }>(ctx, 'pullrequests', {
+    'searchCriteria.status': status, '$top': '50',
+    ...(branch ? { 'searchCriteria.sourceRefName': `refs/heads/${branch}` } : {}),
+  })
+  return raw.value.map((pr) => mapPr(pr, ctx.remoteUrl)).filter((pr) => pr.id > 0)
 }
 
 export async function getPullRequestsWebUrl(
@@ -231,11 +105,11 @@ export async function getCurrentBranchPullRequest(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<PullRequest | null> {
-  const openPrs = await listPullRequestsByStatus(repoPath, 'active', ssh, wsl)
+  const openPrs = await listPullRequestsByStatus(repoPath, 'active', ssh, wsl, branch)
   const openPr = openPrs.find((pr) => pr.sourceBranch === branch)
   if (openPr) return (await enrichOpenPullRequests(repoPath, [openPr], ssh, wsl))[0] ?? openPr
 
-  const completedPrs = await listPullRequestsByStatus(repoPath, 'completed', ssh, wsl)
+  const completedPrs = await listPullRequestsByStatus(repoPath, 'completed', ssh, wsl, branch)
   const completedPr = completedPrs.find((pr) => pr.sourceBranch === branch)
   if (!completedPr) return null
   return (await enrichOpenPullRequests(repoPath, [completedPr], ssh, wsl))[0] ?? completedPr
@@ -258,32 +132,14 @@ export async function createPullRequest(
   if (!source) throw new Error('Could not determine source branch name')
   if (!target) throw new Error('Could not determine target branch name')
 
-  const args: string[] = [
-    'pr', 'create',
-    '--repo', ctx.repo,
-    '--source', source,
-    '--target', target,
-    '--title', payload.title,
-    '--format', 'json',
-  ]
-  if (ctx.project) {
-    args.splice(4, 0, '--project', ctx.project)
-  }
+  const raw = await azureRequest<AzurePrInput>(ctx, 'pullrequests', {}, {
+    sourceRefName: `refs/heads/${source}`,
+    targetRefName: `refs/heads/${target}`,
+    title: payload.title,
+    description: payload.description?.trim().replace(/\r\n/g, '\n') ?? '',
+  })
 
-  if (payload.description?.trim()) {
-    args.push('--description', payload.description.trim().replace(/\r\n/g, '\n'))
-  }
-
-  const output = await runAzDevOps(repoPath, args, ssh, wsl)
-
-  let raw: unknown
-  try {
-    raw = JSON.parse(output)
-  } catch {
-    throw new Error('Failed to parse create PR response from azdevops CLI')
-  }
-
-  const pr = mapPr(raw as AzDevOpsPr, ctx.remoteUrl)
+  const pr = mapPr(raw, ctx.remoteUrl)
   if (!pr.id) {
     throw new Error('Azure DevOps did not return a valid pull request')
   }
@@ -303,57 +159,8 @@ export async function checkoutPullRequestBranch(
   const ctx = await resolveRepoContext(repoPath, ssh, wsl)
   const localPrBranch = `pr/${prId}`
 
-  const getPrFromCli = async (subcommand: 'view' | 'show'): Promise<AzDevOpsPr | null> => {
-    const args = [
-      'pr', subcommand,
-      '--repo', ctx.repo,
-      '--id', String(prId),
-      '--format', 'json',
-    ]
-    if (ctx.project) {
-      args.splice(4, 0, '--project', ctx.project)
-    }
-    try {
-      const output = await runAzDevOps(repoPath, args, ssh, wsl)
-      const parsed = JSON.parse(output) as AzDevOpsPr
-      return parsed
-    } catch {
-      return null
-    }
-  }
-
-  let sourceRefName = ''
-  const directPr = (await getPrFromCli('view')) ?? (await getPrFromCli('show'))
-  if (typeof directPr?.sourceRefName === 'string') {
-    sourceRefName = directPr.sourceRefName.trim()
-  }
-
-  // Some azdevops CLI versions don't support `pr view/show`.
-  // Fall back to list and locate the requested PR id.
-  if (!sourceRefName) {
-    try {
-      const listArgs = [
-        'pr', 'list',
-        '--repo', ctx.repo,
-        '--status', 'active',
-        '--top', '200',
-        '--format', 'json',
-      ]
-      if (ctx.project) {
-        listArgs.splice(4, 0, '--project', ctx.project)
-      }
-      const listOutput = await runAzDevOps(repoPath, listArgs, ssh, wsl)
-      const prs = JSON.parse(listOutput)
-      if (Array.isArray(prs)) {
-        const matched = prs.find((pr) => Number((pr as AzDevOpsPr).pullRequestId) === prId) as AzDevOpsPr | undefined
-        if (typeof matched?.sourceRefName === 'string') {
-          sourceRefName = matched.sourceRefName.trim()
-        }
-      }
-    } catch {
-      // Fall through to direct ref fetch attempts.
-    }
-  }
+  const directPr = await azureRequest<AzurePrInput>(ctx, `pullrequests/${prId}`)
+  const sourceRefName = directPr.sourceRefName?.trim() ?? ''
 
   const fetchRefs = [
     sourceRefName,

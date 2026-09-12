@@ -38,14 +38,14 @@ describe('forge refresh backoff', () => {
     expect(invoke).toHaveBeenCalledWith('git:isRepo', 'C:/deleted-worktree')
   })
 
-  it('returns Azure setup instructions instead of rejecting when the optional CLI is absent', async () => {
+  it('returns Azure setup instructions instead of rejecting when a PAT is absent', async () => {
     invoke.mockImplementation(async (channel: string) => {
       if (channel === 'git:isRepo') return true
       if (channel === 'git:hostingProvider') return 'azure'
       if (channel === 'git:defaultBranch') return 'main'
       if (channel === 'forge:pr:webUrl') return 'https://dev.azure.test/pulls'
       if (channel === 'forge:pr:list') {
-        throw new Error('azdevops CLI not found. Install and configure it first: azdevops setup --org <org> --token <pat> --project <project>')
+        throw new Error('Azure DevOps authentication required. Add a PAT in Settings > Azure DevOps.')
       }
       return null
     })
@@ -54,8 +54,8 @@ describe('forge refresh backoff', () => {
     await expect(refreshForge('C:/azure-repo', 'main')).resolves.toMatchObject({
       capability: {
         available: false,
-        reason: 'azure-cli-missing',
-        setupCommand: 'azdevops setup --org <org> --token <pat> --project <project>',
+        reason: 'azure-authentication-required',
+        message: 'Azure DevOps authentication required. Add a PAT in Settings > Azure DevOps.',
       },
       provider: 'azure',
       openPrs: [],

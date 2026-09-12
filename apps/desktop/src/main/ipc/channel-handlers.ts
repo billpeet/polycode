@@ -1,3 +1,4 @@
+import { hasAzurePat, saveAzurePat } from '../azure-devops-client'
 /**
  * The single implementation of every channel, typed against `ChannelContract`.
  *
@@ -2156,6 +2157,8 @@ export const channelHandlers = {
   // The generic key/value settings pair, on the same `settings` table the webhook and
   // remote-control configs are stored in. Nothing depends on the order these are registered
   // in — both are plain reads and writes against the DB, with no module init behind them.
+  'azure:pat:status': () => hasAzurePat(),
+  'azure:pat:set': (_ctx, token) => saveAzurePat(token),
   'settings:get': (_ctx, key) => getSetting(key),
 
   'settings:set': (_ctx, key, value) => setSetting(key, value),
