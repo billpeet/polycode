@@ -1,4 +1,4 @@
-import { BackgroundTerminal, CodexPersonality, CodexReasoningSummary, OutputEvent, PermissionMode, ReasoningLevel, SendOptions, SshConfig, WslConfig } from '../../shared/types'
+import { BackgroundTerminal, CodexPersonality, CodexReasoningSummary, OutputEvent, PermissionMode, ReasoningLevel, SendOptions, SshConfig, SubscriptionUsageSnapshot, WslConfig } from '../../shared/types'
 
 export interface MessageOptions extends SendOptions {
   planMode?: boolean
@@ -43,6 +43,8 @@ export interface CLIDriver {
   listBackgroundTerminals?(): Promise<BackgroundTerminal[]>
   terminateBackgroundTerminal?(processId: string): Promise<boolean>
   cleanBackgroundTerminals?(): Promise<void>
+  /** Read the subscription quota known to this provider process. */
+  getSubscriptionUsage?(): Promise<SubscriptionUsageSnapshot>
 }
 
 export interface DriverOptions {

@@ -20,6 +20,8 @@ import path from 'path'
 import readline from 'readline'
 import { parseShellCommand } from '../../shared/shell-command'
 import { CodexAgentTracker } from './codex-agents'
+import { normalizeCodexSubscriptionUsage, unavailableSubscriptionUsage } from '../subscription-usage'
+import type { SubscriptionUsageSnapshot } from '../../shared/types'
 
 type ToolCallPayload = { content: string; metadata: Record<string, unknown> }
 
@@ -1847,6 +1849,12 @@ class CodexAppServerDriver implements CLIDriver {
     await this.sendRequest('thread/backgroundTerminals/clean', { threadId: this.codexThreadId })
   }
 
+  async getSubscriptionUsage(): Promise<SubscriptionUsageSnapshot> {
+    await this.ensureReady()
+    const response = await this.sendRequest('account/rateLimits/read', {})
+    return normalizeCodexSubscriptionUsage(response)
+  }
+
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {
     const permission = this.pendingPermissionRequests.get(requestId)
     if (permission) {
@@ -2521,6 +2529,10 @@ export class CodexDriver implements CLIDriver {
 
   async cleanBackgroundTerminals(): Promise<void> {
     await this.localDriver?.cleanBackgroundTerminals()
+  }
+
+  async getSubscriptionUsage(): Promise<SubscriptionUsageSnapshot> {
+    return this.localDriver?.getSubscriptionUsage() ?? unavailableSubscriptionUsage('codex')
   }
 
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {

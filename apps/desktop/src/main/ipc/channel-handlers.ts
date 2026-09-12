@@ -1750,6 +1750,18 @@ export const channelHandlers = {
 
   'models:grokAvailable': (_ctx, threadId) => listGrokAvailableModels(modelQueryOptions(threadId)),
 
+  'subscription-usage:get': (ctx, threadId) => {
+    if (!threadExists(threadId)) throw new Error('Thread not found')
+    const session = sessionManager.getOrCreate(
+      threadId,
+      getEffectiveWorkingDir(threadId),
+      ctx.window,
+      getSshConfigForThread(threadId),
+      getWslConfigForThread(threadId),
+    )
+    return session.getSubscriptionUsage()
+  },
+
   // ── Sessions and messages ─────────────────────────────────────────────────
 
   'sessions:list': (_ctx, threadId) => listSessions(threadId),

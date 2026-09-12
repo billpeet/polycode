@@ -277,6 +277,25 @@ export const GROK_MODELS = [
 export type GrokModelId = typeof GROK_MODELS[number]['id']
 
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok'
+
+export type SubscriptionUsageProvider = 'claude-code' | 'codex'
+
+export interface SubscriptionUsageWindow {
+  id: string
+  label: string
+  usedPercent: number | null
+  durationMinutes: number | null
+  resetsAt: number | null
+}
+
+export interface SubscriptionUsageSnapshot {
+  provider: SubscriptionUsageProvider
+  plan: string | null
+  windows: SubscriptionUsageWindow[]
+  observedAt: number
+  source: 'codex-app-server' | 'claude-sdk'
+  error?: 'not_authenticated' | 'unavailable' | 'schema_changed'
+}
 /**
  * How much a provider may do before escalating to the user.
  * - `ask`       — every privileged action needs approval

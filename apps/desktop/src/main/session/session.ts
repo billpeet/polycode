@@ -8,7 +8,7 @@ import { PiDriver } from '../driver/pi'
 import { CursorDriver } from '../driver/cursor'
 import { GrokDriver } from '../driver/grok'
 import { CLIDriver } from '../driver/types'
-import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel } from '../../shared/types'
+import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel, SubscriptionUsageSnapshot } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
 import { createRunner } from '../driver/runner'
 import { killWindowsProcessTree } from '../process-control'
@@ -136,6 +136,16 @@ export class Session {
 
   getSessions(): SessionInfo[] {
     return listSessions(this.threadId)
+  }
+
+  async getSubscriptionUsage(): Promise<SubscriptionUsageSnapshot> {
+    const provider = getThreadProvider(this.threadId)
+    if (provider !== 'codex' && provider !== 'claude-code') {
+      throw new Error(`Subscription usage is unavailable for ${provider}`)
+    }
+    const driver = this.activeSessionId ? this.drivers.get(this.activeSessionId) : undefined
+    if (!driver?.getSubscriptionUsage) throw new Error(`Subscription usage is unavailable for ${provider}`)
+    return driver.getSubscriptionUsage()
   }
 
   switchSession(sessionId: string): void {

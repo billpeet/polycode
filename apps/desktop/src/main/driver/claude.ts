@@ -11,6 +11,8 @@ import type {
 import { CLIDriver, DriverOptions, MessageOptions } from './types'
 import { OutputEvent, ReasoningLevel } from '../../shared/types'
 import { augmentWindowsPath, expandHomePath, resolveClaudeCodeExecutable } from './runner'
+import { normalizeClaudeSubscriptionUsage } from '../subscription-usage'
+import type { SubscriptionUsageSnapshot } from '../../shared/types'
 
 type PendingTurn = {
   onEvent: (event: OutputEvent) => void
@@ -230,6 +232,13 @@ export class ClaudeDriver implements CLIDriver {
 
   getPid(): number | null {
     return null
+  }
+
+  async getSubscriptionUsage(): Promise<SubscriptionUsageSnapshot> {
+    await this.ensureQuery()
+    if (!this.query) throw new Error('Claude usage is unavailable')
+    const usage = await this.query.usage_EXPERIMENTAL_MAY_CHANGE_DO_NOT_RELY_ON_THIS_API_YET()
+    return normalizeClaudeSubscriptionUsage(usage)
   }
 
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void {

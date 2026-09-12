@@ -6,6 +6,7 @@ import { PlanIcon, YoloIcon, FastIcon, formatElapsed } from './icons'
 import { Favourite } from '../../stores/favourites'
 import BackgroundTerminals from './BackgroundTerminals'
 import { client } from '../../lib/client'
+import SubscriptionUsageIndicator from './SubscriptionUsageIndicator'
 
 function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -457,6 +458,8 @@ export default function ComposerToolbar({
           applyFavourite={handleApplyFavourite}
         />
       </span>
+
+      <SubscriptionUsageIndicator threadId={threadId} provider={currentProvider} />
 
       {currentProvider === 'codex' && <BackgroundTerminals threadId={threadId} />}
 

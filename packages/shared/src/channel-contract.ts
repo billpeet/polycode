@@ -61,6 +61,7 @@ import type {
   BrowserPrepareSessionResult,
   Routine,
   RoutineDraft,
+  SubscriptionUsageSnapshot,
 } from './types'
 import type { Channel } from './channels'
 
@@ -290,6 +291,7 @@ export interface ChannelContract {
   'models:piAvailable': [[threadId?: string | null, forceRefresh?: boolean], ModelOption[]]
   'models:cursorAvailable': [[threadId?: string | null], ModelOption[]]
   'models:grokAvailable': [[threadId?: string | null], ModelOption[]]
+  'subscription-usage:get': [[threadId: string], SubscriptionUsageSnapshot]
   'terminal:spawn': [[threadId: string, cols: number, rows: number], string]
   'terminal:kill': [[terminalId: string], void]
   'terminal:getBuffer': [[terminalId: string], string]
