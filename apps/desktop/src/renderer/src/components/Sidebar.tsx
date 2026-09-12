@@ -9,6 +9,13 @@ import { useYouTrackStore } from '../stores/youtrack'
 import { Project, QueueThread, RepoLocation, Thread, ThreadStatus, WorktreeCleanupCandidate, WorkingTreeFacts } from '../types/ipc'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { subscribeToSidebarBranches } from '../lib/sidebarBranchRefresh'
+import {
+  collectCommandInstances,
+  collectVisibleLocations,
+  commandInstancesKey,
+  visibleLocationsKey,
+} from '../lib/sidebarVisibility'
+import { useKeyed } from '../lib/useKeyed'
 import CollapsedSidebar from './sidebar/CollapsedSidebar'
 import ExpandedSidebar from './sidebar/ExpandedSidebar'
 import QueueSidebar from './sidebar/QueueSidebar'
@@ -228,27 +235,39 @@ export default function Sidebar() {
     }
   }, [commandByProject, expandedProjectIds, fetchCommands])
 
+  // The visible location set and the command × location instance set, fingerprinted so the
+  // effects below only re-run when what is *visible* changes — not whenever a store replaces
+  // `byProject` by identity (every location/command write does). Before this, a single
+  // worktree removal re-ran all three sweeps at once: 27 `commands:getStatus` + N
+  // `locations:pathExists` + a branch re-subscription, and a 2s renderer long task behind it.
+  const visibleLocations = useKeyed(
+    useMemo(() => collectVisibleLocations(expandedProjectIds, locationsByProject), [expandedProjectIds, locationsByProject]),
+    useMemo(() => visibleLocationsKey(collectVisibleLocations(expandedProjectIds, locationsByProject)), [expandedProjectIds, locationsByProject]),
+  )
+  const commandInstances = useKeyed(
+    useMemo(() => collectCommandInstances(expandedProjectIds, commandByProject, locationsByProject, instKey), [expandedProjectIds, commandByProject, locationsByProject]),
+    useMemo(() => commandInstancesKey(collectCommandInstances(expandedProjectIds, commandByProject, locationsByProject, instKey)), [expandedProjectIds, commandByProject, locationsByProject]),
+  )
+
   useEffect(() => {
     const activeKeys = new Set<string>()
+    // Hydrate statuses once per newly visible (project, location) pair; live updates arrive
+    // over `command:status:${key}` pushes, so re-polling on every change is redundant.
+    const pairsToHydrate = new Set<string>()
 
-    for (const projectId of expandedProjectIds) {
-      const commands = commandByProject[projectId] ?? []
-      const locations = locationsByProject[projectId] ?? []
-      if (commands.length === 0 || locations.length === 0) continue
+    for (const instance of commandInstances) {
+      activeKeys.add(instance.key)
+      if (commandSubsRef.current.has(instance.key)) continue
+      pairsToHydrate.add(`${instance.projectId}\u0000${instance.locationId}`)
+      const unsubscribe = window.api.on(`command:status:${instance.key}`, (status) => {
+        setCommandStatus(instance.key, status as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
+      })
+      commandSubsRef.current.set(instance.key, unsubscribe)
+    }
 
-      for (const location of locations) {
-        void fetchCommandStatuses(projectId, location.id)
-        for (const command of commands) {
-          const key = instKey(command.id, location.id)
-          activeKeys.add(key)
-          if (!commandSubsRef.current.has(key)) {
-            const unsubscribe = window.api.on(`command:status:${key}`, (status) => {
-              setCommandStatus(key, status as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
-            })
-            commandSubsRef.current.set(key, unsubscribe)
-          }
-        }
-      }
+    for (const pair of pairsToHydrate) {
+      const [projectId, locationId] = pair.split('\u0000')
+      void fetchCommandStatuses(projectId, locationId)
     }
 
     for (const [key, unsubscribe] of commandSubsRef.current) {
@@ -256,7 +275,7 @@ export default function Sidebar() {
       unsubscribe()
       commandSubsRef.current.delete(key)
     }
-  }, [commandByProject, expandedProjectIds, fetchCommandStatuses, locationsByProject, setCommandStatus])
+  }, [commandInstances, fetchCommandStatuses, setCommandStatus])
 
   useEffect(() => {
     fetchYouTrackServers()
@@ -285,9 +304,6 @@ export default function Sidebar() {
   }, [fetchThreads, fetchQueue, touchProject])
 
   useEffect(() => {
-    const visibleLocations = Array.from(expandedProjectIds).flatMap(
-      (projectId) => locationsByProject[projectId] ?? [],
-    )
     return subscribeToSidebarBranches(visibleLocations, (branches) => {
       setBranchByLocation((prev) => {
         let changed = false
@@ -301,22 +317,19 @@ export default function Sidebar() {
         return changed ? next : prev
       })
     })
-  }, [expandedProjectIds, locationsByProject])
+  }, [visibleLocations])
 
   useEffect(() => {
-    for (const projectId of expandedProjectIds) {
-      const locations = locationsByProject[projectId] ?? []
-      for (const location of locations) {
-        if (location.connection_type !== 'local') continue
-        window.api.invoke('locations:pathExists', location.path).then((exists) => {
-          setPathExistsByLocation((prev) => {
-            if (prev[location.id] === exists) return prev
-            return { ...prev, [location.id]: exists }
-          })
-        }).catch(() => {})
-      }
+    for (const location of visibleLocations) {
+      if (location.connection_type !== 'local') continue
+      window.api.invoke('locations:pathExists', location.path).then((exists) => {
+        setPathExistsByLocation((prev) => {
+          if (prev[location.id] === exists) return prev
+          return { ...prev, [location.id]: exists }
+        })
+      }).catch(() => {})
     }
-  }, [expandedProjectIds, locationsByProject])
+  }, [visibleLocations])
 
   function handleToggleProject(projectId: string): void {
     toggleExpanded(projectId)

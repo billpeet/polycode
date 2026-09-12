@@ -23,6 +23,7 @@ import { createRunner } from './driver/runner'
 import { runGit as executeGit } from './git-runner'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
+import { runSerialized } from './keyed-queue'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
 
 /** Expand a leading `~` to the user's home directory. */
@@ -241,6 +242,15 @@ export async function createLocalWorktree(parentLocationId: string, label?: stri
   if (parent.connection_type !== 'local') throw new Error('Worktree creation is currently supported for local locations only.')
   if (parent.is_worktree) throw new Error('Create new worktrees from the main checkout location.')
   if (!existsSync(parent.path)) throw new Error(`Directory not found: "${parent.path}"`)
+  return runSerialized(worktreeQueueKey(parent.path), () => createLocalWorktreeUnqueued(parent, label, baseRefOverride))
+}
+
+/** Worktree add/remove serialise per parent repository — they share its index lock. */
+function worktreeQueueKey(parentPath: string): string {
+  return `worktree:${resolve(parentPath).toLowerCase()}`
+}
+
+async function createLocalWorktreeUnqueued(parent: RepoLocation, label?: string | null, baseRefOverride?: string): Promise<RepoLocation> {
 
   const currentBranch = (await runGit(['branch', '--show-current'], parent.path)).trim()
   const baseName = sanitizeWorktreeSegment(label || currentBranch || 'worktree')
@@ -289,14 +299,16 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
   }
   const parent = location.parent_location_id ? getLocationById(location.parent_location_id) : null
   const gitCwd = parent?.path && existsSync(parent.path) ? parent.path : location.path
-  try {
-    await runGit(['worktree', 'remove', '--force', location.path], gitCwd)
-  } catch (error) {
-    if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
-    if (parent?.path && existsSync(parent.path)) {
-      await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
+  await runSerialized(worktreeQueueKey(parent?.path ?? location.path), async () => {
+    try {
+      await runGit(['worktree', 'remove', '--force', location.path], gitCwd)
+    } catch (error) {
+      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
+      if (parent?.path && existsSync(parent.path)) {
+        await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
+      }
+      await removeWorktreeDirectoryBestEffort(location.path)
     }
-    await removeWorktreeDirectoryBestEffort(location.path)
-  }
+  })
   deleteLocation(id)
 }
