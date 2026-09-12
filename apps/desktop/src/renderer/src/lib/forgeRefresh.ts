@@ -17,7 +17,7 @@ export type ForgeCapability =
   | { available: true; provider: 'azure' | 'github' }
   | {
     available: false
-    reason: 'not-repository' | 'no-provider' | 'azure-cli-missing' | 'azure-project-missing'
+    reason: 'not-repository' | 'no-provider' | 'azure-authentication-required'
     message: string
     setupCommand?: string
   }
@@ -39,17 +39,11 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-const AZURE_SETUP_COMMAND = 'azdevops setup --org <org> --token <pat> --project <project>'
-
 function azureSetupCapability(error: unknown): ForgeCapability | null {
   const message = errorMessage(error)
-  if (/azdevops cli not found|enoent|is not recognized/i.test(message)) {
-    return { available: false, reason: 'azure-cli-missing', message, setupCommand: AZURE_SETUP_COMMAND }
-  }
-  if (/default azure project|set a default azure project|project.*(?:required|missing)/i.test(message)) {
-    return { available: false, reason: 'azure-project-missing', message, setupCommand: AZURE_SETUP_COMMAND }
-  }
-  return null
+  return /azure devops authentication/i.test(message)
+    ? { available: false, reason: 'azure-authentication-required', message }
+    : null
 }
 
 export function isDeterministicForgeError(error: unknown): boolean {

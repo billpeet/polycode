@@ -134,7 +134,7 @@ export function installIpcProfiling(): void {
           const thresholdMs = getIpcThresholdMs(channel)
           if (durationMs >= thresholdMs) {
             console.warn(
-              `[perf][ipc] ${channel} ${durationMs.toFixed(1)}ms outcome=${outcome} ${summarizeArgs(args)}`
+              `[perf][ipc] ${channel} ${durationMs.toFixed(1)}ms outcome=${outcome} ${channel === 'azure:pat:set' ? 'args=[redacted]' : summarizeArgs(args)}`
             )
           }
         }

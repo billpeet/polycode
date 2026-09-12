@@ -288,6 +288,8 @@ export interface ChannelContract {
   'terminal:spawn': [[threadId: string, cols: number, rows: number], string]
   'terminal:kill': [[terminalId: string], void]
   'terminal:getBuffer': [[terminalId: string], string]
+  'azure:pat:status': [[], boolean]
+  'azure:pat:set': [[token: string], void]
   'settings:get': [[key: string], string | null]
   'settings:set': [[key: string, value: string], void]
   'webhook:getConfig': [[], { enabled: boolean; port: number; token: string }]

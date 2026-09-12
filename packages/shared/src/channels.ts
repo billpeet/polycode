@@ -215,6 +215,8 @@ export const CHANNEL_REGISTRY = {
   'dialog:open-directory': { local: true, remote: false },
   'dialog:open-favicon': { local: true, remote: false },
   'dialog:open-files': { local: true, remote: false },
+  'azure:pat:status': { local: true, remote: false },
+  'azure:pat:set': { local: true, remote: false },
   'settings:get': { local: true, remote: false },
   'settings:set': { local: true, remote: false },
   'clipboard:writeText': { local: true, remote: false },

@@ -1,13 +1,13 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
 const run = vi.hoisted(() => vi.fn())
-const exists = vi.hoisted(() => vi.fn(() => false))
+const azureRequest = vi.hoisted(() => vi.fn())
 vi.mock('../driver/runner', () => ({ createRunner: () => ({ run }) }))
-vi.mock('fs', async importOriginal => ({ ...await importOriginal<typeof import('fs')>(), existsSync: exists }))
+vi.mock('../azure-devops-client', () => ({ azureRequest }))
 
 beforeEach(() => {
   vi.resetModules()
-  exists.mockReset().mockReturnValue(false)
+  azureRequest.mockReset().mockResolvedValue({ value: [] })
   run.mockReset().mockImplementation(async ({ binary, args }) => ({
     stdout: binary === 'git' ? (args.length === 1 ? 'origin' : 'https://github.com/acme/widgets.git') : '[]',
     stderr: '', exitCode: 0, timedOut: false,
@@ -98,28 +98,25 @@ it('keeps remote discovery cached across ordinary git invalidation', async () =>
   expect(run).toHaveBeenCalledTimes(2)
 })
 
-it.each([false, true])('shares Azure discovery and memoizes Windows shim lookup (direct node: %s)', async direct => {
-  vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
-  exists.mockReturnValue(direct)
+it('shares Azure discovery and coalesces REST reads without CLI subprocesses', async () => {
   const original = run.getMockImplementation()!
   run.mockImplementation(async command => {
     const result = await original(command)
     if (command.binary === 'git' && command.args.length > 1) result.stdout = 'https://dev.azure.com/org/project/_git/repo'
-    if (command.binary === 'where.exe') result.stdout = direct ? 'C:\\cli\\azdevops.cmd' : ''
     return result
   })
   const { createForge } = await import('../forge')
   const forges = await Promise.all([createForge('/repo'), createForge('/repo')])
-  await Promise.all([
-    ...forges.map(forge => forge.listPullRequests()),
-    forges[0].getCurrentBranchPullRequest('feature'),
-  ])
-  expect(run.mock.calls.filter(([command]) => command.binary === 'git')).toHaveLength(2)
-  expect(run.mock.calls.filter(([command]) => command.binary === 'where.exe')).toHaveLength(1)
-  const commands = run.mock.calls.filter(([command]) => direct ? command.binary.endsWith('node.exe') : command.binary === 'azdevops')
-  expect(commands).toHaveLength(3)
-  expect(commands[2][0].args).toContain('completed')
-  if (direct) expect(commands[2][0].args[0]).toContain('azdevops.js')
+  await Promise.all(forges.flatMap(forge => [
+    forge.listPullRequests(), forge.getCurrentBranchPullRequest('feature'),
+  ]))
+  await forges[0].listPullRequests()
+  expect(run).toHaveBeenCalledTimes(2)
+  expect(run.mock.calls.every(([command]) => command.binary === 'git')).toBe(true)
+  expect(azureRequest).toHaveBeenCalledTimes(3)
+  expect(azureRequest).toHaveBeenLastCalledWith(expect.anything(), 'pullrequests', {
+    'searchCriteria.status': 'completed', '$top': '50', 'searchCriteria.sourceRefName': 'refs/heads/feature',
+  })
 })
 
 it('prefers origin, falls back to supported remotes and caches unsupported repositories', async () => {
