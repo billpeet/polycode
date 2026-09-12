@@ -16,7 +16,7 @@ const CONNECTED = { hostId: 'web', phase: 'connected', reconnectAttempt: 0, erro
 vi.mock('../../lib/webClient', () => ({
   WEB_CAPABILITIES: Object.freeze({
     windowControls: false, shell: false, nativeDialogs: false, browserPanel: false,
-    updates: false, remoteHosts: false, routines: false, webhook: false,
+    updates: false, remoteHosts: false, webhook: false,
   }),
   getWebClient: () => ({
     invoke: vi.fn(async () => CONNECTED),

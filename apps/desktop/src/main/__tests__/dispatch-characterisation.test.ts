@@ -903,7 +903,9 @@ const { registerIpcHandlers } = await import('../ipc/handlers')
 const { MIGRATED_CHANNELS } = await import('../ipc/channel-handlers')
 const { handleControlRpc } = await import('../control/control-rpc')
 
-registerIpcHandlers(window)
+/** Stands in for the Run lifecycle the composition root supplies; no routines channel is characterised here. */
+const runLifecycle = { kind: 'run-lifecycle-stub' } as never
+registerIpcHandlers(window, runLifecycle)
 
 /** Drive the Electron IPC adapter and return the backend calls it made. */
 async function viaIpc(channel: string, args: unknown[]): Promise<string[]> {
@@ -917,7 +919,7 @@ async function viaIpc(channel: string, args: unknown[]): Promise<string[]> {
 /** Drive the control-RPC adapter and return the backend calls it made. */
 async function viaControlRpc(channel: string, args: unknown[]): Promise<string[]> {
   H.log.length = 0
-  await handleControlRpc(window, channel, args)
+  await handleControlRpc({ window, runLifecycle }, channel, args)
   return [...H.log]
 }
 
@@ -930,7 +932,7 @@ async function resultViaIpc(channel: string, args: unknown[]): Promise<unknown> 
 
 /** Drive the control-RPC adapter and return the handler's resolved value. */
 function resultViaControlRpc(channel: string, args: unknown[]): Promise<unknown> {
-  return handleControlRpc(window, channel, args)
+  return handleControlRpc({ window, runLifecycle }, channel, args)
 }
 
 beforeEach(() => {
@@ -4106,7 +4108,7 @@ describe('attachments:* — all three reachability shapes', () => {
       size: 1234, mimeType: 'image/png',
     })
 
-    await expect(handleControlRpc(window, 'attachments:getFileInfo', ['C:/tmp/shot.png']))
+    await expect(handleControlRpc({ window, runLifecycle }, 'attachments:getFileInfo', ['C:/tmp/shot.png']))
       .rejects.toThrow('Unsupported remote control channel: attachments:getFileInfo')
   })
 
@@ -4135,7 +4137,7 @@ describe('attachments:* — all three reachability shapes', () => {
     // twice on the common path.
     expect(H.state.fileReads).toBe(1)
 
-    await expect(handleControlRpc(window, 'attachments:saveFromPath', ['C:/pics/shot.png', 't1']))
+    await expect(handleControlRpc({ window, runLifecycle }, 'attachments:saveFromPath', ['C:/pics/shot.png', 't1']))
       .rejects.toThrow('Unsupported remote control channel: attachments:saveFromPath')
   })
 
@@ -4280,7 +4282,7 @@ async function expectLocalOnly(channel: string, args: unknown[] = []): Promise<v
     .toMatchObject({ local: true, remote: false })
   expect(isRemoteChannel(channel)).toBe(false)
   expect(ipcHandlers.has(channel)).toBe(true)
-  await expect(handleControlRpc(window, channel, args)).rejects.toThrow(
+  await expect(handleControlRpc({ window, runLifecycle }, channel, args)).rejects.toThrow(
     `Unsupported remote control channel: ${channel}`,
   )
 }
@@ -4716,7 +4718,7 @@ describe('the nine client-instance remote:* channels — folded out of remote/cl
    * that the *saved* config reaches the restart, and that the restart happens at all.
    */
   const restartEntry = (config: unknown): string =>
-    `remoteServer.restartRemoteControlServer([${JSON.stringify(config)},${JSON.stringify(window)}])`
+    `remoteServer.restartRemoteControlServer([${JSON.stringify(config)},${JSON.stringify(window)},${JSON.stringify(runLifecycle)}])`
 
   it('remote:getHosts returns the client’s host list untouched', async () => {
     await expectLocalOnly('remote:getHosts')
@@ -4848,7 +4850,7 @@ describe('local-only channels are unreachable from the remote transport', () => 
     expect(isRemoteChannel('settings:get')).toBe(false)
     expect(ipcHandlers.has('settings:get')).toBe(true)
 
-    await expect(handleControlRpc(window, 'settings:get', ['k'])).rejects.toThrow(
+    await expect(handleControlRpc({ window, runLifecycle }, 'settings:get', ['k'])).rejects.toThrow(
       'Unsupported remote control channel: settings:get',
     )
   })
@@ -4860,7 +4862,7 @@ describe('local-only channels are unreachable from the remote transport', () => 
 
     expect(localOnly.length).toBeGreaterThan(0)
     for (const channel of localOnly) {
-      await expect(handleControlRpc(window, channel, [])).rejects.toThrow(
+      await expect(handleControlRpc({ window, runLifecycle }, channel, [])).rejects.toThrow(
         `Unsupported remote control channel: ${channel}`,
       )
     }

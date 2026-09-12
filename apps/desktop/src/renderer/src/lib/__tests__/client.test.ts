@@ -8,7 +8,7 @@ vi.mock('../webClient', () => {
     kind: 'web',
     capabilities: Object.freeze({
       windowControls: false, shell: false, nativeDialogs: false, browserPanel: false,
-      updates: false, remoteHosts: false, routines: false, webhook: false,
+      updates: false, remoteHosts: false, webhook: false,
     }),
     systemLocale: undefined,
     invoke: vi.fn().mockResolvedValue('web-value'),

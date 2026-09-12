@@ -34,7 +34,7 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
     window,
     origin: 'local',
     remoteClient,
-    restartServer: (config) => restartRemoteControlServer(config, window),
+    restartServer: (config) => restartRemoteControlServer(config, window, runLifecycle),
     runLifecycle,
   }
   const proxyable = <T extends unknown[]>(

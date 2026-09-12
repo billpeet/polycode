@@ -33,7 +33,6 @@ export const WEB_CAPABILITIES: ClientCapabilities = Object.freeze({
   browserPanel: false,
   updates: false,
   remoteHosts: false,
-  routines: false,
   webhook: false,
 })
 

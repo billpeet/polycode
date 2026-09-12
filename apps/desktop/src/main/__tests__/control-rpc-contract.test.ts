@@ -73,6 +73,12 @@ describe('remote control RPC channel contract', () => {
     expect(missing).toEqual([])
   })
 
+  test('routine management is reachable from a remote client', () => {
+    const routines = Object.keys(CHANNEL_REGISTRY).filter((channel) => channel.startsWith('routines:'))
+    expect(routines).toHaveLength(9)
+    expect(routines.filter((channel) => !allowedChannels.has(channel))).toEqual([])
+  })
+
   test('remote-only channels are explicit', () => {
     const remoteOnly = Object.entries(CHANNEL_REGISTRY)
       .filter(([, capabilities]) => !capabilities.local && capabilities.remote)

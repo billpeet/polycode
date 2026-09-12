@@ -34,8 +34,8 @@ Funnel is on for the port and warns if it finds it on.
 
 In a browser, desktop-only features are hidden: window controls, opening files in
 Explorer/VS Code/a terminal, native file pickers (the browser's own picker is used),
-the internal browser panel, the updater, and routine management. Everything else —
-threads, terminals, git, commands, plans — works as on the desktop.
+the internal browser panel, and the updater. Everything else — threads, terminals,
+git, commands, plans, routines — works as on the desktop.
 
 Built with Electron, React, TypeScript, Vite, Tailwind CSS, Zustand, pnpm, and
 Node.js.
