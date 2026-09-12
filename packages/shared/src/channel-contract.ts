@@ -223,6 +223,9 @@ export interface ChannelContract {
   'claude-history:listSessions': [[encodedPath: string], ClaudeSession[]]
   'claude-history:importedIds': [[projectId: string], string[]]
   'claude-history:import': [[projectId: string, locationId: string, sessionFilePath: string, sessionId: string, name: string], Thread]
+  'tailscale:getStatus': [[], TailscaleStatus]
+  'tailscale:enableServe': [[scheme: TailscaleServeScheme], TailscaleStatus]
+  'tailscale:disableServe': [[], TailscaleStatus]
   'browser:prepareSession': [[locationId: string], BrowserPrepareSessionResult]
   'browser:releaseSession': [[locationId: string], void]
   'attachments:save': [[dataUrl: string, filename: string, threadId: string], { tempPath: string; id: string }]
@@ -311,9 +314,6 @@ export interface ChannelContract {
   'remote:reconnect': [[], RemoteConnectionState]
   'terminal:write': [[terminalId: string, data: string], void]
   'terminal:resize': [[terminalId: string, cols: number, rows: number], void]
-  'tailscale:getStatus': [[], TailscaleStatus]
-  'tailscale:enableServe': [[scheme: TailscaleServeScheme], TailscaleStatus]
-  'tailscale:disableServe': [[], TailscaleStatus]
   'attachments:readDataUrl': [[threadId: string, filename: string], string | null]
   'plans:getForThread': [
     [threadId: string],
