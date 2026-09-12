@@ -193,17 +193,18 @@ export const CHANNEL_REGISTRY = {
   'models:cursorAvailable': { local: true, remote: true },
   'models:grokAvailable': { local: true, remote: true },
   'subscription-usage:get': { local: true, remote: true },
-  // Routine management is desktop-only in v1; escalated runs surface through
-  // the normal thread channels, so mobile sees them with no extra plumbing.
-  'routines:list': { local: true, remote: false },
-  'routines:create': { local: true, remote: false },
-  'routines:update': { local: true, remote: false },
-  'routines:delete': { local: true, remote: false },
-  'routines:setEnabled': { local: true, remote: false },
-  'routines:runNow': { local: true, remote: false },
-  'routines:listRuns': { local: true, remote: false },
-  'routines:dismissRun': { local: true, remote: false },
-  'routines:runHasUnshippedWork': { local: true, remote: false },
+  // Routines run on the host that owns the project, so a remote client manages them
+  // there. The Run lifecycle the last three need reaches every transport through
+  // `HandlerContext`.
+  'routines:list': { local: true, remote: true },
+  'routines:create': { local: true, remote: true },
+  'routines:update': { local: true, remote: true },
+  'routines:delete': { local: true, remote: true },
+  'routines:setEnabled': { local: true, remote: true },
+  'routines:runNow': { local: true, remote: true },
+  'routines:listRuns': { local: true, remote: true },
+  'routines:dismissRun': { local: true, remote: true },
+  'routines:runHasUnshippedWork': { local: true, remote: true },
   'slash-commands:list': { local: true, remote: true },
   'skills:list': { local: true, remote: true },
   'slash-commands:create': { local: true, remote: true },

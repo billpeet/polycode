@@ -35,8 +35,6 @@ export interface ClientCapabilities {
   updates: boolean
   /** Remote-host management and the host switcher (`remote:*`). */
   remoteHosts: boolean
-  /** Routine management (`routines:*`). */
-  routines: boolean
   /** Inbound webhook configuration (`webhook:*`). */
   webhook: boolean
 }
@@ -53,7 +51,6 @@ const ELECTRON_CAPABILITIES: ClientCapabilities = Object.freeze({
   browserPanel: true,
   updates: true,
   remoteHosts: true,
-  routines: true,
   webhook: true,
 })
 

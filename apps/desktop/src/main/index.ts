@@ -381,7 +381,7 @@ app.whenReady().then(async () => {
   runLifecycle.start()
   powerMonitor.on('resume', () => void runLifecycle?.tick())
   startWebhookServer(readWebhookConfig(), win)
-  startRemoteControlServer(readRemoteServerConfig(), win)
+  startRemoteControlServer(readRemoteServerConfig(), win, runLifecycle)
 
   initUpdater(() => win)
 

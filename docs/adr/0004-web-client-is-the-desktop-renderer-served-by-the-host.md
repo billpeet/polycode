@@ -62,10 +62,11 @@ the desktop's own selection.
   channel, in which case a capability flag hides it rather than a runtime
   error surfacing it.
 - The browser inherits the registry's remote surface exactly: `settings:*`,
-  `shell:*`, `dialog:*`, `window:*`, `update:*`, the internal browser panel and
-  (for now) `routines:*` are unavailable. Promoting a group is a registry
-  change plus threading any `LocalHandlerContext` dependency into
-  `HandlerContext`.
+  `shell:*`, `dialog:*`, `window:*`, `update:*` and the internal browser panel
+  are unavailable. Promoting a group is a registry change plus threading any
+  `LocalHandlerContext` dependency into `HandlerContext` — which is how
+  `routines:*` came across: the Run lifecycle now reaches every transport, so
+  routines are managed on the host that owns the project from any client.
 - Sessions are in memory: an app restart signs every browser out. A token
   regeneration does the same, at the same moment it revokes every native
   client.

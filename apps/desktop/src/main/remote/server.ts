@@ -2,6 +2,7 @@ import * as http from 'http'
 import { join } from 'path'
 import { app, BrowserWindow } from 'electron'
 import { handleControlRpc, CONTROL_RPC_CHANNELS } from '../control/control-rpc'
+import type { RunLifecycle } from '../runs/lifecycle'
 import { onAppEvent } from '../app-events'
 import { RemoteServerConfig } from '../../shared/types'
 import { isValidBearerToken, isValidToken } from '../http-auth'
@@ -246,7 +247,7 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
   }
 }
 
-export function startRemoteControlServer(config: RemoteServerConfig, window: BrowserWindow): void {
+export function startRemoteControlServer(config: RemoteServerConfig, window: BrowserWindow, runLifecycle: RunLifecycle): void {
   stopRemoteControlServer()
   if (!config.enabled) return
 
@@ -256,7 +257,7 @@ export function startRemoteControlServer(config: RemoteServerConfig, window: Bro
   }
 
   const deps: RequestHandlerDeps = {
-    handleRpc: (channel, args) => handleControlRpc(window, channel, args),
+    handleRpc: (channel, args) => handleControlRpc({ window, runLifecycle }, channel, args),
     subscribe: onAppEvent,
     version: () => app.getVersion(),
     // Same bundle the desktop window loads (`main/index.ts` → `../renderer/index.html`).
@@ -285,7 +286,7 @@ export function stopRemoteControlServer(): void {
   server = null
 }
 
-export function restartRemoteControlServer(config: RemoteServerConfig, window: BrowserWindow): void {
+export function restartRemoteControlServer(config: RemoteServerConfig, window: BrowserWindow, runLifecycle: RunLifecycle): void {
   stopRemoteControlServer()
-  if (config.enabled) startRemoteControlServer(config, window)
+  if (config.enabled) startRemoteControlServer(config, window, runLifecycle)
 }

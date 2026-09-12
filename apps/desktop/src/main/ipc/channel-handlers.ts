@@ -432,6 +432,13 @@ function wslPathToUnc(wslPath: string, distro: string): string {
 export interface HandlerContext {
   window: BrowserWindow
   origin: 'local' | 'remote'
+  /**
+   * The Run lifecycle instance, constructed at the composition root (main/index.ts) with
+   * its production adapters. Routines run on the host that owns the project, so
+   * `routines:*` are reachable from every transport and this is what they drive; the
+   * remote-control server is handed the same instance the ipcMain adapter gets.
+   */
+  runLifecycle: RunLifecycle
 }
 
 /**
@@ -456,12 +463,6 @@ export interface HandlerContext {
 export interface LocalHandlerContext extends HandlerContext {
   origin: 'local'
   remoteClient: RemoteControlClient
-  /**
-   * The Run lifecycle instance, constructed at the composition root
-   * (main/index.ts) with its production adapters. The `routines:*` channels
-   * are `{ remote: false }`, so only this transport ever needs it.
-   */
-  runLifecycle: RunLifecycle
   /**
    * Restart this desktop's remote-control HTTP server with `config`.
    *

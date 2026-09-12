@@ -76,17 +76,6 @@ describe('channel handler map migration', () => {
     // it off the network — but it must be a deliberate act, so record which ones are in
     // that state.
     expect(localOnlyButFolded).toEqual([
-      // Routine management is deliberately desktop-only in v1; escalated runs
-      // reach mobile through the ordinary thread channels instead.
-      'routines:list',
-      'routines:create',
-      'routines:update',
-      'routines:delete',
-      'routines:setEnabled',
-      'routines:runNow',
-      'routines:listRuns',
-      'routines:dismissRun',
-      'routines:runHasUnshippedWork',
       'browser:prepareSession',
       'browser:releaseSession',
       'shell:openExternal',
