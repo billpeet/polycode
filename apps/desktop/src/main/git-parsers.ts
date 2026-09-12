@@ -126,6 +126,57 @@ export function parsePorcelainStatus(output: string): GitFileChange[] {
   return files
 }
 
+export interface PorcelainBranchHeader {
+  /** Branch name, or 'HEAD' when detached or on an unborn branch (matches `rev-parse --abbrev-ref HEAD`). */
+  branch: string
+  /** Upstream ref as printed by Git (e.g. `origin/main`), or null when none is configured. */
+  upstream: string | null
+  ahead: number
+  behind: number
+}
+
+/**
+ * Parse the `## ...` first line of `git status --porcelain --branch`.
+ *
+ * One process gives everything `getGitStatus` used to spend three on (`rev-parse HEAD`,
+ * `rev-parse @{u}`, `rev-list --left-right --count`). Forms Git emits:
+ *   `## main`                                       no upstream
+ *   `## main...origin/main`                         upstream, in sync
+ *   `## main...origin/main [ahead 2, behind 1]`     upstream, diverged
+ *   `## main...origin/main [gone]`                  upstream configured but deleted
+ *   `## HEAD (no branch)`                           detached
+ *   `## No commits yet on main`                     unborn branch
+ */
+export function parsePorcelainBranchHeader(line: string): PorcelainBranchHeader {
+  const none: PorcelainBranchHeader = { branch: 'HEAD', upstream: null, ahead: 0, behind: 0 }
+  if (!line.startsWith('## ')) return none
+  const text = line.slice(3).trim()
+  if (text.startsWith('HEAD (') || text.startsWith('No commits yet') || text.startsWith('Initial commit on')) return none
+
+  const bracket = text.lastIndexOf(' [')
+  const head = bracket >= 0 && text.endsWith(']') ? text.slice(0, bracket) : text
+  const counts = bracket >= 0 && text.endsWith(']') ? text.slice(bracket + 2, -1) : ''
+
+  const sep = head.indexOf('...')
+  const branch = sep >= 0 ? head.slice(0, sep) : head
+  const upstream = sep >= 0 ? head.slice(sep + 3) : null
+
+  const ahead = Number(/ahead (\d+)/.exec(counts)?.[1] ?? 0)
+  const behind = Number(/behind (\d+)/.exec(counts)?.[1] ?? 0)
+  return { branch: branch || 'HEAD', upstream: upstream || null, ahead, behind }
+}
+
+/** Split `git status --porcelain --branch` output into its header and the file rows. */
+export function splitPorcelainBranchOutput(output: string): { header: string; body: string } {
+  const newline = output.search(/\r?\n/)
+  if (output.startsWith('## ')) {
+    return newline >= 0
+      ? { header: output.slice(0, newline), body: output.slice(newline).replace(/^\r?\n/, '') }
+      : { header: output, body: '' }
+  }
+  return { header: '', body: output }
+}
+
 export function parseCommitLog(output: string): CommitLogEntry[] {
   if (!output) return []
   const entries: CommitLogEntry[] = []

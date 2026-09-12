@@ -16,7 +16,7 @@ import {
 import { SshConfig, WslConfig, GitBranches, LastCommitInfo, StashEntry, PullResult, CommitLogEntry, WorkingTreeFacts } from '../shared/types'
 import { createRunner, expectSuccess } from './driver/runner'
 import { runGit } from './git-runner'
-import { parseCommitLog, parseNameStatus, parsePorcelainStatus } from './git-parsers'
+import { parseCommitLog, parseNameStatus, parsePorcelainBranchHeader, parsePorcelainStatus, splitPorcelainBranchOutput } from './git-parsers'
 
 export { GitLockedError } from './git-runner'
 
@@ -348,57 +348,39 @@ export function getCachedGitBranch(repoPath: string, ssh?: SshConfig | null, wsl
 export async function getGitStatus(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitStatus | null> {
   const via = ssh ? 'ssh' : wsl ? `wsl:${wsl.distro}` : 'local'
   try {
-    // Branch name
-    let branch = 'HEAD'
-    try {
-      branch = await git(repoPath, ['rev-parse', '--abbrev-ref', 'HEAD'], ssh, wsl)
-    } catch {
-      // detached HEAD or not a git repo
-    }
+    // Two processes, run concurrently, instead of five in series. Grafana's git.* spans showed
+    // each `git:status` as rev-parse ×2 → rev-list → status → diff at ~80–170ms apiece on
+    // Windows (~530ms total) — the #1 main-process time sink after the polling storm was fixed.
+    // `--branch` folds branch, upstream and ahead/behind into the status header; `--numstat`
+    // is the only thing that still needs its own process.
+    //
+    // Plain --porcelain (newline-separated) rather than -z (NUL-terminated) to avoid a
+    // Windows/worktree bug where git produces zero bytes of output to a pipe with -z.
+    // Format per row: "XY PATH" or "XY ORIG_PATH -> NEW_PATH" for renames.
+    const [statusOutput, diffStat] = await Promise.all([
+      git(repoPath, ['status', '--porcelain', '--branch'], ssh, wsl).catch((err) => {
+        console.error(`[git:status] porcelain failed (${via}) for ${repoPath}:`, err)
+        return ''
+      }),
+      // Fails on a repo with no commits yet; that is just "no diff".
+      git(repoPath, ['diff', '--numstat', 'HEAD'], ssh, wsl).catch(() => ''),
+    ])
 
-    // Ahead/behind against upstream
-    let ahead = 0
-    let behind = 0
-    let hasUpstream = false
-    try {
-      const upstreamRef = (await git(repoPath, ['rev-parse', '--abbrev-ref', '@{u}'], ssh, wsl)).trim()
-      // Only treat as "has upstream" when the remote branch name matches the local branch name,
-      // i.e. origin/<branch>. A branch created from origin/master will have @{u}=origin/master
-      // but we still need to publish it to origin/<branch>.
-      hasUpstream = upstreamRef === `origin/${branch}`
-      const ab = await git(repoPath, ['rev-list', '--left-right', '--count', '@{u}...HEAD'], ssh, wsl)
-      const parts = ab.split('\t')
-      behind = parseInt(parts[0] ?? '0', 10) || 0
-      ahead = parseInt(parts[1] ?? '0', 10) || 0
-    } catch {
-      // no upstream set
-    }
-
-    // File statuses — use plain --porcelain (newline-separated) rather than -z
-    // (NUL-terminated) to avoid a Windows/worktree bug where git produces zero
-    // bytes of output to a pipe when the -z flag is used.
-    // Format per line: "XY PATH" or "XY ORIG_PATH -> NEW_PATH" for renames.
-    let porcelain = ''
-    try {
-      porcelain = await git(repoPath, ['status', '--porcelain'], ssh, wsl)
-    } catch (err) {
-      console.error(`[git:status] porcelain failed (${via}) for ${repoPath}:`, err)
-    }
-
-    const files = parsePorcelainStatus(porcelain)
+    const { header, body } = splitPorcelainBranchOutput(statusOutput)
+    const { branch, upstream, ahead, behind } = parsePorcelainBranchHeader(header)
+    // Only treat as "has upstream" when the remote branch name matches the local branch name,
+    // i.e. origin/<branch>. A branch created from origin/master will have @{u}=origin/master
+    // but we still need to publish it to origin/<branch>.
+    const hasUpstream = upstream === `origin/${branch}`
+    const files = parsePorcelainStatus(body)
 
     // Diff stats (staged + unstaged combined)
     let additions = 0
     let deletions = 0
-    try {
-      const diffStat = await git(repoPath, ['diff', '--numstat', 'HEAD'], ssh, wsl)
-      for (const line of diffStat.split('\n').filter(Boolean)) {
-        const parts = line.split('\t')
-        additions += parseInt(parts[0] ?? '0', 10) || 0
-        deletions += parseInt(parts[1] ?? '0', 10) || 0
-      }
-    } catch {
-      // no commits yet
+    for (const line of diffStat.split('\n').filter(Boolean)) {
+      const parts = line.split('\t')
+      additions += parseInt(parts[0] ?? '0', 10) || 0
+      deletions += parseInt(parts[1] ?? '0', 10) || 0
     }
 
     return { branch, ahead, behind, additions, deletions, files, hasUpstream }
