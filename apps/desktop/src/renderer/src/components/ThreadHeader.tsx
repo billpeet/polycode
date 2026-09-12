@@ -14,6 +14,7 @@ import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
 import { Tooltip } from './ui/tooltip'
 import { client } from '../lib/client'
+import { writeClipboardText } from '../lib/clipboard'
 
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
 
@@ -357,7 +358,7 @@ export default function ThreadHeader({ threadId }: Props) {
         {locationPath && !isPendingThread && (
           <span className="flex items-center gap-0.5 flex-shrink-0">
             <button
-              onClick={() => client.invoke('shell:copyPath', locationPath)}
+              onClick={() => void writeClipboardText(locationPath)}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
               title={`Copy path: ${locationPath}`}
@@ -367,6 +368,7 @@ export default function ThreadHeader({ threadId }: Props) {
                 <path d="M2 11V2h9" />
               </svg>
             </button>
+            {client.capabilities.shell && (<>
             <button
               onClick={() => client.invoke('shell:openInExplorer', locationPath)}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
@@ -420,6 +422,8 @@ export default function ThreadHeader({ threadId }: Props) {
                 <path d="M9 12h3" />
               </svg>
             </button>
+            </>)}
+            {client.capabilities.browserPanel && (
             <button
               onClick={() => {
                 if (locationId) useBrowserStore.getState().toggleVisible(locationId)
@@ -440,6 +444,7 @@ export default function ThreadHeader({ threadId }: Props) {
                 <path d="M8 1.5c-4.5 4-4.5 9 0 13 4.5-4 4.5-9 0-13z" />
               </svg>
             </button>
+            )}
             <button
               onClick={() => {
                 if (locationId) useTerminalStore.getState().toggleVisible(locationId)

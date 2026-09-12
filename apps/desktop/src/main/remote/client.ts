@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto'
 import { BrowserWindow, powerMonitor } from 'electron'
-import { isRemoteChannel, RemoteEventStream } from '@polycode/shared'
+import { isRemoteChannel, RemoteEventStream, rpcTimeoutMs } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
 import { count, recordDuration } from '../observability'
@@ -25,27 +25,8 @@ interface ProxyResult {
   value?: unknown
 }
 
-const RPC_TIMEOUT_MS = 10_000
-// Text generation runs an LLM subprocess on the host. Match system-text's own two-minute
-// command budget so the remote transport does not give up while that subprocess is healthy.
-const TEXT_GENERATION_RPC_TIMEOUT_MS = 120_000
-const TEXT_GENERATION_RPC_CHANNELS: ReadonlySet<string> = new Set([
-  'git:generateCommitMessage',
-  'git:generateCommitMessageWithContext',
-  'git:generateBranchName',
-  'git:generatePullRequestText',
-])
-// Channels whose host-side handler does the filesystem work inline (worktree removal is a
-// `git worktree remove --force` plus a recursive delete of a directory that routinely holds
-// `node_modules`). A 10s budget guarantees these fail on the client while the host happily
-// finishes the job minutes later.
-const SLOW_RPC_TIMEOUT_MS = 300_000
-const SLOW_RPC_CHANNELS: ReadonlySet<string> = new Set([
-  'locations:createWorktree',
-  'locations:removeWorktree',
-  'locations:clone',
-  'projects:createFull',
-])
+// Per-channel RPC budgets live in @polycode/shared's rpc-timeouts, shared with the
+// browser client so both give a slow host-side operation the same allowance.
 const RESPONSE_DIAGNOSTIC_LIMIT = 240
 // Reconnect backoff and the stall watchdog live in @polycode/shared's RemoteEventStream,
 // which this client and the mobile app both consume.
@@ -455,11 +436,7 @@ export class RemoteControlClient {
 
   private async invoke(host: RemoteHost, channel: string, args: unknown[]): Promise<unknown> {
     const controller = new AbortController()
-    const timeoutMs = SLOW_RPC_CHANNELS.has(channel)
-      ? SLOW_RPC_TIMEOUT_MS
-      : TEXT_GENERATION_RPC_CHANNELS.has(channel)
-        ? TEXT_GENERATION_RPC_TIMEOUT_MS
-        : RPC_TIMEOUT_MS
+    const timeoutMs = rpcTimeoutMs(channel)
     const timer = setTimeout(() => controller.abort(), timeoutMs)
     const startedAt = Date.now()
     // Remote round trips were previously invisible in telemetry: perf.ts times the outer

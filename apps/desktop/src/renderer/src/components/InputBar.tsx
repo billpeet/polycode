@@ -689,7 +689,33 @@ function InputBarContent({ threadId }: Props) {
     }
   }
 
+  // Without a native picker the browser's own <input type="file"> stands in; its files take
+  // the same path as a paste or drop, which already uploads by data URL.
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  async function handleFileInputChange(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const files = Array.from(e.target.files ?? [])
+    e.target.value = ''
+    for (const file of files) {
+      try {
+        await addAttachment(file)
+      } catch (err) {
+        addToast({
+          type: 'error',
+          title: 'Attachment Failed',
+          message: err instanceof Error ? err.message : 'Failed to add attachment',
+          details: formatErrorDetails({ action: 'attachment:pick', threadId, fileName: file.name, mimeType: file.type, size: file.size }, err),
+          duration: 0,
+        })
+      }
+    }
+  }
+
   async function handleFilePick(): Promise<void> {
+    if (!client.capabilities.nativeDialogs) {
+      fileInputRef.current?.click()
+      return
+    }
     const paths = await client.invoke('dialog:open-files')
     for (const filePath of paths) {
       try {
@@ -836,6 +862,18 @@ function InputBarContent({ threadId }: Props) {
         {/* Composer row */}
         <div className="flex items-end gap-2 px-3 py-3">
           {/* Paperclip button */}
+          {!client.capabilities.nativeDialogs && (
+            <input
+              ref={fileInputRef}
+              type="file"
+              multiple
+              accept={Object.keys(SUPPORTED_ATTACHMENT_TYPES).join(',')}
+              onChange={(e) => void handleFileInputChange(e)}
+              className="hidden"
+              aria-hidden
+              tabIndex={-1}
+            />
+          )}
           <button
             onClick={handleFilePick}
             disabled={isProcessing}

@@ -6,17 +6,18 @@ import { SlashCommandsPanel } from './SlashCommandsDialog'
 import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
 import { WebhookPanel } from './WebhookPanel'
 import { RemoteControlPanel } from './RemoteControlPanel'
-import { client } from '../lib/client'
+import { client, type ClientCapabilities } from '../lib/client'
 
 type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote'
 
-const TABS: { id: Tab; label: string }[] = [
+/** Tabs that configure the host process itself only exist where that process is attached. */
+const TABS: { id: Tab; label: string; requires?: keyof ClientCapabilities }[] = [
   { id: 'health', label: 'Health Checks' },
   { id: 'slash', label: 'Slash Commands' },
   { id: 'azure', label: 'Azure DevOps' },
   { id: 'youtrack', label: 'YouTrack' },
-  { id: 'webhook', label: 'Webhook' },
-  { id: 'remote', label: 'Remote' },
+  { id: 'webhook', label: 'Webhook', requires: 'webhook' },
+  { id: 'remote', label: 'Remote', requires: 'remoteHosts' },
 ]
 
 interface Props {
@@ -28,6 +29,7 @@ interface Props {
 export default function SettingsDialog({ projectId, projectName, onClose }: Props) {
   const backdropClose = useBackdropClose(onClose)
   const [activeTab, setActiveTab] = useState<Tab>('health')
+  const tabs = TABS.filter((tab) => !tab.requires || client.capabilities[tab.requires])
 
   async function openLogsFolder(): Promise<void> {
     try {
@@ -63,7 +65,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
           >
             Settings
           </h2>
-          {TABS.map((tab) => (
+          {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
@@ -83,18 +85,20 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
         <div className="flex-1 flex flex-col min-w-0 p-5 overflow-hidden">
           {/* Close button */}
           <div className="flex justify-end mb-2 flex-shrink-0">
-            <button
-              onClick={() => void openLogsFolder()}
-              className="rounded px-2.5 py-1 text-xs mr-2 transition-colors hover:opacity-90"
-              style={{
-                color: 'var(--color-text)',
-                background: 'var(--color-surface)',
-                border: '1px solid var(--color-border)',
-              }}
-              title="Open the folder containing PolyCode app logs"
-            >
-              Open Logs Folder
-            </button>
+            {client.capabilities.shell && (
+              <button
+                onClick={() => void openLogsFolder()}
+                className="rounded px-2.5 py-1 text-xs mr-2 transition-colors hover:opacity-90"
+                style={{
+                  color: 'var(--color-text)',
+                  background: 'var(--color-surface)',
+                  border: '1px solid var(--color-border)',
+                }}
+                title="Open the folder containing PolyCode app logs"
+              >
+                Open Logs Folder
+              </button>
+            )}
             <button
               onClick={onClose}
               className="rounded p-1 text-xs opacity-50 hover:opacity-100 transition-opacity"

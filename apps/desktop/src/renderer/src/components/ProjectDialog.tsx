@@ -149,9 +149,11 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
                 style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
                 placeholder="Auto-detect"
               />
-              <button type="button" onClick={handleBrowseFavicon} className="rounded px-3 py-2 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
-                Browse
-              </button>
+              {client.capabilities.nativeDialogs && (
+                <button type="button" onClick={handleBrowseFavicon} className="rounded px-3 py-2 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
+                  Browse
+                </button>
+              )}
               {faviconPath && (
                 <button type="button" onClick={() => setFaviconPath('')} className="rounded px-3 py-2 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
                   Clear

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import { isLocalChannel } from '@polycode/shared'
+import { createSlowInvokeTracker, isLocalChannel } from '@polycode/shared'
 import { getHeapStatistics } from 'node:v8'
 
 export type IpcListener = (...args: unknown[]) => void
@@ -9,44 +9,10 @@ const systemLocale = process.argv
   .find((arg) => arg.startsWith(SYSTEM_LOCALE_ARG))
   ?.slice(SYSTEM_LOCALE_ARG.length)
 
-// ── Slow-invoke signal ───────────────────────────────────────────────────────
-//
 // Every request/response call already flows through api.invoke, which makes this the one
-// place that can cheaply notice "something the UI asked for is taking a while". Listeners
-// get the number of calls currently in flight past the threshold; the renderer decides
-// whether that means anything (it only surfaces the signal while a remote host is active,
-// where the delay is network distance rather than local work).
-const SLOW_INVOKE_THRESHOLD_MS = 400
-
-type SlowInvokeListener = (pendingSlowCalls: number) => void
-const slowInvokeListeners = new Set<SlowInvokeListener>()
-let pendingSlowCalls = 0
-
-function notifySlowInvoke(): void {
-  for (const listener of slowInvokeListeners) {
-    try {
-      listener(pendingSlowCalls)
-    } catch {
-      // A broken listener must not take down IPC timing for everyone else.
-    }
-  }
-}
-
-function trackSlowInvoke(promise: Promise<unknown>): void {
-  let counted = false
-  const timer = setTimeout(() => {
-    counted = true
-    pendingSlowCalls += 1
-    notifySlowInvoke()
-  }, SLOW_INVOKE_THRESHOLD_MS)
-  void promise.finally(() => {
-    clearTimeout(timer)
-    if (counted) {
-      pendingSlowCalls -= 1
-      notifySlowInvoke()
-    }
-  }).catch(() => undefined)
-}
+// place that can cheaply notice "something the UI asked for is taking a while". The tracker
+// itself is shared with the browser client (@polycode/shared) so both report the same signal.
+const slowInvokes = createSlowInvokeTracker()
 
 const api = {
   systemLocale,
@@ -68,7 +34,7 @@ const api = {
     }
     const startedAt = performance.now()
     const pending = ipcRenderer.invoke(channel, ...args)
-    trackSlowInvoke(pending)
+    slowInvokes.track(pending)
     return pending.finally(() => {
       const durationMs = performance.now() - startedAt
       if (durationMs >= 50) {
@@ -98,8 +64,7 @@ const api = {
    * Fires only on transitions (a call crossing the threshold, or such a call settling).
    */
   onSlowInvoke(callback: (pendingSlowCalls: number) => void): () => void {
-    slowInvokeListeners.add(callback)
-    return () => slowInvokeListeners.delete(callback)
+    return slowInvokes.subscribe(callback)
   }
 }
 

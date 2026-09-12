@@ -151,7 +151,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                   {ports.length > 0 && (
                     <p className="text-[10px] font-mono mb-2" style={{ color: '#4ade80' }}>
                       ports:{' '}
-                      {ports.map((port) => (
+                      {ports.map((port) => client.capabilities.browserPanel ? (
                         <button
                           key={port}
                           onClick={() => {
@@ -164,6 +164,8 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                         >
                           {port}
                         </button>
+                      ) : (
+                        <span key={port} className="mr-1">{port}</span>
                       ))}
                     </p>
                   )}

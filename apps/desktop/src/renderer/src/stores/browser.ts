@@ -64,6 +64,7 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
 
   /** Show the panel; reuse a tab already at `url`, else open a new one. */
   open: async (locationId, url) => {
+    if (!client.capabilities.browserPanel) return
     const state = get()
     let session = state.sessionByLocation[locationId]
     if (!session) {

@@ -583,7 +583,9 @@ export default function ExpandedSidebar({
                     </button>
                   )}
 
-                  <RoutinesSection projectId={project.id} onSelectThread={onSelectThread} />
+                  {client.capabilities.routines && (
+                    <RoutinesSection projectId={project.id} onSelectThread={onSelectThread} />
+                  )}
 
                   {/*
                     Snoozed sits above Archived: a snooze is temporary and

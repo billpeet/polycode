@@ -1,14 +1,15 @@
 import type { ChannelArgs, ChannelResult, LocalChannel } from '@polycode/shared'
 import type { WindowApi } from '../types/ipc'
+import { WEB_CAPABILITIES, getWebClient } from './webClient'
 
 /**
  * The renderer's one seam onto the process that owns its data.
  *
  * Every request/response call, every push subscription and every fire-and-forget send
  * goes through `client` rather than `window.api`. In Electron that is the preload bridge;
- * in a browser served by a Remote Host it will be an HTTP/SSE implementation of the same
- * interface (see docs/web-client-plan.md). Renderer code never learns which one it has —
- * it asks `client.capabilities` when a feature only exists on one side of the seam.
+ * in a browser served by a Remote Host it is the HTTP/SSE client in `webClient.ts`.
+ * Renderer code never learns which one it has — it asks `client.capabilities` when a
+ * feature only exists on one side of the seam.
  *
  * Resolution is per call rather than at module load. Tests stub `window.api` after import
  * and swap it between cases, and there is no cost to a property read per invoke.
@@ -24,7 +25,7 @@ export type ClientKind = 'electron' | 'web'
 export interface ClientCapabilities {
   /** TitleBar minimise/maximise/close and the drag region (`window:*`). */
   windowControls: boolean
-  /** Open in Explorer/VS Code/terminal, reveal, copy path, open logs folder (`shell:*`). */
+  /** Open in Explorer/VS Code/terminal, reveal, open externally, open logs folder (`shell:*`). */
   shell: boolean
   /** Native file and directory pickers (`dialog:*`). */
   nativeDialogs: boolean
@@ -36,6 +37,8 @@ export interface ClientCapabilities {
   remoteHosts: boolean
   /** Routine management (`routines:*`). */
   routines: boolean
+  /** Inbound webhook configuration (`webhook:*`). */
+  webhook: boolean
 }
 
 export interface Client extends WindowApi {
@@ -51,31 +54,11 @@ const ELECTRON_CAPABILITIES: ClientCapabilities = Object.freeze({
   updates: true,
   remoteHosts: true,
   routines: true,
-})
-
-/** A browser has none of the desktop-only surfaces until the web client lands. */
-const WEB_CAPABILITIES: ClientCapabilities = Object.freeze({
-  windowControls: false,
-  shell: false,
-  nativeDialogs: false,
-  browserPanel: false,
-  updates: false,
-  remoteHosts: false,
-  routines: false,
+  webhook: true,
 })
 
 function preloadApi(): WindowApi | undefined {
   return typeof window === 'undefined' ? undefined : window.api
-}
-
-function requirePreloadApi(): WindowApi {
-  const api = preloadApi()
-  if (!api) {
-    throw new Error(
-      'No PolyCode client is available: window.api is missing and no web client is installed',
-    )
-  }
-  return api
 }
 
 /** Bind a `Client` to a specific preload bridge. Exposed for tests. */
@@ -102,15 +85,20 @@ export const client: Client = {
     return preloadApi()?.systemLocale
   },
   invoke<C extends LocalChannel>(channel: C, ...args: ChannelArgs<C>): Promise<ChannelResult<C>> {
-    return requirePreloadApi().invoke(channel, ...args)
+    const api = preloadApi()
+    return api ? api.invoke(channel, ...args) : getWebClient().invoke(channel, ...args)
   },
   on(channel, callback) {
-    return requirePreloadApi().on(channel, callback)
+    const api = preloadApi()
+    return api ? api.on(channel, callback) : getWebClient().on(channel, callback)
   },
   send(channel, ...args) {
-    requirePreloadApi().send(channel, ...args)
+    const api = preloadApi()
+    if (api) api.send(channel, ...args)
+    else getWebClient().send(channel, ...args)
   },
   onSlowInvoke(callback) {
-    return requirePreloadApi().onSlowInvoke(callback)
+    const api = preloadApi()
+    return api ? api.onSlowInvoke(callback) : getWebClient().onSlowInvoke(callback)
   },
 }

@@ -186,7 +186,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
 
   const pathLabel = isSSH ? 'Remote Path' : isWSL ? 'WSL Path' : 'Directory'
   const pathPlaceholder = isSSH ? '/home/user/project' : isWSL ? '~/projects/myapp' : '/path/to/project'
-  const showBrowse = !isSSH && !isWSL
+  const showBrowse = !isSSH && !isWSL && client.capabilities.nativeDialogs
 
   return (
     <div

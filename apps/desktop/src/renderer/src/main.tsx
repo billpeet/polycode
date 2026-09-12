@@ -1,8 +1,8 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import * as Sentry from '@sentry/electron/renderer'
 import './index.css'
 import App from './App'
+import WebRoot from './components/WebRoot'
 import { SENTRY_DSN } from '../../shared/sentry.config'
 import { installRendererPerfObservers, reportReactCommit } from './lib/perf'
 import { initPostHog } from './lib/posthog'
@@ -50,17 +50,39 @@ function installRendererLogForwarding(): void {
   }
 }
 
-installRendererLogForwarding()
+/**
+ * Sentry's Electron renderer SDK talks to the main process over a bridge the preload
+ * installs; without one it is the plain browser SDK we want. Both are loaded on demand so
+ * neither initialises in the wrong host.
+ */
+async function initErrorReporting(): Promise<void> {
+  const release = `polycode@${__APP_VERSION__}`
+  if (client.kind === 'electron') {
+    const Sentry = await import('@sentry/electron/renderer')
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      release,
+      integrations: [Sentry.browserTracingIntegration()],
+      tracesSampleRate: 0.1,
+    })
+  } else {
+    const Sentry = await import('@sentry/react')
+    Sentry.init({
+      dsn: SENTRY_DSN,
+      release,
+      integrations: [Sentry.browserTracingIntegration()],
+      tracesSampleRate: 0.1,
+    })
+  }
+}
+
+// Console lines are forwarded to the desktop's log file. A browser has no such file to
+// write to; its console is its log.
+if (client.kind === 'electron') installRendererLogForwarding()
 installRendererPerfObservers()
 
 if (import.meta.env.PROD) {
-  Sentry.init({
-    dsn: SENTRY_DSN,
-    release: `polycode@${__APP_VERSION__}`,
-    integrations: [Sentry.browserTracingIntegration()],
-    tracesSampleRate: 0.1,
-  })
-
+  void initErrorReporting()
   initPostHog()
 }
 
@@ -79,7 +101,7 @@ window.addEventListener('unhandledrejection', (event) => {
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>
     <React.Profiler id="App" onRender={reportReactCommit}>
-      <App />
+      {client.kind === 'web' ? <WebRoot /> : <App />}
     </React.Profiler>
   </React.StrictMode>
 )

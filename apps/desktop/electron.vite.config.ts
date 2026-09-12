@@ -30,6 +30,15 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss(), ...(sentryPlugin ? [sentryPlugin] : [])],
+    // Web-client dev loop: open http://localhost:5173 in a browser while `electron-vite
+    // dev` runs. There is no preload there, so the renderer takes the web path and its
+    // API calls proxy to the running app's remote-control server. `changeOrigin` rewrites
+    // Host to the bind address, which is what the server's Host gate expects.
+    server: {
+      proxy: {
+        '/api': { target: 'http://127.0.0.1:3285', changeOrigin: true },
+      },
+    },
     define: {
       __APP_VERSION__: JSON.stringify(process.env.npm_package_version ?? '0.0.0'),
       // PostHog project keys are write-only and safe to embed in the app.

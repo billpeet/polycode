@@ -239,12 +239,7 @@ function CommandLogPanel({
     // The internal browser is useful here only for loopback services reached
     // through remote control. Other URLs belong in the system browser.
     const disposeLinks = registerUrlLinks(term, (url) => {
-      void client.invoke('remote:getActiveHost').then((activeHost) => {
-        if (locationId && shouldOpenCommandLogLinkInternally(url, activeHost !== null)) {
-          return useBrowserStore.getState().open(locationId, url)
-        }
-        return client.invoke('shell:openExternal', url)
-      })
+      void openCommandLogLink(url, locationId)
     })
 
     xtermRef.current = term
@@ -376,14 +371,15 @@ function CommandLogPanel({
           {ports.length > 0 && ports.map((port) => (
             <button
               key={port}
+              disabled={!client.capabilities.browserPanel}
               onClick={() => {
                 if (locationId) {
                   void useBrowserStore.getState().open(locationId, `http://localhost:${port}`)
                 }
               }}
-              className="text-[10px] font-mono px-1 rounded flex-shrink-0 hover:opacity-80 transition-opacity"
+              className="text-[10px] font-mono px-1 rounded flex-shrink-0 hover:opacity-80 transition-opacity disabled:cursor-default disabled:hover:opacity-100"
               style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.12)' }}
-              title={`Open localhost:${port} in the internal browser`}
+              title={client.capabilities.browserPanel ? `Open localhost:${port} in the internal browser` : `Listening on port ${port}`}
             >
               :{port}
             </button>
@@ -609,4 +605,24 @@ export default function CommandLogsContent() {
       ))}
     </>
   )
+}
+
+/**
+ * The internal browser is useful here only for loopback services reached through remote
+ * control; other URLs belong in the system browser. Without a desktop attached there is
+ * no internal browser and no shell, so the page's own window is the only way out.
+ */
+async function openCommandLogLink(url: string, locationId: string | null): Promise<void> {
+  const { browserPanel, remoteHosts, shell } = client.capabilities
+  if (browserPanel && locationId) {
+    const activeHost = remoteHosts ? await client.invoke('remote:getActiveHost') : null
+    if (shouldOpenCommandLogLinkInternally(url, activeHost !== null)) {
+      return useBrowserStore.getState().open(locationId, url)
+    }
+  }
+  if (shell) {
+    await client.invoke('shell:openExternal', url)
+  } else {
+    window.open(url, '_blank', 'noopener')
+  }
 }
