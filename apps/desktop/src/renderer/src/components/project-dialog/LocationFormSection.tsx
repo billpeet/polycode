@@ -327,7 +327,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
             <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>{pathLabel}</label>
             <div className="flex gap-2">
               <input type="text" value={path} onChange={(e) => setPath(e.target.value)} className="flex-1 rounded px-3 py-1.5 text-sm outline-none font-mono" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} placeholder={pathPlaceholder} />
-              {!isSSH && !isWSL && <button type="button" onClick={handleBrowse} className="rounded px-3 py-1.5 text-xs" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Browse</button>}
+              {!isSSH && !isWSL && client.capabilities.nativeDialogs && <button type="button" onClick={handleBrowse} className="rounded px-3 py-1.5 text-xs" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Browse</button>}
             </div>
           </div>
           {(isSSH || isWSL) && (

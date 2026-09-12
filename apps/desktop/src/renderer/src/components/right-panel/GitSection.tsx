@@ -17,6 +17,7 @@ import { subscribeToGitRefresh } from '../../lib/gitRefreshCoordinator'
 import { formatErrorDetails } from '../../lib/errorDetails'
 import { getCachedForge, refreshForge, type ForgeCapability, type ForgeRefreshResult } from '../../lib/forgeRefresh'
 import { client } from '../../lib/client'
+import { writeClipboardText } from '../../lib/clipboard'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
 function joinRepoPath(repoPath: string, relPath: string): string {
@@ -1125,7 +1126,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     if (!projectPath) return
     try {
       const value = relative ? file.path : joinRepoPath(projectPath, file.path)
-      await client.invoke('shell:copyPath', value)
+      if (!(await writeClipboardText(value))) throw new Error('The clipboard rejected the write')
       addToast({ type: 'success', message: relative ? 'Copied relative path' : 'Copied path', duration: 2000 })
     } catch (err) {
       addToast({
@@ -1446,8 +1447,10 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
             id: 'reveal',
             label: 'Reveal in Explorer',
             separator: true,
-            disabled: isSsh,
-            title: isSsh ? 'Not available for SSH-hosted repos' : 'Show this file in the system file manager',
+            disabled: isSsh || !client.capabilities.shell,
+            title: !client.capabilities.shell
+              ? 'Not available in the browser'
+              : isSsh ? 'Not available for SSH-hosted repos' : 'Show this file in the system file manager',
             onSelect: () => handleRevealInExplorer(file),
           },
           {

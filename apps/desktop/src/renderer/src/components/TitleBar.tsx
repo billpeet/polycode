@@ -17,12 +17,16 @@ export default function TitleBar() {
   const [activeHost, setActiveHost] = useState<RemoteHost | null>(null)
   const connection = useRemoteConnectionStore((s) => s.connection)
   const slowCalls = useRemoteConnectionStore((s) => s.slowCalls)
+  const { windowControls, remoteHosts } = client.capabilities
+  // A browser is always talking to a remote host; the desktop only when one is selected.
+  const remoteActive = remoteHosts ? activeHost !== null : connection.hostId !== null
 
   useEffect(() => {
     initRemoteConnectionStore()
   }, [])
 
   useEffect(() => {
+    if (!windowControls) return
     client.invoke('window:is-maximized').then((maximized) => {
       setIsMaximized((prev) => (prev === maximized ? prev : maximized))
     })
@@ -30,9 +34,10 @@ export default function TitleBar() {
       const next = maximized as boolean
       setIsMaximized((prev) => (prev === next ? prev : next))
     })
-  }, [])
+  }, [windowControls])
 
   useEffect(() => {
+    if (!remoteHosts) return
     async function loadRemoteState() {
       const [savedHosts, active] = await Promise.all([
         client.invoke('remote:getHosts'),
@@ -54,7 +59,7 @@ export default function TitleBar() {
       offActive()
       offHosts()
     }
-  }, [])
+  }, [remoteHosts])
 
   function switchHost(id: string) {
     void client.invoke('remote:setActiveHost', id === 'local' ? null : id)
@@ -85,7 +90,7 @@ export default function TitleBar() {
         flexShrink: 0,
         position: 'relative',
         zIndex: 2147483647,
-        WebkitAppRegion: 'drag',
+        WebkitAppRegion: windowControls ? 'drag' : undefined,
       } as React.CSSProperties}
     >
       <div
@@ -102,13 +107,13 @@ export default function TitleBar() {
         <span
           style={{
             fontSize: 12,
-            color: activeHost ? 'var(--color-text)' : 'var(--color-text-muted)',
+            color: remoteActive ? 'var(--color-text)' : 'var(--color-text-muted)',
             userSelect: 'none',
           }}
         >
           PolyCode
         </span>
-        {activeHost && (() => {
+        {remoteActive && (() => {
           const dot = PHASE_DOT[connection.phase]
           const latency = connection.phase === 'connected' && connection.latencyMs !== null
             ? `${Math.round(connection.latencyMs)}ms`
@@ -137,29 +142,31 @@ export default function TitleBar() {
             </span>
           )
         })()}
-        <select
-          value={activeHost?.id ?? 'local'}
-          onChange={(event) => switchHost(event.target.value)}
-          title={activeHost ? `Remote: ${activeHost.label}` : 'Local instance'}
-          style={{
-            height: 22,
-            maxWidth: 220,
-            borderRadius: 4,
-            border: `1px solid ${activeHost ? 'var(--color-claude)' : 'var(--color-border)'}`,
-            background: activeHost ? 'color-mix(in srgb, var(--color-claude) 18%, var(--color-surface))' : 'var(--color-surface-2)',
-            color: 'var(--color-text)',
-            fontSize: 11,
-            padding: '0 6px',
-            outline: 'none',
-          }}
-        >
-          <option value="local">Local</option>
-          {hosts.map((host) => (
-            <option key={host.id} value={host.id}>
-              Remote: {host.label}
-            </option>
-          ))}
-        </select>
+        {remoteHosts && (
+          <select
+            value={activeHost?.id ?? 'local'}
+            onChange={(event) => switchHost(event.target.value)}
+            title={activeHost ? `Remote: ${activeHost.label}` : 'Local instance'}
+            style={{
+              height: 22,
+              maxWidth: 220,
+              borderRadius: 4,
+              border: `1px solid ${activeHost ? 'var(--color-claude)' : 'var(--color-border)'}`,
+              background: activeHost ? 'color-mix(in srgb, var(--color-claude) 18%, var(--color-surface))' : 'var(--color-surface-2)',
+              color: 'var(--color-text)',
+              fontSize: 11,
+              padding: '0 6px',
+              outline: 'none',
+            }}
+          >
+            <option value="local">Local</option>
+            {hosts.map((host) => (
+              <option key={host.id} value={host.id}>
+                Remote: {host.label}
+              </option>
+            ))}
+          </select>
+        )}
         {/*
           Perceived-latency signal: at least one in-flight IPC call has been waiting on the
           remote host past the preload's slow threshold. One subtle global spinner instead
@@ -167,7 +174,7 @@ export default function TitleBar() {
           Only rendered while remote is active; local slow calls mean local work, and the
           offline/reconnecting states already have the banner.
         */}
-        {activeHost && slowCalls > 0 && connection.phase === 'connected' && (
+        {remoteActive && slowCalls > 0 && connection.phase === 'connected' && (
           <span
             className="status-spinner"
             title={`Waiting for remote host (${slowCalls} slow ${slowCalls === 1 ? 'request' : 'requests'})…`}
@@ -178,36 +185,38 @@ export default function TitleBar() {
 
       <div style={{ flex: 1 }} />
 
-      <div
-        style={{
-          display: 'flex',
-          WebkitAppRegion: 'no-drag',
-        } as React.CSSProperties}
-      >
-        <WinButton onClick={minimize} title="Minimize" hoverColor="var(--color-surface-2)">
-          <svg width="10" height="1" viewBox="0 0 10 1">
-            <rect width="10" height="1" fill="currentColor" />
-          </svg>
-        </WinButton>
-        <WinButton onClick={maximize} title={isMaximized ? 'Restore' : 'Maximize'} hoverColor="var(--color-surface-2)">
-          {isMaximized ? (
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <rect x="2" y="0" width="8" height="8" stroke="currentColor" strokeWidth="1" />
-              <rect x="0" y="2" width="8" height="8" fill="var(--color-surface)" stroke="currentColor" strokeWidth="1" />
+      {windowControls && (
+        <div
+          style={{
+            display: 'flex',
+            WebkitAppRegion: 'no-drag',
+          } as React.CSSProperties}
+        >
+          <WinButton onClick={minimize} title="Minimize" hoverColor="var(--color-surface-2)">
+            <svg width="10" height="1" viewBox="0 0 10 1">
+              <rect width="10" height="1" fill="currentColor" />
             </svg>
-          ) : (
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-              <rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" strokeWidth="1" />
+          </WinButton>
+          <WinButton onClick={maximize} title={isMaximized ? 'Restore' : 'Maximize'} hoverColor="var(--color-surface-2)">
+            {isMaximized ? (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <rect x="2" y="0" width="8" height="8" stroke="currentColor" strokeWidth="1" />
+                <rect x="0" y="2" width="8" height="8" fill="var(--color-surface)" stroke="currentColor" strokeWidth="1" />
+              </svg>
+            ) : (
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                <rect x="0.5" y="0.5" width="9" height="9" stroke="currentColor" strokeWidth="1" />
+              </svg>
+            )}
+          </WinButton>
+          <WinButton onClick={close} title="Close" hoverColor="#cc2222" hoverTextColor="#ffffff">
+            <svg width="10" height="10" viewBox="0 0 10 10">
+              <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" strokeWidth="1.2" />
+              <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" strokeWidth="1.2" />
             </svg>
-          )}
-        </WinButton>
-        <WinButton onClick={close} title="Close" hoverColor="#cc2222" hoverTextColor="#ffffff">
-          <svg width="10" height="10" viewBox="0 0 10 10">
-            <line x1="0" y1="0" x2="10" y2="10" stroke="currentColor" strokeWidth="1.2" />
-            <line x1="10" y1="0" x2="0" y2="10" stroke="currentColor" strokeWidth="1.2" />
-          </svg>
-        </WinButton>
-      </div>
+          </WinButton>
+        </div>
+      )}
     </div>
   )
 }

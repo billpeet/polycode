@@ -200,7 +200,9 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
               style={inputStyle}
               placeholder="/path/to/existing/repo"
             />
-            <button type="button" onClick={handleBrowse} className="rounded px-3 py-2 text-xs whitespace-nowrap" style={inputStyle}>Browse</button>
+            {client.capabilities.nativeDialogs && (
+              <button type="button" onClick={handleBrowse} className="rounded px-3 py-2 text-xs whitespace-nowrap" style={inputStyle}>Browse</button>
+            )}
           </div>
           {detectedRemote && (
             <p className="mt-1 text-xs truncate" style={{ color: 'var(--color-text-muted)' }} title={detectedRemote}>

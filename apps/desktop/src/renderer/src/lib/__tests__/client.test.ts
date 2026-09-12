@@ -1,6 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { client, createElectronClient } from '../client'
+import { getWebClient } from '../webClient'
 import type { WindowApi } from '../../types/ipc'
+
+vi.mock('../webClient', () => {
+  const web = {
+    kind: 'web',
+    capabilities: Object.freeze({
+      windowControls: false, shell: false, nativeDialogs: false, browserPanel: false,
+      updates: false, remoteHosts: false, routines: false, webhook: false,
+    }),
+    systemLocale: undefined,
+    invoke: vi.fn().mockResolvedValue('web-value'),
+    on: vi.fn(() => () => {}),
+    send: vi.fn(),
+    onSlowInvoke: vi.fn(() => () => {}),
+  }
+  return { WEB_CAPABILITIES: web.capabilities, getWebClient: () => web }
+})
 
 function fakeApi(overrides: Partial<WindowApi> = {}): WindowApi {
   return {
@@ -64,11 +81,20 @@ describe('client without a preload bridge', () => {
     expect(client.systemLocale).toBeUndefined()
   })
 
-  it('fails loudly rather than silently dropping calls', () => {
+  it('routes every member to the web client instead', async () => {
     vi.stubGlobal('window', {})
+    const web = getWebClient()
+    const listener = (): void => {}
 
-    expect(() => client.send('terminal:write', 't1', 'ls')).toThrow(/No PolyCode client/)
-    expect(() => client.on('thread:output:t1', () => {})).toThrow(/No PolyCode client/)
+    await expect(client.invoke('projects:list')).resolves.toBe('web-value')
+    client.on('thread:output:t1', listener)
+    client.send('terminal:write', 't1', 'ls')
+    client.onSlowInvoke(listener)
+
+    expect(web.invoke).toHaveBeenCalledWith('projects:list')
+    expect(web.on).toHaveBeenCalledWith('thread:output:t1', listener)
+    expect(web.send).toHaveBeenCalledWith('terminal:write', 't1', 'ls')
+    expect(web.onSlowInvoke).toHaveBeenCalledWith(listener)
   })
 })
 

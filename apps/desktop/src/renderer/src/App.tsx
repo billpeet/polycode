@@ -79,6 +79,7 @@ export default function App() {
   // Popups from browser-panel guest pages (target=_blank) arrive here as
   // "open this url in the same location's browser panel" requests from main.
   useEffect(() => {
+    if (!client.capabilities.browserPanel) return
     return client.on('browser:popup-request', (locationId, url) => {
       if (typeof locationId === 'string' && typeof url === 'string') {
         void useBrowserStore.getState().open(locationId, url)

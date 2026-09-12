@@ -27,10 +27,13 @@ export function UpdateBanner(): React.JSX.Element | null {
   const [state, setState] = useState<UpdateState>(INITIAL_STATE)
   const [showNotes, setShowNotes] = useState(false)
 
+  const { updates } = client.capabilities
+
   useEffect(() => {
+    if (!updates) return
     client.invoke('update:get-state').then(setState).catch(() => {})
     return client.on('update:state', (next) => setState(next as UpdateState))
-  }, [])
+  }, [updates])
 
   const handleRestart = async (): Promise<void> => {
     try {
