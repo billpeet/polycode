@@ -9,36 +9,61 @@ import { randomBytes } from 'crypto'
  * to `POST /api/remote/session`, and gets back an opaque id in an `HttpOnly` cookie.
  *
  * Sessions live in memory only. An app restart logs every browser out, which is the
- * intended trade: nothing durable holds a credential-equivalent.
+ * intended trade: nothing durable holds a credential-equivalent. They also age out on
+ * their own — a cookie that leaks from a browser profile must not stay good for as long
+ * as the desktop happens to stay up.
  */
 
 export const SESSION_COOKIE = 'polycode_session'
 const SESSION_ID_PATTERN = /^[0-9a-f]{64}$/
 const SESSION_MAX_AGE_SECONDS = 30 * 24 * 60 * 60
 
+/** Hard ceiling from sign-in, however active the session is. */
+export const SESSION_ABSOLUTE_LIFETIME_MS = SESSION_MAX_AGE_SECONDS * 1000
+/** A session unused for this long is gone; every authenticated request renews it. */
+export const SESSION_IDLE_TIMEOUT_MS = 7 * 24 * 60 * 60 * 1000
+
+interface SessionRecord {
+  createdAt: number
+  lastSeenAt: number
+}
+
 export class SessionStore {
-  private readonly ids = new Set<string>()
+  private readonly sessions = new Map<string, SessionRecord>()
+
+  constructor(private readonly now: () => number = Date.now) {}
 
   mint(): string {
     const id = randomBytes(32).toString('hex')
-    this.ids.add(id)
+    const at = this.now()
+    this.sessions.set(id, { createdAt: at, lastSeenAt: at })
     return id
   }
 
+  /** True for a live session; also renews its idle clock. Expired ids are forgotten. */
   has(id: string | undefined): boolean {
-    return id !== undefined && this.ids.has(id)
+    if (id === undefined) return false
+    const record = this.sessions.get(id)
+    if (!record) return false
+    const at = this.now()
+    if (at - record.createdAt > SESSION_ABSOLUTE_LIFETIME_MS || at - record.lastSeenAt > SESSION_IDLE_TIMEOUT_MS) {
+      this.sessions.delete(id)
+      return false
+    }
+    record.lastSeenAt = at
+    return true
   }
 
   revoke(id: string): void {
-    this.ids.delete(id)
+    this.sessions.delete(id)
   }
 
   clear(): void {
-    this.ids.clear()
+    this.sessions.clear()
   }
 
   get size(): number {
-    return this.ids.size
+    return this.sessions.size
   }
 }
 
@@ -113,4 +138,17 @@ export function sessionCookie(id: string, options: CookieOptions): string {
 
 export function expiredSessionCookie(options: CookieOptions): string {
   return `${SESSION_COOKIE}=; ${cookieAttributes(options, 0)}`
+}
+
+const LOOPBACK_ADDRESSES: ReadonlySet<string> = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
+
+/**
+ * The address to rate-limit by. `X-Forwarded-For` is only meaningful when the peer is a
+ * proxy on this machine (`tailscale serve` connects from loopback); from anyone else it
+ * is a header the client chose, and honouring it would let one client be as many
+ * addresses as it likes.
+ */
+export function resolveClientAddress(peerAddress: string | undefined, forwardedFor: string | undefined): string {
+  if (forwardedFor && peerAddress && LOOPBACK_ADDRESSES.has(peerAddress)) return forwardedFor
+  return peerAddress ?? 'unknown'
 }

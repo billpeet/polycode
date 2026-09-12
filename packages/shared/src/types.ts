@@ -168,6 +168,8 @@ export interface TailscaleServe {
   port: number
   /** What to open in a browser, e.g. `https://pc.tailnet.ts.net`. */
   url: string
+  /** Tailscale Funnel is on for this port: the URL is reachable from the public internet. */
+  funnel: boolean
 }
 
 export interface TailscaleStatus {

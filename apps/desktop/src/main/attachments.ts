@@ -15,13 +15,28 @@ export function getAttachmentDir(): string {
 }
 
 /** Save attachment from base64 data URL to temp file */
+const THREAD_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/
+
+/**
+ * The per-thread directory, or an error. `threadId` reaches here from a client — a
+ * remote session may drive `attachments:*` — and it becomes a path segment under a
+ * directory that `cleanup` deletes recursively. A strict shape check plus a containment
+ * check means no id can name anything outside the attachment dir.
+ */
+export function resolveThreadDir(threadId: string): string {
+  if (!THREAD_ID_PATTERN.test(threadId)) throw new Error('Invalid thread id')
+  const attachDir = getAttachmentDir()
+  const threadDir = path.resolve(attachDir, threadId)
+  if (!threadDir.startsWith(attachDir + path.sep)) throw new Error('Invalid thread id')
+  return threadDir
+}
+
 export function saveAttachment(
   dataUrl: string,
   filename: string,
   threadId: string
 ): { tempPath: string; id: string } {
-  const attachDir = getAttachmentDir()
-  const threadDir = path.join(attachDir, threadId)
+  const threadDir = resolveThreadDir(threadId)
 
   if (!fs.existsSync(threadDir)) {
     fs.mkdirSync(threadDir, { recursive: true })
@@ -71,7 +86,7 @@ export function copyAttachmentFromPath(
 
 /** Clean up temp files for a specific thread */
 export function cleanupThreadAttachments(threadId: string): void {
-  const threadDir = path.join(getAttachmentDir(), threadId)
+  const threadDir = resolveThreadDir(threadId)
   if (fs.existsSync(threadDir)) {
     fs.rmSync(threadDir, { recursive: true, force: true })
   }

@@ -75,8 +75,8 @@ describe('parseTailscaleStatus', () => {
 
 describe('parseServeStatus', () => {
   it('finds the entry that forwards to our port and derives the browser URL', () => {
-    expect(parseServeStatus(SERVE_HTTPS, 3285)).toEqual({ scheme: 'https', port: 443, url: 'https://pc.tailnet.ts.net' })
-    expect(parseServeStatus(SERVE_HTTP, 3285)).toEqual({ scheme: 'http', port: 80, url: 'http://pc.tailnet.ts.net' })
+    expect(parseServeStatus(SERVE_HTTPS, 3285)).toEqual({ scheme: 'https', port: 443, url: 'https://pc.tailnet.ts.net', funnel: false })
+    expect(parseServeStatus(SERVE_HTTP, 3285)).toEqual({ scheme: 'http', port: 80, url: 'http://pc.tailnet.ts.net', funnel: false })
   })
 
   it('ignores entries that serve something else', () => {
@@ -138,7 +138,7 @@ describe('enableTailscaleServe', () => {
       'serve --bg --https=443 http://127.0.0.1:3285': ok(''),
     })
     const status = await enableTailscaleServe('https', 3285, c)
-    expect(status.serve).toEqual({ scheme: 'https', port: 443, url: 'https://pc.tailnet.ts.net' })
+    expect(status.serve).toEqual({ scheme: 'https', port: 443, url: 'https://pc.tailnet.ts.net', funnel: false })
     expect(status.error).toBeNull()
     expect(c.calls).toContain('serve --bg --https=443 http://127.0.0.1:3285')
   })
@@ -185,6 +185,27 @@ describe('enableTailscaleServe', () => {
     expect((await enableTailscaleServe('https', 3285, cli({ 'status --json': missing() }))).error).toBe('Tailscale is not installed')
     const stopped = cli({ 'status --json': ok(JSON.stringify({ BackendState: 'Stopped', Self: {} })) })
     expect((await enableTailscaleServe('https', 3285, stopped)).error).toBe('Tailscale is not running')
+  })
+})
+
+describe('Tailscale Funnel', () => {
+  const SERVE_FUNNELED = JSON.stringify({
+    TCP: { '443': { HTTPS: true } },
+    Web: { 'pc.tailnet.ts.net:443': { Handlers: { '/': { Proxy: 'http://127.0.0.1:3285' } } } },
+    AllowFunnel: { 'pc.tailnet.ts.net:443': true },
+  })
+
+  it('reports when the served port is published to the internet', () => {
+    expect(parseServeStatus(SERVE_FUNNELED, 3285)?.funnel).toBe(true)
+    expect(parseServeStatus(SERVE_HTTPS, 3285)?.funnel).toBe(false)
+  })
+
+  it('refuses to expose while Funnel is on, and says how to turn it off', async () => {
+    const c = cli({ 'status --json': ok(STATUS_WITH_CERTS), 'serve status --json': ok(SERVE_FUNNELED) })
+    const status = await enableTailscaleServe('https', 3285, c)
+    expect(status.error).toMatch(/Funnel is enabled/)
+    expect(status.error).toContain('tailscale funnel --https=443 off')
+    expect(c.calls.some((call) => call.startsWith('serve --bg'))).toBe(false)
   })
 })
 

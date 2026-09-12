@@ -66,13 +66,10 @@ async function initErrorReporting(): Promise<void> {
       tracesSampleRate: 0.1,
     })
   } else {
+    // Errors only. Tracing would report the page URL — this machine's tailnet name —
+    // as the transaction name, and a browser session has no business telling Sentry that.
     const Sentry = await import('@sentry/react')
-    Sentry.init({
-      dsn: SENTRY_DSN,
-      release,
-      integrations: [Sentry.browserTracingIntegration()],
-      tracesSampleRate: 0.1,
-    })
+    Sentry.init({ dsn: SENTRY_DSN, release })
   }
 }
 
@@ -83,7 +80,9 @@ installRendererPerfObservers()
 
 if (import.meta.env.PROD) {
   void initErrorReporting()
-  initPostHog()
+  // Autocapture sends clicked-element text and the page URL. Fine for the desktop
+  // (file:// URL, one user); not for a page served at a tailnet hostname.
+  if (client.kind === 'electron') initPostHog()
 }
 
 window.addEventListener('error', (event) => {

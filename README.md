@@ -28,6 +28,10 @@ instead — still WireGuard-encrypted on the wire, but the browser has no secure
 so clipboard access is restricted. Both are equivalent to running
 `tailscale serve --bg --https=443 http://127.0.0.1:3285` by hand.
 
+Never enable Tailscale **Funnel** for this port: it would publish PolyCode — and, behind one
+token, a shell on this machine — to the public internet. PolyCode refuses to expose while
+Funnel is on for the port and warns if it finds it on.
+
 In a browser, desktop-only features are hidden: window controls, opening files in
 Explorer/VS Code/a terminal, native file pickers (the browser's own picker is used),
 the internal browser panel, the updater, and routine management. Everything else —
