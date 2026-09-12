@@ -107,6 +107,12 @@ export interface RemoteServerConfig {
    * Lower-cased, deduplicated, no port.
    */
   allowedHostnames: string[]
+  /**
+   * Tailnet logins a browser may be signed in as without the host token, when its request
+   * arrives through `tailscale serve` on this machine. Empty means the token is always
+   * required. Lower-cased, deduplicated.
+   */
+  tailscaleLogins: string[]
 }
 
 export interface RemoteHost {
@@ -179,6 +185,8 @@ export interface TailscaleStatus {
   running: boolean
   /** This machine's MagicDNS name, without the trailing dot. */
   dnsName: string | null
+  /** The tailnet login this node belongs to, lower-cased — the default identity to admit. */
+  login: string | null
   tailnetIps: string[]
   /** HTTPS certificates are enabled for the tailnet, so `serve --https` can mint one. */
   httpsAvailable: boolean

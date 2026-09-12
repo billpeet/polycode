@@ -149,6 +149,11 @@ const LOOPBACK_ADDRESSES: ReadonlySet<string> = new Set(['127.0.0.1', '::1', '::
  * addresses as it likes.
  */
 export function resolveClientAddress(peerAddress: string | undefined, forwardedFor: string | undefined): string {
-  if (forwardedFor && peerAddress && LOOPBACK_ADDRESSES.has(peerAddress)) return forwardedFor
+  if (forwardedFor && isLoopbackPeer(peerAddress)) return forwardedFor
   return peerAddress ?? 'unknown'
+}
+
+/** True when the socket peer is this machine — the only place a trusted proxy can sit. */
+export function isLoopbackPeer(peerAddress: string | undefined): boolean {
+  return peerAddress !== undefined && LOOPBACK_ADDRESSES.has(peerAddress)
 }

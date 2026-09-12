@@ -13,14 +13,16 @@ import {
 /** Captured from `tailscale status --json` on a logged-in Windows machine (1.102). */
 const STATUS_RUNNING = JSON.stringify({
   BackendState: 'Running',
-  Self: { DNSName: 'futura-gpc.tail5d34f.ts.net.', TailscaleIPs: ['100.106.202.97', 'fd7a:115c:a1e0::5101:ca63'], HostName: 'FUTURA-GPC' },
+  Self: { DNSName: 'futura-gpc.tail5d34f.ts.net.', TailscaleIPs: ['100.106.202.97', 'fd7a:115c:a1e0::5101:ca63'], HostName: 'FUTURA-GPC', UserID: 7 },
+  User: { '7': { ID: 7, LoginName: 'Owner@Example.com', DisplayName: 'Owner' } },
   CurrentTailnet: { MagicDNSSuffix: 'tail5d34f.ts.net', MagicDNSEnabled: true },
   CertDomains: null,
 })
 
 const STATUS_WITH_CERTS = JSON.stringify({
   BackendState: 'Running',
-  Self: { DNSName: 'pc.tailnet.ts.net.', TailscaleIPs: ['100.1.2.3'] },
+  Self: { DNSName: 'pc.tailnet.ts.net.', TailscaleIPs: ['100.1.2.3'], UserID: 7 },
+  User: { '7': { ID: 7, LoginName: 'owner@example.com' } },
   CertDomains: ['pc.tailnet.ts.net'],
 })
 
@@ -59,6 +61,7 @@ describe('parseTailscaleStatus', () => {
     expect(parseTailscaleStatus(STATUS_RUNNING)).toEqual({
       running: true,
       dnsName: 'futura-gpc.tail5d34f.ts.net',
+      login: 'owner@example.com',
       tailnetIps: ['100.106.202.97', 'fd7a:115c:a1e0::5101:ca63'],
       httpsAvailable: false,
     })
@@ -67,7 +70,7 @@ describe('parseTailscaleStatus', () => {
 
   it('reports a stopped or logged-out daemon as not running', () => {
     expect(parseTailscaleStatus(JSON.stringify({ BackendState: 'NeedsLogin', Self: {} }))).toEqual({
-      running: false, dnsName: null, tailnetIps: [], httpsAvailable: false,
+      running: false, dnsName: null, login: null, tailnetIps: [], httpsAvailable: false,
     })
     expect(parseTailscaleStatus('failed to connect to local tailscaled')).toBeNull()
   })
@@ -103,6 +106,7 @@ describe('getTailscaleStatus', () => {
       installed: true,
       running: true,
       dnsName: 'futura-gpc.tail5d34f.ts.net',
+      login: 'owner@example.com',
       tailnetIps: ['100.106.202.97', 'fd7a:115c:a1e0::5101:ca63'],
       httpsAvailable: false,
       serve: null,

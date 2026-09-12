@@ -32,7 +32,12 @@ export default function WebRoot() {
     })
     const off = web.onUnauthorized(() => {
       web.disconnect()
-      setPhase('login')
+      // The session may simply have aged out. A host that signs this browser in by
+      // tailnet identity mints a fresh one on the probe; only if that fails do we ask.
+      setPhase('checking')
+      void web.checkSession().then((result) => {
+        if (!cancelled) settle(result)
+      })
     })
     return () => {
       cancelled = true

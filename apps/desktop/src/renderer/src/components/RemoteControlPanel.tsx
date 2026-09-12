@@ -11,6 +11,12 @@ const DEFAULT_SERVER: RemoteServerConfig = {
   token: '',
   webEnabled: false,
   allowedHostnames: [],
+  tailscaleLogins: [],
+}
+
+/** Comma- or newline-separated free text into a list; used for hostnames and logins alike. */
+function parseListText(text: string): string[] {
+  return text.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
 }
 
 function parseHostnamesText(text: string): string[] {
@@ -186,6 +192,7 @@ const TAILSCALE_UNKNOWN: TailscaleStatus = {
   installed: false,
   running: false,
   dnsName: null,
+  login: null,
   tailnetIps: [],
   httpsAvailable: false,
   serve: null,
@@ -197,7 +204,18 @@ const TAILSCALE_UNKNOWN: TailscaleStatus = {
  * itself and then rewrites its own server config (allowlist, web access), so the
  * panel's job is to show where things stand and offer the one sensible next step.
  */
-function TailscaleSection({ serverPort, onChanged }: { serverPort: number; onChanged: () => Promise<void> }) {
+function TailscaleSection({
+  serverPort,
+  identityLogins,
+  onChanged,
+  onEnableIdentity,
+}: {
+  serverPort: number
+  /** Logins currently admitted without the token; drives the sign-in offer below. */
+  identityLogins: string[]
+  onChanged: () => Promise<void>
+  onEnableIdentity: (login: string) => Promise<void>
+}) {
   const [status, setStatus] = useState<TailscaleStatus | null>(null)
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState(false)
@@ -284,6 +302,28 @@ function TailscaleSection({ serverPort, onChanged }: { serverPort: number; onCha
               <span className="font-mono">tailscale funnel --{status.serve.scheme}={status.serve.port} off</span>.
             </p>
           )}
+          {status.login && (
+            identityLogins.includes(status.login) ? (
+              <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                Devices signed in to Tailscale as <span className="font-mono">{status.login}</span> open this URL
+                without the host token.
+              </p>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  className="rounded px-2 py-1 text-xs"
+                  style={secondaryButtonStyle()}
+                  disabled={busy}
+                  onClick={() => void onEnableIdentity(status.login!)}
+                >
+                  Sign in automatically as {status.login}
+                </button>
+                <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+                  Skips the token for your own devices; anyone else on the tailnet still needs it.
+                </span>
+              </div>
+            )
+          )}
           <div className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-xs font-mono" style={{ color: 'var(--color-text)' }}>{status.serve.url}</span>
             <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} onClick={() => void copyUrl(status.serve!.url)}>
@@ -340,6 +380,8 @@ export function RemoteControlPanel({ hideHeader }: Props) {
   const [server, setServer] = useState<RemoteServerConfig>(DEFAULT_SERVER)
   /** Free text while editing; parsed into `allowedHostnames` on save. */
   const [hostnamesText, setHostnamesText] = useState('')
+  /** Likewise for `tailscaleLogins`. */
+  const [loginsText, setLoginsText] = useState('')
   const [hosts, setHosts] = useState<RemoteHost[]>([])
   const [activeHost, setActiveHostState] = useState<RemoteHost | null>(null)
   const [form, setForm] = useState<RemoteHostInput>(DEFAULT_FORM)
@@ -360,6 +402,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     ]).then(([serverConfig, savedHosts, active]) => {
       setServer(serverConfig)
       setHostnamesText(serverConfig.allowedHostnames.join(', '))
+      setLoginsText(serverConfig.tailscaleLogins.join(', '))
       setHosts(savedHosts)
       setActiveHostState(active)
     }).catch((err) => {
@@ -372,6 +415,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     const saved = await client.invoke('remote:getServerConfig')
     setServer(saved)
     setHostnamesText(saved.allowedHostnames.join(', '))
+    setLoginsText(saved.tailscaleLogins.join(', '))
   }
 
   async function refreshHosts(): Promise<void> {
@@ -383,8 +427,13 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     setActiveHostState(active)
   }
 
-  async function saveServer(config?: RemoteServerConfig): Promise<void> {
-    const next = { ...(config ?? server), allowedHostnames: parseHostnamesText(hostnamesText) }
+  async function saveServer(config?: RemoteServerConfig, overrides: Partial<RemoteServerConfig> = {}): Promise<void> {
+    const next = {
+      ...(config ?? server),
+      allowedHostnames: parseHostnamesText(hostnamesText),
+      tailscaleLogins: parseListText(loginsText),
+      ...overrides,
+    }
     if (next.port < 1024 || next.port > 65535) {
       setError('Port must be between 1024 and 65535')
       return
@@ -396,6 +445,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
       const saved = await client.invoke('remote:setServerConfig', next)
       setServer(saved)
       setHostnamesText(saved.allowedHostnames.join(', '))
+      setLoginsText(saved.tailscaleLogins.join(', '))
       setStatus(saved.enabled ? 'Remote host server is running.' : 'Remote host server is stopped.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save remote host settings')
@@ -533,7 +583,32 @@ export function RemoteControlPanel({ hideHeader }: Props) {
           </div>
         )}
 
-        <TailscaleSection serverPort={server.port} onChanged={reloadServer} />
+        {server.webEnabled && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>
+              Tailscale sign-in
+            </label>
+            <input
+              value={loginsText}
+              onChange={(e) => setLoginsText(e.target.value)}
+              placeholder="you@example.com"
+              className="rounded px-2 py-1 text-xs font-mono"
+              style={inputStyle()}
+            />
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              Tailnet logins whose devices open the web UI without the host token. Applies only to requests
+              that arrive through <span className="font-mono">tailscale serve</span> on this machine; leave
+              empty to always require the token. Comma-separated.
+            </p>
+          </div>
+        )}
+
+        <TailscaleSection
+          serverPort={server.port}
+          identityLogins={server.tailscaleLogins}
+          onChanged={reloadServer}
+          onEnableIdentity={(login) => saveServer(undefined, { tailscaleLogins: [...new Set([...server.tailscaleLogins, login])] })}
+        />
 
         {server.enabled && !isLoopbackHost(server.host) && (
           <p

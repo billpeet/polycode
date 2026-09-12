@@ -43,7 +43,8 @@ export function createTailscaleCli(runner: Runner = createRunner({}), binary = r
 
 interface StatusJson {
   BackendState?: string
-  Self?: { DNSName?: string; TailscaleIPs?: string[] }
+  Self?: { DNSName?: string; TailscaleIPs?: string[]; UserID?: number }
+  User?: Record<string, { LoginName?: string }>
   CertDomains?: string[] | null
 }
 
@@ -58,6 +59,7 @@ interface ServeConfigJson {
 export interface ParsedStatus {
   running: boolean
   dnsName: string | null
+  login: string | null
   tailnetIps: string[]
   httpsAvailable: boolean
 }
@@ -70,9 +72,12 @@ export function parseTailscaleStatus(stdout: string): ParsedStatus | null {
     return null
   }
   const dnsName = json.Self?.DNSName?.replace(/\.$/, '') || null
+  const userId = json.Self?.UserID
+  const login = userId !== undefined ? json.User?.[String(userId)]?.LoginName?.trim().toLowerCase() || null : null
   return {
     running: json.BackendState === 'Running',
     dnsName,
+    login,
     tailnetIps: Array.isArray(json.Self?.TailscaleIPs) ? json.Self!.TailscaleIPs!.filter((ip) => typeof ip === 'string') : [],
     httpsAvailable: Array.isArray(json.CertDomains) && json.CertDomains.length > 0,
   }
@@ -121,6 +126,7 @@ const NOT_INSTALLED: TailscaleStatus = {
   installed: false,
   running: false,
   dnsName: null,
+  login: null,
   tailnetIps: [],
   httpsAvailable: false,
   serve: null,

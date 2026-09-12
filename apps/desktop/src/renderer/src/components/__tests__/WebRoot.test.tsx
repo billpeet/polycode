@@ -71,7 +71,7 @@ describe('WebRoot', () => {
   })
 
   it('returns to sign-in when the host stops accepting the session', async () => {
-    web.checkSession.mockResolvedValue('authenticated')
+    web.checkSession.mockResolvedValueOnce('authenticated').mockResolvedValue('unauthenticated')
     render(<WebRoot />)
     await screen.findByTestId('app')
 
@@ -80,5 +80,18 @@ describe('WebRoot', () => {
     await waitFor(() => expect(screen.queryByTestId('app')).toBeNull())
     expect(await screen.findByLabelText('Host token')).toBeTruthy()
     expect(web.disconnect).toHaveBeenCalled()
+  })
+
+  it('stays signed in across a 401 when the host re-mints a session on the probe', async () => {
+    web.checkSession.mockResolvedValue('authenticated')
+    render(<WebRoot />)
+    await screen.findByTestId('app')
+
+    for (const listener of web.unauthorized) listener()
+
+    await waitFor(() => expect(web.checkSession).toHaveBeenCalledTimes(2))
+    expect(await screen.findByTestId('app')).toBeTruthy()
+    expect(screen.queryByLabelText('Host token')).toBeNull()
+    expect(web.connect).toHaveBeenCalledTimes(2)
   })
 })

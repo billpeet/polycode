@@ -22,6 +22,11 @@ on the LAN.
    the tailnet.
 3. Open it in a browser and paste the host token from the same settings page. The
    browser gets an `HttpOnly` session cookie; the token itself never reaches the page.
+4. Optional: click **Sign in automatically as `<your login>`**. Devices signed in to
+   Tailscale as you then skip the token — PolyCode trusts the identity that
+   `tailscale serve` attaches, and only for requests that arrive through it on this
+   machine (never from Funnel, never from another tailnet member unless you add them
+   under *Tailscale sign-in*).
 
 Without HTTPS certificates, **Expose without TLS** serves `http://<machine>.<tailnet>.ts.net`
 instead — still WireGuard-encrypted on the wire, but the browser has no secure context,

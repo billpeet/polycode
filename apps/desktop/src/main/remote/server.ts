@@ -17,6 +17,7 @@ import {
   sessionCookie,
 } from './sessions'
 import { isStaticPath, serveStaticFile } from './static'
+import { tailscaleIdentityLogin } from './identity'
 
 let server: http.Server | null = null
 
@@ -170,7 +171,20 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
       }
     }
 
-    const credential = authenticate(req, config, deps.sessions)
+    let credential = authenticate(req, config, deps.sessions)
+
+    // A browser arriving through `tailscale serve` on this machine may be signed in by
+    // its tailnet identity instead of the token — but only here, on the read-only probe
+    // the web client opens with, and only to mint the same cookie the token would. Every
+    // request after that is an ordinary session; nothing else ever reads the header.
+    if (!credential && req.method === 'GET' && url.pathname === '/api/remote/health') {
+      const login = tailscaleIdentityLogin(req.socket.remoteAddress, req.headers, config)
+      if (login) {
+        res.setHeader('Set-Cookie', sessionCookie(deps.sessions.mint(), { secure: forwardedProto(req) === 'https' }))
+        credential = 'session'
+      }
+    }
+
     if (!credential) {
       return sendJson(res, 401, { error: 'Unauthorized' })
     }
