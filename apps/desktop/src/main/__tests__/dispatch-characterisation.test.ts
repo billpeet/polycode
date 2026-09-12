@@ -4706,6 +4706,7 @@ describe('the nine client-instance remote:* channels — folded out of remote/cl
 
   const SERVER_CONFIG: RemoteServerConfig = {
     enabled: true, host: '0.0.0.0', port: 3300, token: 'chosen-token',
+    webEnabled: false, allowedHostnames: [],
   }
 
   /**

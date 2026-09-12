@@ -27,7 +27,7 @@ describe('remote browser forwarding', () => {
     }))
     const controlServer = http.createServer((_req, res) => res.end())
     const controlPort = await listen(controlServer)
-    const config = { enabled: true, host: '127.0.0.1', port: controlPort, token: 'test-token' }
+    const config = { enabled: true, host: '127.0.0.1', port: controlPort, token: 'test-token', webEnabled: false, allowedHostnames: [] }
     attachRemoteBrowserTunnel(controlServer, config)
 
     const pool = new RemoteTunnelPool({
@@ -53,7 +53,7 @@ describe('remote browser forwarding', () => {
     const controlServer = http.createServer((_req, res) => res.end())
     const controlPort = await listen(controlServer)
     attachRemoteBrowserTunnel(controlServer, {
-      enabled: true, host: '127.0.0.1', port: controlPort, token: 'correct-token',
+      enabled: true, host: '127.0.0.1', port: controlPort, token: 'correct-token', webEnabled: false, allowedHostnames: [],
     })
 
     const status = await new Promise<number>((resolve, reject) => {

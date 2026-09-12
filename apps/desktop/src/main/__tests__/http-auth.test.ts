@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isValidBearerToken } from '../http-auth'
+import { isValidBearerToken, isValidToken } from '../http-auth'
 
 describe('isValidBearerToken', () => {
   it('accepts the expected bearer token', () => {
@@ -19,5 +19,18 @@ describe('isValidBearerToken', () => {
 
   it('rejects authentication when the configured token is empty', () => {
     expect(isValidBearerToken('Bearer ', '')).toBe(false)
+  })
+})
+
+describe('isValidToken', () => {
+  it('accepts only the exact configured secret', () => {
+    expect(isValidToken('secret-token', 'secret-token')).toBe(true)
+    expect(isValidToken('secret-toke', 'secret-token')).toBe(false)
+    expect(isValidToken('secret-token ', 'secret-token')).toBe(false)
+    expect(isValidToken(undefined, 'secret-token')).toBe(false)
+  })
+
+  it('never matches an empty configured secret', () => {
+    expect(isValidToken('', '')).toBe(false)
   })
 })

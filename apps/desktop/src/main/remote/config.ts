@@ -6,6 +6,8 @@ const SERVER_ENABLED_KEY = 'remote:server:enabled'
 const SERVER_HOST_KEY = 'remote:server:host'
 const SERVER_PORT_KEY = 'remote:server:port'
 const SERVER_TOKEN_KEY = 'remote:server:token'
+const SERVER_WEB_ENABLED_KEY = 'remote:server:web'
+const SERVER_ALLOWED_HOSTNAMES_KEY = 'remote:server:allowedHostnames'
 
 export const DEFAULT_REMOTE_CONTROL_PORT = 3285
 export const DEFAULT_REMOTE_CONTROL_HOST = '127.0.0.1'
@@ -30,12 +32,51 @@ function ensureToken(): string {
   return token
 }
 
+/**
+ * One user-typed hostname to its canonical form: lower-case, no scheme, no port, no
+ * path. `pc.tailnet.ts.net`, `PC.tailnet.ts.net:443` and `https://pc.tailnet.ts.net/`
+ * all become `pc.tailnet.ts.net`. Anything the URL parser rejects is dropped.
+ */
+function parseHostname(raw: string): string | null {
+  const trimmed = raw.trim().toLowerCase()
+  if (!trimmed) return null
+  const candidate = trimmed.includes('://') ? trimmed : `http://${trimmed}`
+  try {
+    return new URL(candidate).hostname || null
+  } catch {
+    return null
+  }
+}
+
+export function normalizeAllowedHostnames(values: unknown): string[] {
+  if (!Array.isArray(values)) return []
+  const out = new Set<string>()
+  for (const raw of values) {
+    if (typeof raw !== 'string') continue
+    const hostname = parseHostname(raw)
+    if (hostname) out.add(hostname)
+  }
+  return [...out]
+}
+
+function readAllowedHostnames(): string[] {
+  const raw = getSetting(SERVER_ALLOWED_HOSTNAMES_KEY)
+  if (!raw) return []
+  try {
+    return normalizeAllowedHostnames(JSON.parse(raw))
+  } catch {
+    return []
+  }
+}
+
 export function readRemoteServerConfig(): RemoteServerConfig {
   return {
     enabled: getSetting(SERVER_ENABLED_KEY) === 'true',
     host: normalizeHost(getSetting(SERVER_HOST_KEY)),
     port: parsePort(getSetting(SERVER_PORT_KEY)),
     token: ensureToken(),
+    webEnabled: getSetting(SERVER_WEB_ENABLED_KEY) === 'true',
+    allowedHostnames: readAllowedHostnames(),
   }
 }
 
@@ -45,11 +86,15 @@ export function saveRemoteServerConfig(config: RemoteServerConfig): RemoteServer
     host: normalizeHost(config.host),
     port: parsePort(String(config.port)),
     token: config.token?.trim() || randomBytes(24).toString('hex'),
+    webEnabled: Boolean(config.webEnabled),
+    allowedHostnames: normalizeAllowedHostnames(config.allowedHostnames),
   }
 
   setSetting(SERVER_ENABLED_KEY, next.enabled ? 'true' : 'false')
   setSetting(SERVER_HOST_KEY, next.host)
   setSetting(SERVER_PORT_KEY, String(next.port))
   setSetting(SERVER_TOKEN_KEY, next.token)
+  setSetting(SERVER_WEB_ENABLED_KEY, next.webEnabled ? 'true' : 'false')
+  setSetting(SERVER_ALLOWED_HOSTNAMES_KEY, JSON.stringify(next.allowedHostnames))
   return next
 }

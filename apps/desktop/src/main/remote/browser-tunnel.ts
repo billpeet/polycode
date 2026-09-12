@@ -9,7 +9,7 @@ import { isAllowedHostHeader } from '../http-request-security'
 export function attachRemoteBrowserTunnel(server: http.Server, config: RemoteServerConfig): void {
   server.on('connect', (req, socket, head) => {
     const client = socket as net.Socket
-    if (!isAllowedHostHeader(req.headers.host, config.host, config.port)
+    if (!isAllowedHostHeader(req.headers.host, config.host, config.port, { allowedHostnames: config.allowedHostnames })
       || !isValidBearerToken(req.headers.authorization, config.token)) {
       client.end('HTTP/1.1 401 Unauthorized\r\n\r\n')
       return
