@@ -7,6 +7,7 @@ export interface GitHubRemote {
 
 export interface AzureRepoContext {
   remoteName: string
+  organization: string | null
   project: string | null
   repo: string
   remoteUrl: string
@@ -155,6 +156,8 @@ export function parseAzureRemote(remoteUrl: string): AzureRepoContext | null {
     if (match) {
       return {
         remoteName: 'origin',
+        // The legacy DefaultCollection SSH form doesn't encode an organization.
+        organization: pattern.project === 1 ? null : decodeURIComponent(match[1] ?? ''),
         project: pattern.project === null ? null : decodeURIComponent(match[pattern.project] ?? ''),
         repo: decodeURIComponent(match[pattern.repo] ?? ''),
         remoteUrl,

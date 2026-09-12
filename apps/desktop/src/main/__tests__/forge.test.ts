@@ -37,6 +37,37 @@ function dependencies(provider: 'azure' | 'github' | null): ForgeDependencies {
 }
 
 describe('createForge', () => {
+  it('shares matching enrichment requests but preserves different input snapshots', async () => {
+    const deps = dependencies('azure')
+    const first = await createForge('/repo', null, null, deps)
+    const second = await createForge('/repo', null, null, deps)
+    const updated = { ...pullRequest, title: 'Updated' }
+    const results = await Promise.all([
+      first.enrichPullRequests([pullRequest]), second.enrichPullRequests([{ ...pullRequest }]),
+      first.enrichPullRequests([updated]),
+    ])
+    expect(deps.azure.enrichPullRequests).toHaveBeenCalledTimes(2)
+    expect(results[2]).toEqual([updated])
+    await first.enrichPullRequests([pullRequest])
+    expect(deps.azure.enrichPullRequests).toHaveBeenCalledTimes(3)
+  })
+
+  it('invalidates PR reads after creation and checkout without coalescing mutations', async () => {
+    const deps = dependencies('github')
+    const forge = await createForge('/repo', null, null, deps)
+    await forge.listPullRequests()
+    await forge.getCurrentBranchPullRequest('feature')
+    await Promise.all([1, 2].map(() => forge.createPullRequest({ target: 'main', title: 'New' })))
+    expect(deps.github.createPullRequest).toHaveBeenCalledTimes(2)
+    await forge.listPullRequests()
+    await forge.getCurrentBranchPullRequest('feature')
+    expect(deps.github.listPullRequests).toHaveBeenCalledTimes(2)
+    expect(deps.github.getCurrentBranchPullRequest).toHaveBeenCalledTimes(2)
+    await forge.checkoutPullRequest(42)
+    await forge.listPullRequests()
+    expect(deps.github.listPullRequests).toHaveBeenCalledTimes(3)
+  })
+
   it('binds one GitHub repository and exposes every operation', async () => {
     const deps = dependencies('github')
     const forge = await createForge('C:/repo', undefined, undefined, deps)

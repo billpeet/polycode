@@ -59,12 +59,12 @@ describe('GitHub parsers', () => {
 
 describe('Azure DevOps parsers', () => {
   it.each([
-    ['https://dev.azure.com/org/project/_git/repo', 'project', 'repo'],
-    ['git@ssh.dev.azure.com:v3/org/project/repo', 'project', 'repo'],
-    ['ssh://git@vs-ssh.visualstudio.com:22/DefaultCollection/project/_ssh/repo', 'project', 'repo'],
-    ['https://dev.azure.com/org/_git/repo', null, 'repo'],
-  ])('parses %s', (url, project, repo) => {
-    expect(parseAzureRemote(url)).toMatchObject({ project, repo })
+    ['https://dev.azure.com/org/project/_git/repo', 'project', 'repo', 'org'],
+    ['git@ssh.dev.azure.com:v3/org/project/repo', 'project', 'repo', 'org'],
+    ['ssh://git@vs-ssh.visualstudio.com:22/DefaultCollection/project/_ssh/repo', 'project', 'repo', null],
+    ['https://dev.azure.com/org/_git/repo', null, 'repo', 'org'],
+  ])('parses %s', (url, project, repo, organization) => {
+    expect(parseAzureRemote(url)).toMatchObject({ project, repo, organization })
   })
 
   it('builds browser URLs from SSH remotes', () => {

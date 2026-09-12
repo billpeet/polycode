@@ -1,3 +1,4 @@
+import { resolveForgeRepoContext } from './forge-context'
 import { promises as fsPromises } from 'fs'
 import { tmpdir } from 'os'
 import * as path from 'path'
@@ -5,7 +6,7 @@ import { randomUUID } from 'crypto'
 import { PullRequest, SshConfig, WslConfig } from '../shared/types'
 import { createRunner } from './driver/runner'
 import { runGit } from './git-runner'
-import { mapGitHubPr as mapPr, parseGitHubRemote } from './forge-parsers'
+import { mapGitHubPr as mapPr } from './forge-parsers'
 import type { GitHubPrInput as GhPullRequest } from './forge-parsers'
 
 interface GitHubRepoContext {
@@ -36,35 +37,9 @@ async function runGh(repoPath: string, args: string[], ssh?: SshConfig | null, w
 }
 
 async function resolveRepoContext(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<GitHubRepoContext> {
-  const remoteNamesRaw = await git(repoPath, ['remote'], ssh, wsl)
-  const remoteNames = remoteNamesRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-  if (remoteNames.length === 0) {
-    throw new Error('No git remotes found for this repository')
-  }
-
-  const prioritized = remoteNames.includes('origin')
-    ? ['origin', ...remoteNames.filter((r) => r !== 'origin')]
-    : remoteNames
-
-  const seenUrls: string[] = []
-  for (const remoteName of prioritized) {
-    let remoteUrl = ''
-    try {
-      remoteUrl = (await git(repoPath, ['remote', 'get-url', remoteName], ssh, wsl)).trim()
-    } catch {
-      continue
-    }
-
-    if (!remoteUrl) continue
-    seenUrls.push(`${remoteName}=${remoteUrl}`)
-
-    const parsed = parseGitHubRemote(remoteUrl)
-    if (parsed) {
-      return { remoteName, ...parsed }
-    }
-  }
-
-  throw new Error(`No GitHub remote found. Checked: ${seenUrls.join(', ')}`)
+  const context = await resolveForgeRepoContext(repoPath, ssh, wsl)
+  if (context?.provider !== 'github') throw new Error('No GitHub remote found for this repository')
+  return context
 }
 
 function parseJson<T>(value: string, errMsg: string): T {
