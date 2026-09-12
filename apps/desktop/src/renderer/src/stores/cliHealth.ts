@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { CliHealthResult, Provider, ConnectionType, SshConfig, WslConfig } from '../types/ipc'
+import { client } from '../lib/client'
 
 export type CliHealthStatus = 'idle' | 'checking' | 'ok' | 'unavailable' | 'error'
 
@@ -45,7 +46,7 @@ export const useCliHealthStore = create<CliHealthStore>((set, get) => ({
       },
     }))
     try {
-      const result = await window.api.invoke('cli:health', provider, connectionType, ssh, wsl)
+      const result = await client.invoke('cli:health', provider, connectionType, ssh, wsl)
       set((s) => {
         if (s.requestIdByThread[threadId] !== requestId) return s
         return {

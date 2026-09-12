@@ -3,6 +3,7 @@ import { ThreadLogEntry } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { writeClipboardText } from '../lib/clipboard'
 import { formatTime } from '../lib/locale'
+import { client } from '../lib/client'
 
 const TYPE_COLORS: Record<string, string> = {
   message_sent: '#63b3ed',
@@ -128,7 +129,7 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
   const load = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await window.api.invoke('threads:getLogs', threadId)
+      const data = await client.invoke('threads:getLogs', threadId)
       setEntries(data)
     } finally {
       setLoading(false)

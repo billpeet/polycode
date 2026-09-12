@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { appendFoldedMessage, eventRole } from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
 import { isRemoteTransportError } from '../lib/remoteErrors'
+import { client } from '../lib/client'
 
 interface MessageStore {
   messagesByThread: Record<string, Message[]>
@@ -28,7 +29,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
   fetch: async (threadId) => {
     let messages: Message[]
     try {
-      messages = await window.api.invoke('messages:list', threadId)
+      messages = await client.invoke('messages:list', threadId)
     } catch (error) {
       // A routine connectivity transition (remote host offline or slow) is not a defect:
       // keep the last-good transcript on screen and let the connection banner explain.
@@ -52,7 +53,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
   fetchBySession: async (sessionId) => {
     let messages: Message[]
     try {
-      messages = await window.api.invoke('messages:listBySession', sessionId)
+      messages = await client.invoke('messages:listBySession', sessionId)
     } catch (error) {
       if (isRemoteTransportError(error)) return
       throw error

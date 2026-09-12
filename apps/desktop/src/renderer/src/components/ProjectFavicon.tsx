@@ -1,6 +1,7 @@
 import { Folder } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useProjectStore } from '../stores/projects'
+import { client } from '../lib/client'
 
 const loadedFavicons = new Map<string, string | null>()
 
@@ -11,7 +12,7 @@ function ProjectFaviconContent({ projectId, cacheKey, className = '' }: { projec
   useEffect(() => {
     if (loadedFavicons.has(cacheKey)) return
     let cancelled = false
-    void window.api.invoke('projects:favicon', projectId).then((value) => {
+    void client.invoke('projects:favicon', projectId).then((value) => {
       if (cancelled) return
       loadedFavicons.set(cacheKey, value)
       setSrc(value)

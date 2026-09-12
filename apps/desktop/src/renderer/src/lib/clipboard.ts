@@ -1,3 +1,5 @@
+import { client } from './client'
+
 /**
  * Writes text without leaking clipboard failures as unhandled rejections.
  *
@@ -11,7 +13,7 @@ export async function writeClipboardText(text: string): Promise<boolean> {
     return true
   } catch {
     try {
-      await window.api.invoke('clipboard:writeText', text)
+      await client.invoke('clipboard:writeText', text)
       return true
     } catch {
       return false

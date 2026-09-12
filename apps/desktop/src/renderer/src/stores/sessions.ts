@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { Session } from '../types/ipc'
+import { client } from '../lib/client'
 
 const EMPTY_SESSIONS: Session[] = []
 
@@ -18,7 +19,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   activeSessionByThread: {},
 
   fetch: async (threadId) => {
-    const sessions = await window.api.invoke('sessions:list', threadId)
+    const sessions = await client.invoke('sessions:list', threadId)
     const active = sessions.find((s: Session) => s.is_active)
     set((s) => ({
       sessionsByThread: { ...s.sessionsByThread, [threadId]: sessions },
@@ -39,7 +40,7 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
 
   switchSession: async (threadId, sessionId) => {
     if (get().activeSessionByThread[threadId] === sessionId) return
-    await window.api.invoke('sessions:switch', threadId, sessionId)
+    await client.invoke('sessions:switch', threadId, sessionId)
     set((s) => ({
       activeSessionByThread: { ...s.activeSessionByThread, [threadId]: sessionId }
     }))

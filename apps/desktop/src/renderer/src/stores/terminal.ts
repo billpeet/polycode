@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useUiStore } from './ui'
+import { client } from '../lib/client'
 
 interface TerminalStore {
   /** Active terminal ID per location (one terminal per location at most) */
@@ -25,7 +26,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   ensure: async (threadId, locationId, cols, rows) => {
     const existing = get().terminalByLocation[locationId]
     if (existing) {
-      window.api.send('terminal:resize', existing, cols, rows)
+      client.send('terminal:resize', existing, cols, rows)
       set((s) => ({
         visibleByLocation: { ...s.visibleByLocation, [locationId]: true },
       }))
@@ -33,7 +34,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
       return existing
     }
 
-    const terminalId = await window.api.invoke('terminal:spawn', threadId, cols, rows) as string
+    const terminalId = await client.invoke('terminal:spawn', threadId, cols, rows) as string
     set((s) => ({
       terminalByLocation: { ...s.terminalByLocation, [locationId]: terminalId },
       visibleByLocation: { ...s.visibleByLocation, [locationId]: true },
@@ -45,7 +46,7 @@ export const useTerminalStore = create<TerminalStore>((set, get) => ({
   kill: async (locationId) => {
     const terminalId = get().terminalByLocation[locationId]
     if (terminalId) {
-      try { await window.api.invoke('terminal:kill', terminalId) } catch { /* ignore */ }
+      try { await client.invoke('terminal:kill', terminalId) } catch { /* ignore */ }
     }
     set((s) => ({
       terminalByLocation: { ...s.terminalByLocation, [locationId]: null },

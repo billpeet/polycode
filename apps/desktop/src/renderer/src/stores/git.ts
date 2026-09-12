@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { GitStatus, GitBranches, LastCommitInfo, StashEntry, PullResult } from '../types/ipc'
 import { useFilesStore } from './files'
 import { invalidateSidebarBranch } from '../lib/sidebarBranchRefresh'
+import { client } from '../lib/client'
 
 const gitFetches = new Map<string, Promise<void>>()
 const lastCommitHeads = new Map<string, string>()
@@ -110,7 +111,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     const request = (async () => {
       set((s) => ({ loadingByPath: { ...s.loadingByPath, [repoPath]: true } }))
       try {
-        const isRepo = await window.api.invoke('git:isRepo', repoPath)
+        const isRepo = await client.invoke('git:isRepo', repoPath)
         if (!isRepo) {
           set((s) => ({
             statusByPath: { ...s.statusByPath, [repoPath]: null },
@@ -120,11 +121,11 @@ export const useGitStore = create<GitStore>((set, get) => ({
           }))
           return
         }
-        const status = await window.api.invoke('git:status', repoPath)
-        const head = status ? await window.api.invoke('git:head', repoPath) : null
+        const status = await client.invoke('git:status', repoPath)
+        const head = status ? await client.invoke('git:head', repoPath) : null
         const needsLastCommit = !!head && lastCommitHeads.get(key) !== head
         const lastCommit = needsLastCommit
-          ? await window.api.invoke('git:lastCommit', repoPath)
+          ? await client.invoke('git:lastCommit', repoPath)
           : get().lastCommitByPath[repoPath] ?? null
         if (head) lastCommitHeads.set(key, head)
         set((s) => ({
@@ -148,8 +149,8 @@ export const useGitStore = create<GitStore>((set, get) => ({
   fetchLastCommit: async (repoPath) => {
     try {
       const [head, lastCommit] = await Promise.all([
-        window.api.invoke('git:head', repoPath),
-        window.api.invoke('git:lastCommit', repoPath),
+        client.invoke('git:head', repoPath),
+        client.invoke('git:lastCommit', repoPath),
       ])
       if (head) lastCommitHeads.set(repositoryKey(repoPath), head)
       set((s) => ({ lastCommitByPath: { ...s.lastCommitByPath, [repoPath]: lastCommit } }))
@@ -162,7 +163,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().initializingByPath[repoPath]) return
     set((s) => ({ initializingByPath: { ...s.initializingByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:init', repoPath)
+      await client.invoke('git:init', repoPath)
       invalidateSidebarBranch(repoPath)
       set((s) => ({ notRepoByPath: { ...s.notRepoByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
@@ -172,7 +173,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   commit: async (repoPath, message) => {
-    await window.api.invoke('git:commit', repoPath, message)
+    await client.invoke('git:commit', repoPath, message)
     invalidateSidebarBranch(repoPath)
     // Clear commit message and refresh status after commit
     set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: '' } }))
@@ -183,7 +184,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().amendingByPath[repoPath]) return
     set((s) => ({ amendingByPath: { ...s.amendingByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:amendCommit', repoPath, message ?? null)
+      await client.invoke('git:amendCommit', repoPath, message ?? null)
       invalidateSidebarBranch(repoPath)
       set((s) => ({ commitMessageByPath: { ...s.commitMessageByPath, [repoPath]: '' } }))
       await get().fetch(repoPath)
@@ -196,7 +197,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().undoingCommitByPath[repoPath]) return
     set((s) => ({ undoingCommitByPath: { ...s.undoingCommitByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:undoLastCommit', repoPath)
+      await client.invoke('git:undoLastCommit', repoPath)
       invalidateSidebarBranch(repoPath)
       await get().fetch(repoPath)
     } finally {
@@ -205,46 +206,46 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   stage: async (repoPath, filePath) => {
-    await window.api.invoke('git:stage', repoPath, filePath)
+    await client.invoke('git:stage', repoPath, filePath)
     await get().fetch(repoPath)
   },
 
   unstage: async (repoPath, filePath) => {
-    await window.api.invoke('git:unstage', repoPath, filePath)
+    await client.invoke('git:unstage', repoPath, filePath)
     await get().fetch(repoPath)
   },
 
   stageAll: async (repoPath) => {
-    await window.api.invoke('git:stageAll', repoPath)
+    await client.invoke('git:stageAll', repoPath)
     await get().fetch(repoPath)
   },
 
   unstageAll: async (repoPath) => {
-    await window.api.invoke('git:unstageAll', repoPath)
+    await client.invoke('git:unstageAll', repoPath)
     await get().fetch(repoPath)
   },
 
   stageFiles: async (repoPath, filePaths) => {
-    await window.api.invoke('git:stageFiles', repoPath, filePaths)
+    await client.invoke('git:stageFiles', repoPath, filePaths)
     await get().fetch(repoPath)
   },
 
   discardFile: async (repoPath, file) => {
-    await window.api.invoke('git:discardFile', repoPath, file.path, file.oldPath ?? null)
+    await client.invoke('git:discardFile', repoPath, file.path, file.oldPath ?? null)
     clearDiffIfMatches(repoPath, [file.path, file.oldPath].filter(Boolean) as string[])
     await get().fetch(repoPath)
   },
 
   discardFiles: async (repoPath, files) => {
     if (files.length === 0) return
-    await window.api.invoke('git:discardFiles', repoPath, files)
+    await client.invoke('git:discardFiles', repoPath, files)
     const discarded = files.flatMap((f) => [f.path, f.oldPath].filter(Boolean) as string[])
     clearDiffIfMatches(repoPath, discarded)
     await get().fetch(repoPath)
   },
 
   discardAll: async (repoPath) => {
-    await window.api.invoke('git:discardAll', repoPath)
+    await client.invoke('git:discardAll', repoPath)
     // Any diff view for this repo is now stale
     const diffView = useFilesStore.getState().diffView
     if (diffView && diffView.repoPath === repoPath) {
@@ -262,7 +263,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     const startingMessage = get().commitMessageByPath[repoPath] ?? ''
     set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: true } }))
     try {
-      const message = await window.api.invoke('git:generateCommitMessage', repoPath)
+      const message = await client.invoke('git:generateCommitMessage', repoPath)
       set((s) => {
         const currentMessage = s.commitMessageByPath[repoPath] ?? ''
         return {
@@ -283,7 +284,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     const startingMessage = get().commitMessageByPath[repoPath] ?? ''
     set((s) => ({ generatingMessageByPath: { ...s.generatingMessageByPath, [repoPath]: true } }))
     try {
-      const message = await window.api.invoke('git:generateCommitMessageWithContext', repoPath, filePaths, context)
+      const message = await client.invoke('git:generateCommitMessageWithContext', repoPath, filePaths, context)
       set((s) => {
         const currentMessage = s.commitMessageByPath[repoPath] ?? ''
         return {
@@ -303,7 +304,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().pushingByPath[repoPath]) return
     set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:push', repoPath)
+      await client.invoke('git:push', repoPath)
     } finally {
       set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
@@ -314,7 +315,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().pushingByPath[repoPath]) return
     set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:pushSetUpstream', repoPath, branch)
+      await client.invoke('git:pushSetUpstream', repoPath, branch)
     } finally {
       set((s) => ({ pushingByPath: { ...s.pushingByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
@@ -325,7 +326,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().pullingByPath[repoPath]) return
     set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
     try {
-      const result = await window.api.invoke('git:pull', repoPath, autoStash) as PullResult | undefined
+      const result = await client.invoke('git:pull', repoPath, autoStash) as PullResult | undefined
       return result
     } finally {
       set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
@@ -339,7 +340,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().pullingByPath[repoPath]) return
     set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:pullOrigin', repoPath)
+      await client.invoke('git:pullOrigin', repoPath)
     } finally {
       set((s) => ({ pullingByPath: { ...s.pullingByPath, [repoPath]: false } }))
       await get().fetch(repoPath)
@@ -350,7 +351,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().stashLoadingByPath[repoPath]) return
     set((s) => ({ stashLoadingByPath: { ...s.stashLoadingByPath, [repoPath]: true } }))
     try {
-      const stashes = await window.api.invoke('git:stashList', repoPath) as StashEntry[]
+      const stashes = await client.invoke('git:stashList', repoPath) as StashEntry[]
       set((s) => ({
         stashesByPath: { ...s.stashesByPath, [repoPath]: stashes },
         stashLoadingByPath: { ...s.stashLoadingByPath, [repoPath]: false },
@@ -364,7 +365,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().stashBusyByPath[repoPath]) return
     set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:stashCreate', repoPath, opts)
+      await client.invoke('git:stashCreate', repoPath, opts)
       await Promise.all([get().fetch(repoPath), get().fetchStashes(repoPath)])
     } finally {
       set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
@@ -375,7 +376,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().stashBusyByPath[repoPath]) return
     set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:stashApply', repoPath, ref)
+      await client.invoke('git:stashApply', repoPath, ref)
       await Promise.all([get().fetch(repoPath), get().fetchStashes(repoPath)])
     } finally {
       set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
@@ -386,7 +387,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().stashBusyByPath[repoPath]) return
     set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:stashPop', repoPath, ref)
+      await client.invoke('git:stashPop', repoPath, ref)
       await Promise.all([get().fetch(repoPath), get().fetchStashes(repoPath)])
     } finally {
       set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
@@ -397,7 +398,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().stashBusyByPath[repoPath]) return
     set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:stashDrop', repoPath, ref)
+      await client.invoke('git:stashDrop', repoPath, ref)
       await get().fetchStashes(repoPath)
     } finally {
       set((s) => ({ stashBusyByPath: { ...s.stashBusyByPath, [repoPath]: false } }))
@@ -407,7 +408,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
   forceUnlock: async (repoPath) => {
     // Destructive; caller is expected to have already confirmed with the user.
     // Refresh status afterwards in case the lock was keeping our view out of date.
-    const result = await window.api.invoke('git:forceUnlock', repoPath) as { removed: string[] }
+    const result = await client.invoke('git:forceUnlock', repoPath) as { removed: string[] }
     await get().fetch(repoPath)
     return result
   },
@@ -416,7 +417,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().refreshingRemoteByPath[repoPath]) return
     set((s) => ({ refreshingRemoteByPath: { ...s.refreshingRemoteByPath, [repoPath]: true } }))
     try {
-      await window.api.invoke('git:fetchRemote', repoPath)
+      await client.invoke('git:fetchRemote', repoPath)
     } catch {
       // Ignore transient network/auth failures for background refresh.
     } finally {
@@ -427,7 +428,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
 
   fetchModifiedFiles: async (threadId) => {
     try {
-      const files = await window.api.invoke('threads:getModifiedFiles', threadId)
+      const files = await client.invoke('threads:getModifiedFiles', threadId)
       set((s) => ({
         modifiedFilesByThread: { ...s.modifiedFilesByThread, [threadId]: files },
       }))
@@ -440,7 +441,7 @@ export const useGitStore = create<GitStore>((set, get) => ({
     if (get().branchLoadingByPath[repoPath]) return
     set((s) => ({ branchLoadingByPath: { ...s.branchLoadingByPath, [repoPath]: true } }))
     try {
-      const branches = await window.api.invoke('git:branches', repoPath)
+      const branches = await client.invoke('git:branches', repoPath)
       set((s) => ({
         branchesByPath: { ...s.branchesByPath, [repoPath]: branches },
         branchLoadingByPath: { ...s.branchLoadingByPath, [repoPath]: false },
@@ -451,21 +452,21 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   checkout: async (repoPath, branch) => {
-    await window.api.invoke('git:checkout', repoPath, branch)
+    await client.invoke('git:checkout', repoPath, branch)
     invalidateSidebarBranch(repoPath)
     await get().fetch(repoPath)
     await get().fetchBranches(repoPath)
   },
 
   createBranch: async (repoPath, name, base, pullFirst) => {
-    await window.api.invoke('git:createBranch', repoPath, name, base, pullFirst)
+    await client.invoke('git:createBranch', repoPath, name, base, pullFirst)
     invalidateSidebarBranch(repoPath)
     await get().fetch(repoPath)
     await get().fetchBranches(repoPath)
   },
 
   merge: async (repoPath, source) => {
-    const result = await window.api.invoke('git:merge', repoPath, source)
+    const result = await client.invoke('git:merge', repoPath, source)
     invalidateSidebarBranch(repoPath)
     await get().fetch(repoPath) // always refresh — conflict markers show up as modified files
     if (result.conflicts.length > 0) {
@@ -476,11 +477,11 @@ export const useGitStore = create<GitStore>((set, get) => ({
   },
 
   findMergedBranches: async (repoPath) => {
-    return window.api.invoke('git:findMergedBranches', repoPath)
+    return client.invoke('git:findMergedBranches', repoPath)
   },
 
   deleteBranches: async (repoPath, branches) => {
-    const result = await window.api.invoke('git:deleteBranches', repoPath, branches)
+    const result = await client.invoke('git:deleteBranches', repoPath, branches)
     invalidateSidebarBranch(repoPath)
     await get().fetchBranches(repoPath)
     return result

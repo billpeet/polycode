@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { useLocationStore } from '../stores/locations'
 import { RepoLocation, SshConfig, WslConfig, ConnectionType } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface Props {
   mode: 'create' | 'edit'
@@ -38,7 +39,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
   // Fetch available WSL distros when WSL mode is selected
   useEffect(() => {
     if (isWSL) {
-      window.api.invoke('wsl:list-distros').then((distros) => {
+      client.invoke('wsl:list-distros').then((distros) => {
         setAvailableDistros(distros)
         if (!wslDistro && distros.length > 0) {
           setWslDistro(distros[0])
@@ -75,7 +76,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
       if (isSSH) {
         const ssh = buildSshConfig()
         if (!ssh || !path.trim()) return
-        const result = await window.api.invoke('ssh:test', ssh, path.trim())
+        const result = await client.invoke('ssh:test', ssh, path.trim())
         if (result.ok) {
           setTestResult('success')
         } else {
@@ -85,7 +86,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
       } else if (isWSL) {
         const wsl = buildWslConfig()
         if (!wsl || !path.trim()) return
-        const result = await window.api.invoke('wsl:test', wsl, path.trim())
+        const result = await client.invoke('wsl:test', wsl, path.trim())
         if (result.ok) {
           setTestResult('success')
         } else {
@@ -101,7 +102,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
   }
 
   async function handleBrowse(): Promise<void> {
-    const dir = await window.api.invoke('dialog:open-directory')
+    const dir = await client.invoke('dialog:open-directory')
     if (dir) {
       setPath(dir)
       if (!label) {
@@ -128,7 +129,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
       setTesting(true)
       setTestResult(null)
       try {
-        const result = await window.api.invoke('ssh:test', ssh, path.trim())
+        const result = await client.invoke('ssh:test', ssh, path.trim())
         if (!result.ok) {
           setTestResult('fail')
           setError(`SSH connection failed: ${result.error}`)
@@ -148,7 +149,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
       setTesting(true)
       setTestResult(null)
       try {
-        const result = await window.api.invoke('wsl:test', wsl, path.trim())
+        const result = await client.invoke('wsl:test', wsl, path.trim())
         if (!result.ok) {
           setTestResult('fail')
           setError(`WSL test failed: ${result.error}`)

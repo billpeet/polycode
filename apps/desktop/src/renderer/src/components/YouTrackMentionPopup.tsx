@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { YouTrackServer, YouTrackIssue } from '../types/ipc'
+import { client } from '../lib/client'
 
 interface Props {
   servers: YouTrackServer[]
@@ -46,7 +47,7 @@ export default function YouTrackMentionPopup({ servers, query, onSelect, onClose
         await Promise.all(
           servers.map(async (server) => {
             try {
-              const issues = await window.api.invoke('youtrack:search', server.url, server.token, query)
+              const issues = await client.invoke('youtrack:search', server.url, server.token, query)
               allResults.push(...issues)
             } catch {
               // Skip failed servers silently

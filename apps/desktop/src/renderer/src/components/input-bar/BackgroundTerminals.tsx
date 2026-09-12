@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { BackgroundTerminal } from '../../types/ipc'
+import { client } from '../../lib/client'
 
 export default function BackgroundTerminals({ threadId }: { threadId: string }) {
   const [open, setOpen] = useState(false)
@@ -11,7 +12,7 @@ export default function BackgroundTerminals({ threadId }: { threadId: string }) 
     setLoading(true)
     setError(null)
     try {
-      setTerminals(await window.api.invoke('threads:backgroundTerminals:list', threadId))
+      setTerminals(await client.invoke('threads:backgroundTerminals:list', threadId))
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {
@@ -30,13 +31,13 @@ export default function BackgroundTerminals({ threadId }: { threadId: string }) 
   }, [open, refresh])
 
   async function terminate(processId: string): Promise<void> {
-    await window.api.invoke('threads:backgroundTerminals:terminate', threadId, processId)
+    await client.invoke('threads:backgroundTerminals:terminate', threadId, processId)
     await refresh()
   }
 
   async function cleanAll(): Promise<void> {
     if (!window.confirm('Terminate all background processes started by this Codex thread?')) return
-    await window.api.invoke('threads:backgroundTerminals:clean', threadId)
+    await client.invoke('threads:backgroundTerminals:clean', threadId)
     await refresh()
   }
 

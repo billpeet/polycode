@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useYouTrackStore } from '../stores/youtrack'
 import { YouTrackServer } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface Props {
   onClose: () => void
@@ -67,7 +68,7 @@ export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
     setTestResult(null)
     setError(null)
     try {
-      const result = await window.api.invoke('youtrack:test', form.url.trim(), form.token.trim())
+      const result = await client.invoke('youtrack:test', form.url.trim(), form.token.trim())
       setTestResult(result)
     } catch (err) {
       setTestResult({ ok: false, error: err instanceof Error ? err.message : 'Unknown error' })

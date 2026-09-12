@@ -13,6 +13,7 @@ import {
   getModelsForProvider,
 } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface Props {
   projectId: string
@@ -68,7 +69,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
   const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    void window.api.invoke('locations:list', projectId).then((list) => {
+    void client.invoke('locations:list', projectId).then((list) => {
       // Runs need a parent checkout to grow worktrees from — local, non-worktree only.
       const eligible = list.filter((l) => l.connection_type === 'local' && !l.is_worktree)
       setLocations(eligible)
@@ -100,7 +101,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
     )[provider]
     if (!channel) return
     let cancelled = false
-    window.api.invoke(channel, null)
+    client.invoke(channel, null)
       .then((discovered) => {
         if (cancelled || discovered.length === 0) return
         setLiveModels(discovered)
@@ -158,8 +159,8 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
 
     setSaving(true)
     try {
-      if (routine) await window.api.invoke('routines:update', routine.id, draft)
-      else await window.api.invoke('routines:create', projectId, draft)
+      if (routine) await client.invoke('routines:update', routine.id, draft)
+      else await client.invoke('routines:create', projectId, draft)
       onSaved()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

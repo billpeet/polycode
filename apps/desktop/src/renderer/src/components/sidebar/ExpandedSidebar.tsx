@@ -7,6 +7,7 @@ import RoutinesSection from './RoutinesSection'
 import { SidebarResizeHandle, ViewModeSwitch } from './shared'
 import ThreadRow from './ThreadRow'
 import ProjectFavicon from '../ProjectFavicon'
+import { client } from '../../lib/client'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -134,7 +135,7 @@ export default function ExpandedSidebar({
 }: ExpandedSidebarProps) {
   const [appVersion, setAppVersion] = useState('')
   useEffect(() => {
-    window.api.invoke('app:getVersion').then((v) => setAppVersion(v as string))
+    client.invoke('app:getVersion').then((v) => setAppVersion(v as string))
   }, [])
 
   return (

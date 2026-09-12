@@ -8,6 +8,7 @@ import type { BundledLanguage, SpecialLanguage, ThemedToken } from 'shiki'
 import { PatchDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
 import type { WorkerInitializationRenderOptions, WorkerPoolOptions } from '@pierre/diffs/react'
 import { reportPerf } from '../lib/perf'
+import { client } from '../lib/client'
 
 function getLanguageFromPath(filePath: string): string {
   const ext = filePath.split('.').pop()?.toLowerCase()
@@ -574,19 +575,19 @@ export function DiffPane() {
     let stopWatching: (() => void) | null = null
     let pollTimer: ReturnType<typeof setInterval> | null = null
 
-    const unsubscribe = window.api.on('files:changed', (data: unknown) => {
+    const unsubscribe = client.on('files:changed', (data: unknown) => {
       const payload = data as { path?: string }
       if (payload.path === watchedPath) void refreshDiff()
     })
 
-    void window.api.invoke('files:watchStart', watchedPath).then((watching) => {
+    void client.invoke('files:watchStart', watchedPath).then((watching) => {
       if (disposed) {
-        if (watching) void window.api.invoke('files:watchStop', watchedPath)
+        if (watching) void client.invoke('files:watchStop', watchedPath)
         return
       }
 
       if (watching) {
-        stopWatching = () => { void window.api.invoke('files:watchStop', watchedPath) }
+        stopWatching = () => { void client.invoke('files:watchStop', watchedPath) }
         return
       }
 
@@ -689,19 +690,19 @@ export function FilePane() {
     let stopWatching: (() => void) | null = null
     let pollTimer: ReturnType<typeof setInterval> | null = null
 
-    const unsubscribe = window.api.on('files:changed', (data: unknown) => {
+    const unsubscribe = client.on('files:changed', (data: unknown) => {
       const payload = data as { path?: string }
       if (payload.path === selectedFilePath) void refreshSelectedFile()
     })
 
-    void window.api.invoke('files:watchStart', selectedFilePath).then((watching) => {
+    void client.invoke('files:watchStart', selectedFilePath).then((watching) => {
       if (disposed) {
-        if (watching) void window.api.invoke('files:watchStop', selectedFilePath)
+        if (watching) void client.invoke('files:watchStop', selectedFilePath)
         return
       }
 
       if (watching) {
-        stopWatching = () => { void window.api.invoke('files:watchStop', selectedFilePath) }
+        stopWatching = () => { void client.invoke('files:watchStop', selectedFilePath) }
         return
       }
 

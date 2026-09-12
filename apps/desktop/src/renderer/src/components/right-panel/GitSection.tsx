@@ -16,6 +16,7 @@ import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../../lib/gitRefreshCoordinator'
 import { formatErrorDetails } from '../../lib/errorDetails'
 import { getCachedForge, refreshForge, type ForgeCapability, type ForgeRefreshResult } from '../../lib/forgeRefresh'
+import { client } from '../../lib/client'
 
 /** Join a repo path and a relative file path using the separator style implied by the repo path. */
 function joinRepoPath(repoPath: string, relPath: string): string {
@@ -313,14 +314,14 @@ function BranchControls({
     let cancelled = false
     async function loadRepoLink() {
       try {
-        const provider = await window.api.invoke('git:hostingProvider', projectPath)
+        const provider = await client.invoke('git:hostingProvider', projectPath)
         if (!provider) {
           if (!cancelled) {
             setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider: null, pageUrl: null } }))
           }
           return
         }
-        const pageUrl = await window.api.invoke('forge:repo:webUrl', projectPath)
+        const pageUrl = await client.invoke('forge:repo:webUrl', projectPath)
         if (!cancelled) {
           setRepoLinkCacheByPath((cache) => ({ ...cache, [projectPath]: { provider, pageUrl } }))
         }
@@ -851,7 +852,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     const showLoading = opts?.force || !compareCacheByPath[projectPath]?.loadedBranches[currentBranch]
     if (showLoading) setCompareLoadingByPath((cache) => ({ ...cache, [projectPath]: true }))
     try {
-      const result = await window.api.invoke('git:compareToMain', projectPath) as GitCompareResult
+      const result = await client.invoke('git:compareToMain', projectPath) as GitCompareResult
       setCompareCacheByPath((cache) => ({
         ...cache,
         [projectPath]: {
@@ -1108,7 +1109,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     if (!projectPath) return
     try {
       const fullPath = joinRepoPath(projectPath, file.path)
-      await window.api.invoke('shell:revealInExplorer', fullPath)
+      await client.invoke('shell:revealInExplorer', fullPath)
     } catch (err) {
       addToast({
         type: 'error',
@@ -1124,7 +1125,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     if (!projectPath) return
     try {
       const value = relative ? file.path : joinRepoPath(projectPath, file.path)
-      await window.api.invoke('shell:copyPath', value)
+      await client.invoke('shell:copyPath', value)
       addToast({ type: 'success', message: relative ? 'Copied relative path' : 'Copied path', duration: 2000 })
     } catch (err) {
       addToast({
@@ -1182,7 +1183,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     if (!projectPath || !prProvider) return
     setCheckingOutPrId(prId)
     try {
-      const result = await window.api.invoke('forge:pr:checkout', projectPath, prId)
+      const result = await client.invoke('forge:pr:checkout', projectPath, prId)
       await fetchGit(projectPath)
       await refreshPullRequests({ force: true })
       addToast({ type: 'success', message: `Checked out ${result.branch}`, duration: 3000 })
@@ -1214,7 +1215,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
     let worktree: RepoLocation | null = null
     try {
       worktree = await createWorktree(parentLocation.id, threadProjectId, `PR #${pr.id}`)
-      const result = await window.api.invoke('forge:pr:checkout', worktree.path, pr.id)
+      const result = await client.invoke('forge:pr:checkout', worktree.path, pr.id)
       await createThread(threadProjectId, `PR #${pr.id}: ${pr.title}`, worktree.id)
       addToast({ type: 'success', message: `Checked out ${result.branch} in a new worktree`, duration: 3000 })
       window.dispatchEvent(new Event('focus-input'))

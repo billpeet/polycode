@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { RemoteConnectionState } from '../types/ipc'
+import { client } from '../lib/client'
 
 interface RemoteConnectionStore {
   connection: RemoteConnectionState
@@ -47,7 +48,7 @@ export const useRemoteConnectionStore = create<RemoteConnectionStore>((set) => (
   retry: async () => {
     set({ retrying: true })
     try {
-      const connection = await window.api.invoke('remote:reconnect')
+      const connection = await client.invoke('remote:reconnect')
       set({ connection })
     } catch {
       // The reconnect attempt itself reports through remote:connection-changed.
@@ -67,7 +68,7 @@ export function initRemoteConnectionStore(): void {
   if (initialized) return
   initialized = true
 
-  window.api.on('remote:connection-changed', (...args) => {
+  client.on('remote:connection-changed', (...args) => {
     const connection = args[0] as RemoteConnectionState | undefined
     if (!connection) return
     useRemoteConnectionStore.setState((s) => ({
@@ -77,10 +78,10 @@ export function initRemoteConnectionStore(): void {
         : s.reconnectNonce,
     }))
   })
-  window.api.onSlowInvoke((pendingSlowCalls) => {
+  client.onSlowInvoke((pendingSlowCalls) => {
     useRemoteConnectionStore.setState({ slowCalls: pendingSlowCalls })
   })
-  void window.api.invoke('remote:getConnectionState')
+  void client.invoke('remote:getConnectionState')
     .then((connection) => useRemoteConnectionStore.setState({ connection }))
     .catch(() => undefined)
 }

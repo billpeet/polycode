@@ -4,6 +4,7 @@ import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { isAppShuttingDownError } from '@polycode/shared'
 import { settleBackgroundIpc } from '../lib/backgroundIpc'
+import { client } from '../lib/client'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 const STALE_THREAD_SELECTION_MESSAGE = 'The selected project location is no longer available.'
@@ -299,7 +300,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         locationId = location.id
       }
 
-      let thread = await window.api.invoke('threads:create', projectId, draft.name, locationId)
+      let thread = await client.invoke('threads:create', projectId, draft.name, locationId)
 
       // The draft carries settings inherited (or adjusted) before materializing.
       if (
@@ -310,11 +311,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         thread.codex_personality !== draft.codex_personality ||
         thread.codex_reasoning_summary !== draft.codex_reasoning_summary
       ) {
-        await window.api.invoke('threads:setWsl', thread.id, draft.use_wsl, draft.wsl_distro)
-        await window.api.invoke('threads:setPermissionMode', thread.id, draft.permission_mode)
-        await window.api.invoke('threads:updateReasoningLevel', thread.id, draft.reasoning_level)
-        await window.api.invoke('threads:updateCodexPersonality', thread.id, draft.codex_personality)
-        await window.api.invoke('threads:updateCodexReasoningSummary', thread.id, draft.codex_reasoning_summary)
+        await client.invoke('threads:setWsl', thread.id, draft.use_wsl, draft.wsl_distro)
+        await client.invoke('threads:setPermissionMode', thread.id, draft.permission_mode)
+        await client.invoke('threads:updateReasoningLevel', thread.id, draft.reasoning_level)
+        await client.invoke('threads:updateCodexPersonality', thread.id, draft.codex_personality)
+        await client.invoke('threads:updateCodexReasoningSummary', thread.id, draft.codex_reasoning_summary)
         thread = {
           ...thread,
           use_wsl: draft.use_wsl,
@@ -327,7 +328,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         }
       }
       if (thread.provider !== draft.provider || thread.model !== draft.model) {
-        await window.api.invoke('threads:updateProviderAndModel', thread.id, draft.provider, draft.model)
+        await client.invoke('threads:updateProviderAndModel', thread.id, draft.provider, draft.model)
         thread = { ...thread, provider: draft.provider, model: draft.model }
       }
 
@@ -403,7 +404,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   fetchQueue: async () => {
     try {
-      const threads = await window.api.invoke('threads:listQueue')
+      const threads = await client.invoke('threads:listQueue')
       set((s) => ({
         queueThreads: threads,
         statusMap: {
@@ -423,9 +424,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   fetch: async (projectId) => {
     const [threads, count, snoozedCount] = await Promise.all([
-      window.api.invoke('threads:list', projectId),
-      window.api.invoke('threads:archivedCount', projectId),
-      window.api.invoke('threads:snoozedCount', projectId),
+      client.invoke('threads:list', projectId),
+      client.invoke('threads:archivedCount', projectId),
+      client.invoke('threads:snoozedCount', projectId),
     ])
     set((s) => {
       // The create-on-send draft has no DB row, so a wholesale refresh from
@@ -463,7 +464,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   fetchArchived: async (projectId, page) => {
     const nextPage = page ?? get().archivedPageByProject[projectId] ?? 0
-    const threads = await window.api.invoke(
+    const threads = await client.invoke(
       'threads:listArchived',
       projectId,
       ARCHIVED_THREADS_PAGE_SIZE,
@@ -542,7 +543,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }))
 
     try {
-      let thread = await window.api.invoke('threads:create', projectId, name, locationId)
+      let thread = await client.invoke('threads:create', projectId, name, locationId)
 
       // Carry over per-thread WSL override for this location to new threads.
       if (
@@ -556,11 +557,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           thread.codex_reasoning_summary !== sourceThread.codex_reasoning_summary
         )
       ) {
-        await window.api.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
-        await window.api.invoke('threads:setPermissionMode', thread.id, sourceThread.permission_mode)
-        await window.api.invoke('threads:updateReasoningLevel', thread.id, sourceThread.reasoning_level)
-        await window.api.invoke('threads:updateCodexPersonality', thread.id, sourceThread.codex_personality)
-        await window.api.invoke('threads:updateCodexReasoningSummary', thread.id, sourceThread.codex_reasoning_summary)
+        await client.invoke('threads:setWsl', thread.id, sourceThread.use_wsl, sourceThread.wsl_distro)
+        await client.invoke('threads:setPermissionMode', thread.id, sourceThread.permission_mode)
+        await client.invoke('threads:updateReasoningLevel', thread.id, sourceThread.reasoning_level)
+        await client.invoke('threads:updateCodexPersonality', thread.id, sourceThread.codex_personality)
+        await client.invoke('threads:updateCodexReasoningSummary', thread.id, sourceThread.codex_reasoning_summary)
         thread = {
           ...thread,
           use_wsl: sourceThread.use_wsl,
@@ -715,7 +716,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   remove: async (id, projectId) => {
-    await window.api.invoke('threads:delete', id)
+    await client.invoke('threads:delete', id)
     set((s) => {
       const updatedStatus = { ...s.statusMap }
       delete updatedStatus[id]
@@ -790,7 +791,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
 
     try {
-      const result = await window.api.invoke('threads:archive', id)
+      const result = await client.invoke('threads:archive', id)
       if (result.outcome === 'deleted') {
         set((s) => {
           const prevCount = s.archivedCountByProject[projectId] ?? 0
@@ -825,7 +826,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   unarchive: async (id, projectId) => {
     const wasArchivedExpanded = get().expandedArchivedProjectId === projectId
     const currentArchivedPage = get().archivedPageByProject[projectId] ?? 0
-    await window.api.invoke('threads:unarchive', id)
+    await client.invoke('threads:unarchive', id)
     set((s) => {
       const thread = (s.archivedByProject[projectId] ?? []).find((t) => t.id === id)
       const prevCount = s.archivedCountByProject[projectId] ?? 0
@@ -865,7 +866,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   fetchSnoozed: async (projectId, page) => {
     const nextPage = page ?? get().snoozedPageByProject[projectId] ?? 0
-    const threads = await window.api.invoke(
+    const threads = await client.invoke(
       'threads:listSnoozed',
       projectId,
       ARCHIVED_THREADS_PAGE_SIZE,
@@ -899,7 +900,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     })
 
     try {
-      await window.api.invoke('threads:snooze', id, untilIso)
+      await client.invoke('threads:snooze', id, untilIso)
       if (wasSnoozedExpanded) await get().setSnoozedPage(projectId, currentSnoozedPage)
     } catch (error) {
       set({
@@ -913,7 +914,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   wake: async (id, projectId) => {
     const wasSnoozedExpanded = get().expandedSnoozedProjectId === projectId
     const currentSnoozedPage = get().snoozedPageByProject[projectId] ?? 0
-    await window.api.invoke('threads:unsnooze', id)
+    await client.invoke('threads:unsnooze', id)
     set((s) => {
       const thread = (s.snoozedByProject[projectId] ?? []).find((t) => t.id === id)
       const prevCount = s.snoozedCountByProject[projectId] ?? 0
@@ -971,7 +972,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
     })
     if (id && wasUnread) {
-      void settleBackgroundIpc(window.api.invoke('threads:setUnread', id, false))
+      void settleBackgroundIpc(client.invoke('threads:setUnread', id, false))
     }
   },
 
@@ -998,7 +999,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     const current = !!get().unreadByThread[threadId]
     if (current === nextUnread) return
     set((s) => ({ unreadByThread: { ...s.unreadByThread, [threadId]: nextUnread } }))
-    void settleBackgroundIpc(window.api.invoke('threads:setUnread', threadId, nextUnread))
+    void settleBackgroundIpc(client.invoke('threads:setUnread', threadId, nextUnread))
   },
 
   setName: (threadId, name) =>
@@ -1017,7 +1018,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }),
 
   rename: async (threadId, name) => {
-    await window.api.invoke('threads:updateName', threadId, name)
+    await client.invoke('threads:updateName', threadId, name)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1028,7 +1029,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setModel: async (threadId, model) => {
-    await window.api.invoke('threads:updateModel', threadId, model)
+    await client.invoke('threads:updateModel', threadId, model)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1046,9 +1047,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       : currentPermissionMode === 'yolo'
         ? 'yolo'
         : 'ask'
-    await window.api.invoke('threads:updateProviderAndModel', threadId, provider, model)
+    await client.invoke('threads:updateProviderAndModel', threadId, provider, model)
     if (currentPermissionMode !== nextPermissionMode) {
-      await window.api.invoke('threads:setPermissionMode', threadId, nextPermissionMode)
+      await client.invoke('threads:setPermissionMode', threadId, nextPermissionMode)
     }
     set((s) => {
       const updated = { ...s.byProject }
@@ -1060,7 +1061,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setReasoningLevel: async (threadId, reasoningLevel) => {
-    await window.api.invoke('threads:updateReasoningLevel', threadId, reasoningLevel)
+    await client.invoke('threads:updateReasoningLevel', threadId, reasoningLevel)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1071,7 +1072,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setCodexPersonality: async (threadId, personality) => {
-    await window.api.invoke('threads:updateCodexPersonality', threadId, personality)
+    await client.invoke('threads:updateCodexPersonality', threadId, personality)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1082,7 +1083,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setCodexReasoningSummary: async (threadId, summary) => {
-    await window.api.invoke('threads:updateCodexReasoningSummary', threadId, summary)
+    await client.invoke('threads:updateCodexReasoningSummary', threadId, summary)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1093,7 +1094,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setCursorThinking: async (threadId, thinking) => {
-    await window.api.invoke('threads:updateCursorThinking', threadId, thinking)
+    await client.invoke('threads:updateCursorThinking', threadId, thinking)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1104,7 +1105,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setCursorContext: async (threadId, context) => {
-    await window.api.invoke('threads:updateCursorContext', threadId, context)
+    await client.invoke('threads:updateCursorContext', threadId, context)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1115,7 +1116,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setWsl: async (threadId, useWsl, wslDistro) => {
-    await window.api.invoke('threads:setWsl', threadId, useWsl, wslDistro)
+    await client.invoke('threads:setWsl', threadId, useWsl, wslDistro)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1128,7 +1129,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   setPermissionMode: async (threadId, permissionMode) => {
-    await window.api.invoke('threads:setPermissionMode', threadId, permissionMode)
+    await client.invoke('threads:setPermissionMode', threadId, permissionMode)
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
@@ -1145,11 +1146,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   start: async (threadId) => {
-    await window.api.invoke('threads:start', threadId)
+    await client.invoke('threads:start', threadId)
   },
 
   stop: async (threadId, cleanBackgroundTerminals = false) => {
-    await window.api.invoke('threads:stop', threadId, cleanBackgroundTerminals)
+    await client.invoke('threads:stop', threadId, cleanBackgroundTerminals)
   },
 
   reset: async (threadId) => {
@@ -1162,7 +1163,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         runStartedAtByThread,
       }
     })
-    await window.api.invoke('threads:reset', threadId)
+    await client.invoke('threads:reset', threadId)
   },
 
   send: async (threadId, content, options) => {
@@ -1185,7 +1186,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       }
     })
     try {
-      await window.api.invoke('threads:send', threadId, content, options)
+      await client.invoke('threads:send', threadId, content, options)
     } catch (error) {
       set((s) => {
         if (s.runStartedAtByThread[threadId] !== startedAt) return s
@@ -1213,7 +1214,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
     }))
     try {
-      await window.api.invoke('threads:approvePlan', threadId)
+      await client.invoke('threads:approvePlan', threadId)
     } catch (error) {
       set((s) => {
         if (s.runStartedAtByThread[threadId] !== startedAt) return s
@@ -1227,11 +1228,11 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   rejectPlan: async (threadId) => {
     set((s) => ({ statusMap: { ...s.statusMap, [threadId]: 'idle' } }))
-    await window.api.invoke('threads:rejectPlan', threadId)
+    await client.invoke('threads:rejectPlan', threadId)
   },
 
   getQuestions: async (threadId) => {
-    return await window.api.invoke('threads:getQuestions', threadId)
+    return await client.invoke('threads:getQuestions', threadId)
   },
 
   answerQuestion: async (threadId, answers, questionComments, generalComment) => {
@@ -1242,7 +1243,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
     }))
     try {
-      await window.api.invoke('threads:answerQuestion', threadId, answers, questionComments, generalComment)
+      await client.invoke('threads:answerQuestion', threadId, answers, questionComments, generalComment)
     } catch (error) {
       set((s) => {
         if (s.runStartedAtByThread[threadId] !== startedAt) return s
@@ -1255,7 +1256,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   getPermissions: async (threadId) => {
-    return window.api.invoke('threads:getPendingPermissions', threadId)
+    return client.invoke('threads:getPendingPermissions', threadId)
   },
 
   approvePermissions: async (threadId, requestId) => {
@@ -1266,7 +1267,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       runStartedAtByThread: { ...s.runStartedAtByThread, [threadId]: startedAt },
     }))
     try {
-      await window.api.invoke('threads:approvePermissions', threadId, requestId)
+      await client.invoke('threads:approvePermissions', threadId, requestId)
     } catch (error) {
       set((s) => {
         if (s.runStartedAtByThread[threadId] !== startedAt) return s
@@ -1282,7 +1283,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => ({
       statusMap: { ...s.statusMap, [threadId]: 'idle' },
     }))
-    await window.api.invoke('threads:denyPermissions', threadId, requestId)
+    await client.invoke('threads:denyPermissions', threadId, requestId)
   },
 
   setDraft: (threadId, draft) =>
@@ -1307,7 +1308,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     }),
 
   importFromHistory: async (projectId, locationId, sessionFilePath, sessionId, name) => {
-    const thread = await window.api.invoke('claude-history:import', projectId, locationId, sessionFilePath, sessionId, name)
+    const thread = await client.invoke('claude-history:import', projectId, locationId, sessionFilePath, sessionId, name)
     set((s) => ({
       byProject: {
         ...s.byProject,

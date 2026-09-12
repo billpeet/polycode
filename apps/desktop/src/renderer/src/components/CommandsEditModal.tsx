@@ -3,6 +3,7 @@ import { useCommandStore, EMPTY_COMMANDS } from '../stores/commands'
 import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface Props {
   projectId: string
@@ -34,7 +35,7 @@ function allRunVariants(scriptName: string): string[] {
 async function detectPackageManager(rootPath: string): Promise<PackageManager> {
   const base = rootPath.replace(/\\/g, '/').replace(/\/$/, '')
   for (const { file, pm } of PM_PROBES) {
-    const result = await window.api.invoke('files:read', `${base}/${file}`)
+    const result = await client.invoke('files:read', `${base}/${file}`)
     if (result !== null) return pm
   }
   return 'npm' // fallback
@@ -92,7 +93,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
         const base = loc.path.replace(/\\/g, '/').replace(/\/$/, '')
         const pkgPath = `${base}/package.json`
         try {
-          const result = await window.api.invoke('files:read', pkgPath)
+          const result = await client.invoke('files:read', pkgPath)
           if (!result) continue
           const pkg = JSON.parse(result.content) as { scripts?: Record<string, string> }
           if (!pkg.scripts) continue

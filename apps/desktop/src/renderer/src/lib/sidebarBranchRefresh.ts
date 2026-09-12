@@ -1,3 +1,5 @@
+import { client } from './client'
+
 const BRANCH_SWEEP_INTERVAL_MS = 120_000
 const MAX_BRANCH_WORKERS = 2
 
@@ -55,7 +57,7 @@ function runSweep(forceAll = false): Promise<void> {
         const key = repositoryKey(location.path)
         invalidatedPaths.delete(key)
         try {
-          const branch = await window.api.invoke('git:branch', location.path)
+          const branch = await client.invoke('git:branch', location.path)
           branchByPath.set(key, branch || null)
         } catch {
           branchByPath.set(key, null)

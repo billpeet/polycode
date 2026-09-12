@@ -36,6 +36,7 @@ import { CliUnavailableBanner, ErrorBanner, MissingLocationBanner, PermissionBan
 import DestinationPicker from './input-bar/DestinationPicker'
 import { PaperclipIcon, QueueIcon, SendIcon, StopIcon } from './input-bar/icons'
 import { formatErrorDetails } from '../lib/errorDetails'
+import { client } from '../lib/client'
 
 interface Props {
   threadId: string
@@ -114,7 +115,7 @@ function InputBarContent({ threadId }: Props) {
       queueMicrotask(() => setLocationPathMissing(false))
       return
     }
-    window.api.invoke('locations:pathExists', locationPath).then((exists) => {
+    client.invoke('locations:pathExists', locationPath).then((exists) => {
       setLocationPathMissing(!exists)
     }).catch(() => {})
   }, [locationPath, isPendingThread])
@@ -155,7 +156,7 @@ function InputBarContent({ threadId }: Props) {
     if (isPendingThread) return
     if (!isLocalLocation) return
     const timeoutId = window.setTimeout(() => {
-      window.api.invoke('wsl:list-distros').then(setAvailableDistros).catch(() => {})
+      client.invoke('wsl:list-distros').then(setAvailableDistros).catch(() => {})
     }, 250)
     return () => window.clearTimeout(timeoutId)
   }, [isLocalLocation, isPendingThread])
@@ -319,7 +320,7 @@ function InputBarContent({ threadId }: Props) {
       const savedAttachments: Array<{ path: string; type: PendingAttachment['type'] }> = []
       for (const att of currentAttachments) {
         if (att.dataUrl) {
-          const { tempPath } = await window.api.invoke(
+          const { tempPath } = await client.invoke(
             'attachments:save',
             att.dataUrl,
             att.name,
@@ -533,7 +534,7 @@ function InputBarContent({ threadId }: Props) {
   }
 
   async function addAttachmentFromPath(filePath: string): Promise<void> {
-    const info = await window.api.invoke('attachments:getFileInfo', filePath)
+    const info = await client.invoke('attachments:getFileInfo', filePath)
     if (!info) {
       addToast({
         type: 'error',
@@ -598,7 +599,7 @@ function InputBarContent({ threadId }: Props) {
     }
 
     // Copy to temp and get path
-    const { tempPath, id, dataUrl: savedDataUrl } = await window.api.invoke('attachments:saveFromPath', filePath, threadId) as { tempPath: string; id: string; dataUrl?: string }
+    const { tempPath, id, dataUrl: savedDataUrl } = await client.invoke('attachments:saveFromPath', filePath, threadId) as { tempPath: string; id: string; dataUrl?: string }
     const typeInfo = SUPPORTED_ATTACHMENT_TYPES[info.mimeType as keyof typeof SUPPORTED_ATTACHMENT_TYPES]
     const fileName = filePath.split(/[\\/]/).pop() ?? 'file'
 
@@ -606,7 +607,7 @@ function InputBarContent({ threadId }: Props) {
     let dataUrl: string | undefined
     if (typeInfo.type === 'image') {
       dataUrl = savedDataUrl
-      const result = dataUrl ? null : await window.api.invoke('files:read', tempPath)
+      const result = dataUrl ? null : await client.invoke('files:read', tempPath)
       if (result) {
         // Read the temp file as base64 for preview
         const base64 = await fetch(`file://${tempPath}`)
@@ -689,7 +690,7 @@ function InputBarContent({ threadId }: Props) {
   }
 
   async function handleFilePick(): Promise<void> {
-    const paths = await window.api.invoke('dialog:open-files')
+    const paths = await client.invoke('dialog:open-files')
     for (const filePath of paths) {
       try {
         await addAttachmentFromPath(filePath)
@@ -738,7 +739,7 @@ function InputBarContent({ threadId }: Props) {
           onReject={rejectPlan}
           onApprove={approvePlan}
           onNewContext={(id) => {
-            window.api.invoke('threads:executePlanInNewContext', id)
+            client.invoke('threads:executePlanInNewContext', id)
           }}
         />
       )}

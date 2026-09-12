@@ -15,6 +15,7 @@ import InputBar from './InputBar'
 import { formatErrorDetails } from '../lib/errorDetails'
 import UiErrorBoundary from './UiErrorBoundary'
 import { useRemoteConnectionStore } from '../stores/remoteConnection'
+import { client } from '../lib/client'
 
 interface Props {
   threadId: string
@@ -97,7 +98,7 @@ function ThreadViewContent({ threadId }: Props) {
   useEffect(() => {
     if (isPendingThread) return
     // Subscribe to streaming events
-    const unsubOutput = window.api.on(`thread:output:${threadId}`, (...args) => {
+    const unsubOutput = client.on(`thread:output:${threadId}`, (...args) => {
       const event = args[0] as OutputEvent
       const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
 
@@ -182,7 +183,7 @@ function ThreadViewContent({ threadId }: Props) {
       }
     })
 
-    const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
+    const unsubStatus = client.on(`thread:status:${threadId}`, (...args) => {
       const status = args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
       setStatus(threadId, status)
       if (status === 'error') {
@@ -201,7 +202,7 @@ function ThreadViewContent({ threadId }: Props) {
       }
     })
 
-    const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
+    const unsubComplete = client.on(`thread:complete:${threadId}`, (...args) => {
       // Use the status sent directly with the complete event to avoid race conditions
       // with the separate thread:status IPC event
       const completionStatus = (args[0] as ThreadStatus | undefined) ?? 'idle'
@@ -273,19 +274,19 @@ function ThreadViewContent({ threadId }: Props) {
       }
     })
 
-    const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
+    const unsubTitle = client.on(`thread:title:${threadId}`, (...args) => {
       setName(threadId, args[0] as string)
     })
 
     // Subscribe to session switch events from main process
-    const unsubSessionSwitch = window.api.on(`thread:session-switched:${threadId}`, (...args) => {
+    const unsubSessionSwitch = client.on(`thread:session-switched:${threadId}`, (...args) => {
       const sessionId = args[0] as string
       setActiveSession(threadId, sessionId)
       // Refetch sessions to update the tabs (a new session may have been created)
       useSessionStore.getState().fetch(threadId)
     })
 
-    const unsubPid = window.api.on(`thread:pid:${threadId}`, (...args) => {
+    const unsubPid = client.on(`thread:pid:${threadId}`, (...args) => {
       useThreadStore.getState().setPid(threadId, (args[0] as number | null) ?? null)
     })
 

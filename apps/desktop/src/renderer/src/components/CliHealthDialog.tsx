@@ -3,6 +3,7 @@ import { useLocationStore } from '../stores/locations'
 import { useProjectStore } from '../stores/projects'
 import { Provider, PROVIDERS, SshConfig, WslConfig, CliHealthResult, CliUpdateResult } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface EnvironmentOption {
   label: string
@@ -103,7 +104,7 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
     await Promise.all(
       PROVIDERS.map(async ({ id: provider }) => {
         try {
-          const result = await window.api.invoke(
+          const result = await client.invoke(
             'cli:health',
             provider,
             env.connectionType,
@@ -138,7 +139,7 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
     }))
 
     try {
-      const result = await window.api.invoke(
+      const result = await client.invoke(
         'cli:update',
         provider,
         selectedEnv.connectionType,
@@ -152,7 +153,7 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
 
       // Re-check this provider after update
       if (result.success) {
-        const health = await window.api.invoke(
+        const health = await client.invoke(
           'cli:health',
           provider,
           selectedEnv.connectionType,

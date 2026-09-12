@@ -7,6 +7,7 @@ import { useBackdropClose } from '../hooks/useBackdropClose'
 import { CommandsSection, LocationsSection, PoolsSection } from './project-dialog/EditSections'
 import NewProjectForm from './project-dialog/NewProjectForm'
 import { LocationFormState, ProjectDialogProps } from './project-dialog/types'
+import { client } from '../lib/client'
 
 const EMPTY: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -62,7 +63,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
   }
 
   async function handleBrowseFavicon(): Promise<void> {
-    const selected = await window.api.invoke('dialog:open-favicon')
+    const selected = await client.invoke('dialog:open-favicon')
     if (selected) setFaviconPath(selected)
   }
 

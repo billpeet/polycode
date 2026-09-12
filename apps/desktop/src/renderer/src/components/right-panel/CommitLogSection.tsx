@@ -5,6 +5,7 @@ import { CommitLogEntry, GitFileChange } from '../../types/ipc'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
 import { formatErrorDetails } from '../../lib/errorDetails'
 import { formatDateTime } from '../../lib/locale'
+import { client } from '../../lib/client'
 
 /** Format an ISO timestamp as a short relative-age label (e.g. "2h ago"). Matches StashSection's style. */
 function shortRelativeTime(iso: string): string {
@@ -92,7 +93,7 @@ export function CommitLogSection({
     if (!projectPath) return
     setLoading(true)
     try {
-      const list = await window.api.invoke('git:log', projectPath, { range, limit }) as CommitLogEntry[]
+      const list = await client.invoke('git:log', projectPath, { range, limit }) as CommitLogEntry[]
       setCommits(list)
       setLoaded(true)
     } catch (err) {
@@ -123,7 +124,7 @@ export function CommitLogSection({
     if (filesBySha[sha]) return
     setLoadingFilesForSha(sha)
     try {
-      const files = await window.api.invoke('git:commitFiles', projectPath, sha) as GitFileChange[]
+      const files = await client.invoke('git:commitFiles', projectPath, sha) as GitFileChange[]
       setFilesBySha((prev) => ({ ...prev, [sha]: files }))
     } catch (err) {
       addToast({

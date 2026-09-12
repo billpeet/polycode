@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { getPref, setPref } from '../lib/prefs'
 
 export type RightPanelTab = 'tasks' | 'files' | 'commands'
 export type LocationAuxTab = 'diff' | 'file' | 'command' | 'terminal' | 'browser' | null
@@ -84,7 +85,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   loadSidebarViewMode: async () => {
     try {
-      const raw = await window.api.invoke('settings:get', SIDEBAR_VIEW_MODE_SETTING_KEY)
+      const raw = await getPref(SIDEBAR_VIEW_MODE_SETTING_KEY)
       if (raw === 'tree' || raw === 'queue') {
         set({ sidebarViewMode: raw })
       }
@@ -95,14 +96,14 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   setSidebarViewMode: (mode) => {
     set({ sidebarViewMode: mode })
-    void window.api.invoke('settings:set', SIDEBAR_VIEW_MODE_SETTING_KEY, mode)
+    void setPref(SIDEBAR_VIEW_MODE_SETTING_KEY, mode)
   },
 
   layoutMode: 'split',
 
   loadLayoutMode: async () => {
     try {
-      const raw = await window.api.invoke('settings:get', LAYOUT_MODE_SETTING_KEY)
+      const raw = await getPref(LAYOUT_MODE_SETTING_KEY)
       if (raw === 'split' || raw === 'full') {
         set({ layoutMode: raw })
       }
@@ -113,7 +114,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   setLayoutMode: (mode) => {
     set({ layoutMode: mode })
-    void window.api.invoke('settings:set', LAYOUT_MODE_SETTING_KEY, mode)
+    void setPref(LAYOUT_MODE_SETTING_KEY, mode)
   },
 
   toggleLayoutMode: () => {
@@ -142,7 +143,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
 
   loadSidebarWidth: async () => {
     try {
-      const raw = await window.api.invoke('settings:get', SIDEBAR_WIDTH_SETTING_KEY)
+      const raw = await getPref(SIDEBAR_WIDTH_SETTING_KEY)
       const width = Number(raw)
       if (raw !== null && Number.isFinite(width)) {
         set({ sidebarWidth: clampSidebarWidth(width) })
@@ -157,7 +158,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setSidebarResizing: (resizing) => set({ sidebarResizing: resizing }),
 
   persistSidebarWidth: () => {
-    void window.api.invoke('settings:set', SIDEBAR_WIDTH_SETTING_KEY, String(get().sidebarWidth))
+    void setPref(SIDEBAR_WIDTH_SETTING_KEY, String(get().sidebarWidth))
   },
 
   todoPanelOpenByThread: {},

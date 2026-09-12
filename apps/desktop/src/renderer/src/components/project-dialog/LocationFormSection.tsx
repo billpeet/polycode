@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { useLocationStore } from '../../stores/locations'
 import { ConnectionType, SshConfig, WslConfig } from '../../types/ipc'
 import { LocationFormSectionProps } from './types'
+import { getPref, setPref } from '../../lib/prefs'
+import { client } from '../../lib/client'
 
 export default function LocationFormSection({ projectId, location, pools, gitUrl, defaultCloneMode, onSaved, onCancel }: LocationFormSectionProps) {
   const createLocation = useLocationStore((s) => s.create)
@@ -29,7 +31,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
 
   useEffect(() => {
     if (!cloneMode) return
-    window.api.invoke('settings:get', 'default_source_dir').then((val) => {
+    getPref('default_source_dir').then((val) => {
       setBaseDir(val?.trim() || '~/source')
     }).catch(() => {})
   }, [cloneMode])
@@ -41,7 +43,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
     }
     const repoName = gitUrl.replace(/\.git$/, '').split('/').filter(Boolean).pop() ?? 'repo'
     if (!cloneLabel) queueMicrotask(() => setCloneLabel(repoName))
-    window.api.invoke('locations:suggestPath', baseDir, repoName).then(setSuggestedPath).catch(() => {})
+    client.invoke('locations:suggestPath', baseDir, repoName).then(setSuggestedPath).catch(() => {})
   }, [cloneMode, baseDir, gitUrl, cloneLabel])
 
   const isSSH = connectionType === 'ssh'
@@ -49,7 +51,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
 
   useEffect(() => {
     if (!isWSL) return
-    window.api.invoke('wsl:list-distros').then((distros) => {
+    client.invoke('wsl:list-distros').then((distros) => {
       setAvailableDistros(distros)
       if (!wslDistro && distros.length > 0) setWslDistro(distros[0])
     }).catch(() => setAvailableDistros([]))
@@ -78,7 +80,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
     setCloning(true)
     setCloneError('')
     try {
-      await window.api.invoke('locations:clone', projectId, labelToUse, gitUrl, suggestedPath)
+      await client.invoke('locations:clone', projectId, labelToUse, gitUrl, suggestedPath)
       onSaved()
     } catch (err) {
       setCloneError(String(err).replace(/^Error:\s*/, ''))
@@ -89,7 +91,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
   function handleSetAsDefault(): void {
     const trimmed = baseDir.trim()
     if (!trimmed) return
-    window.api.invoke('settings:set', 'default_source_dir', trimmed).catch(() => {})
+    setPref('default_source_dir', trimmed).catch(() => {})
   }
 
   async function handleTest(): Promise<void> {
@@ -100,13 +102,13 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
       if (isSSH) {
         const ssh = buildSshConfig()
         if (!ssh || !path.trim()) return
-        const result = await window.api.invoke('ssh:test', ssh, path.trim())
+        const result = await client.invoke('ssh:test', ssh, path.trim())
         setTestResult(result.ok ? 'success' : 'fail')
         if (!result.ok) setError(`SSH connection failed: ${result.error}`)
       } else if (isWSL) {
         const wsl = buildWslConfig()
         if (!wsl || !path.trim()) return
-        const result = await window.api.invoke('wsl:test', wsl, path.trim())
+        const result = await client.invoke('wsl:test', wsl, path.trim())
         setTestResult(result.ok ? 'success' : 'fail')
         if (!result.ok) setError(`WSL test failed: ${result.error}`)
       }
@@ -118,7 +120,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
   }
 
   async function handleBrowse(): Promise<void> {
-    const dir = await window.api.invoke('dialog:open-directory')
+    const dir = await client.invoke('dialog:open-directory')
     if (dir) {
       setPath(dir)
       if (!label) {
@@ -143,7 +145,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
       setTesting(true)
       setTestResult(null)
       try {
-        const result = await window.api.invoke('ssh:test', ssh, path.trim())
+        const result = await client.invoke('ssh:test', ssh, path.trim())
         if (!result.ok) {
           setTestResult('fail')
           setError(`SSH connection failed: ${result.error}`)
@@ -163,7 +165,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
       setTesting(true)
       setTestResult(null)
       try {
-        const result = await window.api.invoke('wsl:test', wsl, path.trim())
+        const result = await client.invoke('wsl:test', wsl, path.trim())
         if (!result.ok) {
           setTestResult('fail')
           setError(`WSL test failed: ${result.error}`)
