@@ -1,6 +1,7 @@
 import { randomBytes } from 'crypto'
 import { getSetting, setSetting } from '../db/queries'
 import { RemoteServerConfig } from '../../shared/types'
+import { normalizeTailscaleLogins } from './identity'
 
 const SERVER_ENABLED_KEY = 'remote:server:enabled'
 const SERVER_HOST_KEY = 'remote:server:host'
@@ -8,6 +9,7 @@ const SERVER_PORT_KEY = 'remote:server:port'
 const SERVER_TOKEN_KEY = 'remote:server:token'
 const SERVER_WEB_ENABLED_KEY = 'remote:server:web'
 const SERVER_ALLOWED_HOSTNAMES_KEY = 'remote:server:allowedHostnames'
+const SERVER_TAILSCALE_LOGINS_KEY = 'remote:server:tailscaleLogins'
 
 export const DEFAULT_REMOTE_CONTROL_PORT = 3285
 export const DEFAULT_REMOTE_CONTROL_HOST = '127.0.0.1'
@@ -59,11 +61,11 @@ export function normalizeAllowedHostnames(values: unknown): string[] {
   return [...out]
 }
 
-function readAllowedHostnames(): string[] {
-  const raw = getSetting(SERVER_ALLOWED_HOSTNAMES_KEY)
+function readJsonList(key: string, normalize: (values: unknown) => string[]): string[] {
+  const raw = getSetting(key)
   if (!raw) return []
   try {
-    return normalizeAllowedHostnames(JSON.parse(raw))
+    return normalize(JSON.parse(raw))
   } catch {
     return []
   }
@@ -76,7 +78,8 @@ export function readRemoteServerConfig(): RemoteServerConfig {
     port: parsePort(getSetting(SERVER_PORT_KEY)),
     token: ensureToken(),
     webEnabled: getSetting(SERVER_WEB_ENABLED_KEY) === 'true',
-    allowedHostnames: readAllowedHostnames(),
+    allowedHostnames: readJsonList(SERVER_ALLOWED_HOSTNAMES_KEY, normalizeAllowedHostnames),
+    tailscaleLogins: readJsonList(SERVER_TAILSCALE_LOGINS_KEY, normalizeTailscaleLogins),
   }
 }
 
@@ -88,6 +91,7 @@ export function saveRemoteServerConfig(config: RemoteServerConfig): RemoteServer
     token: config.token?.trim() || randomBytes(24).toString('hex'),
     webEnabled: Boolean(config.webEnabled),
     allowedHostnames: normalizeAllowedHostnames(config.allowedHostnames),
+    tailscaleLogins: normalizeTailscaleLogins(config.tailscaleLogins),
   }
 
   setSetting(SERVER_ENABLED_KEY, next.enabled ? 'true' : 'false')
@@ -96,5 +100,6 @@ export function saveRemoteServerConfig(config: RemoteServerConfig): RemoteServer
   setSetting(SERVER_TOKEN_KEY, next.token)
   setSetting(SERVER_WEB_ENABLED_KEY, next.webEnabled ? 'true' : 'false')
   setSetting(SERVER_ALLOWED_HOSTNAMES_KEY, JSON.stringify(next.allowedHostnames))
+  setSetting(SERVER_TAILSCALE_LOGINS_KEY, JSON.stringify(next.tailscaleLogins))
   return next
 }

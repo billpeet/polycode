@@ -56,6 +56,20 @@ act?** Three routes:
 - Tiptap: only user drafts reach the `html: true` composer; the editor that
   receives AI-generated PR text is `html: false`.
 
+## Tailnet identity sign-in (added after the review)
+
+A browser may be signed in by the `Tailscale-User-Login` header instead of the
+token. The header is trusted only when all of the following hold, checked in
+`remote/identity.ts`: web access is on; the login is on the user's allowlist
+(default: this node's owner — reaching the port under the tailnet's ACLs is not
+the same as being let in); the socket peer is loopback (`tailscaled` proxies
+from this machine, so any other peer typed the header itself); and the request
+is not a Funnel request. A match does one thing: mint the ordinary session
+cookie, on `GET /api/remote/health` only. Every other request, including every
+mutation, authenticates exactly as before, so the CSRF analysis above is
+unchanged. A local process could forge the header, and could already read the
+token from SQLite — nothing new is granted.
+
 ## Residual
 
 - The session holder is trusted completely. There is no per-channel policy for

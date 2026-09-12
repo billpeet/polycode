@@ -65,6 +65,7 @@ async function start(overrides: Partial<RemoteServerConfig> = {}): Promise<Harne
     token: 'host-token',
     webEnabled: true,
     allowedHostnames: ['pc.tailnet.ts.net'],
+    tailscaleLogins: [],
     ...overrides,
   }
   const deps: RequestHandlerDeps = {
@@ -209,6 +210,54 @@ describe('login exchange', () => {
     const h = await start()
     expect((await h.request({ method: 'POST', path: '/api/remote/session', body: 'not json' })).status).toBe(400)
     expect((await h.request({ method: 'POST', path: '/api/remote/session', body: JSON.stringify({ token: 42 }) })).status).toBe(401)
+  })
+})
+
+describe('tailnet identity sign-in', () => {
+  const IDENTITY = { 'Tailscale-User-Login': 'Owner@Example.com', 'Tailscale-User-Name': 'Owner' }
+
+  it('mints a session on the health probe for an admitted login arriving via the local proxy', async () => {
+    const h = await start({ tailscaleLogins: ['owner@example.com'] })
+    const res = await h.request({ path: '/api/remote/health', headers: IDENTITY })
+    expect(res.status).toBe(200)
+    const cookie = res.headers['set-cookie']?.[0] ?? ''
+    expect(cookie).toMatch(/^polycode_session=[0-9a-f]{64}; /)
+    expect(cookie).toContain('HttpOnly')
+
+    // From here on it is an ordinary session: the header is not needed again.
+    const rpc = await h.request({
+      method: 'POST',
+      path: '/api/remote/rpc',
+      headers: { Cookie: cookie.split(';')[0], Origin: h.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: 'threads:list', args: [] }),
+    })
+    expect(rpc.status).toBe(200)
+  })
+
+  it.each([
+    ['a login that is not admitted', { tailscaleLogins: ['owner@example.com'] }, { 'Tailscale-User-Login': 'guest@example.com' }],
+    ['no identity header', { tailscaleLogins: ['owner@example.com'] }, {}],
+    ['a Funnel request', { tailscaleLogins: ['owner@example.com'] }, { ...IDENTITY, 'Tailscale-Funnel-Request': '?1' }],
+    ['no admitted logins configured', { tailscaleLogins: [] }, IDENTITY],
+    ['web access off', { tailscaleLogins: ['owner@example.com'], webEnabled: false }, IDENTITY],
+  ])('answers 401 and sets no cookie for %s', async (_case, overrides, headers) => {
+    const h = await start(overrides)
+    const res = await h.request({ path: '/api/remote/health', headers })
+    expect(res.status).toBe(401)
+    expect(res.headers['set-cookie']).toBeUndefined()
+  })
+
+  it('never signs in by identity on any endpoint but the health probe', async () => {
+    const h = await start({ tailscaleLogins: ['owner@example.com'] })
+    const rpc = await h.request({
+      method: 'POST',
+      path: '/api/remote/rpc',
+      headers: { ...IDENTITY, Origin: h.origin, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: 'threads:list', args: [] }),
+    })
+    expect(rpc.status).toBe(401)
+    const events = await h.request({ path: '/api/remote/events', headers: IDENTITY })
+    expect(events.status).toBe(401)
   })
 })
 
