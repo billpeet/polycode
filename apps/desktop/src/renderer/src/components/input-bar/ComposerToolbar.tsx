@@ -289,7 +289,7 @@ export default function ComposerToolbar({
   }
 
   return (
-    <div className="flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
+    <div className="@container flex items-center gap-2 px-3 pt-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
       <button
         onClick={() => setPlanMode(threadId, !planMode)}
         disabled={isProcessing}
@@ -304,9 +304,9 @@ export default function ComposerToolbar({
         <PlanIcon />
         Plan
       </button>
-      <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
       {supportsFastMode && (
         <>
+          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
           <button
             onClick={() => setFastMode(threadId, !fastMode)}
             disabled={isProcessing}
@@ -323,11 +323,11 @@ export default function ComposerToolbar({
             <FastIcon />
             Fast
           </button>
-          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>
       )}
       {showThinkingToggle && (
         <>
+          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
           <button
             onClick={() => setCursorThinking(threadId, !cursorThinking)}
             disabled={isProcessing}
@@ -343,11 +343,11 @@ export default function ComposerToolbar({
           >
             Thinking
           </button>
-          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>
       )}
       {permissionOptions.length > 0 && currentThread && (
         <>
+          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
           <div
             className="flex items-center overflow-hidden rounded-md mb-2"
             style={{ border: '1px solid var(--color-border)' }}
@@ -376,13 +376,8 @@ export default function ComposerToolbar({
               )
             })}
           </div>
-          <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
         </>
       )}
-      <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
-        Shift+Enter for newline
-      </span>
-
       <span className="flex-1" />
 
       {isLocalLocation && currentThread && availableDistros.length > 0 && (
