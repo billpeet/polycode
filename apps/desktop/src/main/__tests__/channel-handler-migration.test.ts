@@ -130,6 +130,11 @@ describe('channel handler map migration', () => {
       'remote:getPairingInfo',
       'remote:getConnectionState',
       'remote:reconnect',
+      // Exposing this machine over its tailnet drives the local `tailscale` CLI and
+      // rewrites this machine's own server config — desktop-only by nature.
+      'tailscale:getStatus',
+      'tailscale:enableServe',
+      'tailscale:disableServe',
     ])
   })
 

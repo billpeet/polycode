@@ -246,6 +246,11 @@ export const CHANNEL_REGISTRY = {
   'remote:getConnectionState': { local: true, remote: false },
   'remote:reconnect': { local: true, remote: false },
   'window:close': { local: true, remote: false },
+  // Exposing this machine over its tailnet drives the local `tailscale` CLI and rewrites
+  // this machine's own server config: desktop-only by nature.
+  'tailscale:getStatus': { local: true, remote: false },
+  'tailscale:enableServe': { local: true, remote: false },
+  'tailscale:disableServe': { local: true, remote: false },
   'window:is-maximized': { local: true, remote: false },
   'window:maximize': { local: true, remote: false },
   'window:minimize': { local: true, remote: false },

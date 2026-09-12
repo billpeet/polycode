@@ -194,6 +194,7 @@ import { restartWebhookServer } from '../webhook/server'
 import { readWebhookConfig, saveWebhookConfig } from '../webhook/config'
 import { readRemoteServerConfig, saveRemoteServerConfig } from '../remote/config'
 import { getPairingInfo } from '../remote/lan'
+import { disableTailscaleServe, enableTailscaleServe, getTailscaleStatus } from '../remote/tailscale'
 // `import type`, and it has to stay that way — see `LocalHandlerContext` below and the
 // assertion in channel-handler-migration.test.ts that pins the `type` keyword.
 import type { RemoteControlClient } from '../remote/client'
@@ -2260,6 +2261,35 @@ export function isMigratedChannel(channel: string): channel is MigratedChannel {
   return MIGRATED_CHANNEL_SET.has(channel)
 }
 
+
+  // ── Tailscale ─────────────────────────────────────────────────────────────
+  //
+  // Exposing this machine over its tailnet is two steps the user should not have to
+  // sequence: point `tailscale serve` at our port, then teach our own server to accept the
+  // MagicDNS name and to serve the UI. Doing both here keeps the settings panel one button.
+  // Status is read against the *configured* port, so a port change shows "not served"
+  // until the user exposes again.
+
+  'tailscale:getStatus': () => getTailscaleStatus(readRemoteServerConfig().port),
+
+  'tailscale:enableServe': async (ctx, scheme) => {
+    const current = readRemoteServerConfig()
+    const status = await enableTailscaleServe(scheme, current.port)
+    if (status.serve && status.dnsName) {
+      const saved = saveRemoteServerConfig({
+        ...current,
+        enabled: true,
+        webEnabled: true,
+        allowedHostnames: [...current.allowedHostnames, status.dnsName],
+      })
+      ctx.restartServer(saved)
+    }
+    return status
+  },
+
+  // Leaves the server config alone: the hostname allowlist is harmless without serve, and
+  // the user may be about to expose again.
+  'tailscale:disableServe': () => disableTailscaleServe(readRemoteServerConfig().port),
 /**
  * Transport-facing entry point. Both adapters funnel through here.
  *

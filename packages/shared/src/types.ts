@@ -159,6 +159,33 @@ export interface RemotePairingInfo {
   hostname: string
 }
 
+export type TailscaleServeScheme = 'https' | 'http'
+
+/** A `tailscale serve` entry that forwards to PolyCode's remote-control port. */
+export interface TailscaleServe {
+  scheme: TailscaleServeScheme
+  /** The tailnet-facing port (443 for HTTPS, 80 for HTTP). */
+  port: number
+  /** What to open in a browser, e.g. `https://pc.tailnet.ts.net`. */
+  url: string
+}
+
+export interface TailscaleStatus {
+  /** The `tailscale` CLI was found and answered. */
+  installed: boolean
+  /** The daemon is up and this machine is logged in to a tailnet. */
+  running: boolean
+  /** This machine's MagicDNS name, without the trailing dot. */
+  dnsName: string | null
+  tailnetIps: string[]
+  /** HTTPS certificates are enabled for the tailnet, so `serve --https` can mint one. */
+  httpsAvailable: boolean
+  /** The serve entry pointing at PolyCode, when one exists. */
+  serve: TailscaleServe | null
+  /** The last CLI failure, verbatim, for the settings panel to show. */
+  error: string | null
+}
+
 export const ANTHROPIC_MODELS = [
   { id: 'claude-fable-5[1m]', label: 'Fable 5', contextWindow: 1_000_000 },
   { id: 'claude-opus-4-8', label: 'Opus 4.8', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },

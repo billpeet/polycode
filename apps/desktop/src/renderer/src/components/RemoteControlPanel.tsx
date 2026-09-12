@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
-import { RemoteConnectionStatus, RemoteHost, RemoteHostInput, RemotePairingInfo, RemoteServerConfig } from '../types/ipc'
+import { RemoteConnectionStatus, RemoteHost, RemoteHostInput, RemotePairingInfo, RemoteServerConfig, TailscaleServeScheme, TailscaleStatus } from '../types/ipc'
 import { client } from '../lib/client'
+import { writeClipboardText } from '../lib/clipboard'
 
 const DEFAULT_SERVER: RemoteServerConfig = {
   enabled: false,
@@ -181,6 +182,150 @@ function PairingQrSection({
   )
 }
 
+const TAILSCALE_UNKNOWN: TailscaleStatus = {
+  installed: false,
+  running: false,
+  dnsName: null,
+  tailnetIps: [],
+  httpsAvailable: false,
+  serve: null,
+  error: null,
+}
+
+/**
+ * One-click exposure over the user's tailnet. The desktop drives `tailscale serve`
+ * itself and then rewrites its own server config (allowlist, web access), so the
+ * panel's job is to show where things stand and offer the one sensible next step.
+ */
+function TailscaleSection({ serverPort, onChanged }: { serverPort: number; onChanged: () => Promise<void> }) {
+  const [status, setStatus] = useState<TailscaleStatus | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    client.invoke('tailscale:getStatus')
+      .then((next) => { if (!cancelled) setStatus(next) })
+      .catch((err) => {
+        if (!cancelled) setStatus({ ...TAILSCALE_UNKNOWN, error: err instanceof Error ? err.message : String(err) })
+      })
+    return () => { cancelled = true }
+  }, [serverPort])
+
+  async function run(action: () => Promise<TailscaleStatus>): Promise<void> {
+    setBusy(true)
+    try {
+      const next = await action()
+      setStatus(next)
+      if (!next.error) await onChanged()
+    } catch (err) {
+      setStatus((current) => ({ ...(current ?? TAILSCALE_UNKNOWN), error: err instanceof Error ? err.message : String(err) }))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const expose = (scheme: TailscaleServeScheme): Promise<void> => run(() => client.invoke('tailscale:enableServe', scheme))
+  const stop = (): Promise<void> => run(() => client.invoke('tailscale:disableServe'))
+  const recheck = (): Promise<void> => run(() => client.invoke('tailscale:getStatus'))
+
+  async function copyUrl(url: string): Promise<void> {
+    if (await writeClipboardText(url)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    }
+  }
+
+  const primaryButton = { background: 'var(--color-claude)', color: '#fff', opacity: busy ? 0.6 : 1 }
+
+  return (
+    <div className="flex flex-col gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+          Tailscale
+        </span>
+        {status?.dnsName && (
+          <span className="truncate text-xs font-mono" style={{ color: 'var(--color-text-muted)' }} title={status.tailnetIps.join(', ')}>
+            {status.dnsName}
+          </span>
+        )}
+      </div>
+
+      {status === null && (
+        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Checking…</p>
+      )}
+
+      {status && !status.installed && (
+        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+          Tailscale isn't installed on this machine. Install it from tailscale.com to expose PolyCode to your
+          tailnet with one click — no port forwarding, and only your devices can reach it.
+        </p>
+      )}
+
+      {status && status.installed && !status.running && (
+        <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+          Tailscale is installed but not running or not signed in.
+        </p>
+      )}
+
+      {status?.running && status.serve && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+            Browsers on your tailnet can open this URL and sign in with the host token above.
+            {status.serve.scheme === 'http' && ' Served without TLS: still encrypted by WireGuard, but the browser has no secure context.'}
+          </p>
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-xs font-mono" style={{ color: 'var(--color-text)' }}>{status.serve.url}</span>
+            <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} onClick={() => void copyUrl(status.serve!.url)}>
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} disabled={busy} onClick={() => void stop()}>
+              Stop serving
+            </button>
+          </div>
+        </div>
+      )}
+
+      {status?.running && !status.serve && (
+        <div className="flex flex-col gap-2">
+          {status.httpsAvailable ? (
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              Serve PolyCode at https://{status.dnsName} with a certificate from Tailscale. The server keeps listening
+              on loopback; only devices on your tailnet can reach it.
+            </p>
+          ) : (
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              HTTPS certificates aren't enabled for your tailnet. Turn them on in the Tailscale admin console under
+              DNS → HTTPS Certificates, then recheck — or expose without TLS (encrypted by WireGuard, but the browser
+              has no secure context, so clipboard access is limited).
+            </p>
+          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {status.httpsAvailable ? (
+              <button className="rounded px-3 py-1.5 text-xs font-medium" style={primaryButton} disabled={busy} onClick={() => void expose('https')}>
+                {busy ? 'Working…' : 'Expose over HTTPS'}
+              </button>
+            ) : (
+              <>
+                <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} disabled={busy} onClick={() => void recheck()}>
+                  Recheck
+                </button>
+                <button className="rounded px-2 py-1 text-xs" style={secondaryButtonStyle()} disabled={busy} onClick={() => void expose('http')}>
+                  {busy ? 'Working…' : 'Expose without TLS'}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {status?.error && (
+        <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>{status.error}</p>
+      )}
+    </div>
+  )
+}
+
 export function RemoteControlPanel({ hideHeader }: Props) {
   const [server, setServer] = useState<RemoteServerConfig>(DEFAULT_SERVER)
   /** Free text while editing; parsed into `allowedHostnames` on save. */
@@ -211,6 +356,13 @@ export function RemoteControlPanel({ hideHeader }: Props) {
       setError(err instanceof Error ? err.message : 'Failed to load remote settings')
     }).finally(() => setLoading(false))
   }, [])
+
+  /** Re-read the server config after something other than this panel changed it. */
+  async function reloadServer(): Promise<void> {
+    const saved = await client.invoke('remote:getServerConfig')
+    setServer(saved)
+    setHostnamesText(saved.allowedHostnames.join(', '))
+  }
 
   async function refreshHosts(): Promise<void> {
     const [savedHosts, active] = await Promise.all([
@@ -370,6 +522,8 @@ export function RemoteControlPanel({ hideHeader }: Props) {
             </p>
           </div>
         )}
+
+        <TailscaleSection serverPort={server.port} onChanged={reloadServer} />
 
         {server.enabled && !isLoopbackHost(server.host) && (
           <p

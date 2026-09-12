@@ -6,6 +6,33 @@ PolyCode is an Electron desktop app for orchestrating multiple AI coding-agent s
 
 PolyCode's desktop-to-desktop and mobile remote-control protocol uses bearer-authenticated HTTP. HTTP does not encrypt bearer tokens, stored integration credentials, filesystem data, or command results in transit. When a remote host uses an `http://` URL, only run it on a trusted LAN or behind a trusted encrypted tunnel/reverse proxy; use HTTPS for traffic that crosses an untrusted network.
 
+## Web access over Tailscale
+
+A PolyCode desktop can serve its own UI to a browser. The server keeps listening on
+`127.0.0.1:3285`; [Tailscale](https://tailscale.com) terminates HTTPS with a `*.ts.net`
+certificate, applies your tailnet's access rules, and forwards to it. Nothing is exposed
+on the LAN.
+
+1. Install Tailscale on the desktop and sign in. In the Tailscale admin console, enable
+   **DNS → HTTPS Certificates** (once per tailnet).
+2. In PolyCode, open **Settings → Remote**, enable the host server, and under
+   **Tailscale** click **Expose over HTTPS**. PolyCode runs `tailscale serve` for you,
+   adds this machine's MagicDNS name to *Allowed hostnames*, and switches *Web access*
+   on. The URL shown (`https://<machine>.<tailnet>.ts.net`) works from any device on
+   the tailnet.
+3. Open it in a browser and paste the host token from the same settings page. The
+   browser gets an `HttpOnly` session cookie; the token itself never reaches the page.
+
+Without HTTPS certificates, **Expose without TLS** serves `http://<machine>.<tailnet>.ts.net`
+instead — still WireGuard-encrypted on the wire, but the browser has no secure context,
+so clipboard access is restricted. Both are equivalent to running
+`tailscale serve --bg --https=443 http://127.0.0.1:3285` by hand.
+
+In a browser, desktop-only features are hidden: window controls, opening files in
+Explorer/VS Code/a terminal, native file pickers (the browser's own picker is used),
+the internal browser panel, the updater, and routine management. Everything else —
+threads, terminals, git, commands, plans — works as on the desktop.
+
 Built with Electron, React, TypeScript, Vite, Tailwind CSS, Zustand, pnpm, and
 Node.js.
 
