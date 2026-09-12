@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { FileEntry } from '../types/ipc'
 import { useThreadStore } from './threads'
 import { useUiStore } from './ui'
+import { client } from '../lib/client'
 
 interface FileContent {
   content: string
@@ -94,7 +95,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     set((s) => ({ loadingPaths: new Set([...s.loadingPaths, dirPath]) }))
 
     try {
-      const entries = await window.api.invoke('files:list', dirPath) as FileEntry[]
+      const entries = await client.invoke('files:list', dirPath) as FileEntry[]
       set((s) => ({
         entriesByPath: { ...s.entriesByPath, [dirPath]: entries },
         loadingPaths: new Set([...s.loadingPaths].filter((p) => p !== dirPath)),
@@ -118,7 +119,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     await Promise.all(
       pathsToRefresh.map(async (p) => {
         try {
-          const entries = await window.api.invoke('files:list', p) as FileEntry[]
+          const entries = await client.invoke('files:list', p) as FileEntry[]
           set((s) => ({
             entriesByPath: { ...s.entriesByPath, [p]: entries },
             loadingPaths: new Set([...s.loadingPaths].filter((lp) => lp !== p)),
@@ -186,7 +187,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
       loadingContentByLocation: locationId ? { ...s.loadingContentByLocation, [locationId]: true } : s.loadingContentByLocation,
     }))
     try {
-      const result = await window.api.invoke('files:read', filePath)
+      const result = await client.invoke('files:read', filePath)
       if (get().selectedFilePathByLocation[locationId ?? ''] === filePath || get().selectedFilePath === filePath) {
         set((s) => ({
           fileContent: result,
@@ -235,7 +236,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     }))
     if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
     try {
-      const diff = await window.api.invoke('git:diff', repoPath, filePath, staged) as string
+      const diff = await client.invoke('git:diff', repoPath, filePath, staged) as string
       const next = { repoPath, filePath, diff, staged, kind: 'working' as const }
       set((s) => ({ diffView: next, loadingDiff: false, diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: next } : s.diffViewByLocation, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     } catch {
@@ -254,7 +255,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     }))
     if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
     try {
-      const diff = await window.api.invoke('git:compareDiffToMain', repoPath, filePath) as string
+      const diff = await client.invoke('git:compareDiffToMain', repoPath, filePath) as string
       const next = { repoPath, filePath, diff, staged: false, kind: 'compareToMain' as const }
       set((s) => ({ diffView: next, loadingDiff: false, diffViewByLocation: locationId ? { ...s.diffViewByLocation, [locationId]: next } : s.diffViewByLocation, loadingDiffByLocation: locationId ? { ...s.loadingDiffByLocation, [locationId]: false } : s.loadingDiffByLocation }))
     } catch {
@@ -273,7 +274,7 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     }))
     if (locationId) useUiStore.getState().setLocationAuxTab(locationId, 'diff')
     try {
-      const diff = await window.api.invoke('git:commitDiff', repoPath, commitSha, filePath) as string
+      const diff = await client.invoke('git:commitDiff', repoPath, commitSha, filePath) as string
       const current = locationId ? get().diffViewByLocation[locationId] : get().diffView
       if (current && current.filePath === filePath && current.commitSha && current.commitSha !== commitSha) return
       const next = { repoPath, filePath, diff, staged: false, kind: 'commit' as const, commitSha, commitShortSha }
@@ -292,11 +293,11 @@ export const useFilesStore = create<FilesStore>((set, get) => ({
     try {
       let diff = ''
       if (current.kind === 'commit' && current.commitSha) {
-        diff = await window.api.invoke('git:commitDiff', current.repoPath, current.commitSha, current.filePath) as string
+        diff = await client.invoke('git:commitDiff', current.repoPath, current.commitSha, current.filePath) as string
       } else if (current.kind === 'compareToMain') {
-        diff = await window.api.invoke('git:compareDiffToMain', current.repoPath, current.filePath) as string
+        diff = await client.invoke('git:compareDiffToMain', current.repoPath, current.filePath) as string
       } else {
-        diff = await window.api.invoke('git:diff', current.repoPath, current.filePath, current.staged) as string
+        diff = await client.invoke('git:diff', current.repoPath, current.filePath, current.staged) as string
       }
 
       const latest = (locationId && get().diffViewByLocation[locationId]) || get().diffView

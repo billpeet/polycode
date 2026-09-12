@@ -3,6 +3,7 @@ import { AlertTriangle, Check, ChevronDown, ChevronRight, Pencil, Play, Plus, X 
 import { Routine, Thread } from '../../types/ipc'
 import RoutineEditModal from '../RoutineEditModal'
 import { formatDateTime } from '../../lib/locale'
+import { client } from '../../lib/client'
 
 const RUNS_SHOWN = 10
 
@@ -32,27 +33,27 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
   const [creating, setCreating] = useState(false)
 
   const refresh = useCallback(async () => {
-    const list = await window.api.invoke('routines:list', projectId)
+    const list = await client.invoke('routines:list', projectId)
     setRoutines(list)
     const runs: Record<string, Thread[]> = {}
     await Promise.all(list.map(async (routine) => {
-      runs[routine.id] = await window.api.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
+      runs[routine.id] = await client.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
     }))
     setRunsByRoutine(runs)
   }, [projectId])
 
   useEffect(() => {
     let cancelled = false
-    void window.api.invoke('routines:list', projectId).then(async (list) => {
+    void client.invoke('routines:list', projectId).then(async (list) => {
       const runs: Record<string, Thread[]> = {}
       await Promise.all(list.map(async (routine) => {
-        runs[routine.id] = await window.api.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
+        runs[routine.id] = await client.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
       }))
       if (cancelled) return
       setRoutines(list)
       setRunsByRoutine(runs)
     })
-    const unsubscribe = window.api.on('routines:changed', () => void refresh())
+    const unsubscribe = client.on('routines:changed', () => void refresh())
     return () => {
       cancelled = true
       unsubscribe()
@@ -69,22 +70,22 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
   }
 
   const runNow = async (routine: Routine) => {
-    const threadId = await window.api.invoke('routines:runNow', routine.id)
+    const threadId = await client.invoke('routines:runNow', routine.id)
     await refresh()
     if (threadId) onSelectThread(threadId)
   }
 
   const dismissRun = async (run: Thread) => {
-    const unshipped = await window.api.invoke('routines:runHasUnshippedWork', run.id)
+    const unshipped = await client.invoke('routines:runHasUnshippedWork', run.id)
     if (unshipped && !window.confirm('This run’s worktree has unshipped changes. Delete it anyway?')) return
-    await window.api.invoke('routines:dismissRun', run.id)
+    await client.invoke('routines:dismissRun', run.id)
     await refresh()
   }
 
   const deleteRoutine = async (routine: Routine) => {
     if (!window.confirm(`Delete routine "${routine.name}"? Its past runs will move to Archived.`)) return
     try {
-      await window.api.invoke('routines:delete', routine.id)
+      await client.invoke('routines:delete', routine.id)
     } catch (error) {
       window.alert(error instanceof Error ? error.message : String(error))
     }

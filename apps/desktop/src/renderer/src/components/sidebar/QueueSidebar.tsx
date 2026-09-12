@@ -7,6 +7,7 @@ import { getThreadStatusColor, relativeTime, SidebarResizeHandle, ViewModeSwitch
 import SnoozeMenu, { timeUntil } from './SnoozeMenu'
 import ProjectFavicon from '../ProjectFavicon'
 import { formatDateTime } from '../../lib/locale'
+import { client } from '../../lib/client'
 
 interface QueueSidebarProps {
   queueThreads: QueueThread[]
@@ -235,8 +236,8 @@ function CollapsedQueueSection({
       try {
         const trimmed = search.trim() || null
         const rows = variant === 'snoozed'
-          ? await window.api.invoke('threads:listQueueSnoozed', trimmed, ARCHIVED_PAGE_SIZE, offset)
-          : await window.api.invoke('threads:listQueueArchived', trimmed, ARCHIVED_PAGE_SIZE, offset)
+          ? await client.invoke('threads:listQueueSnoozed', trimmed, ARCHIVED_PAGE_SIZE, offset)
+          : await client.invoke('threads:listQueueArchived', trimmed, ARCHIVED_PAGE_SIZE, offset)
         setThreads((prev) => append ? [...prev, ...rows] : rows)
         setHasMore(rows.length === ARCHIVED_PAGE_SIZE)
       } catch (err) {
@@ -353,10 +354,10 @@ export default function QueueSidebar({
       return
     }
     const timeoutId = window.setTimeout(() => {
-      window.api.invoke('threads:listQueueArchived', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
+      client.invoke('threads:listQueueArchived', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
         .then(setArchivedMatches)
         .catch((err) => console.error('Failed to search archived queue threads', err))
-      window.api.invoke('threads:listQueueSnoozed', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
+      client.invoke('threads:listQueueSnoozed', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
         .then(setSnoozedMatches)
         .catch((err) => console.error('Failed to search snoozed queue threads', err))
     }, 200)

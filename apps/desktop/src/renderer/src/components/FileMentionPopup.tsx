@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import Fuse from 'fuse.js'
 import { SearchableFile } from '../types/ipc'
+import { client } from '../lib/client'
 
 interface Props {
   projectPath: string
@@ -55,7 +56,7 @@ export default function FileMentionPopup({ projectPath, query, onSelect, onClose
       if (!cancelled) setLoading(true)
     })
 
-    window.api.invoke('files:searchList', projectPath).then((result) => {
+    client.invoke('files:searchList', projectPath).then((result) => {
       if (!cancelled) {
         setFiles(result)
         setLoading(false)

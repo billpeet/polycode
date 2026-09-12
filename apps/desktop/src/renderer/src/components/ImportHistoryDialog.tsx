@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { ClaudeProject, ClaudeSession } from '../types/ipc'
 import { useThreadStore } from '../stores/threads'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface Props {
   projectId: string
@@ -45,8 +46,8 @@ export default function ImportHistoryDialog({ projectId, locationId, locationPat
       setLoading(true)
       try {
         const [projects, importedIds] = await Promise.all([
-          window.api.invoke('claude-history:listProjects') as Promise<ClaudeProject[]>,
-          window.api.invoke('claude-history:importedIds', projectId) as Promise<string[]>
+          client.invoke('claude-history:listProjects') as Promise<ClaudeProject[]>,
+          client.invoke('claude-history:importedIds', projectId) as Promise<string[]>
         ])
 
         // Find matching project by path
@@ -59,7 +60,7 @@ export default function ImportHistoryDialog({ projectId, locationId, locationPat
           return
         }
 
-        const allSessions = await window.api.invoke('claude-history:listSessions', match.encodedPath) as ClaudeSession[]
+        const allSessions = await client.invoke('claude-history:listSessions', match.encodedPath) as ClaudeSession[]
 
         // Filter out already imported sessions
         const importedSet = new Set(importedIds)

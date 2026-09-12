@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { RemoteConnectionStatus, RemoteHost, RemoteHostInput, RemotePairingInfo, RemoteServerConfig } from '../types/ipc'
+import { client } from '../lib/client'
 
 const DEFAULT_SERVER: RemoteServerConfig = {
   enabled: false,
@@ -62,7 +63,7 @@ function PairingQrSection({
 
   useEffect(() => {
     if (!show || isLoopback) return
-    window.api
+    client
       .invoke('remote:getPairingInfo')
       .then(setInfo)
       .catch(() => setInfo({ addresses: [], hostname: 'PolyCode' }))
@@ -175,9 +176,9 @@ export function RemoteControlPanel({ hideHeader }: Props) {
 
   useEffect(() => {
     Promise.all([
-      window.api.invoke('remote:getServerConfig'),
-      window.api.invoke('remote:getHosts'),
-      window.api.invoke('remote:getActiveHost'),
+      client.invoke('remote:getServerConfig'),
+      client.invoke('remote:getHosts'),
+      client.invoke('remote:getActiveHost'),
     ]).then(([serverConfig, savedHosts, active]) => {
       setServer(serverConfig)
       setHosts(savedHosts)
@@ -189,8 +190,8 @@ export function RemoteControlPanel({ hideHeader }: Props) {
 
   async function refreshHosts(): Promise<void> {
     const [savedHosts, active] = await Promise.all([
-      window.api.invoke('remote:getHosts'),
-      window.api.invoke('remote:getActiveHost'),
+      client.invoke('remote:getHosts'),
+      client.invoke('remote:getActiveHost'),
     ])
     setHosts(savedHosts)
     setActiveHostState(active)
@@ -206,7 +207,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     setError(null)
     setStatus(null)
     try {
-      const saved = await window.api.invoke('remote:setServerConfig', next)
+      const saved = await client.invoke('remote:setServerConfig', next)
       setServer(saved)
       setStatus(saved.enabled ? 'Remote host server is running.' : 'Remote host server is stopped.')
     } catch (err) {
@@ -218,7 +219,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
 
   async function regenerateToken(): Promise<void> {
     setError(null)
-    const saved = await window.api.invoke('remote:regenerateServerToken')
+    const saved = await client.invoke('remote:regenerateServerToken')
     setServer(saved)
     setStatus('Token regenerated.')
   }
@@ -227,7 +228,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     setTestResult(null)
     setError(null)
     try {
-      const result = await window.api.invoke('remote:testHost', form)
+      const result = await client.invoke('remote:testHost', form)
       setTestResult(result)
     } catch (err) {
       setTestResult({ ok: false, error: err instanceof Error ? err.message : 'Connection failed' })
@@ -239,7 +240,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     setError(null)
     setStatus(null)
     try {
-      await window.api.invoke('remote:addHost', form)
+      await client.invoke('remote:addHost', form)
       setForm(DEFAULT_FORM)
       setTestResult(null)
       await refreshHosts()
@@ -253,13 +254,13 @@ export function RemoteControlPanel({ hideHeader }: Props) {
 
   async function connect(id: string | null): Promise<void> {
     setError(null)
-    const active = await window.api.invoke('remote:setActiveHost', id)
+    const active = await client.invoke('remote:setActiveHost', id)
     setActiveHostState(active)
     setStatus(active ? `Connected to ${active.label}.` : 'Remote host disconnected.')
   }
 
   async function removeHost(id: string): Promise<void> {
-    await window.api.invoke('remote:removeHost', id)
+    await client.invoke('remote:removeHost', id)
     await refreshHosts()
   }
 

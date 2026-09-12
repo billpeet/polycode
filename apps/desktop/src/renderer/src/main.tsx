@@ -6,6 +6,7 @@ import App from './App'
 import { SENTRY_DSN } from '../../shared/sentry.config'
 import { installRendererPerfObservers, reportReactCommit } from './lib/perf'
 import { initPostHog } from './lib/posthog'
+import { client } from './lib/client'
 
 type RendererLogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug'
 
@@ -39,7 +40,7 @@ function installRendererLogForwarding(): void {
   for (const level of levels) {
     console[level] = (...args: unknown[]) => {
       originalConsole[level](...args)
-      window.api.send('log:write', {
+      client.send('log:write', {
         source: 'renderer',
         level,
         timestamp: new Date().toISOString(),

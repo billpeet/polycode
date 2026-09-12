@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { Provider, SlashCommand } from '../types/ipc'
+import { client } from '../lib/client'
 
 interface SlashCommandStore {
   /** Commands keyed by scope: projectId or 'global' */
@@ -17,22 +18,22 @@ export const useSlashCommandStore = create<SlashCommandStore>((set) => ({
   commandsByScope: {},
 
   fetch: async (projectId, provider, cwd) => {
-    const commands = await window.api.invoke('slash-commands:list', projectId ?? null)
-    const skills = provider ? await window.api.invoke('skills:list', provider, cwd ?? null) : []
+    const commands = await client.invoke('slash-commands:list', projectId ?? null)
+    const skills = provider ? await client.invoke('skills:list', provider, cwd ?? null) : []
     const key = projectId ?? 'global'
     set((s) => ({ commandsByScope: { ...s.commandsByScope, [key]: [...skills, ...commands] } }))
   },
 
   create: async (projectId, name, description, prompt) => {
-    const cmd = await window.api.invoke('slash-commands:create', projectId, name, description, prompt)
-    const commands = await window.api.invoke('slash-commands:list', projectId ?? null)
+    const cmd = await client.invoke('slash-commands:create', projectId, name, description, prompt)
+    const commands = await client.invoke('slash-commands:list', projectId ?? null)
     const key = projectId ?? 'global'
     set((s) => ({ commandsByScope: { ...s.commandsByScope, [key]: commands } }))
     return cmd
   },
 
   update: async (id, name, description, prompt) => {
-    await window.api.invoke('slash-commands:update', id, name, description, prompt)
+    await client.invoke('slash-commands:update', id, name, description, prompt)
     set((s) => {
       const newScope = { ...s.commandsByScope }
       for (const key of Object.keys(newScope)) {
@@ -45,7 +46,7 @@ export const useSlashCommandStore = create<SlashCommandStore>((set) => ({
   },
 
   remove: async (id) => {
-    await window.api.invoke('slash-commands:delete', id)
+    await client.invoke('slash-commands:delete', id)
     set((s) => {
       const newScope = { ...s.commandsByScope }
       for (const key of Object.keys(newScope)) {

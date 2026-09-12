@@ -13,6 +13,7 @@ import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
 import { Tooltip } from './ui/tooltip'
+import { client } from '../lib/client'
 
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
 
@@ -356,7 +357,7 @@ export default function ThreadHeader({ threadId }: Props) {
         {locationPath && !isPendingThread && (
           <span className="flex items-center gap-0.5 flex-shrink-0">
             <button
-              onClick={() => window.api.invoke('shell:copyPath', locationPath)}
+              onClick={() => client.invoke('shell:copyPath', locationPath)}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
               title={`Copy path: ${locationPath}`}
@@ -367,7 +368,7 @@ export default function ThreadHeader({ threadId }: Props) {
               </svg>
             </button>
             <button
-              onClick={() => window.api.invoke('shell:openInExplorer', locationPath)}
+              onClick={() => client.invoke('shell:openInExplorer', locationPath)}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
               title="Open in Explorer"
@@ -384,7 +385,7 @@ export default function ThreadHeader({ threadId }: Props) {
                     ? { distro: thread.wsl_distro }
                     : null
                 const sshConfig = location?.connection_type === 'ssh' ? (location.ssh ?? null) : null
-                window.api.invoke('shell:openInVsCode', locationPath, sshConfig, wslConfig)
+                client.invoke('shell:openInVsCode', locationPath, sshConfig, wslConfig)
               }}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}
@@ -403,7 +404,7 @@ export default function ThreadHeader({ threadId }: Props) {
                   (location?.connection_type === 'local' && thread?.use_wsl && thread.wsl_distro)
                     ? { distro: thread.wsl_distro }
                     : null
-                window.api.invoke('shell:openInTerminal', locationPath, wslConfig)
+                client.invoke('shell:openInTerminal', locationPath, wslConfig)
               }}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{ color: 'var(--color-text-muted)', background: 'none', border: 'none', cursor: 'pointer', lineHeight: 1 }}

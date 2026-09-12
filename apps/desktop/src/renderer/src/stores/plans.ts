@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { client } from '../lib/client'
 
 export interface PlanFileEntry {
   name: string
@@ -72,7 +73,7 @@ export const usePlanStore = create<PlanStore>((set) => ({
 }))
 
 // Subscribe to plan:associated events from session layer (per-thread)
-window.api.on('plan:associated', (data: unknown) => {
+client.on('plan:associated', (data: unknown) => {
   const { threadId, name, path, content } = data as {
     threadId: string
     name: string
@@ -85,7 +86,7 @@ window.api.on('plan:associated', (data: unknown) => {
 })
 
 // Subscribe to plan-file:changed events from file watcher (content updates)
-window.api.on('plan-file:changed', (data: unknown) => {
+client.on('plan-file:changed', (data: unknown) => {
   const { name, content, modifiedAt } = data as {
     name: string
     path: string

@@ -4,6 +4,7 @@ import type { UpdateState } from '../types/ipc'
 import { useToastStore } from '../stores/toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { UpdateReleaseNotesDialog } from './UpdateReleaseNotesDialog'
+import { client } from '../lib/client'
 
 const INITIAL_STATE: UpdateState = {
   available: false,
@@ -27,13 +28,13 @@ export function UpdateBanner(): React.JSX.Element | null {
   const [showNotes, setShowNotes] = useState(false)
 
   useEffect(() => {
-    window.api.invoke('update:get-state').then(setState).catch(() => {})
-    return window.api.on('update:state', (next) => setState(next as UpdateState))
+    client.invoke('update:get-state').then(setState).catch(() => {})
+    return client.on('update:state', (next) => setState(next as UpdateState))
   }, [])
 
   const handleRestart = async (): Promise<void> => {
     try {
-      const { success } = await window.api.invoke('update:apply')
+      const { success } = await client.invoke('update:apply')
       if (!success) {
         // The app did not quit, so un-stick the release-notes dialog — the toast
         // below explains why nothing restarted.

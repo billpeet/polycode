@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useProjectStore } from '../../stores/projects'
 import { NewProjectSpec, Project } from '../../types/ipc'
+import { getPref, setPref } from '../../lib/prefs'
+import { client } from '../../lib/client'
 
 type SourceKind = 'new' | 'existing' | 'clone'
 
@@ -45,7 +47,7 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
 
   // Load the user's saved default base directory once.
   useEffect(() => {
-    window.api.invoke('settings:get', 'default_source_dir').then((val) => {
+    getPref('default_source_dir').then((val) => {
       if (val) setBaseDir(val)
     }).catch(() => {})
   }, [])
@@ -64,7 +66,7 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
       return
     }
     let cancelled = false
-    window.api.invoke('locations:suggestPath', baseDir.trim(), folder)
+    client.invoke('locations:suggestPath', baseDir.trim(), folder)
       .then((p) => { if (!cancelled) setSuggestedPath(p) })
       .catch(() => { if (!cancelled) setSuggestedPath('') })
     return () => { cancelled = true }
@@ -79,25 +81,25 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
       return
     }
     let cancelled = false
-    window.api.invoke('locations:suggestPath', baseDir.trim(), folder)
+    client.invoke('locations:suggestPath', baseDir.trim(), folder)
       .then((p) => { if (!cancelled) setNewPath(p) })
       .catch(() => { if (!cancelled) setNewPath('') })
     return () => { cancelled = true }
   }, [sourceKind, baseDir, name, newPathDirty])
 
   function handleSetDefaultBaseDir(): void {
-    window.api.invoke('settings:set', 'default_source_dir', baseDir.trim()).catch(() => {})
+    setPref('default_source_dir', baseDir.trim()).catch(() => {})
   }
 
   async function handleBrowse(): Promise<void> {
-    const dir = await window.api.invoke('dialog:open-directory')
+    const dir = await client.invoke('dialog:open-directory')
     if (!dir) return
     setExistingPath(dir)
     const base = dir.split(/[/\\]/).filter(Boolean).pop() ?? ''
     if (base) autofillName(base)
     setDetectedRemote(null)
     try {
-      const remote = await window.api.invoke('git:getRemoteUrl', dir)
+      const remote = await client.invoke('git:getRemoteUrl', dir)
       setDetectedRemote(remote)
     } catch {
       setDetectedRemote(null)

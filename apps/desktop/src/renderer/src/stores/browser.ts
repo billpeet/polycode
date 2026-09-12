@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import type { BrowserSessionConfig } from '../types/ipc'
 import { useUiStore } from './ui'
 import { useToastStore } from './toast'
+import { client } from '../lib/client'
 
 export interface BrowserTab {
   id: string
@@ -66,7 +67,7 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     const state = get()
     let session = state.sessionByLocation[locationId]
     if (!session) {
-      const result = await window.api.invoke('browser:prepareSession', locationId)
+      const result = await client.invoke('browser:prepareSession', locationId)
       if (!result.ok) {
         get().discardLocation(locationId)
         useToastStore.getState().add({ type: 'info', message: 'That project location no longer exists.' })
@@ -113,14 +114,14 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
   /** Hide the panel and drop the guest pages; the partition's storage persists. */
   closePanel: (locationId) => {
     set((s) => ({ visibleByLocation: { ...s.visibleByLocation, [locationId]: false } }))
-    void window.api.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
+    void client.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
   },
 
   newTab: async (locationId, url = null) => {
     const state = get()
     let session = state.sessionByLocation[locationId]
     if (!session) {
-      const result = await window.api.invoke('browser:prepareSession', locationId)
+      const result = await client.invoke('browser:prepareSession', locationId)
       if (!result.ok) {
         get().discardLocation(locationId)
         useToastStore.getState().add({ type: 'info', message: 'That project location no longer exists.' })
@@ -163,7 +164,7 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
     }))
 
     if (remaining.length === 0) {
-      void window.api.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
+      void client.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
     }
   },
 
@@ -191,6 +192,6 @@ export const useBrowserStore = create<BrowserStore>((set, get) => ({
       sessionByLocation: withoutKey(s.sessionByLocation, locationId),
     }))
     useUiStore.getState().clearLocationAuxTab(locationId)
-    void window.api.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
+    void client.invoke('browser:releaseSession', locationId).catch(() => { /* ignore */ })
   },
 }))

@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { RepoLocation, SshConfig, WslConfig, ConnectionType, LocationPool } from '../types/ipc'
 import { useThreadStore } from './threads'
 import { useBrowserStore } from './browser'
+import { client } from '../lib/client'
 
 interface LocationStore {
   byProject: Record<string, RepoLocation[]>
@@ -27,7 +28,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   deletingWorktreesByProject: {},
 
   fetch: async (projectId) => {
-    const locations = await window.api.invoke('locations:list', projectId)
+    const locations = await client.invoke('locations:list', projectId)
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: locations }
     }))
@@ -35,7 +36,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
 
   fetchPools: async (projectId) => {
     try {
-      const pools = await window.api.invoke('location-pools:list', projectId)
+      const pools = await client.invoke('location-pools:list', projectId)
       set((s) => ({
         poolsByProject: { ...s.poolsByProject, [projectId]: pools }
       }))
@@ -47,7 +48,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   createPool: async (projectId, name) => {
-    const pool = await window.api.invoke('location-pools:create', projectId, name)
+    const pool = await client.invoke('location-pools:create', projectId, name)
     set((s) => ({
       poolsByProject: { ...s.poolsByProject, [projectId]: [...(s.poolsByProject[projectId] ?? []), pool] }
     }))
@@ -55,7 +56,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   updatePool: async (id, projectId, name) => {
-    await window.api.invoke('location-pools:update', id, name)
+    await client.invoke('location-pools:update', id, name)
     set((s) => ({
       poolsByProject: {
         ...s.poolsByProject,
@@ -65,7 +66,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   removePool: async (id, projectId) => {
-    await window.api.invoke('location-pools:delete', id)
+    await client.invoke('location-pools:delete', id)
     set((s) => ({
       poolsByProject: {
         ...s.poolsByProject,
@@ -81,7 +82,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   create: async (projectId, label, connectionType, path, poolId, ssh, wsl) => {
-    const location = await window.api.invoke('locations:create', projectId, label, connectionType, path, poolId ?? null, ssh, wsl)
+    const location = await client.invoke('locations:create', projectId, label, connectionType, path, poolId ?? null, ssh, wsl)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -92,7 +93,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   update: async (id, projectId, label, connectionType, path, poolId, ssh, wsl) => {
-    await window.api.invoke('locations:update', id, label, connectionType, path, poolId ?? null, ssh, wsl)
+    await client.invoke('locations:update', id, label, connectionType, path, poolId ?? null, ssh, wsl)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -104,7 +105,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   remove: async (id, projectId) => {
-    await window.api.invoke('locations:delete', id)
+    await client.invoke('locations:delete', id)
     useBrowserStore.getState().discardLocation(id)
     set((s) => ({
       byProject: {
@@ -115,7 +116,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   createWorktree: async (parentLocationId, projectId, label) => {
-    const location = await window.api.invoke('locations:createWorktree', parentLocationId, label ?? null)
+    const location = await client.invoke('locations:createWorktree', parentLocationId, label ?? null)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -181,7 +182,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
       }
     }))
     try {
-      await window.api.invoke('locations:removeWorktree', id)
+      await client.invoke('locations:removeWorktree', id)
       useBrowserStore.getState().discardLocation(id)
     } catch (error) {
       useThreadStore.setState({
@@ -212,7 +213,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   checkout: async (id, projectId) => {
-    await window.api.invoke('locations:checkout', id)
+    await client.invoke('locations:checkout', id)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -222,7 +223,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   returnToPool: async (id, projectId) => {
-    await window.api.invoke('locations:returnToPool', id)
+    await client.invoke('locations:returnToPool', id)
     set((s) => ({
       byProject: {
         ...s.byProject,

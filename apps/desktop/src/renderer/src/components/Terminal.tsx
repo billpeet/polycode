@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminal'
 import { writeClipboardText } from '../lib/clipboard'
+import { client } from '../lib/client'
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   if (event.altKey) return false
@@ -86,19 +87,19 @@ export default function TerminalContent({ threadId, locationId }: Props) {
 
         terminalIdRef.current = terminalId
 
-        const buffer = await window.api.invoke('terminal:getBuffer', terminalId) as string
+        const buffer = await client.invoke('terminal:getBuffer', terminalId) as string
         if (disposed) return
         if (buffer) {
           term.write(buffer)
         }
 
-        const unsubData = window.api.on(`terminal:data:${terminalId}`, (data) => {
+        const unsubData = client.on(`terminal:data:${terminalId}`, (data) => {
           term.write(data as string)
         })
 
         const inputDisposable = term.onData((data) => {
           if (!terminalIdRef.current) return
-          window.api.send('terminal:write', terminalIdRef.current, data)
+          client.send('terminal:write', terminalIdRef.current, data)
         })
 
         cleanupRef.current = () => {
@@ -134,7 +135,7 @@ export default function TerminalContent({ threadId, locationId }: Props) {
         try {
           fitAddonRef.current.fit()
           const { cols, rows } = xtermRef.current
-          window.api.send('terminal:resize', terminalIdRef.current, cols, rows)
+          client.send('terminal:resize', terminalIdRef.current, cols, rows)
         } catch {
           // Ignore errors during resize.
         }

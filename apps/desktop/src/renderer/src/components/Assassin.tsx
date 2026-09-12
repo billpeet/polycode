@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from 'react'
 import { Crosshair } from 'lucide-react'
+import { client } from '../lib/client'
 
 type Mode = 'pid' | 'port'
 type Feedback = { type: 'success' | 'error'; text: string } | null
@@ -39,7 +40,7 @@ export default function Assassin({ threadId }: { threadId: string }) {
     setLoading(true)
     showFeedback(null)
     try {
-      const result = await window.api.invoke('process:kill', trimmed, mode, threadId)
+      const result = await client.invoke('process:kill', trimmed, mode, threadId)
       if (result.ok) {
         showFeedback({ type: 'success', text: `Killed ${mode === 'pid' ? 'PID' : 'port'} ${trimmed}` })
         setValue('')

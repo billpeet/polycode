@@ -5,6 +5,7 @@ import { useCommandStore, EMPTY_COMMANDS, instKey } from '../../stores/commands'
 import { useBrowserStore } from '../../stores/browser'
 import { useThreadStore } from '../../stores/threads'
 import { CommandStatus } from '../../types/ipc'
+import { client } from '../../lib/client'
 
 function StatusDot({ status }: { status: CommandStatus }) {
   const color =
@@ -73,7 +74,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
     if (commands.length === 0 || !locationId) return
     const unsubs = commands.map((cmd) => {
       const key = instKey(cmd.id, locationId)
-      return window.api.on(`command:status:${key}`, (status) => {
+      return client.on(`command:status:${key}`, (status) => {
         setStatus(key, status as CommandStatus)
       })
     })
@@ -84,7 +85,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
     if (commands.length === 0 || !locationId) return
     const unsubs = commands.map((cmd) => {
       const key = instKey(cmd.id, locationId)
-      return window.api.on(`command:ports:${key}`, (ports) => {
+      return client.on(`command:ports:${key}`, (ports) => {
         setPorts(key, ports as number[])
       })
     })

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { YouTrackServer } from '../types/ipc'
+import { client } from '../lib/client'
 
 interface YouTrackStore {
   servers: YouTrackServer[]
@@ -13,18 +14,18 @@ export const useYouTrackStore = create<YouTrackStore>((set) => ({
   servers: [],
 
   fetch: async () => {
-    const servers = await window.api.invoke('youtrack:servers:list')
+    const servers = await client.invoke('youtrack:servers:list')
     set({ servers })
   },
 
   create: async (name, url, token) => {
-    const server = await window.api.invoke('youtrack:servers:create', name, url, token)
+    const server = await client.invoke('youtrack:servers:create', name, url, token)
     set((s) => ({ servers: [...s.servers, server] }))
     return server
   },
 
   update: async (id, name, url, token) => {
-    await window.api.invoke('youtrack:servers:update', id, name, url, token)
+    await client.invoke('youtrack:servers:update', id, name, url, token)
     set((s) => ({
       servers: s.servers.map((srv) =>
         srv.id === id ? { ...srv, name, url, token, updated_at: new Date().toISOString() } : srv
@@ -33,7 +34,7 @@ export const useYouTrackStore = create<YouTrackStore>((set) => ({
   },
 
   remove: async (id) => {
-    await window.api.invoke('youtrack:servers:delete', id)
+    await client.invoke('youtrack:servers:delete', id)
     set((s) => ({ servers: s.servers.filter((srv) => srv.id !== id) }))
   },
 }))

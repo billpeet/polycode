@@ -9,6 +9,7 @@ import { toKebabBranchName } from '../../lib/utils'
 import { GitBranches, GitFileChange } from '../../types/ipc'
 import MarkdownEditor from '../MarkdownEditor'
 import { SparkleIcon } from './shared'
+import { client } from '../../lib/client'
 
 interface Props {
   projectPath: string
@@ -141,7 +142,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
   // Load the branch list for the target dropdown.
   useEffect(() => {
     let cancelled = false
-    void window.api.invoke('git:branches', projectPath).then((result) => {
+    void client.invoke('git:branches', projectPath).then((result) => {
       if (!cancelled) setBranches(result)
     }).catch(() => { /* leave dropdown with just the default target */ })
     return () => { cancelled = true }
@@ -156,7 +157,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     setCollapsedFiles(new Set())
     setDiffLoading(true)
     try {
-      const result = await window.api.invoke('git:compareDiffToBranch', projectPath, target.trim())
+      const result = await client.invoke('git:compareDiffToBranch', projectPath, target.trim())
       if (diffReqId.current === reqId) setDiff(result)
     } catch {
       if (diffReqId.current === reqId) setDiff('')
@@ -240,7 +241,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     const startingDescription = description
     setGenerating(true)
     try {
-      const generated = await window.api.invoke('git:generatePullRequestText', projectPath, target.trim())
+      const generated = await client.invoke('git:generatePullRequestText', projectPath, target.trim())
       if (!generated.title.trim() && !generated.description.trim()) {
         addToast({
           type: 'error',
@@ -274,7 +275,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     const startingMessage = commitMessage
     setGeneratingCommit(true)
     try {
-      const message = await window.api.invoke('git:generateCommitMessage', projectPath)
+      const message = await client.invoke('git:generateCommitMessage', projectPath)
       if (message.trim()) {
         setCommitMessage((current) => (current === startingMessage ? message : current))
       } else {
@@ -303,7 +304,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
     const startingName = newBranchName
     setGeneratingBranch(true)
     try {
-      const name = await window.api.invoke('git:generateBranchName', projectPath)
+      const name = await client.invoke('git:generateBranchName', projectPath)
       if (name.trim()) {
         setNewBranchName((current) => (current === startingName ? toKebabBranchName(name) : current))
       } else {
@@ -340,7 +341,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
   async function publishPullRequest(values: { title: string; description: string; branchName: string; commitMessage: string }) {
     setCreating(true)
     try {
-      const result = await window.api.invoke('git:publishBranch', {
+      const result = await client.invoke('git:publishBranch', {
         repoPath: projectPath,
         targetBranch: target.trim(),
         title: values.title.trim(),
@@ -403,9 +404,9 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
       setGeneratingBranch(needsBranchName)
       try {
         const [prText, generatedCommitMessage, generatedBranchName] = await Promise.all([
-          needsPrText ? window.api.invoke('git:generatePullRequestText', projectPath, target.trim()) : Promise.resolve(null),
-          needsCommitMessage ? window.api.invoke('git:generateCommitMessage', projectPath) : Promise.resolve(null),
-          needsBranchName ? window.api.invoke('git:generateBranchName', projectPath) : Promise.resolve(null),
+          needsPrText ? client.invoke('git:generatePullRequestText', projectPath, target.trim()) : Promise.resolve(null),
+          needsCommitMessage ? client.invoke('git:generateCommitMessage', projectPath) : Promise.resolve(null),
+          needsBranchName ? client.invoke('git:generateBranchName', projectPath) : Promise.resolve(null),
         ])
 
         if (!values.title.trim() && prText?.title.trim()) values.title = prText.title

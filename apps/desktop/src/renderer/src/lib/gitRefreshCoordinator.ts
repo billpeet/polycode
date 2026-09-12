@@ -1,4 +1,5 @@
 import { useGitStore } from '../stores/git'
+import { client } from './client'
 
 const STATUS_FALLBACK_INTERVAL_MS = 5 * 60_000
 const REMOTE_INTERVAL_MS = 60_000
@@ -71,7 +72,7 @@ function updateTimers(entry: RepositoryEntry): void {
 
 async function startWatch(entry: RepositoryEntry): Promise<void> {
   try {
-    entry.watching = await window.api.invoke('git:watchStart', entry.path)
+    entry.watching = await client.invoke('git:watchStart', entry.path)
   } catch {
     entry.watching = false
   }
@@ -80,7 +81,7 @@ async function startWatch(entry: RepositoryEntry): Promise<void> {
 function stopWatch(entry: RepositoryEntry): void {
   if (!entry.watching) return
   entry.watching = false
-  void window.api.invoke('git:watchStop', entry.path)
+  void client.invoke('git:watchStop', entry.path)
 }
 
 function activate(key: string): void {
@@ -136,7 +137,7 @@ export function subscribeToGitRefresh(repoPath: string, options?: { includeRemot
   }
 }
 
-window.api.on('git:repoChanged', (...args) => {
+client.on('git:repoChanged', (...args) => {
   const event = args[0] as { path?: string }
   if (!event.path) return
   const entry = repositories.get(repositoryKey(event.path))

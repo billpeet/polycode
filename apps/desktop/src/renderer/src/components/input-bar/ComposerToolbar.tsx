@@ -5,6 +5,7 @@ import ModelSelectorMenu from './ModelSelectorMenu'
 import { PlanIcon, YoloIcon, FastIcon, formatElapsed } from './icons'
 import { Favourite } from '../../stores/favourites'
 import BackgroundTerminals from './BackgroundTerminals'
+import { client } from '../../lib/client'
 
 function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -115,7 +116,7 @@ export default function ComposerToolbar({
     if (currentProvider !== 'claude-code') return
 
     let cancelled = false
-    window.api.invoke('models:claudeAvailable', threadId)
+    client.invoke('models:claudeAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveClaudeModels(models)
       })
@@ -130,7 +131,7 @@ export default function ComposerToolbar({
     if (currentProvider !== 'codex') return
 
     let cancelled = false
-    window.api.invoke('models:codexAvailable', threadId)
+    client.invoke('models:codexAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveCodexModels(models)
       })
@@ -145,7 +146,7 @@ export default function ComposerToolbar({
     if (currentProvider !== 'opencode') return
 
     let cancelled = false
-    window.api.invoke('models:opencodeAvailable', threadId)
+    client.invoke('models:opencodeAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveOpenCodeModels(models)
       })
@@ -168,7 +169,7 @@ export default function ComposerToolbar({
     }, 0)
     const forceRefresh = forcePiModelsRefresh.current
     forcePiModelsRefresh.current = false
-    window.api.invoke('models:piAvailable', threadId, forceRefresh)
+    client.invoke('models:piAvailable', threadId, forceRefresh)
       .then((models) => {
         if (cancelled) return
         setLivePiModels(models)
@@ -188,7 +189,7 @@ export default function ComposerToolbar({
     if (currentProvider !== 'cursor') return
 
     let cancelled = false
-    window.api.invoke('models:cursorAvailable', threadId)
+    client.invoke('models:cursorAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveCursorModels(models)
       })
@@ -203,7 +204,7 @@ export default function ComposerToolbar({
     if (currentProvider !== 'grok') return
 
     let cancelled = false
-    window.api.invoke('models:grokAvailable', threadId)
+    client.invoke('models:grokAvailable', threadId)
       .then((models) => {
         if (!cancelled && models.length > 0) setLiveGrokModels(models)
       })

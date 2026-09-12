@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { client } from '../lib/client'
 
 interface WebhookConfig {
   enabled: boolean
@@ -21,7 +22,7 @@ export function WebhookPanel({ hideHeader }: Props) {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    window.api.invoke('webhook:getConfig').then((cfg) => {
+    client.invoke('webhook:getConfig').then((cfg) => {
       setConfig(cfg as WebhookConfig)
       setLoading(false)
     }).catch(() => setLoading(false))
@@ -39,7 +40,7 @@ export function WebhookPanel({ hideHeader }: Props) {
     setSaving(true)
     setError(null)
     try {
-      await window.api.invoke('webhook:setConfig', config)
+      await client.invoke('webhook:setConfig', config)
       setSaved(true)
       setTimeout(() => setSaved(false), 2000)
     } catch (err) {

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { ProjectCommand, CommandStatus, CommandLogLine } from '../types/ipc'
 import { useUiStore } from './ui'
+import { client } from '../lib/client'
 
 export const EMPTY_COMMANDS: ProjectCommand[] = []
 export const EMPTY_LOGS: CommandLogLine[] = []
@@ -72,7 +73,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   pinnedInstancesByLocation: {},
 
   fetch: async (projectId) => {
-    const commands = await window.api.invoke('commands:list', projectId)
+    const commands = await client.invoke('commands:list', projectId)
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: commands },
     }))
@@ -85,7 +86,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     // long task). A failed lookup keeps whatever status we already had.
     const results = await Promise.allSettled(
       commands.map(async (cmd) => {
-        const status = await window.api.invoke('commands:getStatus', cmd.id, locationId)
+        const status = await client.invoke('commands:getStatus', cmd.id, locationId)
         return [instKey(cmd.id, locationId), status] as [string, CommandStatus]
       })
     )
@@ -98,7 +99,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   create: async (projectId, name, command, cwd, shell, runOnWorktreeCreate) => {
-    const created = await window.api.invoke('commands:create', projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false)
+    const created = await client.invoke('commands:create', projectId, name, command, cwd, shell, runOnWorktreeCreate ?? false)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -108,7 +109,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   update: async (id, projectId, name, command, cwd, shell, runOnWorktreeCreate) => {
-    await window.api.invoke('commands:update', id, name, command, cwd, shell, runOnWorktreeCreate ?? false)
+    await client.invoke('commands:update', id, name, command, cwd, shell, runOnWorktreeCreate ?? false)
     set((s) => ({
       byProject: {
         ...s.byProject,
@@ -120,7 +121,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   },
 
   remove: async (id, projectId) => {
-    await window.api.invoke('commands:delete', id)
+    await client.invoke('commands:delete', id)
     set((s) => {
       const statusMap = { ...s.statusMap }
       const portsMap = { ...s.portsMap }
@@ -162,13 +163,13 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   start: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
     set((s) => ({ statusMap: { ...s.statusMap, [key]: 'running' } }))
-    await window.api.invoke('commands:start', commandId, locationId)
+    await client.invoke('commands:start', commandId, locationId)
   },
 
   stop: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
     set((s) => ({ statusMap: { ...s.statusMap, [key]: 'stopping' } }))
-    await window.api.invoke('commands:stop', commandId, locationId)
+    await client.invoke('commands:stop', commandId, locationId)
   },
 
   restart: async (commandId, locationId) => {
@@ -178,7 +179,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
       statusMap: { ...s.statusMap, [key]: 'stopping' },
       logsByCommand: { ...s.logsByCommand, [key]: [] },
     }))
-    await window.api.invoke('commands:restart', commandId, locationId)
+    await client.invoke('commands:restart', commandId, locationId)
   },
 
   setStatus: (key, status) => {
@@ -197,7 +198,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchPorts: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    const ports = await window.api.invoke('commands:getPorts', commandId, locationId)
+    const ports = await client.invoke('commands:getPorts', commandId, locationId)
     set((s) => ({ portsMap: { ...s.portsMap, [key]: ports } }))
   },
 
@@ -233,7 +234,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchLogs: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    const logs = await window.api.invoke('commands:getLogs', commandId, locationId)
+    const logs = await client.invoke('commands:getLogs', commandId, locationId)
     const pending = pendingLogsByKey.get(key) ?? EMPTY_LOGS
     if (pending.length > 0) pendingLogsByKey.delete(key)
     const merged = pending.length > 0 ? logs.concat(pending) : logs

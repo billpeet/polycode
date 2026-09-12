@@ -1,5 +1,7 @@
 import { create } from 'zustand'
 import { Project, NewProjectSpec, ProjectSortMode } from '../types/ipc'
+import { getPref, setPref } from '../lib/prefs'
+import { client } from '../lib/client'
 
 const SORT_MODE_SETTING_KEY = 'projects:sortMode'
 
@@ -73,7 +75,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   loadSortMode: async () => {
     try {
-      const raw = await window.api.invoke('settings:get', SORT_MODE_SETTING_KEY)
+      const raw = await getPref(SORT_MODE_SETTING_KEY)
       if (raw === 'alphabetical' || raw === 'lastMessage') {
         set({ sortMode: raw })
       }
@@ -84,7 +86,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
   setSortMode: (mode) => {
     set({ sortMode: mode })
-    void window.api.invoke('settings:set', SORT_MODE_SETTING_KEY, mode)
+    void setPref(SORT_MODE_SETTING_KEY, mode)
   },
 
   touch: (projectId) => set((s) => {
@@ -99,8 +101,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ loading: true })
     try {
       const [projects, archivedProjects] = await Promise.all([
-        window.api.invoke('projects:list'),
-        window.api.invoke('projects:listArchived'),
+        client.invoke('projects:list'),
+        client.invoke('projects:listArchived'),
       ])
       set({ projects, archivedProjects, loading: false })
     } catch (err) {
@@ -110,19 +112,19 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   create: async (name, gitUrl, allowMainBranchCommits = true) => {
-    const project = await window.api.invoke('projects:create', name, gitUrl, allowMainBranchCommits)
+    const project = await client.invoke('projects:create', name, gitUrl, allowMainBranchCommits)
     set((s) => ({ projects: [project, ...s.projects] }))
     return project
   },
 
   createFull: async (spec) => {
-    const { project } = await window.api.invoke('projects:createFull', spec)
+    const { project } = await client.invoke('projects:createFull', spec)
     set((s) => ({ projects: [project, ...s.projects] }))
     return project
   },
 
   update: async (id, name, gitUrl, allowMainBranchCommits = true, faviconPath) => {
-    await window.api.invoke('projects:update', id, name, gitUrl, allowMainBranchCommits, faviconPath)
+    await client.invoke('projects:update', id, name, gitUrl, allowMainBranchCommits, faviconPath)
     set((s) => ({
       projects: s.projects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, favicon_path: faviconPath ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
       archivedProjects: s.archivedProjects.map((p) => p.id === id ? { ...p, name, git_url: gitUrl ?? null, favicon_path: faviconPath ?? null, allow_main_branch_commits: allowMainBranchCommits } : p),
@@ -130,7 +132,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   remove: async (id) => {
-    await window.api.invoke('projects:delete', id)
+    await client.invoke('projects:delete', id)
     set((s) => {
       const newExpanded = new Set(s.expandedProjectIds)
       newExpanded.delete(id)
@@ -144,7 +146,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   archive: async (id) => {
-    await window.api.invoke('projects:archive', id)
+    await client.invoke('projects:archive', id)
     set((s) => {
       const project = s.projects.find((p) => p.id === id)
       if (!project) return s
@@ -161,7 +163,7 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   unarchive: async (id) => {
-    await window.api.invoke('projects:unarchive', id)
+    await client.invoke('projects:unarchive', id)
     set((s) => {
       const project = s.archivedProjects.find((p) => p.id === id)
       if (!project) return s

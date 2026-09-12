@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { client } from '../lib/client'
 
 export function AzureDevOpsSettingsPanel() {
   const [configured, setConfigured] = useState(false)
@@ -6,14 +7,14 @@ export function AzureDevOpsSettingsPanel() {
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   useEffect(() => {
-    window.api.invoke('azure:pat:status').then(setConfigured).catch(() => setMessage('Could not load credential status.'))
+    client.invoke('azure:pat:status').then(setConfigured).catch(() => setMessage('Could not load credential status.'))
   }, [])
 
   async function save(value: string) {
     setBusy(true)
     setMessage('')
     try {
-      await window.api.invoke('azure:pat:set', value)
+      await client.invoke('azure:pat:set', value)
       setConfigured(Boolean(value.trim()))
       setToken('')
       setMessage(value ? 'PAT saved. Refresh your pull requests to connect.' : 'PAT removed.')

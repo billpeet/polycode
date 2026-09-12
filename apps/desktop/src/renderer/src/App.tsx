@@ -29,6 +29,8 @@ import UiErrorBoundary from './components/UiErrorBoundary'
 import { useDatabaseSync } from './hooks/useDatabaseSync'
 import { useRemoteConnectionStore } from './stores/remoteConnection'
 import { writeClipboardText } from './lib/clipboard'
+import { getPref, setPref } from './lib/prefs'
+import { client } from './lib/client'
 
 const SETTING_PROJECT_KEY = 'selectedProjectId'
 const SETTING_THREAD_KEY = 'selectedThreadId'
@@ -77,7 +79,7 @@ export default function App() {
   // Popups from browser-panel guest pages (target=_blank) arrive here as
   // "open this url in the same location's browser panel" requests from main.
   useEffect(() => {
-    return window.api.on('browser:popup-request', (locationId, url) => {
+    return client.on('browser:popup-request', (locationId, url) => {
       if (typeof locationId === 'string' && typeof url === 'string') {
         void useBrowserStore.getState().open(locationId, url)
       }
@@ -87,8 +89,8 @@ export default function App() {
   // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
     Promise.all([
-      window.api.invoke('settings:get', SETTING_PROJECT_KEY),
-      window.api.invoke('settings:get', SETTING_THREAD_KEY),
+      getPref(SETTING_PROJECT_KEY),
+      getPref(SETTING_THREAD_KEY),
       fetchProjects(),
       fetchYouTrackServers(),
       loadFavourites(),
@@ -280,7 +282,7 @@ export default function App() {
   }, [layoutMode, selectedThreadId, auxTabs])
 
   useEffect(() => {
-    return window.api.on('remote:active-changed', () => {
+    return client.on('remote:active-changed', () => {
       useProjectStore.setState({
         projects: [],
         archivedProjects: [],
@@ -378,13 +380,13 @@ export default function App() {
   // 4. Persist selections whenever they change
   useEffect(() => {
     if (selectedProjectId) {
-      window.api.invoke('settings:set', SETTING_PROJECT_KEY, selectedProjectId)
+      setPref(SETTING_PROJECT_KEY, selectedProjectId)
     }
   }, [selectedProjectId])
 
   useEffect(() => {
     if (selectedThreadId) {
-      window.api.invoke('settings:set', SETTING_THREAD_KEY, selectedThreadId)
+      setPref(SETTING_THREAD_KEY, selectedThreadId)
     }
   }, [selectedThreadId])
 

@@ -25,6 +25,7 @@ import SidebarDialogs, {
   SidebarProjectDialogState,
 } from './sidebar/SidebarDialogs'
 import { useSidebar } from './ui/sidebar-context'
+import { client } from '../lib/client'
 
 function playChime() {
   try {
@@ -175,16 +176,16 @@ export default function Sidebar() {
 
     for (const [threadId, projectId] of projectByThread) {
       if (!subsRef.current.has(threadId)) {
-        const unsubTitle = window.api.on(`thread:title:${threadId}`, (...args) => {
+        const unsubTitle = client.on(`thread:title:${threadId}`, (...args) => {
           setName(threadId, args[0] as string)
         })
-        const unsubStatus = window.api.on(`thread:status:${threadId}`, (...args) => {
+        const unsubStatus = client.on(`thread:status:${threadId}`, (...args) => {
           const status = args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
           setStatus(threadId, status)
           if (status === 'running') touchProject(projectId)
           refreshQueueIfActive()
         })
-        const unsubComplete = window.api.on(`thread:complete:${threadId}`, (...args) => {
+        const unsubComplete = client.on(`thread:complete:${threadId}`, (...args) => {
           const currentStatus = useThreadStore.getState().statusMap[threadId]
           const completionStatus = args[0] as ThreadStatus | undefined
           if (currentStatus === 'running' || currentStatus === 'stopping') {
@@ -259,7 +260,7 @@ export default function Sidebar() {
       activeKeys.add(instance.key)
       if (commandSubsRef.current.has(instance.key)) continue
       pairsToHydrate.add(`${instance.projectId}\u0000${instance.locationId}`)
-      const unsubscribe = window.api.on(`command:status:${instance.key}`, (status) => {
+      const unsubscribe = client.on(`command:status:${instance.key}`, (status) => {
         setCommandStatus(instance.key, status as 'idle' | 'running' | 'stopping' | 'error' | 'stopped')
       })
       commandSubsRef.current.set(instance.key, unsubscribe)
@@ -294,7 +295,7 @@ export default function Sidebar() {
 
   // Refresh thread list when a webhook creates a thread in this project
   useEffect(() => {
-    const unsub = window.api.on('webhook:thread-created', (...args) => {
+    const unsub = client.on('webhook:thread-created', (...args) => {
       const { projectId } = args[0] as { projectId: string; threadId: string }
       fetchThreads(projectId)
       touchProject(projectId)
@@ -322,7 +323,7 @@ export default function Sidebar() {
   useEffect(() => {
     for (const location of visibleLocations) {
       if (location.connection_type !== 'local') continue
-      window.api.invoke('locations:pathExists', location.path).then((exists) => {
+      client.invoke('locations:pathExists', location.path).then((exists) => {
         setPathExistsByLocation((prev) => {
           if (prev[location.id] === exists) return prev
           return { ...prev, [location.id]: exists }
@@ -418,7 +419,7 @@ export default function Sidebar() {
       return
     }
     const locations = locationsByProject[project.id]
-      ?? await window.api.invoke('locations:list', project.id) as RepoLocation[]
+      ?? await client.invoke('locations:list', project.id) as RepoLocation[]
     const activeLocation = locations.find((location) => !location.pool_id || location.checked_out)
     if (activeLocation) {
       handleNewThread(project.id, activeLocation.id)
@@ -431,7 +432,7 @@ export default function Sidebar() {
     selectProject(project.id)
     expandProject(project.id)
     await Promise.all([fetchThreads(project.id), fetchLocations(project.id), fetchPools(project.id)])
-    const locations = await window.api.invoke('locations:list', project.id) as RepoLocation[]
+    const locations = await client.invoke('locations:list', project.id) as RepoLocation[]
     const activeLocation = locations.find((location) => !location.pool_id || location.checked_out)
     if (!activeLocation) return
     handleNewThread(project.id, activeLocation.id)
@@ -479,7 +480,7 @@ export default function Sidebar() {
     if (!worktree) return
     let facts: WorkingTreeFacts | null = null
     try {
-      facts = await window.api.invoke('git:workingTreeFacts', worktree.path)
+      facts = await client.invoke('git:workingTreeFacts', worktree.path)
     } catch {
       return
     }
@@ -561,7 +562,7 @@ export default function Sidebar() {
         let locationId = loadedActiveLocations[0]?.id ?? null
 
         if (!locationId) {
-          const fetchedLocations = await window.api.invoke('locations:list', projectId) as RepoLocation[]
+          const fetchedLocations = await client.invoke('locations:list', projectId) as RepoLocation[]
           const fetchedActiveLocations = fetchedLocations.filter((location) => !location.pool_id || location.checked_out)
           locationId = fetchedActiveLocations[0]?.id ?? null
         }

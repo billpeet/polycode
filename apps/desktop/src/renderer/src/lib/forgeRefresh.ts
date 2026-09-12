@@ -1,4 +1,5 @@
 import type { PullRequest } from '../types/ipc'
+import { client } from './client'
 
 const METADATA_TTL_MS = 30 * 60_000
 const BASE_BACKOFF_MS = 30_000
@@ -67,10 +68,10 @@ async function getMetadata(repoPath: string, force: boolean): Promise<Metadata> 
   if (!force && cached && cached.expiresAt > Date.now()) return cached
 
   const [provider, defaultBranch] = await Promise.all([
-    window.api.invoke('git:hostingProvider', repoPath),
-    window.api.invoke('git:defaultBranch', repoPath),
+    client.invoke('git:hostingProvider', repoPath),
+    client.invoke('git:defaultBranch', repoPath),
   ])
-  const pageUrl = provider ? await window.api.invoke('forge:pr:webUrl', repoPath) : null
+  const pageUrl = provider ? await client.invoke('forge:pr:webUrl', repoPath) : null
   const metadata = { provider, defaultBranch, pageUrl, expiresAt: Date.now() + METADATA_TTL_MS }
   metadataByPath.set(key, metadata)
   return metadata
@@ -94,7 +95,7 @@ export function refreshForge(
 
   const request = (async () => {
     try {
-      const isRepo = await window.api.invoke('git:isRepo', repoPath)
+      const isRepo = await client.invoke('git:isRepo', repoPath)
       if (!isRepo) {
         metadataByPath.delete(key)
         failureByPath.delete(key)
@@ -123,7 +124,7 @@ export function refreshForge(
         options?.onList?.(result)
         return result
       }
-      const openPrs = await window.api.invoke('forge:pr:list', repoPath)
+      const openPrs = await client.invoke('forge:pr:list', repoPath)
       const previous = resultByPath.get(key)
       const listed: ForgeRefreshResult = {
         ...metadata,
@@ -136,11 +137,11 @@ export function refreshForge(
 
       // Merge/check/comment state and the current-branch lookup are deliberately
       // second-phase work: neither can delay rendering the newly fetched list.
-      const enrichment = window.api.invoke('forge:pr:enrich', repoPath, openPrs).catch(() => openPrs)
+      const enrichment = client.invoke('forge:pr:enrich', repoPath, openPrs).catch(() => openPrs)
       const hasOpenCurrent = openPrs.some((pr) => pr.sourceBranch === branch)
       const currentRequest = hasOpenCurrent
         ? enrichment.then((prs) => prs.find((pr) => pr.sourceBranch === branch) ?? listed.current)
-        : window.api.invoke('forge:pr:current', repoPath, branch).catch(() => listed.current)
+        : client.invoke('forge:pr:current', repoPath, branch).catch(() => listed.current)
       const [enrichedPrs, current] = await Promise.all([enrichment, currentRequest])
       failureByPath.delete(key)
       const result: ForgeRefreshResult = { ...listed, openPrs: enrichedPrs, current }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RemoteConnectionPhase, RemoteHost } from '../types/ipc'
 import { initRemoteConnectionStore, useRemoteConnectionStore } from '../stores/remoteConnection'
+import { client } from '../lib/client'
 
 const PHASE_DOT: Record<RemoteConnectionPhase, { color: string; label: string; pulse?: boolean }> = {
   local: { color: 'var(--color-text-muted)', label: 'Local instance' },
@@ -22,10 +23,10 @@ export default function TitleBar() {
   }, [])
 
   useEffect(() => {
-    window.api.invoke('window:is-maximized').then((maximized) => {
+    client.invoke('window:is-maximized').then((maximized) => {
       setIsMaximized((prev) => (prev === maximized ? prev : maximized))
     })
-    return window.api.on('window:maximized-changed', (maximized) => {
+    return client.on('window:maximized-changed', (maximized) => {
       const next = maximized as boolean
       setIsMaximized((prev) => (prev === next ? prev : next))
     })
@@ -34,19 +35,19 @@ export default function TitleBar() {
   useEffect(() => {
     async function loadRemoteState() {
       const [savedHosts, active] = await Promise.all([
-        window.api.invoke('remote:getHosts'),
-        window.api.invoke('remote:getActiveHost'),
+        client.invoke('remote:getHosts'),
+        client.invoke('remote:getActiveHost'),
       ])
       setHosts(savedHosts)
       setActiveHost(active)
     }
 
     void loadRemoteState()
-    const offActive = window.api.on('remote:active-changed', (...args) => {
+    const offActive = client.on('remote:active-changed', (...args) => {
       setActiveHost((args[0] as RemoteHost | null) ?? null)
-      void window.api.invoke('remote:getHosts').then(setHosts).catch(() => undefined)
+      void client.invoke('remote:getHosts').then(setHosts).catch(() => undefined)
     })
-    const offHosts = window.api.on('remote:hosts-changed', (...args) => {
+    const offHosts = client.on('remote:hosts-changed', (...args) => {
       setHosts((args[0] as RemoteHost[] | undefined) ?? [])
     })
     return () => {
@@ -56,21 +57,21 @@ export default function TitleBar() {
   }, [])
 
   function switchHost(id: string) {
-    void window.api.invoke('remote:setActiveHost', id === 'local' ? null : id)
+    void client.invoke('remote:setActiveHost', id === 'local' ? null : id)
       .then((host) => setActiveHost(host))
       .catch((error) => console.error('[remote] Failed to switch host', error))
   }
 
   function minimize() {
-    window.api.invoke('window:minimize')
+    client.invoke('window:minimize')
   }
 
   function maximize() {
-    window.api.invoke('window:maximize')
+    client.invoke('window:maximize')
   }
 
   function close() {
-    window.api.invoke('window:close')
+    client.invoke('window:close')
   }
 
   return (

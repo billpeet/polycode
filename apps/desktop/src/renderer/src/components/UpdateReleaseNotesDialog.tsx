@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Download, ExternalLink, GitCommitHorizontal, Loader2 } from 'lucide-react'
 import type { UpdateReleaseNotes } from '../types/ipc'
 import { useBackdropClose } from '../hooks/useBackdropClose'
+import { client } from '../lib/client'
 
 interface Props {
   /** Pending version the notes describe; shown in the header. */
@@ -40,7 +41,7 @@ export function UpdateReleaseNotesDialog({ version, onClose, onInstall }: Props)
 
   useEffect(() => {
     let cancelled = false
-    window.api
+    client
       .invoke('update:release-notes')
       .then((result) => {
         if (!cancelled) setNotes(result as UpdateReleaseNotes | null)

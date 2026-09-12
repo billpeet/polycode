@@ -12,6 +12,7 @@ import { registerUrlLinks, shouldOpenCommandLogLinkInternally } from '../lib/xte
 import { writeClipboardText } from '../lib/clipboard'
 import { settleBackgroundIpc } from '../lib/backgroundIpc'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
+import { client } from '../lib/client'
 
 const EMPTY_PINNED: string[] = []
 const EMPTY_PORTS: number[] = []
@@ -238,11 +239,11 @@ function CommandLogPanel({
     // The internal browser is useful here only for loopback services reached
     // through remote control. Other URLs belong in the system browser.
     const disposeLinks = registerUrlLinks(term, (url) => {
-      void window.api.invoke('remote:getActiveHost').then((activeHost) => {
+      void client.invoke('remote:getActiveHost').then((activeHost) => {
         if (locationId && shouldOpenCommandLogLinkInternally(url, activeHost !== null)) {
           return useBrowserStore.getState().open(locationId, url)
         }
-        return window.api.invoke('shell:openExternal', url)
+        return client.invoke('shell:openExternal', url)
       })
     })
 
@@ -256,7 +257,7 @@ function CommandLogPanel({
     })
 
     // Load existing logs from backend
-    window.api.invoke('commands:getLogs', commandId, locationId).then((logs: CommandLogLine[]) => {
+    client.invoke('commands:getLogs', commandId, locationId).then((logs: CommandLogLine[]) => {
       if (logs.length > 0) {
         term.write(buildXtermChunk(logs))
       }
@@ -281,7 +282,7 @@ function CommandLogPanel({
 
   // Subscribe to streaming log events
   useEffect(() => {
-    const unsub = window.api.on(`command:log:${instanceKey}`, (payload) => {
+    const unsub = client.on(`command:log:${instanceKey}`, (payload) => {
       const term = xtermRef.current
       if (!term) return
       const lines: CommandLogLine[] = Array.isArray(payload)
@@ -303,7 +304,7 @@ function CommandLogPanel({
 
   // Subscribe to port events
   useEffect(() => {
-    const unsub = window.api.on(`command:ports:${instanceKey}`, (nextPorts) => {
+    const unsub = client.on(`command:ports:${instanceKey}`, (nextPorts) => {
       setPorts(instanceKey, nextPorts as number[])
     })
     return unsub
@@ -331,7 +332,7 @@ function CommandLogPanel({
   useEffect(() => {
     let cancelled = false
     if (status === 'running' || status === 'stopping') {
-      void settleBackgroundIpc(window.api.invoke('commands:getPid', commandId, locationId))
+      void settleBackgroundIpc(client.invoke('commands:getPid', commandId, locationId))
         .then((pid) => {
           if (!cancelled && pid !== undefined) setLoadedPid(pid)
         })

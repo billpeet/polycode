@@ -6,6 +6,7 @@ import { SlashCommandsPanel } from './SlashCommandsDialog'
 import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
 import { WebhookPanel } from './WebhookPanel'
 import { RemoteControlPanel } from './RemoteControlPanel'
+import { client } from '../lib/client'
 
 type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote'
 
@@ -30,7 +31,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
 
   async function openLogsFolder(): Promise<void> {
     try {
-      const result = await window.api.invoke('app:open-logs-folder')
+      const result = await client.invoke('app:open-logs-folder')
       if (typeof result === 'string' && result.trim()) {
         throw new Error(result)
       }

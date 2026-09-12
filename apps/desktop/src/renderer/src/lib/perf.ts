@@ -1,4 +1,5 @@
 import type { ProfilerOnRenderCallback } from 'react'
+import { client } from './client'
 
 const SUSPECTED_SLEEP_THRESHOLD_MS = 30_000
 const DEFAULT_MIN_INTERVAL_MS = 5000
@@ -56,7 +57,7 @@ export function reportPerf(
   if (!shouldSend(key, options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS)) return
 
   const detailText = serializeDetails({ ...details, ...options.logDetails })
-  window.api.send('log:write', {
+  client.send('log:write', {
     source: 'renderer',
     level: options.level ?? 'warn',
     timestamp: new Date().toISOString(),
@@ -65,7 +66,7 @@ export function reportPerf(
       detailText,
     ].filter(Boolean),
   })
-  window.api.send('telemetry:duration', {
+  client.send('telemetry:duration', {
     name: `polycode.renderer.${name.replace(/[^a-zA-Z0-9_.-]/g, '_')}`,
     durationMs,
     attributes: details,

@@ -1,5 +1,11 @@
+import { client } from './client'
+
+/**
+ * OS regional-format locale under Electron (supplied by preload). A browser has no
+ * such channel, so the navigator's language stands in.
+ */
 export function systemLocale(): string | undefined {
-  return window.api.systemLocale
+  return client.systemLocale ?? globalThis.navigator?.language
 }
 
 export function formatDateTime(at: Date | string | number): string {

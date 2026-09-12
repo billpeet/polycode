@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { Provider, ReasoningLevel, PROVIDERS, getModelsForProvider } from '../types/ipc'
+import { getPref, setPref } from '../lib/prefs'
 
 /** A saved provider/model/effort combination, loadable via Ctrl+<slot>. */
 export interface Favourite {
@@ -52,7 +53,7 @@ export function formatFavourite(fav: Favourite): string {
 }
 
 async function persist(bySlot: Record<number, Favourite>): Promise<void> {
-  await window.api.invoke('settings:set', SETTING_KEY, JSON.stringify(bySlot))
+  await setPref(SETTING_KEY, JSON.stringify(bySlot))
 }
 
 export const useFavouritesStore = create<FavouritesStore>((set, get) => ({
@@ -61,7 +62,7 @@ export const useFavouritesStore = create<FavouritesStore>((set, get) => ({
 
   load: async () => {
     try {
-      const raw = await window.api.invoke('settings:get', SETTING_KEY)
+      const raw = await getPref(SETTING_KEY)
       const bySlot = raw ? sanitize(JSON.parse(raw)) : {}
       set({ bySlot, loaded: true })
     } catch {

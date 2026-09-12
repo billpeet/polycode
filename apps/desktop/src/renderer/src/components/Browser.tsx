@@ -10,6 +10,7 @@ import type {
 import { useBrowserStore, type BrowserTab } from '../stores/browser'
 import type { BrowserSessionConfig } from '../types/ipc'
 import { normalizeBrowserUrl } from '../../../shared/browser'
+import { client } from '../lib/client'
 
 interface Props {
   locationId: string
@@ -412,7 +413,7 @@ export default function BrowserContent({ locationId }: Props) {
 
         <ToolbarButton
           onClick={() => {
-            if (activeTab?.url) void window.api.invoke('shell:openExternal', activeTab.url)
+            if (activeTab?.url) void client.invoke('shell:openExternal', activeTab.url)
           }}
           disabled={!activeTab?.url}
           title="Open in system browser"
