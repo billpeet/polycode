@@ -1,3 +1,4 @@
+import { forgeReadCache, forgeScope } from './forge-cache'
 import type { PullRequest, SshConfig, WslConfig } from '../shared/types'
 import {
   checkoutPullRequestBranch as checkoutAzurePullRequest,
@@ -106,18 +107,34 @@ const defaultDependencies: ForgeDependencies = {
   },
 }
 
+const adapterIds = new WeakMap<ForgeAdapter, number>()
+let nextAdapterId = 0
+
 function bindForge(
   adapter: ForgeAdapter,
   repoPath: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Forge {
+  let adapterId = adapterIds.get(adapter)
+  if (adapterId === undefined) {
+    adapterId = nextAdapterId++
+    adapterIds.set(adapter, adapterId)
+  }
+  const scope = forgeScope(repoPath, ssh, wsl)
+  const read = <T>(channel: string, args: unknown, ttlMs: number, load: () => Promise<T>): Promise<T> =>
+    forgeReadCache.read(JSON.stringify([adapterId, scope, channel, args]), ttlMs, load)
+  // A create can succeed upstream even if parsing its response fails. Retire
+  // in-flight reads as well so they cannot repopulate stale results afterwards.
+  const mutate = async <T>(load: () => Promise<T>): Promise<T> => {
+    try { return await load() } finally { forgeReadCache.clear() }
+  }
   return {
-    listPullRequests: () => adapter.listPullRequests(repoPath, ssh, wsl),
-    enrichPullRequests: (prs) => adapter.enrichPullRequests(repoPath, prs, ssh, wsl),
-    getCurrentBranchPullRequest: (branch) => adapter.getCurrentBranchPullRequest(repoPath, branch, ssh, wsl),
-    createPullRequest: (payload) => adapter.createPullRequest(repoPath, payload, ssh, wsl),
-    checkoutPullRequest: (prId) => adapter.checkoutPullRequest(repoPath, prId, ssh, wsl),
+    listPullRequests: () => read('list', null, 30_000, () => adapter.listPullRequests(repoPath, ssh, wsl)),
+    enrichPullRequests: (prs) => read('enrich', prs, 0, () => adapter.enrichPullRequests(repoPath, prs, ssh, wsl)),
+    getCurrentBranchPullRequest: (branch) => read('current', branch, 30_000, () => adapter.getCurrentBranchPullRequest(repoPath, branch, ssh, wsl)),
+    createPullRequest: (payload) => mutate(() => adapter.createPullRequest(repoPath, payload, ssh, wsl)),
+    checkoutPullRequest: (prId) => mutate(() => adapter.checkoutPullRequest(repoPath, prId, ssh, wsl)),
     getPullRequestsWebUrl: () => adapter.getPullRequestsWebUrl(repoPath, ssh, wsl),
     getRepoWebUrl: () => adapter.getRepoWebUrl(repoPath, ssh, wsl),
   }

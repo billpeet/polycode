@@ -1,3 +1,4 @@
+import { invalidateForgeRemotes } from './forge-cache'
 import { SpanStatusCode } from '@opentelemetry/api'
 import { withSpan } from './observability'
 import type { Runner } from './driver/runner'
@@ -79,7 +80,12 @@ export async function runGit(
         span?.setAttribute('git.duration_ms', performance.now() - startedAt)
       }
     })
-    if (result.exitCode === 0) return result.stdout.trimEnd()
+    if (result.exitCode === 0) {
+      if (subcommand === 'remote' && ['add', 'remove', 'rm', 'rename', 'set-url'].includes(args[args.indexOf('remote') + 1])) {
+        invalidateForgeRemotes()
+      }
+      return result.stdout.trimEnd()
+    }
 
     const lockPath = extractLockPathFromStderr(result.stderr)
       ?? extractLockPathFromStderr(result.stdout)

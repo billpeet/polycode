@@ -1,3 +1,4 @@
+import { resolveForgeRepoContext } from './forge-context'
 import { promises as fsPromises, Dirent } from 'fs'
 import * as path from 'path'
 import {
@@ -58,7 +59,6 @@ const CACHE_POLICY = {
   lastCommit: { ttlMs: 10_000 },
   branches: { ttlMs: 30_000 },
   compareToMain: { ttlMs: 15_000 },
-  hostingProvider: { ttlMs: 60_000 },
   defaultBranch: { ttlMs: 60_000 },
   fetchRemote: { ttlMs: 30_000 },
 } satisfies Record<string, CachePolicy>
@@ -323,48 +323,15 @@ export async function forceUnlockRepo(
   return { removed }
 }
 
-function detectProviderFromRemoteUrl(remoteUrl: string): GitHostingProvider | null {
-  const normalized = remoteUrl.trim().replace(/\.git$/i, '')
-  if (!normalized) return null
-  if (/github\.com[:/]/i.test(normalized)) return 'github'
-  if (/dev\.azure\.com[:/]/i.test(normalized) || /visualstudio\.com[:/]/i.test(normalized)) return 'azure'
-  return null
-}
-
 export async function detectGitHostingProvider(
   repoPath: string,
   ssh?: SshConfig | null,
   wsl?: WslConfig | null,
 ): Promise<GitHostingProvider | null> {
-  const remoteNamesRaw = await git(repoPath, ['remote'], ssh, wsl)
-  const remoteNames = remoteNamesRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-  if (remoteNames.length === 0) return null
-
-  const prioritized = remoteNames.includes('origin')
-    ? ['origin', ...remoteNames.filter((name) => name !== 'origin')]
-    : remoteNames
-
-  for (const remoteName of prioritized) {
-    let remoteUrl = ''
-    try {
-      remoteUrl = await git(repoPath, ['remote', 'get-url', remoteName], ssh, wsl)
-    } catch {
-      continue
-    }
-    const provider = detectProviderFromRemoteUrl(remoteUrl)
-    if (provider) return provider
-  }
-
-  return null
+  return (await resolveForgeRepoContext(repoPath, ssh, wsl))?.provider ?? null
 }
 
-export function detectGitHostingProviderCached(
-  repoPath: string,
-  ssh?: SshConfig | null,
-  wsl?: WslConfig | null,
-): Promise<GitHostingProvider | null> {
-  return readWithCache('hostingProvider', repoPath, () => detectGitHostingProvider(repoPath, ssh, wsl), ssh, wsl)
-}
+export const detectGitHostingProviderCached = detectGitHostingProvider
 
 export async function getGitBranch(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string | null> {
   try {

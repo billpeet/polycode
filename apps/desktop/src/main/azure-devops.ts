@@ -1,3 +1,4 @@
+import { resolveForgeRepoContext } from './forge-context'
 import { existsSync } from 'fs'
 import * as path from 'path'
 import { PullRequest, SshConfig, WslConfig } from '../shared/types'
@@ -8,7 +9,6 @@ import {
   buildAzureRepoUrl as buildRepoWebUrl,
   mapAzurePr as mapPr,
   normalizeAzureBranchName as normalizeBranchName,
-  parseAzureRemote,
 } from './forge-parsers'
 
 import type { AzureRepoContext, AzurePrInput as AzDevOpsPr } from './forge-parsers'
@@ -34,7 +34,15 @@ async function resolveLocalCommand(cmd: string, args: string[]): Promise<LocalCo
   return { cmd, args }
 }
 
+let windowsAzDevOpsCommand: Promise<LocalCommand | null> | undefined
+
 async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalCommand | null> {
+  windowsAzDevOpsCommand ??= discoverWindowsAzDevOpsNodeCommand()
+  const command = await windowsAzDevOpsCommand
+  return command ? { cmd: command.cmd, args: [...command.args, ...args] } : null
+}
+
+async function discoverWindowsAzDevOpsNodeCommand(): Promise<LocalCommand | null> {
   try {
     const result = await createRunner({}).run({
       binary: 'where.exe',
@@ -52,7 +60,7 @@ async function resolveWindowsAzDevOpsNodeCommand(args: string[]): Promise<LocalC
     const adjacentNode = path.join(baseDir, 'node.exe')
     return {
       cmd: existsSync(adjacentNode) ? adjacentNode : 'node',
-      args: [scriptPath, ...args],
+      args: [scriptPath],
     }
   } catch {
     return null
@@ -119,35 +127,9 @@ async function enrichPullRequests(
 }
 
 async function resolveRepoContext(repoPath: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<AzureRepoContext> {
-  const remoteNamesRaw = await git(repoPath, ['remote'], ssh, wsl)
-  const remoteNames = remoteNamesRaw.split(/\r?\n/).map((s) => s.trim()).filter(Boolean)
-  if (remoteNames.length === 0) {
-    throw new Error('No git remotes found for this repository')
-  }
-
-  const prioritized = remoteNames.includes('origin')
-    ? ['origin', ...remoteNames.filter((r) => r !== 'origin')]
-    : remoteNames
-
-  const seenUrls: string[] = []
-  for (const remoteName of prioritized) {
-    let remoteUrl = ''
-    try {
-      remoteUrl = (await git(repoPath, ['remote', 'get-url', remoteName], ssh, wsl)).trim()
-    } catch {
-      continue
-    }
-    if (!remoteUrl) continue
-    seenUrls.push(`${remoteName}=${remoteUrl}`)
-    const context = parseAzureRemote(remoteUrl)
-    if (context) {
-      context.remoteName = remoteName
-      context.remoteUrl = remoteUrl
-      return context
-    }
-  }
-
-  throw new Error(`No Azure DevOps remote found. Checked: ${seenUrls.join(', ')}`)
+  const context = await resolveForgeRepoContext(repoPath, ssh, wsl)
+  if (context?.provider !== 'azure') throw new Error('No Azure DevOps remote found for this repository')
+  return context
 }
 
 export async function listOpenPullRequests(
