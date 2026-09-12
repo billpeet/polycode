@@ -80,16 +80,20 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchStatuses: async (projectId, locationId) => {
     const commands = get().byProject[projectId] ?? []
-    const statusEntries = await Promise.all(
+    // Settle rather than all: one unreachable remote host used to reject the whole batch and
+    // surface as N unhandled rejections in the same tick (Grafana: 20 at once → 6.2s renderer
+    // long task). A failed lookup keeps whatever status we already had.
+    const results = await Promise.allSettled(
       commands.map(async (cmd) => {
         const status = await window.api.invoke('commands:getStatus', cmd.id, locationId)
         return [instKey(cmd.id, locationId), status] as [string, CommandStatus]
       })
     )
     const statusUpdate: Record<string, CommandStatus> = {}
-    for (const [key, status] of statusEntries) {
-      statusUpdate[key] = status
+    for (const result of results) {
+      if (result.status === 'fulfilled') statusUpdate[result.value[0]] = result.value[1]
     }
+    if (Object.keys(statusUpdate).length === 0) return
     set((s) => ({ statusMap: { ...s.statusMap, ...statusUpdate } }))
   },
 

@@ -103,17 +103,21 @@ function InputBarContent({ threadId }: Props) {
 
   const [locationPathMissing, setLocationPathMissing] = useState(false)
 
-  // Check if the thread's local location path exists
+  // Check if the thread's local location path exists. Keyed on the path and type, not the
+  // location object: `location` is re-derived by `.find()` on every render, and InputBar
+  // re-renders every second while a Turn runs, so depending on the object fired one
+  // `locations:pathExists` IPC per second per open thread.
+  const locationPath = location?.connection_type === 'local' ? location.path : null
   useEffect(() => {
     if (isPendingThread) return
-    if (!location || location.connection_type !== 'local') {
+    if (!locationPath) {
       queueMicrotask(() => setLocationPathMissing(false))
       return
     }
-    window.api.invoke('locations:pathExists', location.path).then((exists) => {
+    window.api.invoke('locations:pathExists', locationPath).then((exists) => {
       setLocationPathMissing(!exists)
     }).catch(() => {})
-  }, [location, isPendingThread])
+  }, [locationPath, isPendingThread])
 
   const cliHealth = useCliHealthStore((s) => s.healthByThread[threadId])
   const cliUnavailable = cliHealth?.status === 'unavailable' || cliHealth?.status === 'error'
