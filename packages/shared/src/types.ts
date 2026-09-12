@@ -99,6 +99,14 @@ export interface RemoteServerConfig {
   host: string
   port: number
   token: string
+  /** Serve the web UI (renderer bundle plus cookie login) alongside the API. */
+  webEnabled: boolean
+  /**
+   * DNS names accepted in the `Host` header on top of IP literals, `localhost` and this
+   * machine's own hostname — e.g. a Tailscale MagicDNS name fronted by `tailscale serve`.
+   * Lower-cased, deduplicated, no port.
+   */
+  allowedHostnames: string[]
 }
 
 export interface RemoteHost {

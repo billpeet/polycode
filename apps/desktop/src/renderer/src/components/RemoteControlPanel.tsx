@@ -8,6 +8,27 @@ const DEFAULT_SERVER: RemoteServerConfig = {
   host: '127.0.0.1',
   port: 3285,
   token: '',
+  webEnabled: false,
+  allowedHostnames: [],
+}
+
+function parseHostnamesText(text: string): string[] {
+  return text.split(/[,\n]/).map((s) => s.trim()).filter(Boolean)
+}
+
+function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
+  return (
+    <div
+      onClick={onToggle}
+      className="relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors"
+      style={{ background: on ? 'var(--color-claude)' : 'var(--color-border)' }}
+    >
+      <div
+        className="absolute top-0.5 h-4 w-4 rounded-full transition-transform"
+        style={{ background: '#fff', transform: on ? 'translateX(18px)' : 'translateX(2px)' }}
+      />
+    </div>
+  )
 }
 
 const DEFAULT_FORM: RemoteHostInput = {
@@ -162,6 +183,8 @@ function PairingQrSection({
 
 export function RemoteControlPanel({ hideHeader }: Props) {
   const [server, setServer] = useState<RemoteServerConfig>(DEFAULT_SERVER)
+  /** Free text while editing; parsed into `allowedHostnames` on save. */
+  const [hostnamesText, setHostnamesText] = useState('')
   const [hosts, setHosts] = useState<RemoteHost[]>([])
   const [activeHost, setActiveHostState] = useState<RemoteHost | null>(null)
   const [form, setForm] = useState<RemoteHostInput>(DEFAULT_FORM)
@@ -181,6 +204,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
       client.invoke('remote:getActiveHost'),
     ]).then(([serverConfig, savedHosts, active]) => {
       setServer(serverConfig)
+      setHostnamesText(serverConfig.allowedHostnames.join(', '))
       setHosts(savedHosts)
       setActiveHostState(active)
     }).catch((err) => {
@@ -198,7 +222,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
   }
 
   async function saveServer(config?: RemoteServerConfig): Promise<void> {
-    const next = config ?? server
+    const next = { ...(config ?? server), allowedHostnames: parseHostnamesText(hostnamesText) }
     if (next.port < 1024 || next.port > 65535) {
       setError('Port must be between 1024 and 65535')
       return
@@ -209,6 +233,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
     try {
       const saved = await client.invoke('remote:setServerConfig', next)
       setServer(saved)
+      setHostnamesText(saved.allowedHostnames.join(', '))
       setStatus(saved.enabled ? 'Remote host server is running.' : 'Remote host server is stopped.')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save remote host settings')
@@ -282,16 +307,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
             This Machine
           </h3>
           <label className="flex items-center gap-2 text-xs cursor-pointer" style={{ color: 'var(--color-text)' }}>
-            <div
-              onClick={() => setServer((cfg) => ({ ...cfg, enabled: !cfg.enabled }))}
-              className="relative h-5 w-9 rounded-full transition-colors"
-              style={{ background: server.enabled ? 'var(--color-claude)' : 'var(--color-border)' }}
-            >
-              <div
-                className="absolute top-0.5 h-4 w-4 rounded-full transition-transform"
-                style={{ background: '#fff', transform: server.enabled ? 'translateX(18px)' : 'translateX(2px)' }}
-              />
-            </div>
+            <Toggle on={server.enabled} onToggle={() => setServer((cfg) => ({ ...cfg, enabled: !cfg.enabled }))} />
             {server.enabled ? 'Enabled' : 'Disabled'}
           </label>
         </div>
@@ -323,6 +339,37 @@ export function RemoteControlPanel({ hideHeader }: Props) {
             />
           </div>
         </div>
+
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>
+              Web access
+            </span>
+            <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              Serve the PolyCode UI to browsers at http://{server.host}:{server.port}/. Browsers sign in with the host token.
+            </span>
+          </div>
+          <Toggle on={server.webEnabled} onToggle={() => setServer((cfg) => ({ ...cfg, webEnabled: !cfg.webEnabled }))} />
+        </div>
+
+        {server.webEnabled && (
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium" style={{ color: 'var(--color-text-muted)' }}>
+              Allowed hostnames
+            </label>
+            <input
+              value={hostnamesText}
+              onChange={(e) => setHostnamesText(e.target.value)}
+              placeholder="pc.tailnet.ts.net"
+              className="rounded px-2 py-1 text-xs font-mono"
+              style={inputStyle()}
+            />
+            <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
+              DNS names accepted in addition to IP addresses, localhost and this machine's name — for example a
+              Tailscale MagicDNS name when fronted by <span className="font-mono">tailscale serve</span>. Comma-separated.
+            </p>
+          </div>
+        )}
 
         {server.enabled && !isLoopbackHost(server.host) && (
           <p
