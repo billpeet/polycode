@@ -48,6 +48,8 @@ function sanitizeSegment(value: string): string {
 export class RunLifecycle {
   private timer: NodeJS.Timeout | null = null
   private ticking = false
+  private stopped = false
+  private pending = new Set<Promise<unknown>>()
   private unsubscribe: (() => void) | null = null
   /** Runs whose completion the lifecycle is already awaiting via runToCompletion. */
   private watched = new Set<string>()
@@ -71,6 +73,7 @@ export class RunLifecycle {
     // lifecycle itself started are excluded here; their runToCompletion
     // promise owns the evaluation.
     this.unsubscribe = this.deps.sessions.onCompletion((threadId, status) => {
+      if (this.stopped) return
       if (this.watched.has(threadId)) return
       const run = this.deps.store.getRun(threadId)
       if (!run || (run.state !== 'active' && run.state !== 'escalated')) return
@@ -84,10 +87,24 @@ export class RunLifecycle {
   }
 
   stop(): void {
+    this.stopped = true
     if (this.timer) clearInterval(this.timer)
     this.timer = null
     this.unsubscribe?.()
     this.unsubscribe = null
+  }
+
+  /** Await work already using the store, after stop has disabled new work. */
+  async waitForIdle(): Promise<void> {
+    while (this.pending.size > 0) await Promise.allSettled([...this.pending])
+  }
+
+  private track<T>(operation: () => Promise<T>): Promise<T> {
+    const pending = operation()
+    this.pending.add(pending)
+    const remove = () => { this.pending.delete(pending) }
+    void pending.then(remove, remove)
+    return pending
   }
 
   /**
@@ -95,12 +112,18 @@ export class RunLifecycle {
    * the most recent scheduled time is after the routine's last firing. This
    * caps catch-up at a single missed instance (the latest) by construction.
    */
-  async tick(): Promise<void> {
+  tick(): Promise<void> {
+    if (this.stopped) return Promise.resolve()
+    return this.track(() => this.tickWhileRunning())
+  }
+
+  private async tickWhileRunning(): Promise<void> {
     if (this.ticking) return
     this.ticking = true
     try {
       const now = this.deps.clock.now()
       for (const { routine, schedule } of this.deps.store.loadRoutines()) {
+        if (this.stopped) return
         if (!routine.enabled) continue
         try {
           if (schedule.kind === 'invalid') {
@@ -136,6 +159,7 @@ export class RunLifecycle {
 
   /** Manual trigger. Returns the run's thread id (the existing one if a run is active). */
   async runNow(routineId: string): Promise<string> {
+    if (this.stopped) throw new Error('Run lifecycle has stopped')
     const routine = this.deps.store.getRoutine(routineId)
     if (!routine) throw new Error('Routine not found')
     const active = this.deps.store.activeRun(routineId)
@@ -201,7 +225,11 @@ export class RunLifecycle {
    * Spawn a Run: fetch, worktree off origin/<default>, hidden thread, prompt.
    * The thread is created first so any setup failure has a Run to escalate.
    */
-  private async fire(routine: Routine): Promise<string> {
+  private fire(routine: Routine): Promise<string> {
+    return this.track(() => this.fireWhileRunning(routine))
+  }
+
+  private async fireWhileRunning(routine: Routine): Promise<string> {
     const firedAt = this.deps.clock.now()
     const run = this.deps.store.spawnRun(routine, `${routine.name} — ${this.deps.formatTimestamp(firedAt)}`)
     this.deps.onChange()
@@ -216,14 +244,17 @@ export class RunLifecycle {
       let baseRef: string
       try {
         await this.deps.git.fetchOrigin(parent.path)
+        if (this.stopped) return run.id
         baseRef = await this.deps.git.resolveBaseRef(parent.path)
       } catch (error) {
         throw new Error(`Could not fetch origin before the run: ${message(error)}`)
       }
 
       const label = `${sanitizeSegment(routine.name)}-${firedAt.getTime().toString(36)}`
+      if (this.stopped) return run.id
       const worktree = await this.deps.worktrees.create(routine.location_id, label, baseRef)
       this.deps.store.attachWorktree(run.id, worktree.locationId)
+      if (this.stopped) return run.id
       this.watch({ ...run, locationId: worktree.locationId }, routine.prompt, worktree)
       return run.id
     } catch (error) {
@@ -244,11 +275,13 @@ export class RunLifecycle {
       try {
         status = await this.deps.sessions.runToCompletion(run.id, worktree, prompt)
       } catch (error) {
+        if (this.stopped) return
         this.escalate(run.id, run.routineId, `The run’s session could not accept the prompt: ${message(error)}`)
         return
       } finally {
         this.watched.delete(run.id)
       }
+      if (this.stopped) return
       await this.evaluateCompletedRun(run, status)
     })()
   }
@@ -258,7 +291,12 @@ export class RunLifecycle {
    * everything else escalates. Escalated runs stay watched so that, after the
    * user interacts and the session goes idle again, evaluation reruns.
    */
-  private async evaluateCompletedRun(run: Run, status: ThreadStatus): Promise<void> {
+  private evaluateCompletedRun(run: Run, status: ThreadStatus): Promise<void> {
+    if (this.stopped) return Promise.resolve()
+    return this.track(() => this.evaluateWhileRunning(run, status))
+  }
+
+  private async evaluateWhileRunning(run: Run, status: ThreadStatus): Promise<void> {
     try {
       if (status !== 'idle') {
         this.escalate(run.id, run.routineId, NON_IDLE_REASONS[status] ?? `The run ended in state "${status}".`)

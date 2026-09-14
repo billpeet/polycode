@@ -46,7 +46,7 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
         const proxied = await remoteClient.invokeIfActive(channel, args)
         if (proxied.handled) return proxied.value
         return handler(...args)
-      })
+      }, channel)
     })
   }
 
@@ -93,7 +93,7 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
             }
           }
           return invokeLocally(sourcePath, threadId)
-        })
+        }, channel)
       })
       continue
     }
@@ -108,7 +108,7 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
       proxyable(channel, invokeLocally)
     } else {
       ipcMain.handle(channel, (_event, ...args: unknown[]) => {
-        return runAppOperation(() => invokeLocally(...args))
+        return runAppOperation(() => invokeLocally(...args), channel)
       })
     }
   }
@@ -134,7 +134,7 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
     void runAppOperation(async () => {
       const proxied = await remoteClient.invokeIfActive('terminal:write', [terminalId, data])
       if (!proxied.handled) ptyManager.write(terminalId, data)
-    })
+    }, 'terminal:write')
   })
 
   ipcMain.on('terminal:resize', (_event, terminalId: string, cols: number, rows: number) => {
@@ -142,6 +142,6 @@ export function registerIpcHandlers(window: BrowserWindow, runLifecycle: RunLife
     void runAppOperation(async () => {
       const proxied = await remoteClient.invokeIfActive('terminal:resize', [terminalId, cols, rows])
       if (!proxied.handled) ptyManager.resize(terminalId, cols, rows)
-    })
+    }, 'terminal:resize')
   })
 }

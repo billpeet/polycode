@@ -17,7 +17,8 @@ export interface ControlRpcHost {
 }
 
 export async function handleControlRpc(host: ControlRpcHost, channel: string, args: unknown[]): Promise<unknown> {
-  return runAppOperation(() => handleControlRpcWhileRunning(host, channel, args))
+  return runAppOperation(() => handleControlRpcWhileRunning(host, channel, args),
+    isRemoteChannel(channel) ? channel : 'unsupported')
 }
 
 async function handleControlRpcWhileRunning(host: ControlRpcHost, channel: string, args: unknown[]): Promise<unknown> {

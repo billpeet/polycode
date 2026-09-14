@@ -17,6 +17,7 @@ import { isValidBearerToken } from '../http-auth'
 import { getAllowedCorsOrigin, isAllowedHostHeader } from '../http-request-security'
 import { windowsPathToWsl } from '../path-utils'
 import { WebhookConfig } from './config'
+import { AppShuttingDownError, getAppLifecycleState, runAppOperation } from '../app-lifecycle'
 
 let server: http.Server | null = null
 
@@ -133,8 +134,11 @@ function createRequestHandler(config: WebhookConfig, window: BrowserWindow): htt
       try {
         const raw = await readBody(req)
         const body = JSON.parse(raw) as Record<string, unknown>
-        await handleCreateThread(body, window, res)
+        await runAppOperation(() => handleCreateThread(body, window, res), 'webhook:createThread')
       } catch (err) {
+        if (err instanceof AppShuttingDownError) {
+          return sendJson(res, 503, { error: err.message, code: err.code })
+        }
         console.error('[webhook] Error handling POST /api/threads:', err)
         sendJson(res, 500, { error: 'Internal server error' })
       }
@@ -146,6 +150,7 @@ function createRequestHandler(config: WebhookConfig, window: BrowserWindow): htt
 }
 
 export function startWebhookServer(config: WebhookConfig, window: BrowserWindow): void {
+  if (getAppLifecycleState() !== 'running') return
   stopWebhookServer()
   if (!config.enabled) return
 

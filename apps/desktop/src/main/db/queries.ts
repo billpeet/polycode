@@ -29,27 +29,27 @@ const PROJECT_LAST_ACTIVITY_SELECT =
   'SELECT p.*, (SELECT MAX(COALESCE(t.last_turn_completed_at, t.created_at)) FROM threads t WHERE t.project_id = p.id) AS last_activity_at FROM projects p'
 
 export function listProjects(): Project[] {
-  const rows = getDb()
+  const rows = getDb('listProjects')
     .prepare(`${PROJECT_LAST_ACTIVITY_SELECT} WHERE p.archived_at IS NULL ORDER BY p.created_at DESC`)
     .all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
 export function listArchivedProjects(): Project[] {
-  const rows = getDb()
+  const rows = getDb('listArchivedProjects')
     .prepare(`${PROJECT_LAST_ACTIVITY_SELECT} WHERE p.archived_at IS NOT NULL ORDER BY p.archived_at DESC`)
     .all() as ProjectRow[]
   return rows.map(rowToProject)
 }
 
 export function archiveProject(id: string): void {
-  getDb()
+  getDb('archiveProject')
     .prepare('UPDATE projects SET archived_at = ?, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), new Date().toISOString(), id)
 }
 
 export function unarchiveProject(id: string): void {
-  getDb()
+  getDb('unarchiveProject')
     .prepare('UPDATE projects SET archived_at = NULL, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id)
 }
@@ -57,7 +57,7 @@ export function unarchiveProject(id: string): void {
 export function createProject(name: string, gitUrl?: string | null, allowMainBranchCommits = true): Project {
   const now = new Date().toISOString()
   const id = uuidv4()
-  getDb()
+  getDb('createProject')
     .prepare(
       'INSERT INTO projects (id, name, path, git_url, allow_main_branch_commits, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
@@ -76,24 +76,24 @@ export function createProject(name: string, gitUrl?: string | null, allowMainBra
 }
 
 export function updateProject(id: string, name: string, gitUrl?: string | null, allowMainBranchCommits = true, faviconPath?: string | null): void {
-  getDb()
+  getDb('updateProject')
     .prepare('UPDATE projects SET name = ?, git_url = ?, allow_main_branch_commits = ?, favicon_path = ?, updated_at = ? WHERE id = ?')
     .run(name, gitUrl ?? null, allowMainBranchCommits ? 1 : 0, faviconPath ?? null, new Date().toISOString(), id)
 }
 
 export function deleteProject(id: string): void {
-  getDb().prepare('DELETE FROM projects WHERE id = ?').run(id)
+  getDb('deleteProject').prepare('DELETE FROM projects WHERE id = ?').run(id)
 }
 
 export function getProjectForThread(threadId: string): Project | null {
-  const row = getDb()
+  const row = getDb('getProjectForThread')
     .prepare('SELECT p.* FROM projects p JOIN threads t ON t.project_id = p.id WHERE t.id = ?')
     .get(threadId) as ProjectRow | undefined
   return row ? rowToProject(row) : null
 }
 
 export function getProjectById(id: string): Project | null {
-  const row = getDb()
+  const row = getDb('getProjectById')
     .prepare('SELECT * FROM projects WHERE id = ?')
     .get(id) as ProjectRow | undefined
   return row ? rowToProject(row) : null
@@ -132,7 +132,7 @@ function rowToLocation(row: RepoLocationRow): RepoLocation {
 }
 
 export function listLocations(projectId: string): RepoLocation[] {
-  const rows = getDb()
+  const rows = getDb('listLocations')
     .prepare('SELECT * FROM repo_locations WHERE project_id = ? ORDER BY created_at ASC')
     .all(projectId) as RepoLocationRow[]
   return rows.map(rowToLocation)
@@ -149,7 +149,7 @@ export function createLocation(
 ): RepoLocation {
   const now = new Date().toISOString()
   const id = uuidv4()
-  getDb()
+  getDb('createLocation')
     .prepare(
       'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, worktree_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, ?, 0, NULL, 0, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
@@ -186,7 +186,7 @@ export function updateLocation(
   ssh?: SshConfig | null,
   wsl?: WslConfig | null
 ): void {
-  getDb()
+  getDb('updateLocation')
     .prepare(
       'UPDATE repo_locations SET label = ?, connection_type = ?, path = ?, pool_id = ?, checked_out = CASE WHEN ? IS NULL THEN 0 ELSE checked_out END, ssh_host = ?, ssh_user = ?, ssh_port = ?, ssh_key_path = ?, wsl_distro = ?, updated_at = ? WHERE id = ?'
     )
@@ -200,11 +200,11 @@ export function updateLocation(
 }
 
 export function deleteLocation(id: string): void {
-  getDb().prepare('DELETE FROM repo_locations WHERE id = ?').run(id)
+  getDb('deleteLocation').prepare('DELETE FROM repo_locations WHERE id = ?').run(id)
 }
 
 export function getLocationById(id: string): RepoLocation | null {
-  const row = getDb()
+  const row = getDb('getLocationById')
     .prepare('SELECT * FROM repo_locations WHERE id = ?')
     .get(id) as RepoLocationRow | undefined
   return row ? rowToLocation(row) : null
@@ -219,7 +219,7 @@ export function createWorktreeLocation(
   const now = new Date().toISOString()
   const id = uuidv4()
   const assignedWorktreeId = worktreeId ?? getNextWorktreeId(parentLocation.id)
-  getDb()
+  getDb('createWorktreeLocation')
     .prepare(
       'INSERT INTO repo_locations (id, project_id, pool_id, checked_out, parent_location_id, is_worktree, worktree_id, label, connection_type, path, ssh_host, ssh_user, ssh_port, ssh_key_path, wsl_distro, created_at, updated_at) VALUES (?, ?, NULL, 0, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
@@ -258,7 +258,7 @@ export function createWorktreeLocation(
 }
 
 export function getNextWorktreeId(parentLocationId: string): number {
-  const rows = getDb()
+  const rows = getDb('getNextWorktreeId')
     .prepare('SELECT worktree_id FROM repo_locations WHERE parent_location_id = ? AND is_worktree = 1 AND worktree_id IS NOT NULL ORDER BY worktree_id ASC')
     .all(parentLocationId) as Array<{ worktree_id: number }>
   const used = new Set(rows.map((row) => row.worktree_id).filter((id) => Number.isInteger(id) && id > 0))
@@ -268,7 +268,7 @@ export function getNextWorktreeId(parentLocationId: string): number {
 }
 
 export function getLocationForThread(threadId: string): RepoLocation | null {
-  const row = getDb()
+  const row = getDb('getLocationForThread')
     .prepare('SELECT l.* FROM repo_locations l JOIN threads t ON t.location_id = l.id WHERE t.id = ?')
     .get(threadId) as RepoLocationRow | undefined
   return row ? rowToLocation(row) : null
@@ -288,7 +288,7 @@ function rowToLocationPool(row: LocationPoolRow): LocationPool {
 
 export function listLocationPools(projectId: string): LocationPool[] {
   try {
-    const rows = getDb()
+    const rows = getDb('listLocationPools')
       .prepare('SELECT * FROM location_pools WHERE project_id = ? ORDER BY created_at ASC')
       .all(projectId) as LocationPoolRow[]
     return rows.map(rowToLocationPool)
@@ -301,20 +301,20 @@ export function listLocationPools(projectId: string): LocationPool[] {
 export function createLocationPool(projectId: string, name: string): LocationPool {
   const now = new Date().toISOString()
   const id = uuidv4()
-  getDb()
+  getDb('createLocationPool')
     .prepare('INSERT INTO location_pools (id, project_id, name, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
     .run(id, projectId, name, now, now)
   return { id, project_id: projectId, name, created_at: now, updated_at: now }
 }
 
 export function updateLocationPool(id: string, name: string): void {
-  getDb()
+  getDb('updateLocationPool')
     .prepare('UPDATE location_pools SET name = ?, updated_at = ? WHERE id = ?')
     .run(name, new Date().toISOString(), id)
 }
 
 export function deleteLocationPool(id: string): void {
-  const db = getDb()
+  const db = getDb('deleteLocationPool')
   const now = new Date().toISOString()
   db.prepare('UPDATE repo_locations SET pool_id = NULL, checked_out = 0, updated_at = ? WHERE pool_id = ?')
     .run(now, id)
@@ -322,40 +322,40 @@ export function deleteLocationPool(id: string): void {
 }
 
 export function checkoutLocation(id: string): void {
-  getDb()
+  getDb('checkoutLocation')
     .prepare('UPDATE repo_locations SET checked_out = 1, updated_at = ? WHERE id = ? AND pool_id IS NOT NULL')
     .run(new Date().toISOString(), id)
 }
 
 export function returnLocationToPool(id: string): void {
-  getDb()
+  getDb('returnLocationToPool')
     .prepare('UPDATE repo_locations SET checked_out = 0, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id)
 }
 
 export function getProjectByName(name: string): Project | null {
-  const row = getDb()
+  const row = getDb('getProjectByName')
     .prepare('SELECT * FROM projects WHERE name = ? AND archived_at IS NULL')
     .get(name) as ProjectRow | undefined
   return row ? rowToProject(row) : null
 }
 
 export function getLocationByLabel(projectId: string, label: string): RepoLocation | null {
-  const row = getDb()
+  const row = getDb('getLocationByLabel')
     .prepare('SELECT * FROM repo_locations WHERE project_id = ? AND label = ?')
     .get(projectId, label) as RepoLocationRow | undefined
   return row ? rowToLocation(row) : null
 }
 
 export function getPoolByName(projectId: string, name: string): LocationPool | null {
-  const row = getDb()
+  const row = getDb('getPoolByName')
     .prepare('SELECT * FROM location_pools WHERE project_id = ? AND name = ?')
     .get(projectId, name) as LocationPoolRow | undefined
   return row ? rowToLocationPool(row) : null
 }
 
 export function getNextAvailablePoolLocation(poolId: string): RepoLocation | null {
-  const row = getDb()
+  const row = getDb('getNextAvailablePoolLocation')
     .prepare('SELECT * FROM repo_locations WHERE pool_id = ? AND checked_out = 0 ORDER BY created_at ASC LIMIT 1')
     .get(poolId) as RepoLocationRow | undefined
   return row ? rowToLocation(row) : null
@@ -364,13 +364,13 @@ export function getNextAvailablePoolLocation(poolId: string): RepoLocation | nul
 /** Find a location whose path matches (prefix match for file lookups). */
 export function getLocationByPath(path: string): RepoLocation | null {
   // Exact match first
-  const exact = getDb()
+  const exact = getDb('getLocationByPath')
     .prepare('SELECT * FROM repo_locations WHERE path = ?')
     .get(path) as RepoLocationRow | undefined
   if (exact) return rowToLocation(exact)
 
   // Prefix match — find a location whose path is a prefix of the given path
-  const allLocations = getDb()
+  const allLocations = getDb('getLocationByPath')
     .prepare('SELECT * FROM repo_locations')
     .all() as RepoLocationRow[]
   for (const loc of allLocations) {
@@ -490,7 +490,7 @@ function nowIso(): string {
 }
 
 export function listThreads(projectId: string): Thread[] {
-  const rows = getDb()
+  const rows = getDb('listThreads')
     .prepare(
       'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' AND ' + THREAD_NOT_SNOOZED + ' ORDER BY ' + THREAD_TURN_ACTIVITY + ' DESC'
     )
@@ -509,7 +509,7 @@ export function listThreads(projectId: string): Thread[] {
  * is the whole point of ADR-0002 — do not "fix" it for consistency.
  */
 export function listActiveThreadsForLocation(locationId: string): Thread[] {
-  const rows = getDb()
+  const rows = getDb('listActiveThreadsForLocation')
     .prepare(
       'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.location_id = ? AND t.archived = 0 AND ' + THREAD_VISIBILITY_FILTER + ' ORDER BY ' + THREAD_TURN_ACTIVITY + ' DESC'
     )
@@ -526,7 +526,7 @@ export function listActiveThreadsForLocation(locationId: string): Thread[] {
  * against destroying that location as a visible thread is.
  */
 export function countLiveThreadsForLocation(locationId: string): number {
-  const row = getDb()
+  const row = getDb('countLiveThreadsForLocation')
     .prepare('SELECT COUNT(*) AS n FROM threads t WHERE t.location_id = ? AND t.archived = 0')
     .get(locationId) as { n: number }
   return row.n
@@ -597,7 +597,7 @@ function rowToQueueThread(r: QueueThreadRow): QueueThread {
  * push-driven status overrides the persisted snapshot.
  */
 export function listQueueThreads(): QueueThread[] {
-  const rows = getDb()
+  const rows = getDb('listQueueThreads')
     .prepare(
       `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
@@ -620,7 +620,7 @@ export function listQueueThreads(): QueueThread[] {
  */
 export function listSnoozedQueueThreads(search: string | null, limit: number, offset: number): QueueThread[] {
   const query = search?.trim()
-  const rows = getDb()
+  const rows = getDb('listSnoozedQueueThreads')
     .prepare(
       `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
@@ -642,7 +642,7 @@ export function listSnoozedQueueThreads(search: string | null, limit: number, of
  */
 export function listArchivedQueueThreads(search: string | null, limit: number, offset: number): QueueThread[] {
   const query = search?.trim()
-  const rows = getDb()
+  const rows = getDb('listArchivedQueueThreads')
     .prepare(
       `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
@@ -657,14 +657,14 @@ export function listArchivedQueueThreads(search: string | null, limit: number, o
 }
 
 export function archivedThreadCount(projectId: string): number {
-  const row = getDb()
+  const row = getDb('archivedThreadCount')
     .prepare('SELECT COUNT(*) as count FROM threads WHERE project_id = ? AND archived = 1')
     .get(projectId) as { count: number }
   return row.count
 }
 
 export function listArchivedThreads(projectId: string, limit?: number, offset?: number): Thread[] {
-  const rows = getDb()
+  const rows = getDb('listArchivedThreads')
     .prepare(
       'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 1 ORDER BY t.updated_at DESC LIMIT ? OFFSET ?'
     )
@@ -678,7 +678,7 @@ export function listArchivedThreads(projectId: string, limit?: number, offset?: 
  * `snoozedThreadCount`, which must keep the same predicate or the pager drifts.
  */
 export function listSnoozedThreads(projectId: string, limit?: number, offset?: number): Thread[] {
-  const rows = getDb()
+  const rows = getDb('listSnoozedThreads')
     .prepare(
       'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_IS_SNOOZED + ' ORDER BY t.snoozed_until ASC LIMIT ? OFFSET ?'
     )
@@ -687,14 +687,14 @@ export function listSnoozedThreads(projectId: string, limit?: number, offset?: n
 }
 
 export function snoozedThreadCount(projectId: string): number {
-  const row = getDb()
+  const row = getDb('snoozedThreadCount')
     .prepare('SELECT COUNT(*) as count FROM threads t WHERE t.project_id = ? AND t.archived = 0 AND ' + THREAD_IS_SNOOZED)
     .get(projectId, nowIso()) as { count: number }
   return row.count
 }
 
 export function threadHasMessages(id: string): boolean {
-  const row = getDb()
+  const row = getDb('threadHasMessages')
     .prepare('SELECT COUNT(*) as count FROM messages WHERE thread_id = ?')
     .get(id) as { count: number }
   return row.count > 0
@@ -708,7 +708,7 @@ export function threadHasMessages(id: string): boolean {
  * bumping it would reorder lists that sort on it.
  */
 export function snoozeThread(id: string, until: string): void {
-  getDb().prepare('UPDATE threads SET snoozed_until = ? WHERE id = ?').run(until, id)
+  getDb('snoozeThread').prepare('UPDATE threads SET snoozed_until = ? WHERE id = ?').run(until, id)
 }
 
 /**
@@ -717,7 +717,7 @@ export function snoozeThread(id: string, until: string): void {
  * discharges the woken state.
  */
 export function unsnoozeThread(id: string): void {
-  getDb().prepare('UPDATE threads SET snoozed_until = NULL WHERE id = ?').run(id)
+  getDb('unsnoozeThread').prepare('UPDATE threads SET snoozed_until = NULL WHERE id = ?').run(id)
 }
 
 /**
@@ -725,13 +725,13 @@ export function unsnoozeThread(id: string): void {
  * and unarchiving returns it to active rather than back to snoozed.
  */
 export function archiveThread(id: string): void {
-  getDb()
+  getDb('archiveThread')
     .prepare('UPDATE threads SET archived = 1, snoozed_until = NULL, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id)
 }
 
 export function unarchiveThread(id: string): void {
-  getDb()
+  getDb('unarchiveThread')
     .prepare('UPDATE threads SET archived = 0, updated_at = ? WHERE id = ?')
     .run(new Date().toISOString(), id)
 }
@@ -748,7 +748,7 @@ export function unarchiveThread(id: string): void {
  * archived. Returns the number of threads archived.
  */
 export function archiveThreadsForLocation(locationId: string): number {
-  const result = getDb()
+  const result = getDb('archiveThreadsForLocation')
     .prepare('UPDATE threads SET archived = 1, snoozed_until = NULL, updated_at = ? WHERE location_id = ? AND archived = 0')
     .run(new Date().toISOString(), locationId)
   return result.changes
@@ -792,7 +792,7 @@ export function createThreadForLocation(
   name: string,
   locationId: string
 ): Thread {
-  const db = getDb()
+  const db = getDb('createThreadForLocation')
   return db.transaction(() => {
     const location = db.prepare('SELECT project_id FROM repo_locations WHERE id = ?')
       .get(locationId) as { project_id: string } | undefined
@@ -844,7 +844,7 @@ export function createThread(projectId: string, name: string, locationId: string
     created_at: now,
     updated_at: now
   }
-  getDb()
+  getDb('createThread')
     .prepare(
       'INSERT INTO threads (id, project_id, location_id, name, provider, model, reasoning_level, status, permission_mode, yolo_mode, git_branch, routine_id, run_state, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
@@ -892,19 +892,19 @@ function rowToRoutine(r: RoutineRow): Routine {
 }
 
 export function listRoutines(projectId: string): Routine[] {
-  const rows = getDb()
+  const rows = getDb('listRoutines')
     .prepare('SELECT * FROM routines WHERE project_id = ? ORDER BY created_at ASC')
     .all(projectId) as RoutineRow[]
   return rows.map(rowToRoutine)
 }
 
 export function listAllRoutines(): Routine[] {
-  const rows = getDb().prepare('SELECT * FROM routines').all() as RoutineRow[]
+  const rows = getDb('listAllRoutines').prepare('SELECT * FROM routines').all() as RoutineRow[]
   return rows.map(rowToRoutine)
 }
 
 export function getRoutine(id: string): Routine | null {
-  const row = getDb().prepare('SELECT * FROM routines WHERE id = ?').get(id) as RoutineRow | undefined
+  const row = getDb('getRoutine').prepare('SELECT * FROM routines WHERE id = ?').get(id) as RoutineRow | undefined
   return row ? rowToRoutine(row) : null
 }
 
@@ -939,7 +939,7 @@ export function createRoutine(input: RoutineInput): Routine {
     created_at: now,
     updated_at: now,
   }
-  getDb()
+  getDb('createRoutine')
     .prepare(
       'INSERT INTO routines (id, project_id, location_id, name, prompt, trigger_type, schedule, provider, model, permission_mode, enabled, last_fired_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
@@ -961,20 +961,20 @@ export function updateRoutine(id: string, patch: Partial<Omit<RoutineInput, 'pro
     permission_mode: patch.permission_mode ?? existing.permission_mode,
     enabled: patch.enabled ?? existing.enabled,
   }
-  getDb()
+  getDb('updateRoutine')
     .prepare('UPDATE routines SET location_id = ?, name = ?, prompt = ?, trigger_type = ?, schedule = ?, provider = ?, model = ?, permission_mode = ?, enabled = ?, updated_at = ? WHERE id = ?')
     .run(merged.location_id, merged.name, merged.prompt, merged.trigger_type, merged.schedule, merged.provider, merged.model, merged.permission_mode, merged.enabled ? 1 : 0, new Date().toISOString(), id)
   return getRoutine(id)
 }
 
 export function setRoutineEnabled(id: string, enabled: boolean): void {
-  getDb()
+  getDb('setRoutineEnabled')
     .prepare('UPDATE routines SET enabled = ?, updated_at = ? WHERE id = ?')
     .run(enabled ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function markRoutineFired(id: string, firedAt: string): void {
-  getDb()
+  getDb('markRoutineFired')
     .prepare('UPDATE routines SET last_fired_at = ?, updated_at = ? WHERE id = ?')
     .run(firedAt, new Date().toISOString(), id)
 }
@@ -984,7 +984,7 @@ export function markRoutineFired(id: string, firedAt: string): void {
  * threads (routine_id cleared) so they join the normal Archived section.
  */
 export function deleteRoutine(id: string): void {
-  const db = getDb()
+  const db = getDb('deleteRoutine')
   db.transaction(() => {
     db.prepare("UPDATE threads SET archived = 1, routine_id = NULL, run_state = NULL, run_detail = NULL, updated_at = ? WHERE routine_id = ?")
       .run(new Date().toISOString(), id)
@@ -995,7 +995,7 @@ export function deleteRoutine(id: string): void {
 // ── Runs (threads spawned by routines) ───────────────────────────────────────
 
 export function listRuns(routineId: string, limit?: number): Thread[] {
-  const rows = getDb()
+  const rows = getDb('listRuns')
     .prepare(
       'SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.routine_id = ? ORDER BY t.created_at DESC LIMIT ?'
     )
@@ -1005,21 +1005,21 @@ export function listRuns(routineId: string, limit?: number): Thread[] {
 
 /** Runs still marked active — used at startup to escalate interrupted runs. */
 export function listActiveRuns(): Thread[] {
-  const rows = getDb()
+  const rows = getDb('listActiveRuns')
     .prepare("SELECT t.*, 1 AS has_messages FROM threads t WHERE t.routine_id IS NOT NULL AND t.run_state = 'active'")
     .all() as ThreadRow[]
   return rows.map(rowToThread)
 }
 
 export function hasActiveRun(routineId: string): boolean {
-  const row = getDb()
+  const row = getDb('hasActiveRun')
     .prepare("SELECT COUNT(*) AS count FROM threads WHERE routine_id = ? AND run_state = 'active'")
     .get(routineId) as { count: number }
   return row.count > 0
 }
 
 export function hasEscalatedRun(routineId: string): boolean {
-  const row = getDb()
+  const row = getDb('hasEscalatedRun')
     .prepare("SELECT COUNT(*) AS count FROM threads WHERE routine_id = ? AND run_state = 'escalated'")
     .get(routineId) as { count: number }
   return row.count > 0
@@ -1030,11 +1030,11 @@ export function setRunState(threadId: string, state: RunState, detail: string | 
   if (state === 'escalated') {
     // Escalation is the Run's turn-completion-equivalent: it enters the
     // Queue's attention bucket ordered by when it escalated.
-    getDb()
+    getDb('setRunState')
       .prepare('UPDATE threads SET run_state = ?, run_detail = ?, last_turn_completed_at = ?, updated_at = ? WHERE id = ?')
       .run(state, detail, now, now, threadId)
   } else {
-    getDb()
+    getDb('setRunState')
       .prepare('UPDATE threads SET run_state = ?, run_detail = ?, updated_at = ? WHERE id = ?')
       .run(state, detail, now, threadId)
   }
@@ -1042,45 +1042,45 @@ export function setRunState(threadId: string, state: RunState, detail: string | 
 
 export function updateThreadModel(id: string, model: string): void {
   const now = new Date().toISOString()
-  getDb()
+  getDb('updateThreadModel')
     .prepare('UPDATE threads SET model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
     .run(model, now, now, id)
 }
 
 export function updateThreadProviderAndModel(id: string, provider: string, model: string): void {
   const now = new Date().toISOString()
-  getDb()
+  getDb('updateThreadProviderAndModel')
     .prepare('UPDATE threads SET provider = ?, model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
     .run(provider, model, now, now, id)
 }
 
 export function updateThreadReasoningLevel(id: string, reasoningLevel: string): void {
-  getDb()
+  getDb('updateThreadReasoningLevel')
     .prepare('UPDATE threads SET reasoning_level = ?, updated_at = ? WHERE id = ?')
     .run(normalizeReasoningLevel(reasoningLevel), new Date().toISOString(), id)
 }
 
 export function updateThreadCodexPersonality(id: string, personality: string): void {
-  getDb()
+  getDb('updateThreadCodexPersonality')
     .prepare('UPDATE threads SET codex_personality = ?, updated_at = ? WHERE id = ?')
     .run(normalizeCodexPersonality(personality), new Date().toISOString(), id)
 }
 
 export function updateThreadCodexReasoningSummary(id: string, summary: string): void {
-  getDb()
+  getDb('updateThreadCodexReasoningSummary')
     .prepare('UPDATE threads SET codex_reasoning_summary = ?, updated_at = ? WHERE id = ?')
     .run(normalizeCodexReasoningSummary(summary), new Date().toISOString(), id)
 }
 
 export function updateThreadCursorThinking(id: string, thinking: boolean | null): void {
-  getDb()
+  getDb('updateThreadCursorThinking')
     .prepare('UPDATE threads SET cursor_thinking = ?, updated_at = ? WHERE id = ?')
     .run(thinking == null ? null : thinking ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function updateThreadCursorContext(id: string, context: string | null): void {
   const value = context && context.trim() ? context.trim() : null
-  getDb()
+  getDb('updateThreadCursorContext')
     .prepare('UPDATE threads SET cursor_context = ?, updated_at = ? WHERE id = ?')
     .run(value, new Date().toISOString(), id)
 }
@@ -1091,30 +1091,30 @@ export function updateThreadYoloMode(id: string, yoloMode: boolean): void {
 
 export function updateThreadPermissionMode(id: string, permissionMode: string): void {
   const normalized = normalizePermissionMode(permissionMode)
-  getDb()
+  getDb('updateThreadPermissionMode')
     .prepare('UPDATE threads SET permission_mode = ?, yolo_mode = ?, updated_at = ? WHERE id = ?')
     .run(normalized, normalized === 'yolo' ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function updateThreadLocationId(id: string, locationId: string | null): void {
-  getDb()
+  getDb('updateThreadLocationId')
     .prepare('UPDATE threads SET location_id = ?, updated_at = ? WHERE id = ?')
     .run(locationId, new Date().toISOString(), id)
 }
 
 export function deleteThread(id: string): void {
-  getDb().prepare('DELETE FROM threads WHERE id = ?').run(id)
+  getDb('deleteThread').prepare('DELETE FROM threads WHERE id = ?').run(id)
 }
 
 export function getThreadById(id: string): Thread | null {
-  const row = getDb()
+  const row = getDb('getThreadById')
     .prepare('SELECT t.*, EXISTS(SELECT 1 FROM messages WHERE thread_id = t.id) AS has_messages FROM threads t WHERE t.id = ?')
     .get(id) as ThreadRow | undefined
   return row ? rowToThread(row) : null
 }
 
 export function threadExists(id: string): boolean {
-  const row = getDb()
+  const row = getDb('threadExists')
     .prepare('SELECT 1 AS found FROM threads WHERE id = ? LIMIT 1')
     .get(id) as { found: number } | undefined
   return !!row
@@ -1126,34 +1126,34 @@ const TURN_COMPLETING_STATUSES = ['idle', 'error', 'stopped', 'plan_pending', 'q
 
 export function updateThreadStatus(id: string, status: string): void {
   const now = new Date().toISOString()
-  const current = getDb().prepare('SELECT status FROM threads WHERE id = ?').get(id) as { status: string } | undefined
+  const current = getDb('updateThreadStatus').prepare('SELECT status FROM threads WHERE id = ?').get(id) as { status: string } | undefined
   const prev = current?.status
   const startsTurn = status === 'running' && prev !== 'running'
   const completesTurn = (prev === 'running' || prev === 'stopping') && TURN_COMPLETING_STATUSES.includes(status)
   if (startsTurn) {
-    getDb()
+    getDb('updateThreadStatus')
       .prepare('UPDATE threads SET status = ?, last_turn_started_at = ?, updated_at = ? WHERE id = ?')
       .run(status, now, now, id)
   } else if (completesTurn) {
-    getDb()
+    getDb('updateThreadStatus')
       .prepare('UPDATE threads SET status = ?, last_turn_completed_at = ?, updated_at = ? WHERE id = ?')
       .run(status, now, now, id)
   } else {
-    getDb()
+    getDb('updateThreadStatus')
       .prepare('UPDATE threads SET status = ?, updated_at = ? WHERE id = ?')
       .run(status, now, id)
   }
 }
 
 export function updateThreadUnread(id: string, unread: boolean): void {
-  getDb()
+  getDb('updateThreadUnread')
     .prepare('UPDATE threads SET unread = ? WHERE id = ?')
     .run(unread ? 1 : 0, id)
 }
 
 /** Returns true if any thread is currently running. */
 export function hasRunningThreads(): boolean {
-  const row = getDb()
+  const row = getDb('hasRunningThreads')
     .prepare("SELECT COUNT(*) as count FROM threads WHERE status = 'running'")
     .get() as { count: number }
   return row.count > 0
@@ -1164,13 +1164,13 @@ export function hasRunningThreads(): boolean {
  * Queue's attention bucket rather than sorting on a stale timestamp. */
 export function resetRunningThreads(): void {
   const now = new Date().toISOString()
-  getDb()
+  getDb('resetRunningThreads')
     .prepare("UPDATE threads SET status = 'idle', last_turn_completed_at = ?, updated_at = ? WHERE status = 'running'")
     .run(now, now)
 }
 
 export function getThreadWsl(id: string): { use_wsl: boolean; wsl_distro: string | null } {
-  const row = getDb()
+  const row = getDb('getThreadWsl')
     .prepare('SELECT use_wsl, wsl_distro FROM threads WHERE id = ?')
     .get(id) as { use_wsl: number; wsl_distro: string | null } | undefined
   return { use_wsl: (row?.use_wsl ?? 0) === 1, wsl_distro: row?.wsl_distro ?? null }
@@ -1181,7 +1181,7 @@ export function getThreadYoloMode(id: string): boolean {
 }
 
 export function getThreadPermissionMode(id: string): PermissionMode {
-  const row = getDb()
+  const row = getDb('getThreadPermissionMode')
     .prepare('SELECT permission_mode, yolo_mode FROM threads WHERE id = ?')
     .get(id) as { permission_mode?: string; yolo_mode: number } | undefined
   return normalizePermissionMode(row?.permission_mode, row?.yolo_mode)
@@ -1189,82 +1189,82 @@ export function getThreadPermissionMode(id: string): PermissionMode {
 
 /** Sets git_branch only if it hasn't been set yet. Returns true if it was updated. */
 export function setThreadGitBranchIfUnset(id: string, branch: string): boolean {
-  const result = getDb()
+  const result = getDb('setThreadGitBranchIfUnset')
     .prepare('UPDATE threads SET git_branch = ?, updated_at = ? WHERE id = ? AND git_branch IS NULL')
     .run(branch, new Date().toISOString(), id)
   return result.changes > 0
 }
 
 export function updateThreadWsl(id: string, useWsl: boolean, wslDistro: string | null): void {
-  getDb()
+  getDb('updateThreadWsl')
     .prepare('UPDATE threads SET use_wsl = ?, wsl_distro = ?, updated_at = ? WHERE id = ?')
     .run(useWsl ? 1 : 0, wslDistro, new Date().toISOString(), id)
 }
 
 export function updateThreadName(id: string, name: string): void {
-  getDb()
+  getDb('updateThreadName')
     .prepare('UPDATE threads SET name = ?, updated_at = ? WHERE id = ?')
     .run(name, new Date().toISOString(), id)
 }
 
 export function getThreadModel(threadId: string): string {
-  const row = getDb()
+  const row = getDb('getThreadModel')
     .prepare('SELECT model FROM threads WHERE id = ?')
     .get(threadId) as { model: string | null } | undefined
   return row?.model ?? 'claude-opus-4-8'
 }
 
 export function getThreadProvider(threadId: string): string {
-  const row = getDb()
+  const row = getDb('getThreadProvider')
     .prepare('SELECT provider FROM threads WHERE id = ?')
     .get(threadId) as { provider: string | null } | undefined
   return row?.provider ?? 'claude-code'
 }
 
 export function getThreadReasoningLevel(threadId: string): ReasoningLevel {
-  const row = getDb()
+  const row = getDb('getThreadReasoningLevel')
     .prepare('SELECT reasoning_level FROM threads WHERE id = ?')
     .get(threadId) as { reasoning_level: string | null } | undefined
   return normalizeReasoningLevel(row?.reasoning_level)
 }
 
 export function getThreadCodexPersonality(threadId: string): CodexPersonality {
-  const row = getDb()
+  const row = getDb('getThreadCodexPersonality')
     .prepare('SELECT codex_personality FROM threads WHERE id = ?')
     .get(threadId) as { codex_personality: string | null } | undefined
   return normalizeCodexPersonality(row?.codex_personality)
 }
 
 export function getThreadCodexReasoningSummary(threadId: string): CodexReasoningSummary {
-  const row = getDb()
+  const row = getDb('getThreadCodexReasoningSummary')
     .prepare('SELECT codex_reasoning_summary FROM threads WHERE id = ?')
     .get(threadId) as { codex_reasoning_summary: string | null } | undefined
   return normalizeCodexReasoningSummary(row?.codex_reasoning_summary)
 }
 
 export function getThreadCursorThinking(threadId: string): boolean | null {
-  const row = getDb()
+  const row = getDb('getThreadCursorThinking')
     .prepare('SELECT cursor_thinking FROM threads WHERE id = ?')
     .get(threadId) as { cursor_thinking: number | null } | undefined
   return row?.cursor_thinking == null ? null : row.cursor_thinking === 1
 }
 
 export function getThreadCursorContext(threadId: string): string | null {
-  const row = getDb()
+  const row = getDb('getThreadCursorContext')
     .prepare('SELECT cursor_context FROM threads WHERE id = ?')
     .get(threadId) as { cursor_context: string | null } | undefined
   return row?.cursor_context ?? null
 }
 
 export function getThreadSessionId(threadId: string): string | null {
-  const row = getDb()
+  const row = getDb('getThreadSessionId')
     .prepare('SELECT claude_session_id FROM threads WHERE id = ?')
     .get(threadId) as { claude_session_id: string | null } | undefined
   return row?.claude_session_id ?? null
 }
 
 export function getImportedSessionIds(projectId: string): string[] {
-  const rows = getDb()
+  const rows = getDb('getImportedSessionIds')
     .prepare('SELECT claude_session_id FROM threads WHERE project_id = ? AND claude_session_id IS NOT NULL')
     .all(projectId) as { claude_session_id: string }[]
   return rows.map(r => r.claude_session_id)
@@ -1273,7 +1273,7 @@ export function getImportedSessionIds(projectId: string): string[] {
 /** Get the provider and model from the thread where provider/model was most recently explicitly changed. */
 export function getLastUsedProviderAndModel(projectId: string): { provider: string; model: string } {
   // Prefer threads where provider_model_updated_at was explicitly set; fall back to most recently updated
-  const row = getDb()
+  const row = getDb('getLastUsedProviderAndModel')
     .prepare(
       'SELECT provider, model FROM threads WHERE project_id = ? ORDER BY provider_model_updated_at DESC NULLS LAST, updated_at DESC LIMIT 1'
     )
@@ -1288,14 +1288,14 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
 }
 
 export function updateThreadSessionId(threadId: string, sessionId: string): void {
-  getDb()
+  getDb('updateThreadSessionId')
     .prepare('UPDATE threads SET claude_session_id = ? WHERE id = ?')
     .run(sessionId, threadId)
 }
 
 /** Accumulate provider usage totals and optionally set context_window to the latest snapshot. */
 export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, totalTokens: number, costUsd: number | null, contextWindow: number | null): void {
-  getDb()
+  getDb('updateThreadUsage')
     .prepare(
       'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, total_tokens = total_tokens + ?, total_cost_usd = CASE WHEN ? IS NULL THEN total_cost_usd ELSE COALESCE(total_cost_usd, 0) + ? END, context_window = COALESCE(?, context_window), updated_at = ? WHERE id = ?'
     )
@@ -1305,7 +1305,7 @@ export function updateThreadUsage(id: string, inputTokens: number, outputTokens:
 // ── Sessions ──────────────────────────────────────────────────────────────────
 
 export function listSessions(threadId: string): Session[] {
-  const rows = getDb()
+  const rows = getDb('listSessions')
     .prepare('SELECT * FROM sessions WHERE thread_id = ? ORDER BY created_at ASC')
     .all(threadId) as SessionRow[]
   return rows.map((r) => ({ ...r, is_active: r.is_active === 1 }))
@@ -1314,7 +1314,7 @@ export function listSessions(threadId: string): Session[] {
 export function createSession(threadId: string, name: string, claudeSessionId?: string): Session {
   const now = new Date().toISOString()
   const id = uuidv4()
-  getDb()
+  getDb('createSession')
     .prepare(
       'INSERT INTO sessions (id, thread_id, claude_session_id, name, is_active, created_at, updated_at) VALUES (?, ?, ?, ?, 1, ?, ?)'
     )
@@ -1331,27 +1331,27 @@ export function createSession(threadId: string, name: string, claudeSessionId?: 
 }
 
 export function getActiveSession(threadId: string): Session | null {
-  const row = getDb()
+  const row = getDb('getActiveSession')
     .prepare('SELECT * FROM sessions WHERE thread_id = ? AND is_active = 1')
     .get(threadId) as SessionRow | undefined
   return row ? { ...row, is_active: true } : null
 }
 
 export function setActiveSession(threadId: string, sessionId: string): void {
-  const db = getDb()
+  const db = getDb('setActiveSession')
   const now = new Date().toISOString()
   db.prepare('UPDATE sessions SET is_active = 0 WHERE thread_id = ?').run(threadId)
   db.prepare('UPDATE sessions SET is_active = 1, updated_at = ? WHERE id = ?').run(now, sessionId)
 }
 
 export function updateSessionClaudeId(sessionId: string, claudeSessionId: string): void {
-  getDb()
+  getDb('updateSessionClaudeId')
     .prepare('UPDATE sessions SET claude_session_id = ?, updated_at = ? WHERE id = ?')
     .run(claudeSessionId, new Date().toISOString(), sessionId)
 }
 
 export function getSessionClaudeId(sessionId: string): string | null {
-  const row = getDb()
+  const row = getDb('getSessionClaudeId')
     .prepare('SELECT claude_session_id FROM sessions WHERE id = ?')
     .get(sessionId) as { claude_session_id: string | null } | undefined
   return row?.claude_session_id ?? null
@@ -1373,7 +1373,7 @@ export function getOrCreateActiveSession(threadId: string): Session {
 // ── Messages ──────────────────────────────────────────────────────────────────
 
 export function listMessages(threadId: string): Message[] {
-  const rows = getDb()
+  const rows = getDb('listMessages')
     .prepare('SELECT * FROM messages WHERE thread_id = ? ORDER BY created_at ASC')
     .all(threadId) as MessageRow[]
   return foldMessages(rows as Message[])
@@ -1397,7 +1397,7 @@ export function insertMessage(
     metadata: metadata ? JSON.stringify(metadata) : null,
     created_at: now
   }
-  getDb()
+  getDb('insertMessage')
     .prepare(
       'INSERT INTO messages (id, thread_id, session_id, role, content, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)'
     )
@@ -1406,7 +1406,7 @@ export function insertMessage(
 }
 
 export function listMessagesBySession(sessionId: string): Message[] {
-  const rows = getDb()
+  const rows = getDb('listMessagesBySession')
     .prepare('SELECT * FROM messages WHERE session_id = ? ORDER BY created_at ASC')
     .all(sessionId) as MessageRow[]
   return foldMessages(rows as Message[])
@@ -1564,7 +1564,7 @@ function rowToCommand(row: ProjectCommandRow): ProjectCommand {
 }
 
 export function listCommands(projectId: string): ProjectCommand[] {
-  const rows = getDb()
+  const rows = getDb('listCommands')
     .prepare('SELECT * FROM project_commands WHERE project_id = ? ORDER BY sort_order ASC, created_at ASC')
     .all(projectId) as ProjectCommandRow[]
   return rows.map(rowToCommand)
@@ -1573,33 +1573,33 @@ export function listCommands(projectId: string): ProjectCommand[] {
 export function createCommand(projectId: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate = false): ProjectCommand {
   const now = new Date().toISOString()
   const id = uuidv4()
-  const countRow = getDb()
+  const countRow = getDb('createCommand')
     .prepare('SELECT COUNT(*) as count FROM project_commands WHERE project_id = ?')
     .get(projectId) as { count: number }
   const sortOrder = countRow.count
-  getDb()
+  getDb('createCommand')
     .prepare(
       'INSERT INTO project_commands (id, project_id, name, command, cwd, shell, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
     )
     .run(id, projectId, name, command, cwd ?? null, shell ?? null, sortOrder, now, now)
   if (runOnWorktreeCreate) {
-    getDb().prepare('UPDATE project_commands SET run_on_worktree_create = 1 WHERE id = ?').run(id)
+    getDb('createCommand').prepare('UPDATE project_commands SET run_on_worktree_create = 1 WHERE id = ?').run(id)
   }
   return { id, project_id: projectId, name, command, cwd: cwd ?? null, shell: shell ?? null, run_on_worktree_create: runOnWorktreeCreate, sort_order: sortOrder, created_at: now, updated_at: now }
 }
 
 export function updateCommand(id: string, name: string, command: string, cwd?: string | null, shell?: string | null, runOnWorktreeCreate = false): void {
-  getDb()
+  getDb('updateCommand')
     .prepare('UPDATE project_commands SET name = ?, command = ?, cwd = ?, shell = ?, run_on_worktree_create = ?, updated_at = ? WHERE id = ?')
     .run(name, command, cwd ?? null, shell ?? null, runOnWorktreeCreate ? 1 : 0, new Date().toISOString(), id)
 }
 
 export function deleteCommand(id: string): void {
-  getDb().prepare('DELETE FROM project_commands WHERE id = ?').run(id)
+  getDb('deleteCommand').prepare('DELETE FROM project_commands WHERE id = ?').run(id)
 }
 
 export function getCommandById(id: string): ProjectCommand | null {
-  const row = getDb()
+  const row = getDb('getCommandById')
     .prepare('SELECT * FROM project_commands WHERE id = ?')
     .get(id) as ProjectCommandRow | undefined
   return row ? rowToCommand(row) : null
@@ -1619,7 +1619,7 @@ function rowToYouTrackServer(row: YouTrackServerRow): YouTrackServer {
 }
 
 export function listYouTrackServers(): YouTrackServer[] {
-  const rows = getDb()
+  const rows = getDb('listYouTrackServers')
     .prepare('SELECT * FROM youtrack_servers ORDER BY created_at ASC')
     .all() as YouTrackServerRow[]
   return rows.map(rowToYouTrackServer)
@@ -1628,20 +1628,20 @@ export function listYouTrackServers(): YouTrackServer[] {
 export function createYouTrackServer(name: string, url: string, token: string): YouTrackServer {
   const now = new Date().toISOString()
   const id = uuidv4()
-  getDb()
+  getDb('createYouTrackServer')
     .prepare('INSERT INTO youtrack_servers (id, name, url, token, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)')
     .run(id, name, url, token, now, now)
   return { id, name, url, token, created_at: now, updated_at: now }
 }
 
 export function updateYouTrackServer(id: string, name: string, url: string, token: string): void {
-  getDb()
+  getDb('updateYouTrackServer')
     .prepare('UPDATE youtrack_servers SET name = ?, url = ?, token = ?, updated_at = ? WHERE id = ?')
     .run(name, url, token, new Date().toISOString(), id)
 }
 
 export function deleteYouTrackServer(id: string): void {
-  getDb().prepare('DELETE FROM youtrack_servers WHERE id = ?').run(id)
+  getDb('deleteYouTrackServer').prepare('DELETE FROM youtrack_servers WHERE id = ?').run(id)
 }
 
 // ── Slash Commands ────────────────────────────────────────────────────────────
@@ -1662,7 +1662,7 @@ function rowToSlashCommand(row: SlashCommandRow): SlashCommand {
 /** List global commands plus project-specific commands for the given projectId. */
 export function listSlashCommands(projectId?: string | null): SlashCommand[] {
   if (projectId) {
-    const rows = getDb()
+    const rows = getDb('listSlashCommands')
       .prepare(
         'SELECT * FROM slash_commands WHERE project_id IS NULL OR project_id = ? ORDER BY project_id NULLS FIRST, sort_order ASC, created_at ASC'
       )
@@ -1670,7 +1670,7 @@ export function listSlashCommands(projectId?: string | null): SlashCommand[] {
     return rows.map(rowToSlashCommand)
   }
   // Global only
-  const rows = getDb()
+  const rows = getDb('listSlashCommands')
     .prepare('SELECT * FROM slash_commands WHERE project_id IS NULL ORDER BY sort_order ASC, created_at ASC')
     .all() as SlashCommandRow[]
   return rows.map(rowToSlashCommand)
@@ -1684,11 +1684,11 @@ export function createSlashCommand(
 ): SlashCommand {
   const now = new Date().toISOString()
   const id = uuidv4()
-  const countRow = getDb()
+  const countRow = getDb('createSlashCommand')
     .prepare('SELECT COUNT(*) as count FROM slash_commands WHERE project_id IS ?')
     .get(projectId) as { count: number }
   const sortOrder = countRow.count
-  getDb()
+  getDb('createSlashCommand')
     .prepare(
       'INSERT INTO slash_commands (id, project_id, name, description, prompt, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
     )
@@ -1702,13 +1702,13 @@ export function updateSlashCommand(
   description: string | null,
   prompt: string
 ): void {
-  getDb()
+  getDb('updateSlashCommand')
     .prepare('UPDATE slash_commands SET name = ?, description = ?, prompt = ?, updated_at = ? WHERE id = ?')
     .run(name, description, prompt, new Date().toISOString(), id)
 }
 
 export function deleteSlashCommand(id: string): void {
-  getDb().prepare('DELETE FROM slash_commands WHERE id = ?').run(id)
+  getDb('deleteSlashCommand').prepare('DELETE FROM slash_commands WHERE id = ?').run(id)
 }
 
 export function importThread(
@@ -1718,7 +1718,7 @@ export function importThread(
   claudeSessionId: string,
   messages: ImportedMessage[]
 ): Thread {
-  const db = getDb()
+  const db = getDb('importThread')
   const now = new Date().toISOString()
   const threadId = uuidv4()
   const sessionId = uuidv4()
@@ -1809,10 +1809,10 @@ export function importThread(
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export function getSetting(key: string): string | null {
-  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
+  const row = getDb('getSetting').prepare('SELECT value FROM settings WHERE key = ?').get(key) as { value: string } | undefined
   return row?.value ?? null
 }
 
 export function setSetting(key: string, value: string): void {
-  getDb().prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
+  getDb('setSetting').prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value').run(key, value)
 }

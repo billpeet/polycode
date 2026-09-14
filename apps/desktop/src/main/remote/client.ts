@@ -262,6 +262,7 @@ export class RemoteControlClient {
    * watchdog would notice within a minute; restarting on resume closes the gap immediately.
    */
   private readonly handleResume = (): void => {
+    if (this.stopped) return
     if (this.getActiveHost()) this.restartEventStream()
   }
 
@@ -271,6 +272,7 @@ export class RemoteControlClient {
   }
 
   stop(): void {
+    this.stopped = true
     for (const reads of this.reads.values()) reads.dispose()
     this.reads.clear()
     this.capabilities.clear()
@@ -279,6 +281,8 @@ export class RemoteControlClient {
     this.eventStream.stop()
     this.streamHost = null
   }
+
+  private stopped = false
 
   getConnectionState(): RemoteConnectionState {
     return this.connectionState
@@ -339,6 +343,7 @@ export class RemoteControlClient {
   }
 
   private async probeLatency(host: RemoteHost): Promise<void> {
+    if (this.stopped) return
     // The probe only reports how far away a *reachable* host is. When the circuit is open
     // or the stream is down, the watchdog and RPC paths own the failure story.
     if (!this.streamConnected || this.unavailable?.hostId === host.id) return
@@ -354,6 +359,7 @@ export class RemoteControlClient {
       })
       if (!response.ok) return
       const body = await readJsonResponse(response)
+      if (this.stopped) return
       if (body.ok && this.getActiveHost()?.id === host.id) {
         this.capabilities.set(host.id, Promise.resolve(parseCapabilities(body)))
       }
@@ -583,6 +589,7 @@ export class RemoteControlClient {
   }
 
   private restartEventStream(): void {
+    if (this.stopped) return
     for (const reads of this.reads.values()) reads.dispose()
     this.reads.clear()
     this.capabilities.clear()

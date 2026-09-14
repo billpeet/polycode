@@ -1,5 +1,6 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { appShuttingDownMessage } from '@polycode/shared'
 import { useProjectStore } from '../../stores/projects'
 import { useSessionStore } from '../../stores/sessions'
 import { useThreadStore } from '../../stores/threads'
@@ -38,6 +39,19 @@ describe('useDatabaseSync', () => {
       expect(invoke).toHaveBeenCalledWith('threads:archivedCount', 'project-1')
       expect(invoke).toHaveBeenCalledWith('messages:listBySession', 'session-1')
     })
+  })
+
+  it('settles database sync ticks rejected during app shutdown', async () => {
+    vi.useFakeTimers()
+    const { unmount } = renderHook(() => useDatabaseSync())
+    invoke.mockRejectedValue(new Error(appShuttingDownMessage()))
+    try {
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000) })
+      expect(invoke).toHaveBeenCalledWith('threads:list', 'project-1')
+    } finally {
+      unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('does not reload the transcript of a running thread — the stream and thread:complete own it', async () => {

@@ -39,7 +39,7 @@ import {
   shutdownObservability,
   type TelemetryAttributes,
 } from './observability'
-import { getAppLifecycleState, shutdownApp, waitForAppOperations } from './app-lifecycle'
+import { registerAppShutdown, waitForAppOperations } from './app-lifecycle'
 import { recordMemorySample, startMemoryTelemetry, stopMemoryTelemetry, type MemorySample } from './memory-telemetry'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
@@ -399,38 +399,34 @@ app.on('window-all-closed', () => {
   }
 })
 
-app.on('before-quit', (event) => {
-  if (getAppLifecycleState() !== 'running') return
-
-  event.preventDefault()
-  void shutdownApp({
-    stopProducers: () => {
-      isQuitting = true
-      runLifecycle?.stop()
-      sessionManager.stopAll()
-      stopWebhookServer()
-      stopRemoteControlClient()
-      stopRemoteControlServer()
-      browserSessionManager.stopAll()
-      stopPlanWatcher()
-      stopAllFileWatches()
-      ptyManager.killAll()
-      stopMemoryTelemetry()
-    },
-    awaitProducers: async () => {
-      await Promise.allSettled([
-        commandManager.stopAll(),
-        shutdownObservability(),
-        waitForAppOperations(),
-      ])
-    },
-    closeDatabase: () => {
-      cleanupAllAttachments()
-      closeDb()
-    },
-    finish: () => {
-      flushAppLogs()
-      app.quit()
-    },
-  })
+registerAppShutdown(app, {
+  stopProducers: () => {
+    isQuitting = true
+    runLifecycle?.stop()
+    sessionManager.stopAll()
+    stopWebhookServer()
+    stopRemoteControlClient()
+    stopRemoteControlServer()
+    browserSessionManager.stopAll()
+    stopPlanWatcher()
+    stopAllFileWatches()
+    ptyManager.killAll()
+    stopMemoryTelemetry()
+  },
+  awaitProducers: async () => {
+    await Promise.allSettled([
+      commandManager.stopAll(),
+      runLifecycle?.waitForIdle(),
+      shutdownObservability(),
+      waitForAppOperations(),
+    ])
+  },
+  closeDatabase: () => {
+    cleanupAllAttachments()
+    closeDb()
+  },
+  finish: () => {
+    flushAppLogs()
+    app.quit()
+  },
 })

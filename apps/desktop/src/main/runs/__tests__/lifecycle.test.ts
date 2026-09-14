@@ -57,7 +57,7 @@
  *  21. Escalations notify with the routine name; onChange fires on spawn,
  *      success, escalation, dismissal, and once-disable.
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ThreadStatus } from '../../../shared/types'
 import { RunLifecycle } from '../lifecycle'
 import { FakeGit, FakeNotifier, FakeSessions, FakeStore, FakeWorktrees, ManualClock, makeRoutine } from './fakes'
@@ -91,6 +91,63 @@ function harness(clockAt = new Date('2026-08-14T03:05:00')) {
 }
 
 describe('firing', () => {
+  it('does not resume a scheduled fire or a wake tick after stop', async () => {
+    const h = harness()
+    h.store.addRoutine(makeRoutine())
+    let release!: () => void
+    h.git.fetchOrigin = () => new Promise<void>((resolve) => { release = resolve })
+    const tick = h.lifecycle.tick()
+    h.lifecycle.stop()
+    let drained = false
+    const drain = h.lifecycle.waitForIdle().then(() => { drained = true })
+    await Promise.resolve()
+    expect(drained).toBe(false)
+    release()
+    await tick
+    await drain
+    expect(h.sessions.prompts).toHaveLength(0)
+    const reads = vi.spyOn(h.store, 'loadRoutines')
+    await h.lifecycle.tick()
+    expect(reads).not.toHaveBeenCalled()
+  })
+
+  it('drains an evaluation already awaiting git before allowing database closure', async () => {
+    const h = harness()
+    const run = h.store.seedRun({ id: 'run-live', routineId: 'routine-1', state: 'active', detail: null, locationId: 'wt-live' })
+    h.worktrees.seedWorktree('wt-live')
+    // Startup recovery escalates the run; completing a user turn still evaluates it.
+    h.lifecycle.start()
+    let release!: () => void
+    const held = new Promise<void>((resolve) => { release = resolve })
+    h.git.workingTreeFacts = async () => { await held; return { dirty: false, unpushedCommits: 0 } }
+    h.sessions.emitCompletion(run.id, 'idle')
+    h.lifecycle.stop()
+    let closed = false
+    const drain = h.lifecycle.waitForIdle().then(() => { closed = true })
+    await Promise.resolve()
+    expect(closed).toBe(false)
+    release()
+    await drain
+    expect(h.worktrees.removed).toEqual(['wt-live'])
+    expect(h.store.getRun(run.id)?.state).toBe('success')
+    const reads = vi.spyOn(h.store, 'getRun')
+    h.sessions.emitCompletion(run.id, 'idle')
+    expect(reads).not.toHaveBeenCalled()
+  })
+
+  it('ignores a pending session completion after stop without holding shutdown open', async () => {
+    const h = harness()
+    h.store.addRoutine(makeRoutine())
+    h.sessions.completionStatus = 'never'
+    const id = await h.lifecycle.runNow('routine-1')
+    h.lifecycle.stop()
+    await h.lifecycle.waitForIdle()
+    const writes = vi.spyOn(h.store, 'transition')
+    h.sessions.completePending(id, 'stopped')
+    await Promise.resolve()
+    expect(writes).not.toHaveBeenCalled()
+  })
+
   it('uses the host regional format in the persisted run name', async () => {
     const h = harness(new Date('2026-09-04T07:52:36'))
     h.store.addRoutine(makeRoutine({ name: 'Sentry triage' }))

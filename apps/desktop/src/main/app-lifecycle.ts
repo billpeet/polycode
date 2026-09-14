@@ -1,4 +1,5 @@
 import { APP_SHUTTING_DOWN_CODE, appShuttingDownMessage } from '@polycode/shared'
+import { AsyncLocalStorage } from 'node:async_hooks'
 
 export type AppLifecycleState = 'running' | 'closing' | 'closed'
 
@@ -14,6 +15,16 @@ export class AppShuttingDownError extends Error {
 let state: AppLifecycleState = 'running'
 let activeOperations = 0
 const idleWaiters = new Set<() => void>()
+const operationContext = new AsyncLocalStorage<string>()
+
+/** Labels are code identifiers only; never include arguments, paths or user content. */
+export function sanitizeOperationName(name: string): string {
+  return /^[A-Za-z][A-Za-z0-9:._-]{0,79}$/.test(name) ? name : 'unknown'
+}
+
+export function getAppOperationName(): string {
+  return operationContext.getStore() ?? 'untracked'
+}
 
 export function getAppLifecycleState(): AppLifecycleState {
   return state
@@ -33,11 +44,11 @@ export function assertAppRunning(): void {
   if (state !== 'running') throw new AppShuttingDownError()
 }
 
-export async function runAppOperation<T>(operation: () => T | Promise<T>): Promise<T> {
+export async function runAppOperation<T>(operation: () => T | Promise<T>, name = 'unnamed'): Promise<T> {
   assertAppRunning()
   activeOperations += 1
   try {
-    return await operation()
+    return await operationContext.run(sanitizeOperationName(name), operation)
   } finally {
     activeOperations -= 1
     if (activeOperations === 0) {
@@ -57,6 +68,18 @@ export interface ShutdownSteps {
   awaitProducers(): Promise<unknown>
   closeDatabase(): void
   finish(): void
+}
+
+interface ShutdownHost {
+  on(event: 'before-quit', listener: (event: { preventDefault(): void }) => void): unknown
+}
+
+export function registerAppShutdown(app: ShutdownHost, steps: ShutdownSteps): void {
+  app.on('before-quit', (event) => {
+    if (state !== 'running') return
+    event.preventDefault()
+    void shutdownApp(steps)
+  })
 }
 
 /** Stop every source of asynchronous work before closing the database it uses. */

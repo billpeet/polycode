@@ -3,10 +3,12 @@ import { watch, readFileSync, readdirSync, existsSync, mkdirSync, statSync, FSWa
 import { join } from 'path'
 import { homedir } from 'os'
 import { BrowserWindow } from 'electron'
+import { getAppLifecycleState } from './app-lifecycle'
 
 const PLANS_DIR = join(homedir(), '.claude', 'plans')
 
 let watcher: FSWatcher | null = null
+let cancelPendingChanges: (() => void) | null = null
 
 export interface PlanFile {
   name: string
@@ -39,6 +41,8 @@ export function readPlanFile(filePath: string): string | null {
 }
 
 export function startPlanWatcher(win: BrowserWindow): void {
+  if (getAppLifecycleState() !== 'running') return
+  stopPlanWatcher()
   if (!existsSync(PLANS_DIR)) {
     try {
       mkdirSync(PLANS_DIR, { recursive: true })
@@ -50,9 +54,16 @@ export function startPlanWatcher(win: BrowserWindow): void {
 
   // Per-filename debounce to avoid dropping events when multiple plans are written simultaneously
   const debounceTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  let stopped = false
+  cancelPendingChanges = () => {
+    stopped = true
+    for (const timer of debounceTimers.values()) clearTimeout(timer)
+    debounceTimers.clear()
+  }
 
   try {
     watcher = watch(PLANS_DIR, (_eventType, filename) => {
+      if (stopped) return
       if (!filename || !filename.endsWith('.md')) return
 
       const existing = debounceTimers.get(filename)
@@ -77,6 +88,7 @@ export function startPlanWatcher(win: BrowserWindow): void {
     })
 
     watcher.on('error', (error: NodeJS.ErrnoException) => {
+      stopped = true
       for (const timer of debounceTimers.values()) clearTimeout(timer)
       debounceTimers.clear()
       watcher?.close()
@@ -104,6 +116,8 @@ export function startPlanWatcher(win: BrowserWindow): void {
 }
 
 export function stopPlanWatcher(): void {
+  cancelPendingChanges?.()
+  cancelPendingChanges = null
   if (watcher) {
     watcher.close()
     watcher = null

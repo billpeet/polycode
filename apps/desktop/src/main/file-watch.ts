@@ -2,6 +2,7 @@ import { watch, existsSync, statSync, FSWatcher } from 'node:fs'
 import { basename, dirname } from 'node:path'
 import { BrowserWindow } from 'electron'
 import { emitAppEvent } from './app-events'
+import { getAppLifecycleState } from './app-lifecycle'
 
 interface FileWatchEntry {
   watcher: FSWatcher
@@ -48,6 +49,7 @@ function closeRepoWatchEntry(repoPath: string, entry: RepoWatchEntry): void {
 }
 
 export function startFileWatch(win: BrowserWindow, filePath: string): boolean {
+  if (getAppLifecycleState() !== 'running') return false
   const existing = watchers.get(filePath)
   if (existing) {
     existing.refCount += 1
@@ -136,6 +138,7 @@ export function stopAllFileWatches(): void {
 }
 
 export function startRepoGitWatch(win: BrowserWindow, repoPath: string): boolean {
+  if (getAppLifecycleState() !== 'running') return false
   const existing = repoWatchers.get(repoPath)
   if (existing) {
     existing.refCount += 1
