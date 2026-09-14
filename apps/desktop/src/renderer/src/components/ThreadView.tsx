@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import { useToastStore } from '../stores/toast'
@@ -16,6 +16,7 @@ import { formatErrorDetails } from '../lib/errorDetails'
 import UiErrorBoundary from './UiErrorBoundary'
 import { useRemoteConnectionStore } from '../stores/remoteConnection'
 import { client } from '../lib/client'
+import { settleBackgroundIpc } from '../lib/backgroundIpc'
 
 interface Props {
   threadId: string
@@ -57,8 +58,6 @@ function ThreadViewContent({ threadId }: Props) {
     Object.values(s.byProject).some((threads) => (threads ?? []).some((thread) => thread.id === threadId && thread.is_pending))
   )
 
-  const cleanupRef = useRef<Array<() => void>>([])
-
   // Desktop SSE has no replay: any thread:output/status/complete emitted while the remote
   // event stream was down is simply gone. Re-keying the fetch effects below on this nonce
   // makes a stream recovery behave like a remount — transcript, sessions and canonical
@@ -68,35 +67,40 @@ function ThreadViewContent({ threadId }: Props) {
   // Fetch sessions when thread changes
   useEffect(() => {
     if (isPendingThread) return
-    fetchSessions(threadId)
+    void settleBackgroundIpc(fetchSessions(threadId))
   }, [threadId, fetchSessions, isPendingThread, reconnectNonce])
 
   // Reconcile canonical status when a thread view mounts. Per-thread push
   // events can be missed while another thread is selected.
   useEffect(() => {
     if (isPendingThread || !threadProjectId) return
-    void fetchThreads(threadProjectId)
+    void settleBackgroundIpc(fetchThreads(threadProjectId))
   }, [fetchThreads, isPendingThread, threadProjectId, reconnectNonce])
 
   // Fetch messages when active session changes, and sync todos from persisted messages
   useEffect(() => {
     if (isPendingThread) return
+    let disposed = false
     const doFetch = async () => {
       if (activeSessionId) {
         await fetchMessagesBySession(activeSessionId)
+        if (disposed) return
         const msgs = useMessageStore.getState().messagesBySession[activeSessionId] ?? []
         useTodoStore.getState().syncFromMessages(threadId, msgs)
       } else {
         await fetchMessages(threadId)
+        if (disposed) return
         const msgs = useMessageStore.getState().messagesByThread[threadId] ?? []
         useTodoStore.getState().syncFromMessages(threadId, msgs)
       }
     }
-    doFetch()
+    void settleBackgroundIpc(doFetch())
+    return () => { disposed = true }
   }, [threadId, activeSessionId, fetchMessages, fetchMessagesBySession, isPendingThread, reconnectNonce])
 
   useEffect(() => {
     if (isPendingThread) return
+    let disposed = false
     // Subscribe to streaming events
     const unsubOutput = client.on(`thread:output:${threadId}`, (...args) => {
       const event = args[0] as OutputEvent
@@ -203,6 +207,7 @@ function ThreadViewContent({ threadId }: Props) {
     })
 
     const unsubComplete = client.on(`thread:complete:${threadId}`, (...args) => {
+      if (disposed) return
       // Use the status sent directly with the complete event to avoid race conditions
       // with the separate thread:status IPC event
       const completionStatus = (args[0] as ThreadStatus | undefined) ?? 'idle'
@@ -213,24 +218,26 @@ function ThreadViewContent({ threadId }: Props) {
 
       // Re-fetch messages after completion to replace optimistic entries with
       // persisted ones, then rebuild todo state from that canonical history.
-      void (async () => {
+      void settleBackgroundIpc((async () => {
         const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
         if (currentActiveSession) {
           await useMessageStore.getState().fetchBySession(currentActiveSession)
+          if (disposed) return
           const msgs = useMessageStore.getState().messagesBySession[currentActiveSession] ?? []
           useTodoStore.getState().syncFromMessages(threadId, msgs)
         } else {
           await fetchMessages(threadId)
+          if (disposed) return
           const msgs = useMessageStore.getState().messagesByThread[threadId] ?? []
           useTodoStore.getState().syncFromMessages(threadId, msgs)
         }
-      })()
+      })())
 
       // Re-fetch sessions in case a new one was created
-      fetchSessions(threadId)
+      void settleBackgroundIpc(fetchSessions(threadId))
 
       // Refresh modified files for the git staging feature
-      useGitStore.getState().fetchModifiedFiles(threadId)
+      void settleBackgroundIpc(useGitStore.getState().fetchModifiedFiles(threadId))
 
       // Check for queued message and auto-send if session completed successfully
       const queuedMessage = useThreadStore.getState().queuedMessageByThread[threadId]
@@ -280,20 +287,22 @@ function ThreadViewContent({ threadId }: Props) {
 
     // Subscribe to session switch events from main process
     const unsubSessionSwitch = client.on(`thread:session-switched:${threadId}`, (...args) => {
+      if (disposed) return
       const sessionId = args[0] as string
       setActiveSession(threadId, sessionId)
       // Refetch sessions to update the tabs (a new session may have been created)
-      useSessionStore.getState().fetch(threadId)
+      void settleBackgroundIpc(useSessionStore.getState().fetch(threadId))
     })
 
     const unsubPid = client.on(`thread:pid:${threadId}`, (...args) => {
       useThreadStore.getState().setPid(threadId, (args[0] as number | null) ?? null)
     })
 
-    cleanupRef.current = [unsubOutput, unsubStatus, unsubComplete, unsubTitle, unsubSessionSwitch, unsubPid]
+    const cleanups = [unsubOutput, unsubStatus, unsubComplete, unsubTitle, unsubSessionSwitch, unsubPid]
 
     return () => {
-      cleanupRef.current.forEach((fn) => fn())
+      disposed = true
+      cleanups.forEach((fn) => fn())
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId, isPendingThread])
