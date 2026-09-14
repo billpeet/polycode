@@ -89,11 +89,13 @@ export default function App() {
 
   // 1. On mount: load saved selections from DB, then fetch projects
   useEffect(() => {
+    // YouTrack is optional and its store owns loading failures. A slow request
+    // must not delay restoring the selected project and thread.
+    void fetchYouTrackServers()
     Promise.all([
       getPref(SETTING_PROJECT_KEY),
       getPref(SETTING_THREAD_KEY),
       fetchProjects(),
-      fetchYouTrackServers(),
       loadFavourites(),
       useUiStore.getState().loadLayoutMode(),
     ]).then(([savedProjectId, savedThreadId]) => {

@@ -22,6 +22,10 @@ interface PanelProps {
 
 export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
   const servers = useYouTrackStore((s) => s.servers)
+  const loading = useYouTrackStore((s) => s.loading)
+  const unavailable = useYouTrackStore((s) => s.unavailable)
+  const loadError = useYouTrackStore((s) => s.error)
+  const fetchServers = useYouTrackStore((s) => s.fetch)
   const createServer = useYouTrackStore((s) => s.create)
   const updateServer = useYouTrackStore((s) => s.update)
   const removeServer = useYouTrackStore((s) => s.remove)
@@ -115,6 +119,19 @@ export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
       )}
 
       <div className="flex-1 overflow-y-auto space-y-4">
+          {loading && <p role="status" className="text-sm">Loading YouTrack servers...</p>}
+          {(unavailable || loadError) && (
+            <div role={loadError ? 'alert' : 'status'} className="text-sm space-y-2">
+              <p>{unavailable
+                ? 'Could not load YouTrack servers. The remote connection is unavailable or timed out.'
+                : `Could not load YouTrack servers: ${loadError}`}</p>
+              <button type="button" onClick={() => void fetchServers()} disabled={loading}
+                className="rounded px-3 py-1.5 text-xs"
+                style={{ border: '1px solid var(--color-border)' }}>
+                Retry
+              </button>
+            </div>
+          )}
           {/* Existing servers */}
           {servers.length > 0 && (
             <div className="space-y-2">
