@@ -19,7 +19,7 @@ export function saveAzurePat(token: string): void {
   forgeReadCache.clear()
 }
 
-export function azureApiUrl(ctx: AzureRepoContext, resource: string): URL {
+export function azureApiUrl(ctx: AzureRepoContext, resource: string, projectId?: string): URL {
   const repoUrl = buildAzureRepoUrl(ctx.remoteUrl)
   if (!repoUrl.startsWith('https://')) {
     throw new Error('Cannot determine Azure DevOps organization. Use a dev.azure.com HTTPS or v3 SSH remote.')
@@ -33,7 +33,9 @@ export function azureApiUrl(ctx: AzureRepoContext, resource: string): URL {
   web.search = ''
   web.hash = ''
   const prefix = web.pathname.split('/_git/')[0]
-  web.pathname = `${prefix}/_apis/git/repositories/${encodeURIComponent(ctx.repo)}/${resource}`
+  web.pathname = projectId
+    ? `${prefix.slice(0, ctx.project ? prefix.lastIndexOf('/') : prefix.length)}/${encodeURIComponent(projectId)}/_apis/${resource}`
+    : `${prefix}/_apis/git/repositories/${encodeURIComponent(ctx.repo)}/${resource}`
   return web
 }
 
@@ -66,8 +68,8 @@ function connectionError(error: unknown): Error {
 }
 
 /** Azure REST traffic always runs on the Polycode host, including SSH/WSL repositories. */
-export async function azureRequest<T>(ctx: AzureRepoContext, resource: string, query: Record<string, string> = {}, body?: unknown): Promise<T> {
-  const url = azureApiUrl(ctx, resource)
+export async function azureRequest<T>(ctx: AzureRepoContext, resource: string, query: Record<string, string> = {}, body?: unknown, projectId?: string): Promise<T> {
+  const url = azureApiUrl(ctx, resource, projectId)
   const encrypted = getSetting(PAT_KEY)
   if (!encrypted) throw new Error('Azure DevOps authentication required. Add a PAT in Settings > Azure DevOps.')
   let pat: string
@@ -76,7 +78,7 @@ export async function azureRequest<T>(ctx: AzureRepoContext, resource: string, q
   } catch {
     throw new Error('Azure DevOps authentication unavailable. Save your PAT again in Settings > Azure DevOps.')
   }
-  url.search = new URLSearchParams({ ...query, 'api-version': '7.1' }).toString()
+  url.search = new URLSearchParams({ 'api-version': '7.1', ...query }).toString()
   const options: RequestInit = {
     method: body === undefined ? 'GET' : 'POST',
     headers: {

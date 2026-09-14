@@ -10,6 +10,7 @@ import { GitCompareResult, GitFileChange, PullRequest, PullResult, RepoLocation 
 import { ContextMenu, ContextMenuItem } from '../ui/ContextMenu'
 import { SectionHeader, SparkleIcon } from './shared'
 import { StashSection } from './StashSection'
+import { PullRequestDetails } from './PullRequestDetails'
 import { CommitLogSection } from './CommitLogSection'
 import CreatePrModal from './CreatePrModal'
 import { useGitErrorReporter } from '../../lib/gitErrorToast'
@@ -109,40 +110,6 @@ function PullRequestProviderIcon({ provider }: { provider: 'azure' | 'github' })
       <path d="M9.45 1 3.94 5.6 1.5 3.75v8.5l2.44-1.85L9.45 15l5.05-2.05V3.05L9.45 1zm0 2.3v9.4L5.15 9.1V6.9l4.3-3.6z" />
     </svg>
   )
-}
-
-function PullRequestDetails({ pr }: { pr: PullRequest }) {
-  const badges: Array<{ label: string; title: string; color: string }> = []
-  if (pr.mergeStatus && pr.mergeStatus !== 'unknown') {
-    badges.push({
-      label: pr.mergeStatus === 'ready' ? 'Merge ready' : pr.mergeStatus === 'conflicting' ? 'Conflicts' : 'Merge blocked',
-      title: `Merge status: ${pr.mergeStatus}`,
-      color: pr.mergeStatus === 'ready' ? '#4ade80' : pr.mergeStatus === 'conflicting' ? '#f87171' : '#fbbf24',
-    })
-  }
-  if (pr.checkStatus && pr.checkStatus !== 'none') {
-    badges.push({
-      label: pr.checkStatus === 'passed' ? 'Checks passed' : pr.checkStatus === 'processing' ? 'Checks running' : 'Checks failed',
-      title: `CI checks: ${pr.checkStatus}`,
-      color: pr.checkStatus === 'passed' ? '#4ade80' : pr.checkStatus === 'processing' ? '#60a5fa' : '#f87171',
-    })
-  }
-  if (pr.unresolvedCommentCount !== undefined) {
-    badges.push({
-      label: `${pr.unresolvedCommentCount} open comment${pr.unresolvedCommentCount === 1 ? '' : 's'}`,
-      title: `${pr.unresolvedCommentCount} unresolved review comment${pr.unresolvedCommentCount === 1 ? '' : 's'}`,
-      color: pr.unresolvedCommentCount > 0 ? '#fbbf24' : 'var(--color-text-muted)',
-    })
-  }
-  if (pr.reviewStatus && pr.reviewStatus !== 'none') {
-    badges.push({
-      label: pr.reviewStatus === 'approved' ? 'Approved' : pr.reviewStatus === 'changes-requested' ? 'Changes requested' : 'Review pending',
-      title: `Review status: ${pr.reviewStatus}`,
-      color: pr.reviewStatus === 'approved' ? '#4ade80' : pr.reviewStatus === 'changes-requested' ? '#f87171' : '#fbbf24',
-    })
-  }
-  if (badges.length === 0) return null
-  return <div className="mt-1 flex flex-wrap gap-1">{badges.map((badge) => <span key={badge.title} className="rounded px-1.5 py-0.5 text-[9px]" title={badge.title} style={{ background: 'rgba(255,255,255,0.06)', color: badge.color }}>{badge.label}</span>)}</div>
 }
 
 function FileGroup({

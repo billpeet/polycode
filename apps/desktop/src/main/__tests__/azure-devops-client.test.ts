@@ -31,6 +31,20 @@ afterEach(() => vi.unstubAllGlobals())
 
 describe('Azure DevOps REST client', () => {
   it.each([
+    ['git@ssh.dev.azure.com:v3/org/My%20Project/repo', 'https://dev.azure.com/org/project-id/_apis/policy/evaluations'],
+    ['https://org.visualstudio.com/DefaultCollection/project/_git/repo', 'https://org.visualstudio.com/DefaultCollection/project-id/_apis/policy/evaluations'],
+    ['https://user@dev.azure.com/org/_git/repo', 'https://dev.azure.com/org/project-id/_apis/policy/evaluations'],
+  ])('builds project-scoped policy URLs for %s', (remote, expected) => {
+    expect(azureApiUrl(parseAzureRemote(remote)!, 'policy/evaluations', 'project-id').toString()).toBe(expected)
+  })
+
+  it('uses the policy API preview version', async () => {
+    saveAzurePat('secret')
+    mocks.fetch.mockResolvedValue({ ok: true, json: async () => ({ value: [] }) })
+    await azureRequest(ctx, 'policy/evaluations', { 'api-version': '7.1-preview.1' }, undefined, 'project-id')
+    expect(mocks.fetch.mock.calls[0][0].searchParams.get('api-version')).toBe('7.1-preview.1')
+  })
+  it.each([
     ['git@ssh.dev.azure.com:v3/org/My%20Project/My%20Repo', 'https://dev.azure.com/org/My%20Project/_apis/git/repositories/My%20Repo/pullrequests'],
     ['https://user@dev.azure.com/org/_git/repo', 'https://dev.azure.com/org/_apis/git/repositories/repo/pullrequests'],
     ['https://org.visualstudio.com/DefaultCollection/project/_git/repo', 'https://org.visualstudio.com/DefaultCollection/project/_apis/git/repositories/repo/pullrequests'],

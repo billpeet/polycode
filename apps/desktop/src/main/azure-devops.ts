@@ -1,6 +1,6 @@
 import { resolveForgeRepoContext } from './forge-context'
 import { PullRequest, SshConfig, WslConfig } from '../shared/types'
-import { azureRequest } from './azure-devops-client'
+import { azureApiUrl, azureRequest } from './azure-devops-client'
 import { createRunner } from './driver/runner'
 import { runGit } from './git-runner'
 import {
@@ -12,6 +12,43 @@ import {
 
 import type { AzureRepoContext, AzurePrInput } from './forge-parsers'
 
+interface BuildPolicyEvaluation {
+  status: string
+  configuration: {
+    isEnabled?: boolean
+    isDeleted?: boolean
+    type?: { id?: string }
+    settings?: { displayName?: string; buildDefinitionId?: number }
+  }
+  context?: { buildId?: number }
+}
+
+async function getChecks(ctx: AzureRepoContext, pr: PullRequest, projectId: string): Promise<Partial<PullRequest>> {
+  const result = await azureRequest<{ value: BuildPolicyEvaluation[] }>(ctx, 'policy/evaluations', {
+    artifactId: `vstfs:///CodeReview/CodeReviewId/${projectId}/${pr.id}`,
+    'api-version': '7.1-preview.1',
+  }, undefined, projectId)
+  const checks: NonNullable<PullRequest['checks']> = result.value
+    .filter(({ configuration, status }) => configuration.type?.id?.toLowerCase() === '0609b952-1397-4640-95ec-e00a01b2c241'
+      && configuration.isEnabled !== false && !configuration.isDeleted && status !== 'notApplicable')
+    .map(({ configuration, status, context }) => {
+      const buildId = context?.buildId
+      const url = azureApiUrl(ctx, 'policy/evaluations', projectId)
+      url.pathname = `${url.pathname.split('/_apis/')[0]}/_build/results`
+      url.search = new URLSearchParams({ buildId: String(buildId) }).toString()
+      return {
+        name: configuration.settings?.displayName || `Pipeline ${configuration.settings?.buildDefinitionId ?? ''}`.trim(),
+        status: status === 'approved' ? 'passed' : status === 'rejected' || status === 'broken' ? 'failed' : 'processing',
+        url: typeof buildId === 'number' && Number.isInteger(buildId) && buildId > 0 ? url.toString() : undefined,
+      }
+    })
+  return {
+    checks,
+    checkStatus: checks.some((check) => check.status === 'processing') ? 'processing'
+      : checks.some((check) => check.status === 'failed') ? 'failed' : checks.length ? 'passed' : 'none',
+  }
+}
+
 async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<string> {
   return runGit(createRunner({ ssh: ssh ?? undefined, wsl: wsl ?? undefined }), repoPath, args)
 }
@@ -19,14 +56,14 @@ async function git(repoPath: string, args: string[], ssh?: SshConfig | null, wsl
 async function enrichPullRequest(
   ctx: AzureRepoContext,
   pr: PullRequest,
+  projectId: Promise<string | undefined>,
 ): Promise<PullRequest> {
-  try {
-    const threads = await azureRequest<{ value: Array<{ status: number | string; isDeleted?: boolean }> }>(ctx, `pullrequests/${pr.id}/threads`)
-    return { ...pr, unresolvedCommentCount: threads.value.filter((thread) => !thread.isDeleted && (thread.status === 1 || thread.status === 'active')).length }
-  } catch {
-    // Comment metadata is optional; keep the base PR usable during transient failures.
-    return pr
-  }
+  const [comments, checks] = await Promise.allSettled([
+    azureRequest<{ value: Array<{ status: number | string; isDeleted?: boolean }> }>(ctx, `pullrequests/${pr.id}/threads`)
+      .then((threads) => ({ unresolvedCommentCount: threads.value.filter((thread) => !thread.isDeleted && (thread.status === 1 || thread.status === 'active')).length })),
+    projectId.then((id) => id ? getChecks(ctx, pr, id) : {}),
+  ])
+  return { ...pr, ...(comments.status === 'fulfilled' ? comments.value : {}), ...(checks.status === 'fulfilled' ? checks.value : {}) }
 }
 
 async function enrichPullRequests(
@@ -34,9 +71,13 @@ async function enrichPullRequests(
   prs: PullRequest[],
 ): Promise<PullRequest[]> {
   const enriched: PullRequest[] = []
+  if (!prs.length) return enriched
+  // Resolve the project GUID once, including remotes that omit the project name.
+  const projectId = azureRequest<{ project: { id: string } }>(ctx, '')
+    .then((repo) => repo.project.id).catch(() => undefined)
   for (let index = 0; index < prs.length; index += 5) {
     enriched.push(...await Promise.all(
-      prs.slice(index, index + 5).map((pr) => enrichPullRequest(ctx, pr)),
+      prs.slice(index, index + 5).map((pr) => enrichPullRequest(ctx, pr, projectId)),
     ))
   }
   return enriched

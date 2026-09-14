@@ -750,6 +750,7 @@ export interface PullRequest {
   creationDate: string
   mergeStatus?: 'ready' | 'blocked' | 'conflicting' | 'unknown'
   checkStatus?: 'passed' | 'processing' | 'failed' | 'none'
+  checks?: Array<{ name: string; status: 'passed' | 'processing' | 'failed'; url?: string }>
   unresolvedCommentCount?: number
   reviewStatus?: 'approved' | 'waiting' | 'changes-requested' | 'none'
 }
