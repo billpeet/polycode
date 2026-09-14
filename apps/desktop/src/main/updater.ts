@@ -1,17 +1,24 @@
-import { app, BrowserWindow } from 'electron'
+import { app, BrowserWindow, powerMonitor } from 'electron'
 import { autoUpdater } from 'electron-updater'
 import * as Sentry from '@sentry/electron/main'
 import type { UpdateState } from '../shared/types'
 import { sendToRenderer } from './app-events'
+import { count } from './observability'
 
 const FIRST_CHECK_DELAY = 10_000 // 10 seconds after launch
 const UPDATE_CHECK_INTERVAL = 30 * 60 * 1000 // every 30 minutes
 const MAX_TRANSIENT_RETRIES = 3
 const RETRY_BASE_DELAY = 2_000
+const RECOVERY_DELAY = 60_000
+const PERSISTENT_FAILURE_WINDOW = 30 * 60 * 1000
 
 let getWindow: () => BrowserWindow | null = () => null
 let transientRetryCount = 0
 let retryTimer: ReturnType<typeof setTimeout> | undefined
+let suspended = false
+let resumeTimer: ReturnType<typeof setTimeout> | undefined
+let firstTransientFailure: number | undefined
+let persistentFailureReported = false
 
 let updateState: UpdateState = {
   available: false,
@@ -51,6 +58,8 @@ function isTransientUpdateError(error: unknown): boolean {
 
 function resetTransientRetries(): void {
   transientRetryCount = 0
+  firstTransientFailure = undefined
+  persistentFailureReported = false
   if (retryTimer) clearTimeout(retryTimer)
   retryTimer = undefined
 }
@@ -58,6 +67,7 @@ function resetTransientRetries(): void {
 function handleUpdateError(error: unknown): void {
   const message = getErrorMessage(error)
   if (!isTransientUpdateError(error)) {
+    resetTransientRetries()
     Sentry.captureException(error, { tags: { source: 'auto-updater' } })
     console.error('[updater] error:', message)
     setState({ checking: false, downloading: false, error: message })
@@ -67,26 +77,28 @@ function handleUpdateError(error: unknown): void {
   // electron-updater can reject checkForUpdates and emit `error` for the same
   // request. One pending timer makes that pair a single retry attempt.
   if (retryTimer) return
+  setState({ checking: false, downloading: false, error: undefined })
+  if (suspended || resumeTimer) return
+  firstTransientFailure ??= Date.now()
+  count('polycode.updater.transient_failure')
 
-  if (transientRetryCount >= MAX_TRANSIENT_RETRIES) {
-    console.error(`[updater] transient failure after ${transientRetryCount} retries:`, message)
+  if (!persistentFailureReported && Date.now() - firstTransientFailure >= PERSISTENT_FAILURE_WINDOW) {
+    persistentFailureReported = true
     Sentry.captureException(error, {
-      tags: { source: 'auto-updater', retriesExhausted: 'true' },
-      extra: { retryCount: transientRetryCount },
+      tags: { source: 'auto-updater', retriesExhausted: 'true', persistent: 'true' },
+      extra: { retryCount: transientRetryCount, failureDurationMs: Date.now() - firstTransientFailure },
     })
-    setState({ checking: false, downloading: false, error: message })
-    return
   }
 
   const retryNumber = transientRetryCount + 1
-  const exponentialDelay = RETRY_BASE_DELAY * (2 ** transientRetryCount)
+  const exhausted = transientRetryCount >= MAX_TRANSIENT_RETRIES
+  const exponentialDelay = exhausted ? RECOVERY_DELAY : RETRY_BASE_DELAY * (2 ** transientRetryCount)
   const jitteredDelay = Math.round(exponentialDelay * (0.75 + Math.random() * 0.5))
   transientRetryCount = retryNumber
   console.warn(
-    `[updater] transient failure; retry ${retryNumber}/${MAX_TRANSIENT_RETRIES} in ${jitteredDelay}ms:`,
+    `[updater] transient failure; ${exhausted ? 'recovery' : 'fast'} retry ${retryNumber} in ${jitteredDelay}ms:`,
     message,
   )
-  setState({ checking: false, downloading: false, error: undefined })
   retryTimer = setTimeout(() => {
     retryTimer = undefined
     checkForUpdates()
@@ -108,7 +120,7 @@ export function getUpdateState(): UpdateState {
 }
 
 export function checkForUpdates(): void {
-  if (!app.isPackaged) return
+  if (!app.isPackaged || suspended || resumeTimer || retryTimer) return
   autoUpdater.checkForUpdates().catch(handleUpdateError)
 }
 
@@ -127,6 +139,25 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
+  powerMonitor.on('suspend', () => {
+    suspended = true
+    resetTransientRetries()
+    if (resumeTimer) clearTimeout(resumeTimer)
+    resumeTimer = undefined
+  })
+  powerMonitor.on('resume', () => {
+    suspended = false
+    resetTransientRetries()
+    if (resumeTimer) clearTimeout(resumeTimer)
+    // Give the OS a bounded grace period to restore DNS and network routes.
+    // If connectivity is still unavailable, the slower recovery loop takes over.
+    count('polycode.updater.resume_deferred')
+    resumeTimer = setTimeout(() => {
+      resumeTimer = undefined
+      checkForUpdates()
+    }, RECOVERY_DELAY)
+  })
+
   autoUpdater.on('checking-for-update', () => {
     setState({ checking: true, error: undefined })
   })
@@ -144,7 +175,7 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
   })
 
   autoUpdater.on('update-available', (info) => {
-    resetTransientRetries()
+    // Metadata success does not mean the artifact download has recovered.
     setState({
       checking: false,
       available: true,
