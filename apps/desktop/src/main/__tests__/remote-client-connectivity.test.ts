@@ -7,6 +7,7 @@ const H = vi.hoisted(() => ({
 }))
 
 vi.mock('electron', () => ({
+  app: { getVersion: () => '0.14.300' },
   BrowserWindow: class {},
   powerMonitor: { on: () => {}, off: () => {} },
 }))
@@ -52,12 +53,30 @@ describe('RemoteControlClient connectivity failures', () => {
     H.settings.clear()
     H.fetch.mockReset()
     H.appEvents.length = 0
-    vi.stubGlobal('fetch', H.fetch)
+    vi.stubGlobal('fetch', (url: string | URL | Request, init?: RequestInit) => {
+      if (String(url).endsWith('/health') && init?.method !== 'GET') {
+        return Promise.resolve(jsonResponse(200, { ok: true, version: '0.14.300' }))
+      }
+      return H.fetch(url, init)
+    })
   })
 
   afterEach(() => {
     vi.useRealTimers()
     vi.unstubAllGlobals()
+  })
+
+  it('blocks routine RPCs on a legacy host with an actionable compatibility error', async () => {
+    vi.stubGlobal('fetch', H.fetch)
+    H.fetch.mockImplementation(async (url) => String(url).endsWith('/health')
+      ? jsonResponse(200, { ok: true, version: '0.14.261' })
+      : jsonResponse(400, { ok: false, error: 'Unsupported channel' }))
+    const client = activeClient()
+    await expect(client.invokeIfActive('routines:list', ['project'])).rejects.toMatchObject({
+      code: 'REMOTE_UNSUPPORTED_CHANNEL', hostVersion: '0.14.261', channel: 'routines:list',
+    })
+    expect(H.fetch.mock.calls.some(([url]) => String(url).endsWith('/rpc'))).toBe(false)
+    client.stop()
   })
 
   it('opens a circuit after transport loss and stops subsequent RPC fan-out', async () => {
@@ -250,6 +269,7 @@ describe('RemoteControlClient connectivity failures', () => {
       client.invokeIfActive('threads:list', [`p${i}`]),
     ))
     const rpcCalls = () => H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/rpc')).length
+    await vi.advanceTimersByTimeAsync(0)
     expect(rpcCalls()).toBe(4)
     await vi.advanceTimersByTimeAsync(20_000)
     expect((await requests).every((result) => result.status === 'rejected')).toBe(true)

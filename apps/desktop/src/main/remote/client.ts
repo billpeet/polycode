@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto'
-import { BrowserWindow, powerMonitor } from 'electron'
+import { app, BrowserWindow, powerMonitor } from 'electron'
 import { isRemoteChannel, RemoteEventStream, RemoteReads, rpcTimeoutMs } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
@@ -18,6 +18,9 @@ interface RpcResponse {
   ok?: boolean
   value?: unknown
   error?: string
+  code?: string
+  version?: string
+  supportedChannels?: string[]
 }
 
 interface ProxyResult {
@@ -36,6 +39,35 @@ const LATENCY_PROBE_INTERVAL_MS = 30_000
 const LATENCY_PROBE_TIMEOUT_MS = 5_000
 // Ignore sub-jitter changes so the probe doesn't emit a connection-changed every 30s.
 const LATENCY_EMIT_DELTA_MS = 15
+
+interface HostCapabilities {
+  version: string
+  channels: Set<string> | null
+}
+
+function parseCapabilities(body: RpcResponse): HostCapabilities {
+  const channels = body.supportedChannels
+  if (channels !== undefined && (!Array.isArray(channels) || !channels.every((channel) => typeof channel === 'string'))) {
+    throw new RemoteProtocolError('Remote host returned an invalid supported-channel manifest')
+  }
+  return {
+    version: typeof body.version === 'string' ? body.version : 'unknown',
+    channels: channels === undefined ? null : new Set(channels),
+  }
+}
+
+export class RemoteUnsupportedChannelError extends Error {
+  readonly code = 'REMOTE_UNSUPPORTED_CHANNEL'
+
+  constructor(
+    readonly channel: string,
+    readonly hostVersion: string,
+    readonly clientVersion: string,
+  ) {
+    super(`[REMOTE_UNSUPPORTED_CHANNEL] Upgrade the Remote Host to use ${channel}. Host version: ${hostVersion}; client version: ${clientVersion}.`)
+    this.name = 'RemoteUnsupportedChannelError'
+  }
+}
 
 export class RemoteUnavailableError extends Error {
   readonly code = 'REMOTE_UNAVAILABLE'
@@ -166,6 +198,7 @@ function isTransportError(error: unknown): boolean {
 
 export class RemoteControlClient {
   private unavailable: { hostId: string; error: RemoteUnavailableError } | null = null
+  private capabilities = new Map<string, Promise<HostCapabilities>>()
   private reads = new Map<string, RemoteReads>()
   private rpcDegraded = false
   private reconnectAttempt = 0
@@ -240,6 +273,7 @@ export class RemoteControlClient {
   stop(): void {
     for (const reads of this.reads.values()) reads.dispose()
     this.reads.clear()
+    this.capabilities.clear()
     powerMonitor.off('resume', this.handleResume)
     this.stopLatencyProbe()
     this.eventStream.stop()
@@ -319,7 +353,10 @@ export class RemoteControlClient {
         signal: controller.signal,
       })
       if (!response.ok) return
-      await response.text()
+      const body = await readJsonResponse(response)
+      if (body.ok && this.getActiveHost()?.id === host.id) {
+        this.capabilities.set(host.id, Promise.resolve(parseCapabilities(body)))
+      }
       const latencyMs = Date.now() - startedAt
       recordDuration('polycode.remote.health.rtt', latencyMs, { 'remote.host': host.label })
       this.publishLatency(latencyMs)
@@ -432,6 +469,33 @@ export class RemoteControlClient {
     }) }
   }
 
+  private getCapabilities(host: RemoteHost): Promise<HostCapabilities> {
+    const existing = this.capabilities.get(host.id)
+    if (existing) return existing
+    const pending = (async () => {
+      const response = await fetch(endpoint(host.baseUrl, '/api/remote/health'), {
+        headers: { Authorization: `Bearer ${host.token}` },
+        signal: AbortSignal.timeout(LATENCY_PROBE_TIMEOUT_MS),
+      })
+      const body = await readJsonResponse(response)
+      if (!response.ok || !body.ok) {
+        if (response.status === 421) throw this.markUnavailable(host, hostnameMismatchMessage(host.baseUrl))
+        throw new Error(body.error ?? `HTTP ${response.status}`)
+      }
+      return parseCapabilities(body)
+    })().catch((error: unknown) => {
+      if (error instanceof DOMException && error.name === 'TimeoutError') {
+        throw this.markUnavailable(host, 'Remote host capability request timed out', error)
+      }
+      throw error
+    })
+    this.capabilities.set(host.id, pending)
+    void pending.catch(() => {
+      if (this.capabilities.get(host.id) === pending) this.capabilities.delete(host.id)
+    })
+    return pending
+  }
+
   async testHost(input: RemoteHostInput): Promise<RemoteConnectionStatus> {
     try {
       const normalized = normalizeHostInput(input)
@@ -464,6 +528,12 @@ export class RemoteControlClient {
     // ipcMain.handle span, where a proxied call just looks like a slow local one.
     let outcome = 'ok'
     try {
+      const capabilities = await this.getCapabilities(host)
+      // Legacy hosts have no manifest. Keep their existing channels working, but
+      // routines were added during the rolling upgrade that introduced negotiation.
+      if (capabilities.channels ? !capabilities.channels.has(channel) : channel.startsWith('routines:')) {
+        throw new RemoteUnsupportedChannelError(channel, capabilities.version, app.getVersion())
+      }
       const response = await fetch(endpoint(host.baseUrl, '/api/remote/rpc'), {
         method: 'POST',
         headers: {
@@ -477,6 +547,9 @@ export class RemoteControlClient {
       const body = await readJsonResponse(response)
       if (response.status === 421) {
         throw this.markUnavailable(host, hostnameMismatchMessage(host.baseUrl))
+      }
+      if (body.code === 'REMOTE_UNSUPPORTED_CHANNEL' || (response.status === 400 && body.error === 'Unsupported channel')) {
+        throw new RemoteUnsupportedChannelError(channel, body.version ?? capabilities.version, app.getVersion())
       }
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
@@ -512,6 +585,7 @@ export class RemoteControlClient {
   private restartEventStream(): void {
     for (const reads of this.reads.values()) reads.dispose()
     this.reads.clear()
+    this.capabilities.clear()
     this.rpcDegraded = false
     this.eventStream.stop()
     this.unavailable = null

@@ -25,6 +25,8 @@ function runStateIcon(run: Thread) {
  * refreshes on `routines:changed` app events.
  */
 export default function RoutinesSection({ projectId, onSelectThread }: RoutinesSectionProps) {
+  const [error, setError] = useState<string | null>(null)
+  const [loadedProjectId, setLoadedProjectId] = useState<string | null>(null)
   const [expanded, setExpanded] = useState(false)
   const [routines, setRoutines] = useState<Routine[]>([])
   const [runsByRoutine, setRunsByRoutine] = useState<Record<string, Thread[]>>({})
@@ -32,28 +34,27 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
   const [editing, setEditing] = useState<Routine | null>(null)
   const [creating, setCreating] = useState(false)
 
-  const refresh = useCallback(async () => {
-    const list = await client.invoke('routines:list', projectId)
-    setRoutines(list)
-    const runs: Record<string, Thread[]> = {}
-    await Promise.all(list.map(async (routine) => {
-      runs[routine.id] = await client.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
-    }))
-    setRunsByRoutine(runs)
-  }, [projectId])
-
-  useEffect(() => {
-    let cancelled = false
-    void client.invoke('routines:list', projectId).then(async (list) => {
+  const refresh = useCallback(async (cancelled: () => boolean = () => false) => {
+    await client.invoke('routines:list', projectId).then(async (list) => {
       const runs: Record<string, Thread[]> = {}
       await Promise.all(list.map(async (routine) => {
         runs[routine.id] = await client.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
       }))
-      if (cancelled) return
+      if (cancelled()) return
       setRoutines(list)
       setRunsByRoutine(runs)
+      setError(null)
+    }).catch((error: unknown) => {
+      if (!cancelled()) setError(error instanceof Error ? error.message : String(error))
+    }).finally(() => {
+      if (!cancelled()) setLoadedProjectId(projectId)
     })
-    const unsubscribe = client.on('routines:changed', () => void refresh())
+  }, [projectId])
+
+  useEffect(() => {
+    let cancelled = false
+    void refresh(() => cancelled)
+    const unsubscribe = client.on('routines:changed', () => void refresh(() => cancelled))
     return () => {
       cancelled = true
       unsubscribe()
@@ -90,6 +91,17 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
       window.alert(error instanceof Error ? error.message : String(error))
     }
     await refresh()
+  }
+
+  if (loadedProjectId !== projectId) return null
+
+  if (error) {
+    return (
+      <div role="status" className="pl-6 pr-4 py-1 text-[10px]" style={{ color: 'var(--color-text-muted)' }}>
+        <span>{error.includes('REMOTE_UNSUPPORTED_CHANNEL') ? 'Upgrade the Remote Host to use routines.' : `Unable to load routines: ${error}`}</span>
+        <button className="ml-2 underline" onClick={() => void refresh()}>Retry</button>
+      </div>
+    )
   }
 
   if (routines.length === 0 && !expanded) {
@@ -137,7 +149,7 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
                   </button>
                   <button
                     title="Run now"
-                    onClick={() => void runNow(routine)}
+                    onClick={() => void runNow(routine).catch((error: unknown) => setError(String(error)))}
                     className="hidden flex-shrink-0 opacity-50 hover:opacity-100 group-hover:block"
                   >
                     <Play size={11} />
@@ -176,7 +188,7 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
                     {run.run_state === 'escalated' && (
                       <button
                         title="Dismiss run"
-                        onClick={() => void dismissRun(run)}
+                        onClick={() => void dismissRun(run).catch((error: unknown) => setError(String(error)))}
                         className="hidden flex-shrink-0 opacity-50 hover:opacity-100 group-hover:block"
                       >
                         <X size={10} />
