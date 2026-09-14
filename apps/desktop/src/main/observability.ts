@@ -244,3 +244,12 @@ export function remoteTraceContext(header: string | undefined): SpanContext | un
   const context = { traceId: match[1], spanId: match[2], traceFlags: parseInt(match[3], 16), isRemote: true }
   return isSpanContextValid(context) ? context : undefined
 }
+
+export async function flushObservability(): Promise<void> {
+  if (!state) return
+  await Promise.allSettled([
+    state.tracerProvider.forceFlush(),
+    state.loggerProvider.forceFlush(),
+    state.meterProvider.forceFlush(),
+  ])
+}

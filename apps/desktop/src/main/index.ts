@@ -1,3 +1,4 @@
+import { installCrashDiagnostics } from './crash-diagnostics'
 import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain, powerMonitor } from 'electron'
 import { join } from 'path'
 import { copyFile } from 'fs/promises'
@@ -42,6 +43,14 @@ import { getAppLifecycleState, shutdownApp, waitForAppOperations } from './app-l
 import { recordMemorySample, startMemoryTelemetry, stopMemoryTelemetry, type MemorySample } from './memory-telemetry'
 
 const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
+
+// Must run before ready, including diagnostic relaunches.
+if (app.commandLine.hasSwitch('disable-gpu')) app.disableHardwareAcceleration()
+
+installCrashDiagnostics({
+  capture: !isDev,
+  locationId: (contents) => browserSessionManager.locationIdForSession(contents.session),
+})
 
 installAppLogger()
 installMainThreadStallMonitor()
@@ -253,14 +262,6 @@ function createWindow(): BrowserWindow {
     dialog.showErrorBox(
       'Failed to load',
       `The app failed to load (${errorCode}: ${errorDescription}).\n\nThis is likely a packaging issue. Please report it.`
-    )
-  })
-
-  win.webContents.on('render-process-gone', (_event, details) => {
-    win.show()
-    dialog.showErrorBox(
-      'Renderer crashed',
-      `The renderer process crashed (reason: ${details.reason}).\n\nPlease restart the app.`
     )
   })
 

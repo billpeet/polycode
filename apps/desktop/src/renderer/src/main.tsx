@@ -1,3 +1,5 @@
+import { useUiStore } from './stores/ui'
+import { useThreadStore } from './stores/threads'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import './index.css'
@@ -104,3 +106,18 @@ ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
     </React.Profiler>
   </React.StrictMode>
 )
+
+// Send only a view category, never thread IDs, file names or browser URLs.
+function reportActiveView(): void {
+  if (client.kind !== 'electron') return
+  const ui = useUiStore.getState()
+  const threadId = useThreadStore.getState().selectedThreadId
+  const view = threadId
+    ? ui.layoutMode === 'full' && ui.isChatTabActive(threadId)
+      ? 'chat' : ui.activeAuxTabByThread[threadId] ?? 'chat'
+    : 'workspace'
+  client.send('telemetry:view', view)
+}
+useUiStore.subscribe(reportActiveView)
+useThreadStore.subscribe(reportActiveView)
+reportActiveView()

@@ -13,6 +13,7 @@
     "start": "pnpm run electron-abi && electron .",
     "start:prod": "pnpm run build && pnpm run electron-abi && cross-env NODE_ENV=production electron .",
     "typecheck": "tsc --build --noEmit",
+    "test:crash-smoke": "node scripts/run-crash-smoke.cjs",
     "test": "pnpm --dir ../../node_modules/better-sqlite3 exec prebuild-install && vitest run",
     "dist": "pnpm run build && pnpm run electron-abi && pnpm run verify:electron-abi && electron-builder --win",
     "dist:publish": "pnpm run build && pnpm run electron-abi && pnpm run verify:electron-abi && electron-builder --win --publish always"
