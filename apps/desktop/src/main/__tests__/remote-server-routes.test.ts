@@ -153,7 +153,7 @@ describe('Host gate', () => {
     const h = await start()
     const res = await h.request({ path: '/api/remote/health', headers: { ...BEARER, Host: 'pc.tailnet.ts.net' } })
     expect(res.status).toBe(200)
-    expect(JSON.parse(res.body)).toEqual({ ok: true, app: 'PolyCode', version: '0.0.0-test' })
+    expect(JSON.parse(res.body)).toEqual({ ok: true, app: 'PolyCode', version: '0.0.0-test', supportedChannels: ['threads:list'] })
   })
 
   it('still answers 421 for any other DNS name', async () => {

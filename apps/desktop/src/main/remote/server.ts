@@ -213,6 +213,7 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
         ok: true,
         app: 'PolyCode',
         version: deps.version(),
+        supportedChannels: [...CONTROL_RPC_CHANNELS],
       })
     }
 
@@ -246,7 +247,7 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
         const raw = await readBody(req)
         const body = JSON.parse(raw) as { channel?: unknown; args?: unknown }
         if (typeof body.channel !== 'string' || !CONTROL_RPC_CHANNELS.has(body.channel)) {
-          return sendJson(res, 400, { ok: false, error: 'Unsupported channel' })
+          return sendJson(res, 400, { ok: false, error: 'Unsupported channel', code: 'REMOTE_UNSUPPORTED_CHANNEL', version: deps.version() })
         }
         if (!Array.isArray(body.args)) {
           return sendJson(res, 400, { ok: false, error: '"args" must be an array' })
