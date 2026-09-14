@@ -1,9 +1,9 @@
 import { randomUUID } from 'crypto'
 import { BrowserWindow, powerMonitor } from 'electron'
-import { isRemoteChannel, RemoteEventStream, rpcTimeoutMs } from '@polycode/shared'
+import { isRemoteChannel, RemoteEventStream, RemoteReads, rpcTimeoutMs } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
-import { count, recordDuration } from '../observability'
+import { count, recordDuration, currentTraceHeaders } from '../observability'
 import {
   RemoteConnectionState,
   RemoteConnectionStatus,
@@ -166,6 +166,8 @@ function isTransportError(error: unknown): boolean {
 
 export class RemoteControlClient {
   private unavailable: { hostId: string; error: RemoteUnavailableError } | null = null
+  private reads = new Map<string, RemoteReads>()
+  private rpcDegraded = false
   private reconnectAttempt = 0
   /** Host the event stream is currently pointed at — callback context for the shared stream. */
   private streamHost: RemoteHost | null = null
@@ -236,6 +238,8 @@ export class RemoteControlClient {
   }
 
   stop(): void {
+    for (const reads of this.reads.values()) reads.dispose()
+    this.reads.clear()
     powerMonitor.off('resume', this.handleResume)
     this.stopLatencyProbe()
     this.eventStream.stop()
@@ -263,6 +267,7 @@ export class RemoteControlClient {
       && current.reconnectAttempt === next.reconnectAttempt
       && current.error === next.error
       && current.latencyMs === this.latencyMs
+      && !!current.rpcDegraded === this.rpcDegraded
     ) return
     this.connectionState = {
       hostId,
@@ -270,6 +275,7 @@ export class RemoteControlClient {
       reconnectAttempt: next.reconnectAttempt,
       error: next.error,
       latencyMs: this.latencyMs,
+      rpcDegraded: this.rpcDegraded,
       changedAt: new Date().toISOString(),
     }
     emitAppEvent(this.window, 'remote:connection-changed', this.connectionState)
@@ -408,7 +414,22 @@ export class RemoteControlClient {
     const host = this.getActiveHost()
     if (!host || !this.shouldProxy(channel)) return { handled: false }
     if (this.unavailable?.hostId === host.id) throw this.unavailable.error
-    return { handled: true, value: await this.invoke(host, channel, args) }
+    let reads = this.reads.get(host.id)
+    if (!reads) {
+      reads = new RemoteReads((degraded) => {
+        if (this.getActiveHost()?.id !== host.id || this.reads.get(host.id) !== reads) return
+        this.rpcDegraded = degraded
+        this.setConnectionState(this.connectionState)
+      })
+      this.reads.set(host.id, reads)
+    }
+    // Capture before queueing: a released slot runs in another caller's async context.
+    const traceHeaders = currentTraceHeaders()
+    return { handled: true, value: await reads.invoke(channel, args, () => {
+      // Transport loss may have opened the circuit while this read was queued.
+      if (this.unavailable?.hostId === host.id) throw this.unavailable.error
+      return this.invoke(host, channel, args, traceHeaders)
+    }) }
   }
 
   async testHost(input: RemoteHostInput): Promise<RemoteConnectionStatus> {
@@ -434,7 +455,7 @@ export class RemoteControlClient {
     }
   }
 
-  private async invoke(host: RemoteHost, channel: string, args: unknown[]): Promise<unknown> {
+  private async invoke(host: RemoteHost, channel: string, args: unknown[], traceHeaders: Record<string, string>): Promise<unknown> {
     const controller = new AbortController()
     const timeoutMs = rpcTimeoutMs(channel)
     const timer = setTimeout(() => controller.abort(), timeoutMs)
@@ -448,6 +469,7 @@ export class RemoteControlClient {
         headers: {
           Authorization: `Bearer ${host.token}`,
           'Content-Type': 'application/json',
+          ...traceHeaders,
         },
         body: JSON.stringify({ channel, args }),
         signal: controller.signal,
@@ -488,6 +510,9 @@ export class RemoteControlClient {
   }
 
   private restartEventStream(): void {
+    for (const reads of this.reads.values()) reads.dispose()
+    this.reads.clear()
+    this.rpcDegraded = false
     this.eventStream.stop()
     this.unavailable = null
     this.reconnectAttempt = 0

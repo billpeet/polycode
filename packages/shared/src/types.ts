@@ -144,6 +144,8 @@ export type RemoteConnectionPhase =
   | 'unavailable'
 
 export interface RemoteConnectionState {
+  /** RPC refreshes are paused after clustered timeouts; SSE may still be healthy. */
+  rpcDegraded?: boolean
   hostId: string | null
   phase: RemoteConnectionPhase
   /** Consecutive failed event-stream (re)connect attempts against the current host. */

@@ -18,6 +18,7 @@ import {
 } from './sessions'
 import { isStaticPath, serveStaticFile } from './static'
 import { tailscaleIdentityLogin } from './identity'
+import { count, recordDuration, recordGauge, remoteTraceContext, withSpan } from '../observability'
 
 let server: http.Server | null = null
 
@@ -138,6 +139,9 @@ async function handleLogin(
 }
 
 export function createRequestHandler(config: RemoteServerConfig, deps: RequestHandlerDeps): http.RequestListener {
+  // No server queue: callers retain cached data and retry. A disconnected caller's
+  // handler still occupies its slot until it finishes, since handlers cannot be cancelled.
+  let activeRpc = 0
   return async (req, res) => {
     if (!isAllowedHostHeader(req.headers.host, config.host, config.port, { allowedHostnames: config.allowedHostnames })) {
       return sendJson(res, 421, { error: 'Misdirected request' })
@@ -248,7 +252,40 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
           return sendJson(res, 400, { ok: false, error: '"args" must be an array' })
         }
 
-        const value = await deps.handleRpc(body.channel, body.args)
+        const channel = body.channel
+        const args = body.args
+        if (activeRpc >= 8) {
+          count('polycode.remote.server.rejected', { 'rpc.channel': channel })
+          return sendJson(res, 503, {
+            ok: false,
+            error: '[REMOTE_REQUEST_TIMEOUT] Remote host is busy. This request was not started; retry shortly.',
+          }, { 'Retry-After': '30' })
+        }
+        if (res.destroyed) return
+        activeRpc++
+        recordGauge('polycode.remote.server.active', activeRpc, '{request}')
+        const startedAt = Date.now()
+        const value = await withSpan('remote.rpc', {
+          'rpc.channel': channel,
+          'rpc.active': activeRpc,
+          'rpc.queued': 0,
+        }, async (span) => {
+          const aborted = () => {
+            if (res.writableEnded) return
+            span?.setAttribute('rpc.request_aborted', true)
+            count('polycode.remote.server.aborted', { 'rpc.channel': channel })
+          }
+          res.once('close', aborted)
+          try {
+            return await deps.handleRpc(channel, args)
+          } finally {
+            res.off('close', aborted)
+            activeRpc--
+            recordGauge('polycode.remote.server.active', activeRpc, '{request}')
+            recordDuration('polycode.remote.server.duration', Date.now() - startedAt, { 'rpc.channel': channel })
+          }
+        }, remoteTraceContext(firstHeaderValue(req.headers.traceparent)))
+        if (res.destroyed) return
         return sendJson(res, 200, { ok: true, value })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)

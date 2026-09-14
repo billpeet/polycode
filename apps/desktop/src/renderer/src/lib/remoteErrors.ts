@@ -28,3 +28,13 @@ export function isRemoteTimeoutError(error: unknown): boolean {
 export function isRemoteTransportError(error: unknown): boolean {
   return isRemoteUnavailableError(error) || isRemoteTimeoutError(error)
 }
+
+/** Background reads retain their cache; mutations must keep their rejection. */
+export async function settleRemoteRefresh<T>(operation: Promise<T>): Promise<T | undefined> {
+  try {
+    return await operation
+  } catch (error) {
+    if (isRemoteTransportError(error)) return undefined
+    throw error
+  }
+}

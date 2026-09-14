@@ -1,5 +1,6 @@
 import {
   RemoteEventStream,
+  RemoteReads,
   createSlowInvokeTracker,
   isRemoteChannel,
   rpcTimeoutMs,
@@ -94,6 +95,11 @@ class BrowserClient implements WebClient {
   private version: string | null = null
   /** Set by an RPC that could not reach the host; cleared by the next success. */
   private unavailable = false
+  private reads = this.createReads()
+
+  private createReads(): RemoteReads {
+    return new RemoteReads((rpcDegraded) => this.setState({ ...this.state, rpcDegraded }))
+  }
   private state: RemoteConnectionState = {
     hostId: null,
     phase: 'local',
@@ -141,7 +147,7 @@ class BrowserClient implements WebClient {
     if (!isRemoteChannel(channel)) {
       throw new Error(`Channel "${channel}" is not available in the browser`)
     }
-    const pending = this.rpc(channel, args)
+    const pending = this.reads.invoke(channel, args, () => this.rpc(channel, args))
     this.slowInvokes.track(pending)
     return pending
   }
@@ -189,12 +195,15 @@ class BrowserClient implements WebClient {
   // ── WebClient ──────────────────────────────────────────────────────────────
 
   connect(): void {
+    this.reads.dispose()
+    this.reads = this.createReads()
     this.unavailable = false
-    this.setState({ phase: 'connecting', reconnectAttempt: 0, error: null })
+    this.setState({ phase: 'connecting', reconnectAttempt: 0, error: null, rpcDegraded: false })
     this.stream.start({ baseUrl: window.location.origin, token: '' })
   }
 
   disconnect(): void {
+    this.reads.dispose()
     this.stream.stop()
     this.setState({ phase: 'local', reconnectAttempt: 0, error: null, hostId: null })
   }
@@ -324,12 +333,14 @@ class BrowserClient implements WebClient {
       && current.phase === next.phase
       && current.reconnectAttempt === next.reconnectAttempt
       && current.error === next.error
+      && current.rpcDegraded === (next.rpcDegraded ?? current.rpcDegraded)
     ) return
     this.state = {
       hostId,
       phase: next.phase,
       reconnectAttempt: next.reconnectAttempt,
       error: next.error,
+      rpcDegraded: next.rpcDegraded ?? current.rpcDegraded,
       latencyMs: null,
       changedAt: new Date().toISOString(),
     }

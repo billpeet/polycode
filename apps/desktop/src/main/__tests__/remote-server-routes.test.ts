@@ -27,6 +27,7 @@ interface Response {
 }
 
 interface RequestOptions {
+  signal?: AbortSignal
   method?: string
   path: string
   headers?: Record<string, string>
@@ -91,6 +92,7 @@ async function start(overrides: Partial<RemoteServerConfig> = {}): Promise<Harne
       method: options.method ?? 'GET',
       path: options.path,
       headers: options.headers,
+      signal: options.signal,
     }, (res) => {
       let body = ''
       res.on('data', (chunk: Buffer) => { body += chunk })
@@ -105,6 +107,33 @@ async function start(overrides: Partial<RemoteServerConfig> = {}): Promise<Harne
 }
 
 const BEARER = { Authorization: 'Bearer host-token' }
+
+it('counts abandoned handlers against the limit and recovers only when handlers finish', async () => {
+  const h = await start()
+  let release!: () => void
+  const blocked = new Promise<void>((resolve) => { release = resolve })
+  vi.mocked(h.deps.handleRpc).mockImplementation(async () => { await blocked; return [] })
+  const rpc = (signal?: AbortSignal) => h.request({ method: 'POST', path: '/api/remote/rpc', headers: BEARER, signal,
+    body: JSON.stringify({ channel: 'threads:list', args: [] }) })
+  const controller = new AbortController()
+  const abandoned = rpc(controller.signal).catch(() => undefined)
+  const active = Array.from({ length: 7 }, () => rpc())
+  try {
+    await vi.waitFor(() => expect(h.deps.handleRpc).toHaveBeenCalledTimes(8))
+    controller.abort()
+    await abandoned
+    const overloaded = await rpc()
+    expect(overloaded.status).toBe(503)
+    expect(overloaded.headers['retry-after']).toBe('30')
+    expect(JSON.parse(overloaded.body).error).toContain('This request was not started')
+    expect(h.deps.handleRpc).toHaveBeenCalledTimes(8)
+    expect((await h.request({ path: '/api/remote/health', headers: BEARER })).status).toBe(200)
+  } finally {
+    release()
+    await Promise.all(active)
+  }
+  expect((await rpc()).status).toBe(200)
+})
 
 async function login(h: Harness, headers: Record<string, string> = {}): Promise<string> {
   const res = await h.request({
