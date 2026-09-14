@@ -5,7 +5,7 @@
  * `file:`, `ms-msdt:`, `search-ms:`, `vscode:` and friends — so it must only ever see
  * schemes a browser would open. Three call sites reach it: the `shell:openExternal`
  * channel, `will-navigate` for in-page anchors, and the window-open handler for
- * `target="_blank"`. All three ask here.
+ * `target="_blank"`. All three use openExternalLink, which validates here.
  */
 const OPENABLE_PROTOCOLS: ReadonlySet<string> = new Set(['http:', 'https:', 'mailto:'])
 
