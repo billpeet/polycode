@@ -44,6 +44,14 @@ function isEditableTarget(target: EventTarget | null): boolean {
 export default function App() {
   useDatabaseSync()
 
+  useEffect(() => client.on('shell:open-external-failed', (message) => {
+    useToastStore.getState().add({
+      type: 'error',
+      title: 'Could not open link',
+      message: typeof message === 'string' ? message : 'The operating system could not open this link.',
+    })
+  }), [])
+
   const fetchProjects = useProjectStore((s) => s.fetch)
   const projects = useProjectStore((s) => s.projects)
   const projectsLoading = useProjectStore((s) => s.loading)
