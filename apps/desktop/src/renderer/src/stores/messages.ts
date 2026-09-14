@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { appendFoldedMessage, eventRole } from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
-import { isRemoteTransportError } from '../lib/remoteErrors'
+import { settleRemoteRefresh } from '../lib/remoteErrors'
 import { client } from '../lib/client'
 
 interface MessageStore {
@@ -27,16 +27,8 @@ export const useMessageStore = create<MessageStore>((set) => ({
   messagesBySession: {},
 
   fetch: async (threadId) => {
-    let messages: Message[]
-    try {
-      messages = await client.invoke('messages:list', threadId)
-    } catch (error) {
-      // A routine connectivity transition (remote host offline or slow) is not a defect:
-      // keep the last-good transcript on screen and let the connection banner explain.
-      // Anything else still propagates. (Issue #48.)
-      if (isRemoteTransportError(error)) return
-      throw error
-    }
+    const messages = await settleRemoteRefresh(client.invoke('messages:list', threadId))
+    if (!messages) return
     set((s) => {
       const serverIds = new Set(messages.map((message: Message) => message.id))
       const pendingUserMessages = (s.messagesByThread[threadId] ?? [])
@@ -51,13 +43,8 @@ export const useMessageStore = create<MessageStore>((set) => ({
   },
 
   fetchBySession: async (sessionId) => {
-    let messages: Message[]
-    try {
-      messages = await client.invoke('messages:listBySession', sessionId)
-    } catch (error) {
-      if (isRemoteTransportError(error)) return
-      throw error
-    }
+    const messages = await settleRemoteRefresh(client.invoke('messages:listBySession', sessionId))
+    if (!messages) return
     set((s) => ({ messagesBySession: { ...s.messagesBySession, [sessionId]: messages } }))
   },
 

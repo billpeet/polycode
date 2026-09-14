@@ -4,8 +4,8 @@ import { initRemoteConnectionStore, useRemoteConnectionStore } from '../stores/r
 
 /**
  * Banner across the top of the app while the active remote host is unreachable or the
- * event stream is re-dialing. Hidden entirely in local mode and while connected — the
- * TitleBar dot covers the healthy states. Cached data stays on screen underneath; this
+ * event stream is re-dialing, or RPC refreshes are paused after repeated timeouts.
+ * The TitleBar dot covers healthy states. Cached data stays on screen underneath; this
  * banner is what tells the user why nothing new is arriving (issue #48).
  */
 export function RemoteConnectionBanner(): React.JSX.Element | null {
@@ -18,7 +18,8 @@ export function RemoteConnectionBanner(): React.JSX.Element | null {
   }, [])
 
   if (!connection.hostId) return null
-  if (connection.phase !== 'unavailable' && connection.phase !== 'reconnecting') return null
+  const slow = connection.phase === 'connected' && connection.rpcDegraded
+  if (!slow && connection.phase !== 'unavailable' && connection.phase !== 'reconnecting') return null
 
   const offline = connection.phase === 'unavailable'
 
@@ -33,7 +34,9 @@ export function RemoteConnectionBanner(): React.JSX.Element | null {
           ? <WifiOff className="h-3.5 w-3.5 text-red-400" />
           : <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />}
         <span className={`text-xs ${offline ? 'text-red-300' : 'text-amber-300'}`}>
-          {offline
+          {slow
+            ? 'Remote host is slow. Showing last synced data; refresh will retry shortly.'
+            : offline
             ? 'Remote host unreachable — showing last synced data'
             : `Connection to remote host lost — reconnecting${connection.reconnectAttempt > 1 ? ` (attempt ${connection.reconnectAttempt})` : ''}…`}
           {connection.error ? ` · ${connection.error}` : ''}

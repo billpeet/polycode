@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import { Session } from '../types/ipc'
 import { client } from '../lib/client'
+import { settleRemoteRefresh } from '../lib/remoteErrors'
 
 const EMPTY_SESSIONS: Session[] = []
 
@@ -19,7 +20,8 @@ export const useSessionStore = create<SessionStore>((set, get) => ({
   activeSessionByThread: {},
 
   fetch: async (threadId) => {
-    const sessions = await client.invoke('sessions:list', threadId)
+    const sessions = await settleRemoteRefresh(client.invoke('sessions:list', threadId))
+    if (!sessions) return
     const active = sessions.find((s: Session) => s.is_active)
     set((s) => ({
       sessionsByThread: { ...s.sessionsByThread, [threadId]: sessions },

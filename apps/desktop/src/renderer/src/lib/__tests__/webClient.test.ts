@@ -48,10 +48,34 @@ beforeEach(() => {
 
 afterEach(() => {
   resetWebClientForTests()
+  vi.useRealTimers()
   vi.unstubAllGlobals()
 })
 
 describe('invoke', () => {
+  it('pauses clustered RPC timeouts while its event stream remains open', async () => {
+    vi.useFakeTimers()
+    route({
+      '/api/remote/events': () => sseResponse().response,
+      '/api/remote/rpc': (init) => new Promise((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+      }),
+    })
+    const web = getWebClient()
+    web.connect()
+    await vi.advanceTimersByTimeAsync(0)
+    const requests = Promise.allSettled(Array.from({ length: 10 }, (_, i) => web.invoke('threads:list', `p${i}`)))
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect((await requests).every((result) => result.status === 'rejected')).toBe(true)
+    expect(await web.invoke('remote:getConnectionState')).toMatchObject({ phase: 'connected', rpcDegraded: true })
+    const count = calls().length
+    await expect(web.invoke('sessions:list', 't')).rejects.toThrow('REMOTE_REQUEST_TIMEOUT')
+    expect(calls()).toHaveLength(count)
+    await vi.advanceTimersByTimeAsync(30_000)
+    route({ '/api/remote/rpc': () => json(200, { ok: true, value: [] }) })
+    await expect(web.invoke('sessions:list', 't')).resolves.toEqual([])
+    expect(await web.invoke('remote:getConnectionState')).toMatchObject({ phase: 'connected', rpcDegraded: false })
+  })
   it('posts the channel and args to the RPC endpoint with the session cookie', async () => {
     route({ '/api/remote/rpc': () => json(200, { ok: true, value: [{ id: 'p1' }] }) })
 

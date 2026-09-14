@@ -1,5 +1,6 @@
 import {
   ROOT_CONTEXT,
+  isSpanContextValid,
   trace,
   SpanStatusCode,
   type Attributes,
@@ -7,6 +8,7 @@ import {
   type Histogram,
   type Gauge,
   type Span,
+  type SpanContext,
 } from '@opentelemetry/api'
 import { createHash } from 'node:crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
@@ -166,12 +168,15 @@ export function recordDuration(name: string, durationMs: number, attributes: Tel
 export async function withSpan<T>(
   name: string,
   attributes: TelemetryAttributes,
-  operation: (span: Span | undefined) => T | Promise<T>
+  operation: (span: Span | undefined) => T | Promise<T>,
+  remoteParent?: SpanContext,
 ): Promise<T> {
   if (!state) return operation(undefined)
   const tracer = state.tracerProvider.getTracer('polycode')
   const parent = activeSpans.getStore()
-  const parentContext = parent ? trace.setSpan(ROOT_CONTEXT, parent) : ROOT_CONTEXT
+  const parentContext = remoteParent
+    ? trace.setSpanContext(ROOT_CONTEXT, remoteParent)
+    : parent ? trace.setSpan(ROOT_CONTEXT, parent) : ROOT_CONTEXT
   const span = tracer.startSpan(name, { attributes: attributes as Attributes }, parentContext)
   try {
     return await activeSpans.run(span, operation, span)
@@ -224,4 +229,18 @@ export async function shutdownObservability(): Promise<void> {
     current.meterProvider.shutdown(),
     current.loggerProvider.shutdown(),
   ])
+}
+
+/** W3C trace context only. Never propagate RPC arguments or credentials. */
+export function currentTraceHeaders(): Record<string, string> {
+  const context = activeSpans.getStore()?.spanContext()
+  if (!context || !isSpanContextValid(context)) return {}
+  return { traceparent: `00-${context.traceId}-${context.spanId}-${context.traceFlags.toString(16).padStart(2, '0')}` }
+}
+
+export function remoteTraceContext(header: string | undefined): SpanContext | undefined {
+  const match = /^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$/.exec(header ?? '')
+  if (!match) return undefined
+  const context = { traceId: match[1], spanId: match[2], traceFlags: parseInt(match[3], 16), isRemote: true }
+  return isSpanContextValid(context) ? context : undefined
 }

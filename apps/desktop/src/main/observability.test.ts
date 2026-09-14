@@ -1,9 +1,14 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
+import type { ReadableSpan } from '@opentelemetry/sdk-trace-node'
 import {
   initializeObservability,
   observabilityConfigFromEnv,
   parseOtlpHeaders,
   shutdownObservability,
+  currentTraceHeaders,
+  remoteTraceContext,
+  withSpan,
 } from './observability'
 
 afterEach(async () => {
@@ -11,6 +16,30 @@ afterEach(async () => {
   delete process.env.OTEL_EXPORTER_OTLP_HEADERS
   delete process.env.OTEL_ENVIRONMENT
   await shutdownObservability()
+  vi.restoreAllMocks()
+})
+
+it('joins a remote handler and its work to the client trace', async () => {
+  const spans: ReadableSpan[] = []
+  vi.spyOn(OTLPTraceExporter.prototype, 'export').mockImplementation((batch, callback) => {
+    spans.push(...batch)
+    callback({ code: 0 })
+  })
+  initializeObservability({ endpoint: 'http://localhost:4318', serviceVersion: 'test', environment: 'test' })
+  let traceparent: string | undefined
+  await withSpan('ipc.client', {}, async () => { traceparent = currentTraceHeaders().traceparent })
+  await withSpan('remote.rpc', { 'rpc.channel': 'threads:list' }, async () => {
+    await withSpan('handler.work', {}, async () => {})
+  }, remoteTraceContext(traceparent))
+  await shutdownObservability()
+  const client = spans.find((span) => span.name === 'ipc.client')!
+  const server = spans.find((span) => span.name === 'remote.rpc')!
+  const work = spans.find((span) => span.name === 'handler.work')!
+  expect(server.spanContext().traceId).toBe(client.spanContext().traceId)
+  expect(server.parentSpanContext?.spanId).toBe(client.spanContext().spanId)
+  expect(work.parentSpanContext?.spanId).toBe(server.spanContext().spanId)
+  expect(remoteTraceContext('00-' + '0'.repeat(32) + '-' + '0'.repeat(16) + '-01')).toBeUndefined()
+  expect(remoteTraceContext('invalid')).toBeUndefined()
 })
 
 describe('observability configuration', () => {

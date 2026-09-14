@@ -33,13 +33,15 @@ export function useDatabaseSync(): void {
         const projectIds = new Set(Object.keys(threadState.byProject))
         if (projectState.selectedProjectId) projectIds.add(projectState.selectedProjectId)
 
-        await Promise.allSettled(
-          [...projectIds]
-            // A canonical list fetch would remove an optimistic thread before
-            // threads:create has committed it to the database.
-            .filter((projectId) => !(threadState.byProject[projectId] ?? []).some((thread) => thread.is_pending))
-            .map((projectId) => threadState.fetch(projectId))
+        // Each project fetch makes three reads. Keep the client queue bounded even
+        // when many projects have been opened, leaving room for interactive reads.
+        const refreshable = [...projectIds].filter((projectId) =>
+          // Do not remove an optimistic thread before threads:create commits it.
+          !(threadState.byProject[projectId] ?? []).some((thread) => thread.is_pending),
         )
+        for (let offset = 0; offset < refreshable.length; offset += 2) {
+          await Promise.allSettled(refreshable.slice(offset, offset + 2).map((projectId) => threadState.fetch(projectId)))
+        }
 
         const latestThreadState = useThreadStore.getState()
 

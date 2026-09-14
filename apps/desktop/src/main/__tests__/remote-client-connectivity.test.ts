@@ -241,6 +241,33 @@ describe('RemoteControlClient connectivity failures', () => {
       .map((event) => (event.args[0] as { phase: string }).phase)
   }
 
+  it('bounds refresh fan-out and emits one degraded signal while SSE stays connected', async () => {
+    vi.useFakeTimers()
+    mockHealthyHostWithHungRpc()
+    const client = healthyClient()
+    await vi.advanceTimersByTimeAsync(0)
+    const requests = Promise.allSettled(Array.from({ length: 20 }, (_, i) =>
+      client.invokeIfActive('threads:list', [`p${i}`]),
+    ))
+    const rpcCalls = () => H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/rpc')).length
+    expect(rpcCalls()).toBe(4)
+    await vi.advanceTimersByTimeAsync(20_000)
+    expect((await requests).every((result) => result.status === 'rejected')).toBe(true)
+    expect(rpcCalls()).toBeLessThanOrEqual(6)
+    expect(client.getConnectionState()).toMatchObject({ phase: 'connected', rpcDegraded: true })
+    const degradedEvents = H.appEvents.filter((event) => event.channel === 'remote:connection-changed'
+      && (event.args[0] as { rpcDegraded?: boolean }).rpcDegraded)
+    expect(degradedEvents).toHaveLength(1)
+    const before = rpcCalls()
+    await expect(client.invokeIfActive('sessions:list', ['t'])).rejects.toThrow('REMOTE_REQUEST_TIMEOUT')
+    expect(rpcCalls()).toBe(before)
+    await vi.advanceTimersByTimeAsync(30_000)
+    H.fetch.mockImplementation(async () => jsonResponse(200, { ok: true, value: [] }))
+    await expect(client.invokeIfActive('sessions:list', ['t'])).resolves.toMatchObject({ value: [] })
+    expect(client.getConnectionState()).toMatchObject({ phase: 'connected', rpcDegraded: false })
+    client.stop()
+  })
+
   function eventStreamConnects(): number {
     return H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/events')).length
   }
