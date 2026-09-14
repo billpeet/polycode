@@ -137,8 +137,8 @@ describe('channel handler map migration', () => {
     expect([...clientSource.matchAll(/\bipcMain\.handle\(\s*'([^']+)'/g)]).toEqual([])
     // Stronger, and the visible consequence: the file no longer reaches Electron's ipcMain
     // at all. It takes a window, it does not talk to the renderer's dispatcher.
-    // `powerMonitor` joined for the resume-triggered stream restart; still no ipcMain.
-    expect(clientSource).toMatch(/^import \{ BrowserWindow, powerMonitor \} from 'electron'$/m)
+    // `app` supplies the client version for capability negotiation; still no ipcMain.
+    expect(clientSource).toMatch(/^import \{ app, BrowserWindow, powerMonitor \} from 'electron'$/m)
   })
 
   test('the client type reaches the map without a runtime import edge', () => {

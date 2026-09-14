@@ -79,6 +79,17 @@ describe('RemoteControlClient connectivity failures', () => {
     client.stop()
   })
 
+  it('does not read settings or restart producers when reconnect arrives after stop', () => {
+    const client = activeClient()
+    client.stop()
+    const read = vi.spyOn(H.settings, 'get')
+    read.mockClear()
+    client.reconnect()
+    expect(read).not.toHaveBeenCalled()
+    expect(H.fetch).not.toHaveBeenCalled()
+    read.mockRestore()
+  })
+
   it('opens a circuit after transport loss and stops subsequent RPC fan-out', async () => {
     H.fetch.mockRejectedValue(new TypeError('fetch failed'))
     const client = activeClient()

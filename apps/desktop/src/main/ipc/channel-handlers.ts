@@ -1,3 +1,4 @@
+import { runAppOperation } from '../app-lifecycle'
 import { hasAzurePat, saveAzurePat } from '../azure-devops-client'
 /**
  * The single implementation of every channel, typed against `ChannelContract`.
@@ -795,8 +796,10 @@ export const channelHandlers = {
     // not delay the send, and a non-repo working directory is not an error.
     const location = getLocationForThread(threadId)
     if (location) {
-      getCachedGitBranch(location.path, location.ssh, location.wsl)
-        .then((branch) => { if (branch) setThreadGitBranchIfUnset(threadId, branch) })
+      void runAppOperation(async () => {
+        const branch = await getCachedGitBranch(location.path, location.ssh, location.wsl)
+        if (branch) setThreadGitBranchIfUnset(threadId, branch)
+      }, 'threads:captureGitBranch')
         .catch(() => undefined)
     }
   },

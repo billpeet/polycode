@@ -1,4 +1,5 @@
 import * as http from 'http'
+import { getAppLifecycleState } from '../app-lifecycle'
 import { join } from 'path'
 import { app, BrowserWindow } from 'electron'
 import { handleControlRpc, CONTROL_RPC_CHANNELS } from '../control/control-rpc'
@@ -300,6 +301,7 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
 }
 
 export function startRemoteControlServer(config: RemoteServerConfig, window: BrowserWindow, runLifecycle: RunLifecycle): void {
+  if (getAppLifecycleState() !== 'running') return
   stopRemoteControlServer()
   if (!config.enabled) return
 

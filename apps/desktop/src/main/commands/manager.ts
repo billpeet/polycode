@@ -7,6 +7,7 @@ import { getCommandById, listCommands, getLocationById } from '../db/queries'
 import { createRunner, augmentWindowsPath } from '../driver/runner'
 import { runExecFile, getPowerShellExe, killWindowsProcessTree } from '../process-control'
 import { emitAppEvent } from '../app-events'
+import { assertAppRunning, getAppLifecycleState } from '../app-lifecycle'
 
 const LOG_RING_BUFFER_SIZE = 1000
 const LOG_FLUSH_INTERVAL_MS = 33
@@ -61,6 +62,7 @@ class CommandManager {
   /** Serialize start/stop/restart operations per command instance key. */
   private lifecycle = new Map<string, Promise<void>>()
   private window: BrowserWindow | null = null
+  private portPolls = new Set<Promise<void>>()
 
   private enqueueLifecycle(key: string, op: () => Promise<void>): Promise<void> {
     const previous = this.lifecycle.get(key) ?? Promise.resolve()
@@ -157,6 +159,7 @@ class CommandManager {
 
     // Never start a replacement process until any previous instance fully exits.
     await this.stopImpl(commandId, locationId)
+    assertAppRunning()
 
     const cmdDef: ProjectCommand | null = getCommandById(commandId)
     if (!cmdDef) return
@@ -369,9 +372,13 @@ class CommandManager {
   async stopAll(): Promise<void> {
     const stops: Promise<void>[] = []
     for (const entry of [...this.running.values()]) {
+      this.stopPortPolling(entry)
+      this.flushPendingLogs(instKey(entry.commandId, entry.locationId), entry)
       stops.push(this.stop(entry.commandId, entry.locationId))
     }
-    await Promise.all(stops)
+    const results = await Promise.allSettled([...stops, ...this.lifecycle.values(), ...this.portPolls])
+    const failed = results.find((result) => result.status === 'rejected')
+    if (failed?.status === 'rejected') throw failed.reason
   }
 
   /** Get statuses for all commands of a project at a given location. */
@@ -401,6 +408,7 @@ class CommandManager {
   }
 
   private scheduleLogFlush(key: string, entry: RunningCommand): void {
+    if (getAppLifecycleState() !== 'running') return
     if (entry.logFlushTimer) return
     entry.logFlushTimer = setTimeout(() => {
       const current = this.running.get(key)
@@ -416,10 +424,17 @@ class CommandManager {
 
   private startPortPolling(key: string, entry: RunningCommand): void {
     this.stopPortPolling(entry)
-    void this.pollPortsOnce(key, entry)
+    this.pollPorts(key, entry)
     entry.portPollTimer = setInterval(() => {
-      void this.pollPortsOnce(key, entry)
+      this.pollPorts(key, entry)
     }, PORT_POLL_INTERVAL_MS)
+  }
+
+  private pollPorts(key: string, entry: RunningCommand): void {
+    if (getAppLifecycleState() !== 'running') return
+    const poll = this.pollPortsOnce(key, entry)
+    this.portPolls.add(poll)
+    void poll.finally(() => this.portPolls.delete(poll))
   }
 
   private stopPortPolling(entry: RunningCommand): void {
@@ -444,7 +459,7 @@ class CommandManager {
     try {
       const ports = await this.getListeningPortsForProcessTree(pid, entry.connectionType)
       const currentEntry = this.running.get(key)
-      if (currentEntry !== entry) return
+      if (currentEntry !== entry || entry.status !== 'running' || getAppLifecycleState() !== 'running') return
       if (!equalPorts(entry.ports, ports)) {
         entry.ports = ports
         this.pushPorts(entry.commandId, entry.locationId, ports)

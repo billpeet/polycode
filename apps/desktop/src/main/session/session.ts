@@ -35,6 +35,7 @@ import {
 } from '../db/queries'
 import { generateTitle } from '../system-text'
 import { emitAppEvent } from '../app-events'
+import { getAppLifecycleState } from '../app-lifecycle'
 
 export class Session {
   readonly threadId: string
@@ -98,7 +99,9 @@ export class Session {
       permissionMode: getThreadPermissionMode(this.threadId),
       yoloMode: getThreadPermissionMode(this.threadId) === 'yolo',
       initialSessionId: externalSessionId,
-      onSessionId: (sid: string) => updateSessionClaudeId(sessionId, sid),
+      onSessionId: (sid: string) => {
+        if (!this.abandoned) updateSessionClaudeId(sessionId, sid)
+      },
       ssh: this.sshConfig,
       wsl: this.wslConfig,
     }
@@ -1095,7 +1098,7 @@ export class Session {
   private triggerAutoTitle(seed: string): void {
     generateTitle(seed, this.workingDir, this.sshConfig, this.wslConfig)
       .then((title) => {
-        if (!title) return
+        if (!title || this.abandoned || getAppLifecycleState() !== 'running') return
         updateThreadName(this.threadId, title)
         this.emit(`thread:title:${this.threadId}`, title)
       })

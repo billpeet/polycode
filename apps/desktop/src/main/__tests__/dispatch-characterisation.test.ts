@@ -15,6 +15,7 @@ import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { CHANNEL_REGISTRY, LOCAL_CHANNELS, isLocalChannel, isRemoteChannel } from '@polycode/shared'
 import type { RemoteHostInput, RemoteServerConfig } from '../../shared/types'
+import { resetAppLifecycleForTest, shutdownApp, waitForAppOperations } from '../app-lifecycle'
 
 const H = vi.hoisted(() => {
   const log: string[] = []
@@ -30,6 +31,7 @@ const H = vi.hoisted(() => {
     } as Record<string, unknown> | null,
     project: { id: 'p1', allow_main_branch_commits: true } as Record<string, unknown> | null,
     gitStatus: { branch: 'feature/x' } as Record<string, unknown> | null,
+    branchResult: null as Promise<string> | null,
     threadExists: true,
     /**
      * Whether the thread already has messages. Steers two branches that no other
@@ -517,7 +519,7 @@ vi.mock('../git', () => H.autoModule('git', {
     if (H.state.gitShouldFail) throw new Error('git exploded')
     return H.state.gitStatus
   }),
-  getCachedGitBranch: H.stub('git.getCachedGitBranch', () => Promise.resolve('feature/x')),
+  getCachedGitBranch: H.stub('git.getCachedGitBranch', () => H.state.branchResult ?? Promise.resolve('feature/x')),
   // ── The non-invalidating `git:*` batch ──────────────────────────────────────
   //
   // A distinct value per function, not a shared sentinel: the four `compare*` channels are
@@ -1847,6 +1849,36 @@ describe('threads:send — the one deliberate divergence', () => {
     // Fire-and-forget, so only the kick-off is deterministic in the recorded log.
     expect(ipc).toContain('git.getCachedGitBranch(["C:/repo",null,null])')
     expect(rpc).toContain('git.getCachedGitBranch(["C:/repo",null,null])')
+  })
+
+  it.each(['ipc', 'rpc'])('drains detached branch capture from %s before closing storage', async (transport) => {
+    let release!: (branch: string) => void
+    H.state.branchResult = new Promise<string>((resolve) => { release = resolve })
+    try {
+      const invoke = transport === 'ipc' ? resultViaIpc : resultViaControlRpc
+      await invoke('threads:send', args)
+      const close = vi.fn()
+      const shutdown = shutdownApp({
+        stopProducers: () => {}, awaitProducers: waitForAppOperations,
+        closeDatabase: close, finish: () => {},
+      })
+      await Promise.resolve()
+      expect(close).not.toHaveBeenCalled()
+      release('feature/late')
+      await shutdown
+      expect(H.log).toContain('db.setThreadGitBranchIfUnset(["t1","feature/late"])')
+      expect(close).toHaveBeenCalledOnce()
+      H.log.length = 0
+      for (const channel of ['commands:getPid', 'commands:getPorts', 'threads:list']) {
+        await expect(invoke(channel, ['t1'])).rejects.toMatchObject({ code: 'APP_SHUTTING_DOWN' })
+      }
+      expect(H.log).toEqual([])
+    } finally {
+      release('feature/late')
+      await waitForAppOperations()
+      H.state.branchResult = null
+      resetAppLifecycleForTest()
+    }
   })
 })
 

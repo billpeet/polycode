@@ -1,11 +1,13 @@
 import { BrowserWindow } from 'electron'
 import { Session } from './session'
 import { SshConfig, WslConfig } from '../../shared/types'
+import { assertAppRunning } from '../app-lifecycle'
 
 class SessionManager {
   private sessions = new Map<string, Session>()
 
   getOrCreate(threadId: string, workingDir: string, window: BrowserWindow, sshConfig?: SshConfig | null, wslConfig?: WslConfig | null): Session {
+    assertAppRunning()
     const existing = this.sessions.get(threadId)
     if (existing) {
       // If the transport config changed (e.g. project re-configured as WSL after
