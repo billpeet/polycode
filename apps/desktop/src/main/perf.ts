@@ -1,3 +1,4 @@
+import { recordCrashBreadcrumb } from './crash-context'
 import { ipcMain } from 'electron'
 import { count, recordDuration, withSpan } from './observability'
 import { recordFeatureUsage } from './feature-usage'
@@ -109,6 +110,7 @@ export function installIpcProfiling(): void {
   ipcMain.handle = ((channel, listener) => {
     return originalHandle(channel, (event, ...args) =>
       withSpan(`ipc.${channel}`, { 'ipc.channel': channel }, async (span) => {
+        recordCrashBreadcrumb(`ipc.start.${channel}`)
         const startedAt = performance.now()
         let outcome: 'ok' | 'error' = 'ok'
         const stats = getChannelStats(channel)
@@ -131,6 +133,7 @@ export function installIpcProfiling(): void {
           recordDuration('polycode.ipc.duration', durationMs, { channel, outcome })
           count('polycode.ipc.calls', { channel, outcome })
           recordFeatureUsage(channel, outcome)
+          recordCrashBreadcrumb(`ipc.${outcome}.${channel}`, durationMs)
           const thresholdMs = getIpcThresholdMs(channel)
           if (durationMs >= thresholdMs) {
             console.warn(
@@ -152,6 +155,7 @@ export function installMainThreadStallMonitor(): void {
     expectedAt = now + MAIN_THREAD_STALL_SAMPLE_MS
 
     if (driftMs >= MAIN_THREAD_STALL_THRESHOLD_MS && driftMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
+      recordCrashBreadcrumb('main.event_loop.stall', driftMs)
       recordDuration('polycode.event_loop.stall', driftMs, { process: 'main' })
       console.warn(`[perf][main-thread] event-loop-stall ${driftMs.toFixed(1)}ms`)
     }

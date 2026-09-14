@@ -14,9 +14,20 @@ export interface MemorySample {
   heapLimitBytes: number
 }
 
+const latest: Partial<Record<MemorySample['process'], MemorySample & { sampledAt: number }>> = {}
+export function latestMemorySamples(): typeof latest {
+  return structuredClone(latest)
+}
+
 let sampleTimer: NodeJS.Timeout | null = null
 
 export function recordMemorySample(sample: MemorySample): void {
+  latest[sample.process] = {
+    process: sample.process, sampledAt: Date.now(),
+    privateBytes: sample.privateBytes, residentSetBytes: sample.residentSetBytes,
+    sharedBytes: sample.sharedBytes, heapUsedBytes: sample.heapUsedBytes,
+    heapTotalBytes: sample.heapTotalBytes, heapLimitBytes: sample.heapLimitBytes,
+  }
   const attributes: TelemetryAttributes = {
     'polycode.process.type': sample.process,
     'polycode.release': app.getVersion(),
