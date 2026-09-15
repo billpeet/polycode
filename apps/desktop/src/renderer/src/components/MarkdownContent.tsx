@@ -8,6 +8,7 @@ import {
   handleMarkdownFileLinkClick,
 } from '../lib/markdownFileLinks'
 import { escapeAttr, renderMarkdownLink } from '../lib/markdownLinkRenderer'
+import { loadMarkdownImages, renderMarkdownImage } from '../lib/markdownImages'
 import { writeClipboardText } from '../lib/clipboard'
 import { useFilesStore } from '../stores/files'
 import { useUiStore } from '../stores/ui'
@@ -26,6 +27,7 @@ function escapeHtml(str: string): string {
 
 const renderer = new marked.Renderer()
 renderer.link = renderMarkdownLink
+renderer.image = renderMarkdownImage
 
 renderer.code = function ({ text, lang }) {
   const hl = getHighlighter()
@@ -82,6 +84,7 @@ export default function MarkdownContent({ content, className = '' }: Props) {
     const raw = marked.parse(content) as string
     const clean = sanitizeMarkdownHtml(raw, { codeControls: true })
     ref.current.innerHTML = clean
+    const cancelImages = loadMarkdownImages(ref.current)
     reportPerf(
       'markdown-content:render',
       performance.now() - startedAt,
@@ -135,7 +138,10 @@ export default function MarkdownContent({ content, className = '' }: Props) {
     }
 
     container.addEventListener('click', handleClick)
-    return () => container.removeEventListener('click', handleClick)
+    return () => {
+      cancelImages()
+      container.removeEventListener('click', handleClick)
+    }
   }, [content, selectFile, setRightPanelTab, shikiReady])
 
   return (
