@@ -127,13 +127,15 @@ export const useLocationStore = create<LocationStore>((set) => ({
   },
 
   removeWorktree: async (id, projectId) => {
-    const activeThreads = useThreadStore.getState().byProject[projectId] ?? []
+    const threadSnapshot = useThreadStore.getState()
+    const activeThreads = [
+      ...(threadSnapshot.byProject[projectId] ?? []),
+      ...threadSnapshot.queueThreads.filter((thread) => thread.project_id === projectId),
+    ]
     const worktreeThreadIds = new Set(activeThreads.filter((thread) => thread.location_id === id).map((thread) => thread.id))
     const locationsSnapshot = (useLocationStore.getState().byProject[projectId] ?? []).slice()
-    const threadSnapshot = useThreadStore.getState()
 
     useThreadStore.setState((s) => {
-      const removedThreads = (s.byProject[projectId] ?? []).filter((thread) => worktreeThreadIds.has(thread.id))
       const nextStatusMap = { ...s.statusMap }
       const nextUnreadByThread = { ...s.unreadByThread }
       const nextQueuedByThread = { ...s.queuedMessageByThread }
@@ -151,6 +153,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
         delete nextPidByThread[threadId]
       }
       return {
+        queueThreads: s.queueThreads.filter((thread) => !worktreeThreadIds.has(thread.id)),
         byProject: {
           ...s.byProject,
           [projectId]: (s.byProject[projectId] ?? []).filter((thread) => !worktreeThreadIds.has(thread.id))
@@ -159,7 +162,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
         // them move to the archived count.
         archivedCountByProject: {
           ...s.archivedCountByProject,
-          [projectId]: (s.archivedCountByProject[projectId] ?? 0) + removedThreads.length
+          [projectId]: (s.archivedCountByProject[projectId] ?? 0) + worktreeThreadIds.size
         },
         selectedThreadId: s.selectedThreadId && worktreeThreadIds.has(s.selectedThreadId) ? null : s.selectedThreadId,
         statusMap: nextStatusMap,
@@ -186,6 +189,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
       useBrowserStore.getState().discardLocation(id)
     } catch (error) {
       useThreadStore.setState({
+        queueThreads: threadSnapshot.queueThreads,
         byProject: threadSnapshot.byProject,
         archivedCountByProject: threadSnapshot.archivedCountByProject,
         selectedThreadId: threadSnapshot.selectedThreadId,
