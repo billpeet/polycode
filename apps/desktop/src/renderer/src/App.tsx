@@ -321,6 +321,7 @@ export default function App() {
         queueThreads: [],
         draftNewThreadId: null,
         draftNewWorktree: false,
+        draftPullRequest: null,
       })
       useLocationStore.setState({
         byProject: {},

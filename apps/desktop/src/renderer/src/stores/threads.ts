@@ -31,6 +31,17 @@ export interface QueuedMessage {
   options: SendOptions
 }
 
+export interface DraftPullRequest {
+  id: number
+  title: string
+}
+
+export interface DraftDestinationOptions {
+  newWorktree?: boolean
+  /** Check this Pull Request out in the new worktree; implies `newWorktree`. */
+  pullRequest?: DraftPullRequest | null
+}
+
 interface ThreadStore {
   /** active (non-archived) threads keyed by project ID */
   byProject: Record<string, Thread[]>
@@ -74,12 +85,17 @@ interface ThreadStore {
   /** When true, the draft's location_id is a parent location; a worktree is forked from it at send time. */
   draftNewWorktree: boolean
   /**
+   * Pull Request to check out in the forked worktree at send time. Only
+   * meaningful alongside `draftNewWorktree`.
+   */
+  draftPullRequest: DraftPullRequest | null
+  /**
    * Opens the new-thread draft (or re-homes the existing one — one slot only).
    * Nothing materializes until the first message is sent.
    */
-  openDraftThread: (projectId: string, locationId: string, opts?: { newWorktree?: boolean }) => void
+  openDraftThread: (projectId: string, locationId: string, opts?: DraftDestinationOptions) => void
   /** Re-points the draft at a different project/location (keeps typed text). */
-  setDraftThreadDestination: (projectId: string, locationId: string, opts?: { newWorktree?: boolean }) => void
+  setDraftThreadDestination: (projectId: string, locationId: string, opts?: DraftDestinationOptions) => void
   discardDraftThread: () => void
   /** Creates the real Thread (and worktree, if requested) for the draft. Returns the real thread id. */
   materializeDraftThread: (draftId: string) => Promise<string>
@@ -161,6 +177,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   queueThreads: [],
   draftNewThreadId: null,
   draftNewWorktree: false,
+  draftPullRequest: null,
 
   openDraftThread: (projectId, locationId, opts) => {
     const existingId = get().draftNewThreadId
@@ -232,7 +249,8 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       statusMap: { ...s.statusMap, [optimisticId]: 'idle' },
       unreadByThread: { ...s.unreadByThread, [optimisticId]: false },
       draftNewThreadId: optimisticId,
-      draftNewWorktree: !!opts?.newWorktree,
+      draftNewWorktree: !!opts?.newWorktree || !!opts?.pullRequest,
+      draftPullRequest: opts?.pullRequest ?? null,
       selectedThreadId: optimisticId,
     }))
   },
@@ -256,7 +274,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     const byProject = { ...s.byProject }
     byProject[fromProjectId] = removeThreadFromList(byProject[fromProjectId] ?? [], id)
     byProject[projectId] = [updated, ...(byProject[projectId] ?? [])]
-    return { byProject, draftNewWorktree: !!opts?.newWorktree }
+    return { byProject, draftNewWorktree: !!opts?.newWorktree || !!opts?.pullRequest, draftPullRequest: opts?.pullRequest ?? null }
   }),
 
   discardDraftThread: () => set((s) => {
@@ -278,6 +296,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       unreadByThread,
       draftNewThreadId: null,
       draftNewWorktree: false,
+      draftPullRequest: null,
       selectedThreadId: s.selectedThreadId === id ? null : s.selectedThreadId,
     }
   }),
@@ -293,15 +312,32 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
     try {
       let locationId = draft.location_id
+      let threadName = draft.name
+      const pullRequest = state.draftPullRequest
       if (state.draftNewWorktree) {
         // The worktree is part of the same create-on-send commitment: nothing
         // exists on disk until the first message is sent.
         const { useLocationStore } = await import('./locations')
-        const location = await useLocationStore.getState().createWorktree(locationId, projectId)
+        const location = await useLocationStore.getState().createWorktree(
+          locationId,
+          projectId,
+          pullRequest ? `PR #${pullRequest.id}` : undefined
+        )
         locationId = location.id
+        if (pullRequest) {
+          // A worktree left on the parent's branch would be mistaken for an
+          // ordinary fork, so a failed checkout takes the worktree with it.
+          try {
+            await client.invoke('forge:pr:checkout', location.path, pullRequest.id)
+          } catch (error) {
+            await useLocationStore.getState().removeWorktree(location.id, projectId).catch(() => undefined)
+            throw error
+          }
+          threadName = `PR #${pullRequest.id}: ${pullRequest.title}`
+        }
       }
 
-      let thread = await client.invoke('threads:create', projectId, draft.name, locationId)
+      let thread = await client.invoke('threads:create', projectId, threadName, locationId)
 
       // The draft carries settings inherited (or adjusted) before materializing.
       if (
@@ -371,6 +407,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
           fastModeByThread: nextFastModeByThread,
           draftNewThreadId: null,
           draftNewWorktree: false,
+          draftPullRequest: null,
           selectedThreadId: s.selectedThreadId === draftId ? thread.id : s.selectedThreadId,
         }
       })

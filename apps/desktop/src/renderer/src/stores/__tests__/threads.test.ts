@@ -255,4 +255,53 @@ describe('create-on-send draft survival', () => {
       { id: 'message-1', thread_id: realThreadId, role: 'user', content: 'Start this work' },
     ])
   })
+
+  it('checks the chosen pull request out in the forked worktree before creating the thread', async () => {
+    invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
+      if (channel === 'locations:createWorktree') return { id: 'wt-1', path: 'C:/repo-pr-7', project_id: 'project-1' }
+      if (channel === 'forge:pr:checkout') return { branch: 'feature/pr-7' }
+      if (channel === 'threads:create') return makeThread({ id: 'real-thread', name: args[1] as string, location_id: 'wt-1' })
+      return undefined
+    })
+    useThreadStore.getState().openDraftThread('project-1', 'location-main', { pullRequest: { id: 7, title: 'Fix the thing' } })
+    const draftId = useThreadStore.getState().draftNewThreadId
+    if (!draftId) throw new Error('expected a draft thread')
+    expect(useThreadStore.getState().draftNewWorktree).toBe(true)
+
+    await useThreadStore.getState().materializeDraftThread(draftId)
+
+    const calls = invoke.mock.calls.map((call) => call[0])
+    expect(calls.indexOf('locations:createWorktree')).toBeLessThan(calls.indexOf('forge:pr:checkout'))
+    expect(calls.indexOf('forge:pr:checkout')).toBeLessThan(calls.indexOf('threads:create'))
+    expect(invoke).toHaveBeenCalledWith('locations:createWorktree', 'location-main', 'PR #7')
+    expect(invoke).toHaveBeenCalledWith('forge:pr:checkout', 'C:/repo-pr-7', 7)
+    expect(invoke).toHaveBeenCalledWith('threads:create', 'project-1', 'PR #7: Fix the thing', 'wt-1')
+    expect(useThreadStore.getState().draftPullRequest).toBeNull()
+  })
+
+  it('removes the forked worktree when the pull request checkout fails', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'locations:createWorktree') return { id: 'wt-1', path: 'C:/repo-pr-7', project_id: 'project-1' }
+      if (channel === 'forge:pr:checkout') throw new Error('PR branch not found')
+      if (channel === 'locations:removeWorktree') return undefined
+      return undefined
+    })
+    useThreadStore.getState().openDraftThread('project-1', 'location-main', { pullRequest: { id: 7, title: 'Fix the thing' } })
+    const draftId = useThreadStore.getState().draftNewThreadId
+    if (!draftId) throw new Error('expected a draft thread')
+
+    await expect(useThreadStore.getState().materializeDraftThread(draftId)).rejects.toThrow('PR branch not found')
+
+    expect(invoke).toHaveBeenCalledWith('locations:removeWorktree', 'wt-1')
+    expect(invoke).not.toHaveBeenCalledWith('threads:create', expect.anything(), expect.anything(), expect.anything())
+  })
+
+  it('clears the pull request when the destination moves to a plain location', () => {
+    useThreadStore.getState().openDraftThread('project-1', 'location-main', { pullRequest: { id: 7, title: 'Fix the thing' } })
+
+    useThreadStore.getState().setDraftThreadDestination('project-1', 'location-main')
+
+    expect(useThreadStore.getState().draftNewWorktree).toBe(false)
+    expect(useThreadStore.getState().draftPullRequest).toBeNull()
+  })
 })
