@@ -14,7 +14,6 @@ interface ThreadRowProps {
   selectedThreadId: string | null
   statusMap: Record<string, ThreadStatus | undefined>
   unreadByThread: Record<string, boolean | undefined>
-  branchByLocation: Record<string, string>
   onSelectThread: (threadId: string) => void
   onArchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
   onUnarchiveThread: (thread: Thread, projectId: string) => void | Promise<void>
@@ -31,7 +30,6 @@ export default function ThreadRow({
   selectedThreadId,
   statusMap,
   unreadByThread,
-  branchByLocation,
   onSelectThread,
   onArchiveThread,
   onUnarchiveThread,
@@ -68,22 +66,6 @@ export default function ThreadRow({
         )}
         <span className="truncate min-w-0">{thread.name}</span>
       </button>
-
-      {(() => {
-        const currentBranch = thread.location_id ? branchByLocation[thread.location_id] : undefined
-        if (thread.git_branch && currentBranch && thread.git_branch !== currentBranch) {
-          return (
-            <div
-              className={`${indent} pr-2 text-[10px] leading-tight truncate -mt-0.5 pb-0.5`}
-              style={{ color: '#f59e0b' }}
-              title={`Started on branch '${thread.git_branch}', current branch is '${currentBranch}'`}
-            >
-              ⎇ {thread.git_branch}
-            </div>
-          )
-        }
-        return null
-      })()}
 
       <div
         className={`absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 transition-opacity ${menuOpen ? 'z-50 opacity-100' : 'opacity-0 group-hover/thread:opacity-100'}`}

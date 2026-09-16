@@ -58,9 +58,19 @@ function sanitizeWorktreeSegment(value: string): string {
   return cleaned || `worktree-${Date.now()}`
 }
 
-/** Worktree branches are intentionally opaque: their label does not describe their base. */
-export function createWorktreeBranchName(timestamp: number = Date.now()): string {
-  return `polycode/${timestamp.toString(36)}`
+/**
+ * The opaque id a worktree's directory and initial branch are both named
+ * after. Deliberately says nothing about the parent's checked-out branch or
+ * the base ref: the worktree's identity is its *current* branch, which the
+ * agent is free to change after creation.
+ */
+export function createWorktreeId(timestamp: number = Date.now()): string {
+  return timestamp.toString(36)
+}
+
+/** Worktree branches are intentionally opaque: their name does not describe their base. */
+export function createWorktreeBranchName(id: string): string {
+  return `polycode/${id}`
 }
 
 function runGit(args: string[], cwd: string): Promise<string> {
@@ -251,24 +261,25 @@ function worktreeQueueKey(parentPath: string): string {
 }
 
 async function createLocalWorktreeUnqueued(parent: RepoLocation, label?: string | null, baseRefOverride?: string): Promise<RepoLocation> {
-
-  const currentBranch = (await runGit(['branch', '--show-current'], parent.path)).trim()
-  const baseName = sanitizeWorktreeSegment(label || currentBranch || 'worktree')
   const repoName = sanitizeWorktreeSegment(basename(parent.path))
   const worktreesRoot = join(dirname(parent.path), `${repoName}-worktrees`)
   mkdirSync(worktreesRoot, { recursive: true })
 
-  let worktreePath = join(worktreesRoot, baseName)
-  let suffix = 2
-  while (existsSync(worktreePath)) {
-    worktreePath = join(worktreesRoot, `${baseName}-${suffix}`)
-    suffix += 1
+  // Directory and branch share one opaque id. Two creations inside the same
+  // millisecond (or a leftover directory) simply advance the id.
+  let timestamp = Date.now()
+  let worktreeId = createWorktreeId(timestamp)
+  while (existsSync(join(worktreesRoot, worktreeId))) {
+    timestamp += 1
+    worktreeId = createWorktreeId(timestamp)
   }
+  const worktreePath = join(worktreesRoot, worktreeId)
 
-  const branchName = createWorktreeBranchName()
+  const branchName = createWorktreeBranchName(worktreeId)
   const baseRef = baseRefOverride ?? await resolveWorktreeBaseRef(parent.path)
   await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
-  const location = createWorktreeLocation(parent, label?.trim() || baseName, worktreePath)
+  // The stored label is only a fallback: the UI names a worktree after its current branch.
+  const location = createWorktreeLocation(parent, label?.trim() || worktreeId, worktreePath)
 
   for (const command of listCommands(parent.project_id).filter((cmd) => cmd.run_on_worktree_create)) {
     void commandManager.start(command.id, location.id)

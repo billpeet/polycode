@@ -353,7 +353,6 @@ export default function ExpandedSidebar({
                       selectedThreadId={selectedThreadId}
                       statusMap={statusMap}
                       unreadByThread={unreadByThread}
-                      branchByLocation={branchByLocation}
                       onSelectThread={onSelectThread}
                       onArchiveThread={onArchiveThread}
                       onUnarchiveThread={onUnarchiveThread}
@@ -371,7 +370,6 @@ export default function ExpandedSidebar({
                       selectedThreadId={selectedThreadId}
                       statusMap={statusMap}
                       unreadByThread={unreadByThread}
-                      branchByLocation={branchByLocation}
                       onSelectThread={onSelectThread}
                       onArchiveThread={onArchiveThread}
                       onUnarchiveThread={onUnarchiveThread}
@@ -564,7 +562,6 @@ export default function ExpandedSidebar({
                         selectedThreadId={selectedThreadId}
                         statusMap={statusMap}
                         unreadByThread={unreadByThread}
-                        branchByLocation={branchByLocation}
                         onSelectThread={onSelectThread}
                         onArchiveThread={onArchiveThread}
                         onUnarchiveThread={onUnarchiveThread}
@@ -619,7 +616,6 @@ export default function ExpandedSidebar({
                           selectedThreadId={selectedThreadId}
                           statusMap={statusMap}
                           unreadByThread={unreadByThread}
-                          branchByLocation={branchByLocation}
                           onSelectThread={onSelectThread}
                           onArchiveThread={onArchiveThread}
                           onUnarchiveThread={onUnarchiveThread}
@@ -679,7 +675,6 @@ export default function ExpandedSidebar({
                           selectedThreadId={selectedThreadId}
                           statusMap={statusMap}
                           unreadByThread={unreadByThread}
-                          branchByLocation={branchByLocation}
                           onSelectThread={onSelectThread}
                           onArchiveThread={onArchiveThread}
                           onUnarchiveThread={onUnarchiveThread}

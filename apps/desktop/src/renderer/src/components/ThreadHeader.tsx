@@ -165,6 +165,12 @@ export default function ThreadHeader({ threadId }: Props) {
     threadProjectId ? s.byProject[threadProjectId]?.find((t) => t.id === threadId) : undefined
   )
   const isPendingThread = !!thread?.is_pending
+  // A draft (create-on-send) thread already has a real destination unless it
+  // targets a worktree that only comes into existence on send; its directory
+  // is usable before the first message.
+  const isDraftThread = useThreadStore((s) => s.draftNewThreadId === threadId)
+  const draftTargetsNewWorktree = useThreadStore((s) => s.draftNewWorktree || !!s.draftPullRequest)
+  const locationActionsAvailable = !isPendingThread || (isDraftThread && !draftTargetsNewWorktree)
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const pid = useThreadStore((s) => s.pidByThread[threadId] ?? null)
   const rename = useThreadStore((s) => s.rename)
@@ -355,7 +361,7 @@ export default function ThreadHeader({ threadId }: Props) {
         )}
 
         {/* Location quick-actions */}
-        {locationPath && !isPendingThread && (
+        {locationPath && locationActionsAvailable && (
           <span className="flex items-center gap-0.5 flex-shrink-0">
             <button
               onClick={() => void writeClipboardText(locationPath)}

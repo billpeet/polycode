@@ -120,3 +120,28 @@ describe('DestinationPicker pull requests', () => {
     expect(invoke).not.toHaveBeenCalledWith('forge:pr:list', expect.anything())
   })
 })
+
+describe('DestinationPicker worktree names', () => {
+  it('lists a worktree by its current branch rather than its stored label', async () => {
+    invoke.mockImplementation(async (channel: string, ...args: unknown[]) => {
+      if (channel === 'forge:pr:list') return []
+      if (channel === 'git:branch') return args[0] === 'C:/zeta-worktrees/kf12oi' ? 'feat/renamed-by-agent' : 'master'
+      return undefined
+    })
+    useLocationStore.setState({
+      byProject: {
+        zeta: [
+          makeLocation({}),
+          makeLocation({ id: 'wt', label: 'kf12oi', path: 'C:/zeta-worktrees/kf12oi', is_worktree: true, parent_location_id: 'loc' }),
+        ],
+      },
+    })
+    render(<DestinationPicker draftThread={draft()} />)
+
+    const select = screen.getByTitle('Location, worktree or pull request') as HTMLSelectElement
+    await waitFor(() => {
+      expect(within(select).getByRole('option', { name: '↳ feat/renamed-by-agent' })).toBeTruthy()
+    })
+    expect(within(select).getByRole('option', { name: 'Local' })).toBeTruthy()
+  })
+})

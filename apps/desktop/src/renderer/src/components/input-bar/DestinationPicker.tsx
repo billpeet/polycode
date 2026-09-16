@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { ChevronDown, GitBranchPlus, GitPullRequest, MapPin } from 'lucide-react'
 import { client } from '../../lib/client'
+import { locationDisplayName } from '../../lib/locationDisplay'
+import { subscribeToSidebarBranches } from '../../lib/sidebarBranchRefresh'
 import { useLocationStore } from '../../stores/locations'
 import { sortProjects, useProjectStore } from '../../stores/projects'
 import { useThreadStore } from '../../stores/threads'
@@ -175,6 +177,32 @@ function useOpenPullRequests(parents: RepoLocation[]): Record<string, PullReques
 }
 
 /**
+ * Current branch of each worktree in the list. Worktrees are named after
+ * their branch, so the picker shares the sidebar's branch sweep rather than
+ * showing the opaque label they were created with.
+ */
+function useWorktreeBranches(locations: RepoLocation[]): Record<string, string> {
+  const [branchByLocation, setBranchByLocation] = useState<Record<string, string>>({})
+  const worktrees = useMemo(() => locations.filter((l) => l.is_worktree), [locations])
+  useEffect(() => {
+    if (worktrees.length === 0) return
+    return subscribeToSidebarBranches(worktrees, (branches) => {
+      setBranchByLocation((prev) => {
+        let changed = false
+        const next = { ...prev }
+        for (const [id, branch] of branches) {
+          if (!branch || next[id] === branch) continue
+          next[id] = branch
+          changed = true
+        }
+        return changed ? next : prev
+      })
+    })
+  }, [worktrees])
+  return branchByLocation
+}
+
+/**
  * Where the create-on-send draft will materialize: project, then
  * location/worktree — including "New worktree of …" and "PR #n", which only
  * come into existence (worktree forked, PR checked out) when the first message
@@ -195,6 +223,7 @@ export default function DestinationPicker({ draftThread }: { draftThread: Thread
   )
   const forkableParents = useMemo(() => locations.filter(canForkWorktree), [locations])
   const pullRequestsByLocation = useOpenPullRequests(forkableParents)
+  const branchByLocation = useWorktreeBranches(locations)
 
   useEffect(() => {
     if (!locationsByProject[projectId]) void fetchLocations(projectId)
@@ -264,7 +293,7 @@ export default function DestinationPicker({ draftThread }: { draftThread: Thread
       >
         {locations.map((location) => (
           <option key={location.id} value={location.id}>
-            {location.is_worktree ? `↳ ${location.label}` : location.label}
+            {location.is_worktree ? `↳ ${locationDisplayName(location, branchByLocation[location.id])}` : location.label}
           </option>
         ))}
         {forkableParents.map((location) => (

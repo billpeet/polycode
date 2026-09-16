@@ -1,13 +1,20 @@
 import { describe, expect, it } from 'vitest'
 import {
   createWorktreeBranchName,
+  createWorktreeId,
   isWorktreeDirectoryCleanupError,
   parseGitWorktreeList,
 } from '../project-admin'
 
+describe('createWorktreeId', () => {
+  it('derives an opaque id from the creation time', () => {
+    expect(createWorktreeId(1_234_567_890)).toBe('kf12oi')
+  })
+})
+
 describe('createWorktreeBranchName', () => {
   it('uses only the opaque worktree id under the polycode namespace', () => {
-    expect(createWorktreeBranchName(1_234_567_890)).toBe('polycode/kf12oi')
+    expect(createWorktreeBranchName(createWorktreeId(1_234_567_890))).toBe('polycode/kf12oi')
   })
 })
 

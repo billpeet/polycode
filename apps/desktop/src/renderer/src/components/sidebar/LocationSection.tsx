@@ -1,8 +1,11 @@
-import { AlertTriangle, ChevronDown, ChevronRight, GitBranchPlus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, Copy, FolderOpen, GitBranchPlus, SquareTerminal, Trash2 } from 'lucide-react'
+import { client } from '../../lib/client'
+import { writeClipboardText } from '../../lib/clipboard'
 import { RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
 import ThreadRow from './ThreadRow'
 import { ConnectionBadge } from './shared'
 import { useCommandStore, EMPTY_COMMANDS, instKey } from '../../stores/commands'
+import { locationDisplayName } from '../../lib/locationDisplay'
 
 interface LocationSectionProps {
   projectId: string
@@ -56,6 +59,8 @@ export default function LocationSection({
   const isCheckedOut = !location.pool_id || location.checked_out
   const pathMissing = location.connection_type === 'local' && pathExistsByLocation[location.id] === false
   const invalidWorktree = location.is_worktree && location.worktree_valid === false
+  // Explorer/terminal need a directory the desktop shell can reach: local or WSL, not SSH.
+  const canOpenShell = client.capabilities.shell && location.connection_type !== 'ssh' && !pathMissing
   const projectCommands = useCommandStore((s) => s.byProject[projectId] ?? EMPTY_COMMANDS)
   const commandStatusMap = useCommandStore((s) => s.statusMap)
   const activeCommandCount = projectCommands.reduce((count, command) => {
@@ -68,8 +73,11 @@ export default function LocationSection({
       <div className="group relative">
         <button
           onClick={() => onToggleLocationCollapsed(location.id)}
-          className="flex w-full items-center pl-6 pr-2 py-0.5 text-left text-xs transition-colors min-w-0"
-          style={{ color: pathMissing || invalidWorktree ? '#f87171' : 'var(--color-text-muted)' }}
+          className="mt-1 flex w-full items-center pl-6 pr-2 py-0.5 text-left text-xs font-semibold transition-colors min-w-0 hover:bg-white/5"
+          style={{
+            color: pathMissing || invalidWorktree ? '#f87171' : 'var(--color-text-muted)',
+            background: 'color-mix(in srgb, var(--color-border) 35%, transparent)',
+          }}
           title={pathMissing
             ? `Directory not found: ${location.path}`
             : invalidWorktree
@@ -80,7 +88,12 @@ export default function LocationSection({
             ? <ChevronDown size={10} className="mr-1 flex-shrink-0 opacity-50" />
             : <ChevronRight size={10} className="mr-1 flex-shrink-0 opacity-50" />
           }
-          <span className="truncate opacity-70">{location.label}</span>
+          <span
+            className="truncate"
+            style={pathMissing || invalidWorktree ? undefined : { color: 'var(--color-text)' }}
+          >
+            {locationDisplayName(location, branchByLocation[location.id])}
+          </span>
           {location.is_worktree && (
             <span
               className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
@@ -89,7 +102,7 @@ export default function LocationSection({
               worktree
             </span>
           )}
-          {branchByLocation[location.id] && (
+          {!location.is_worktree && branchByLocation[location.id] && (
             <span className="ml-1 flex-shrink-0 text-[9px] opacity-50">
               ({branchByLocation[location.id]})
             </span>
@@ -157,34 +170,65 @@ export default function LocationSection({
             )}
           </div>
         )}
-        {location.is_worktree && (
-          <div className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        <div
+          className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 rounded opacity-0 transition-opacity group-hover:opacity-100"
+          style={{ background: 'color-mix(in srgb, var(--color-surface) 90%, transparent)' }}
+        >
             <button
-              onClick={() => onRemoveWorktree(location, projectId)}
+              onClick={() => void writeClipboardText(location.path)}
               className="rounded p-1 hover:bg-white/10"
               style={{ color: 'var(--color-text-muted)' }}
-              title="Remove worktree"
+              title={`Copy path: ${location.path}`}
             >
-              <Trash2 size={11} />
+              <Copy size={11} />
             </button>
-          </div>
-        )}
+            {canOpenShell && (
+              <>
+                <button
+                  onClick={() => void client.invoke('shell:openInExplorer', location.path)}
+                  className="rounded p-1 hover:bg-white/10"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title={`Open in Explorer: ${location.path}`}
+                >
+                  <FolderOpen size={11} />
+                </button>
+                <button
+                  onClick={() => void client.invoke('shell:openInTerminal', location.path, location.connection_type === 'wsl' ? (location.wsl ?? null) : null)}
+                  className="rounded p-1 hover:bg-white/10"
+                  style={{ color: 'var(--color-text-muted)' }}
+                  title={location.connection_type === 'wsl' ? 'Open in WSL Terminal' : 'Open in Terminal'}
+                >
+                  <SquareTerminal size={11} />
+                </button>
+              </>
+            )}
+            {location.is_worktree && (
+              <button
+                onClick={() => onRemoveWorktree(location, projectId)}
+                className="rounded p-1 hover:bg-white/10"
+                style={{ color: 'var(--color-text-muted)' }}
+                title="Remove worktree"
+              >
+                <Trash2 size={11} />
+              </button>
+            )}
+        </div>
       </div>
 
       {isLocationExpanded && isCheckedOut && (
         <div className="flex items-center pl-10 pr-2 py-0.5 gap-2">
           <button
             onClick={() => onNewThread(projectId, location.id)}
-            className="text-left text-[10px] opacity-40 transition-opacity hover:opacity-80"
-            style={{ color: 'var(--color-text-muted)' }}
+            className="text-left text-[11px] opacity-55 transition-opacity hover:opacity-100"
+            style={{ color: 'var(--color-text)' }}
           >
             + New thread
           </button>
           {!location.is_worktree && location.connection_type === 'local' && (
             <button
               onClick={() => onNewWorktreeThread(projectId, location.id)}
-              className="inline-flex items-center gap-1 text-left text-[10px] opacity-40 transition-opacity hover:opacity-80"
-              style={{ color: 'var(--color-text-muted)' }}
+              className="inline-flex items-center gap-1 text-left text-[11px] opacity-55 transition-opacity hover:opacity-100"
+              style={{ color: 'var(--color-text)' }}
               title="Create a new worktree and thread"
             >
               <GitBranchPlus size={10} />
@@ -194,66 +238,22 @@ export default function LocationSection({
         </div>
       )}
 
-      {isLocationExpanded && (() => {
-        const currentBranch = branchByLocation[location.id]
-        const currentBranchThreads = locationThreads.filter((thread) =>
-          !thread.git_branch || !currentBranch || thread.git_branch === currentBranch
-        )
-        const otherBranchThreads = locationThreads.filter((thread) =>
-          thread.git_branch && currentBranch && thread.git_branch !== currentBranch
-        )
-
-        return (
-          <>
-            {currentBranchThreads.map((thread) => (
-              <ThreadRow
-                key={thread.id}
-                thread={thread}
-                isArchived={false}
-                projectId={projectId}
-                selectedThreadId={selectedThreadId}
-                statusMap={statusMap}
-                unreadByThread={unreadByThread}
-                branchByLocation={branchByLocation}
-                onSelectThread={onSelectThread}
-                onArchiveThread={onArchiveThread}
-                onUnarchiveThread={onUnarchiveThread}
-                onSnoozeThread={onSnoozeThread}
-                onWakeThread={onWakeThread}
-              />
-            ))}
-            {otherBranchThreads.length > 0 && (
-              <>
-                <div
-                  className="flex items-center gap-1.5 pl-10 pr-2 py-0.5"
-                  style={{ color: 'var(--color-text-muted)', opacity: 0.4 }}
-                >
-                  <div className="h-px flex-1" style={{ background: 'var(--color-border)' }} />
-                  <span className="flex-shrink-0 text-[9px] uppercase tracking-wide">other branches</span>
-                  <div className="h-px flex-1" style={{ background: 'var(--color-border)' }} />
-                </div>
-                {otherBranchThreads.map((thread) => (
-                  <ThreadRow
-                    key={thread.id}
-                    thread={thread}
-                    isArchived={false}
-                    projectId={projectId}
-                    selectedThreadId={selectedThreadId}
-                    statusMap={statusMap}
-                    unreadByThread={unreadByThread}
-                    branchByLocation={branchByLocation}
-                    onSelectThread={onSelectThread}
-                    onArchiveThread={onArchiveThread}
-                    onUnarchiveThread={onUnarchiveThread}
-                    onSnoozeThread={onSnoozeThread}
-                    onWakeThread={onWakeThread}
-                  />
-                ))}
-              </>
-            )}
-          </>
-        )
-      })()}
+      {isLocationExpanded && locationThreads.map((thread) => (
+        <ThreadRow
+          key={thread.id}
+          thread={thread}
+          isArchived={false}
+          projectId={projectId}
+          selectedThreadId={selectedThreadId}
+          statusMap={statusMap}
+          unreadByThread={unreadByThread}
+          onSelectThread={onSelectThread}
+          onArchiveThread={onArchiveThread}
+          onUnarchiveThread={onUnarchiveThread}
+          onSnoozeThread={onSnoozeThread}
+          onWakeThread={onWakeThread}
+        />
+      ))}
     </div>
   )
 }
