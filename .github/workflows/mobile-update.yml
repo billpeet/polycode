@@ -10,6 +10,9 @@ on:
       - "packages/shared/**"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: mobile-ota
   cancel-in-progress: false
