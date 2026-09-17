@@ -23,6 +23,8 @@ afterEach(async () => {
 describe('remote browser forwarding', () => {
   it('loads the remote host localhost and preserves the browser Host header', async () => {
     const devPort = await listen(http.createServer((req, res) => {
+      res.setHeader('Content-Type', 'application/json; charset=utf-8')
+      res.setHeader('X-Content-Type-Options', 'nosniff')
       res.end(JSON.stringify({ url: req.url, host: req.headers.host }))
     }))
     const controlServer = http.createServer((_req, res) => res.end())
@@ -36,13 +38,15 @@ describe('remote browser forwarding', () => {
     })
     const handle = await pool.acquire('localhost', devPort)
     try {
-      const body = await new Promise<string>((resolve, reject) => {
+      const { body, headers } = await new Promise<{ body: string; headers: http.IncomingHttpHeaders }>((resolve, reject) => {
         http.get({ host: '127.0.0.1', port: handle.localPort, path: '/ready', headers: { host: `localhost:${devPort}` } }, (res) => {
           let value = ''
           res.on('data', (chunk: Buffer) => { value += chunk })
-          res.on('end', () => resolve(value))
+          res.on('end', () => resolve({ body: value, headers: res.headers }))
         }).once('error', reject)
       })
+      expect(headers['content-type']).toBe('application/json; charset=utf-8')
+      expect(headers['x-content-type-options']).toBe('nosniff')
       expect(JSON.parse(body)).toEqual({ url: '/ready', host: `localhost:${devPort}` })
     } finally {
       pool.dispose()
