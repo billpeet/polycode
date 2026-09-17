@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { sanitizeMarkdownHtml } from '../lib/sanitizeMarkdown'
 import { getHighlighter, onReady } from '../lib/shiki'
-import { reportPerf } from '../lib/perf'
+import { reportPerf, sizeBucket } from '../lib/perf'
 import {
   filePathFromMarkdownCopyTarget,
   handleMarkdownFileLinkClick,
@@ -89,10 +89,10 @@ export default function MarkdownContent({ content, className = '' }: Props) {
       'markdown-content:render',
       performance.now() - startedAt,
       {
-        contentLength: content.length,
+        contentLength: sizeBucket(content.length),
         hasHighlighter: !!getHighlighter(),
       },
-      { thresholdMs: 12, minIntervalMs: 1000 }
+      { thresholdMs: 12, minIntervalMs: 1000, logDetails: { contentChars: content.length } }
     )
 
     const container = ref.current

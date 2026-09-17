@@ -74,7 +74,15 @@ export async function runGit(
           maxOutputBytes: GIT_MAX_OUTPUT_BYTES,
         })
         span?.setAttribute('process.exit.code', result.exitCode ?? -1)
-        if (result.exitCode !== 0 || result.timedOut) span?.setStatus({ code: SpanStatusCode.ERROR })
+        if (result.exitCode !== 0 || result.timedOut) {
+          span?.setStatus({ code: SpanStatusCode.ERROR })
+          // Grafana showed `git worktree` exiting 255 a hundred times a week with no
+          // way to tell why; the first line of stderr is the diagnosis.
+          span?.setAttributes({
+            'git.failure': result.timedOut ? 'timeout' : extractLockPathFromStderr(result.stderr) ? 'locked' : 'error',
+            'git.stderr': summarizeGitStderr(result.stderr),
+          })
+        }
         return result
       } finally {
         span?.setAttribute('git.duration_ms', performance.now() - startedAt)
@@ -106,6 +114,22 @@ export async function runGit(
     `Git repository is locked${lastLockPath ? ` (${lastLockPath})` : ''}. Another git process may be running, or a previous one crashed and left a stale lock.`,
     lastLockPath,
   )
+}
+
+const GIT_STDERR_ATTRIBUTE_MAX_CHARS = 256
+
+/**
+ * Stderr for a span attribute: credentials in remote URLs stripped, one line, bounded.
+ * Git prints fetch/push URLs verbatim, and a PAT embedded in one must never reach Tempo.
+ */
+export function summarizeGitStderr(stderr: string): string {
+  return stderr
+    .replace(/(\w+:\/\/)[^/\s@]+@/g, '$1<redacted>@')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' | ')
+    .slice(0, GIT_STDERR_ATTRIBUTE_MAX_CHARS)
 }
 
 /** Skip global options so fetch with `-c key=value` is still named git.fetch. */

@@ -11,6 +11,21 @@ const HEARTBEAT_STALL_THRESHOLD_MS = 200
 
 const lastSentAtByKey = new Map<string, number>()
 
+const SIZE_BUCKET_BOUNDS = [100, 500, 2_000, 10_000, 50_000, 200_000]
+
+/**
+ * Coarse size label for a metric attribute. Raw lengths were being used as a
+ * label, which gave Prometheus one series per distinct document length and
+ * made "is render cost proportional to content?" unanswerable.
+ */
+export function sizeBucket(length: number): string {
+  if (!Number.isFinite(length) || length < 0) return 'unknown'
+  for (const bound of SIZE_BUCKET_BOUNDS) {
+    if (length < bound) return `<${bound}`
+  }
+  return `>=${SIZE_BUCKET_BOUNDS.at(-1)}`
+}
+
 function serializeDetails(details: Record<string, unknown>): string {
   const entries = Object.entries(details)
     .filter(([, value]) => value !== undefined)

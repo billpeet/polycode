@@ -46,7 +46,21 @@ it('exports git retries and synchronous database queries under their IPC parent'
   }
   const git = spans.filter(span => span.name === 'git.status')
   expect(git.map(span => span.attributes['process.exit.code'])).toEqual([128, 0])
-  expect(git[0].attributes).toMatchObject({ 'git.repository': '/repo', 'git.attempt': 1 })
+  expect(git[0].attributes).toMatchObject({
+    'git.repository': '/repo',
+    'git.attempt': 1,
+    'git.failure': 'locked',
+    'git.stderr': 'Another git process seems to be running',
+  })
   expect(git[0].status.code).toBe(2)
+  expect(git[1].attributes).not.toHaveProperty('git.stderr')
   expect(spans.find(span => span.name === 'db.failure')?.status.code).toBe(2)
+})
+
+it('puts git stderr on failed spans without leaking credentials embedded in remote URLs', async () => {
+  const { summarizeGitStderr } = await import('../git-runner')
+  expect(summarizeGitStderr(
+    "fatal: unable to access 'https://user:ghp_secret123@github.com/org/repo.git/': Could not resolve host\r\n  hint: try again\n\n",
+  )).toBe("fatal: unable to access 'https://<redacted>@github.com/org/repo.git/': Could not resolve host | hint: try again")
+  expect(summarizeGitStderr('x'.repeat(1000))).toHaveLength(256)
 })
