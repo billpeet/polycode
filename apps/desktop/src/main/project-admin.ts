@@ -24,6 +24,7 @@ import { runGit as executeGit } from './git-runner'
 import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
 import { runSerialized } from './keyed-queue'
+import { withSpan } from './observability'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
 
 /** Expand a leading `~` to the user's home directory. */
@@ -300,26 +301,38 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
   // and the git worktree have been removed (which can take a long time or
   // fail). Every thread is archived rather than deleting the message-less
   // ones, so the whole worktree stays recoverable from the archive view.
-  const archived = archiveThreadsForLocation(location.id)
+  // Each phase is its own span: a 118s removal traced in Grafana showed 15s of
+  // `git worktree remove` and then 103 untraced seconds, so nobody could say
+  // whether the time went to the directory delete, the queue, or the sessions.
+  const phase = <T>(name: string, operation: () => T | Promise<T>, attributes: Record<string, number> = {}) =>
+    withSpan(`worktree.remove.${name}`, { 'worktree.thread_count': threads.length, ...attributes }, operation)
+  const archived = await phase('archive-threads', () => archiveThreadsForLocation(location.id))
   if (archived > 0) {
     console.log(`[worktree] Archived ${archived} thread(s) at "${location.path}" before removal.`)
   }
-  await commandManager.stopAllForLocation(location.id)
-  for (const thread of threads) {
-    sessionManager.remove(thread.id)
-  }
+  await phase('stop-commands', () => commandManager.stopAllForLocation(location.id))
+  await phase('remove-sessions', () => {
+    for (const thread of threads) {
+      sessionManager.remove(thread.id)
+    }
+  })
   const parent = location.parent_location_id ? getLocationById(location.parent_location_id) : null
   const gitCwd = parent?.path && existsSync(parent.path) ? parent.path : location.path
+  const queuedAt = performance.now()
   await runSerialized(worktreeQueueKey(parent?.path ?? location.path), async () => {
+    const waitedMs = performance.now() - queuedAt
     try {
-      await runGit(['worktree', 'remove', '--force', location.path], gitCwd)
+      await phase('git-remove', () => runGit(['worktree', 'remove', '--force', location.path], gitCwd), { 'worktree.queue_wait_ms': waitedMs })
     } catch (error) {
       if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
       if (parent?.path && existsSync(parent.path)) {
-        await runGit(['worktree', 'prune'], parent.path).catch(() => undefined)
+        await phase('git-prune', () => runGit(['worktree', 'prune'], parent.path).catch(() => undefined))
       }
-      await removeWorktreeDirectoryBestEffort(location.path)
+      await phase('delete-directory', () => removeWorktreeDirectoryBestEffort(location.path))
+    }
+    if (waitedMs >= 1000) {
+      console.warn(`[worktree] Removal of "${location.path}" waited ${waitedMs.toFixed(0)}ms behind another worktree operation.`)
     }
   })
-  deleteLocation(id)
+  await phase('delete-location', () => deleteLocation(id))
 }

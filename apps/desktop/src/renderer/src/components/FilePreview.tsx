@@ -7,7 +7,7 @@ import { getHighlighter, onReady } from '../lib/shiki'
 import type { BundledLanguage, SpecialLanguage, ThemedToken } from 'shiki'
 import { PatchDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
 import type { WorkerInitializationRenderOptions, WorkerPoolOptions } from '@pierre/diffs/react'
-import { reportPerf } from '../lib/perf'
+import { reportPerf, sizeBucket } from '../lib/perf'
 import { client } from '../lib/client'
 
 function getLanguageFromPath(filePath: string): string {
@@ -354,10 +354,9 @@ function MarkdownPreview({ content }: { content: string }) {
       'file-preview:markdown-render',
       performance.now() - startedAt,
       {
-        contentLength: content.length,
-        tocEntries: tocEntries.length,
+        contentLength: sizeBucket(content.length),
       },
-      { thresholdMs: 12, minIntervalMs: 1000 }
+      { thresholdMs: 12, minIntervalMs: 1000, logDetails: { contentChars: content.length, tocEntries: tocEntries.length } }
     )
   }, [content, tocEntries.length])
 

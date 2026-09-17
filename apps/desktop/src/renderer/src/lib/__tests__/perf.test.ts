@@ -47,3 +47,12 @@ it('drops sleep artifacts, resumes monitoring, and reports signed heap deltas', 
     vi.unstubAllGlobals()
   }
 })
+
+it('buckets content sizes into a bounded label set', async () => {
+  const { sizeBucket } = await import('../perf')
+  expect([0, 99, 100, 1999, 2000, 49_999, 199_999, 200_000, 5_000_000].map(sizeBucket)).toEqual([
+    '<100', '<100', '<500', '<2000', '<10000', '<50000', '<200000', '>=200000', '>=200000',
+  ])
+  expect(sizeBucket(-1)).toBe('unknown')
+  expect(sizeBucket(Number.NaN)).toBe('unknown')
+})
