@@ -56,6 +56,7 @@ export interface ThreadRow {
   codex_personality: string
   codex_reasoning_summary: string
   cursor_thinking: number | null
+  kimi_thinking?: string | null
   cursor_context: string | null
   status: string
   archived: number

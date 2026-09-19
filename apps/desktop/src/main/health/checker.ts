@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
+import { KimiConnection } from '../driver/kimi-acp'
 import { SshConfig, WslConfig, Provider, CliHealthResult, CliUpdateResult, parseProviderId } from '../../shared/types'
 import {
   createRunner,
@@ -262,6 +263,15 @@ const PROVIDER_INFO: Record<Provider, {
   // lookup 404s (latest stays null, so no update nag) and updates go through
   // the CLI's own updater like Claude Code and Cursor.
   'grok':        { cmd: 'grok',    package: '@xai/grok-cli',             updateCmd: ['grok', 'update'] },
+  'kimi-code':   { cmd: 'kimi', package: '@moonshot-ai/kimi-code', updateCmd: ['kimi', 'upgrade', '--yes'] },
+}
+
+async function checkKimiIdentity(connectionType: string, ssh?: SshConfig | null, wsl?: WslConfig | null): Promise<void> {
+  const connection = new KimiConnection({
+    workingDir: connectionType === 'local' ? PROBE_DIR : '~',
+    ssh: connectionType === 'ssh' ? ssh : null, wsl: connectionType === 'wsl' ? wsl : null,
+  }, (_method, _params, id) => { if (id !== undefined) connection.reject(id, 'Health check') }, () => undefined)
+  try { await connection.start() } finally { connection.close() }
 }
 
 async function runVersionCheckUncached(
@@ -354,7 +364,7 @@ async function runUpdate(
       ? `${info.updateCmd.join(' ')} 2>&1`
       : `npm install -g ${info.updatePkg} 2>&1`
     return merged(await runner.runScript({
-      script: `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${update}`,
+      script: `${FIX_HOME}; ${LOAD_NODE_MANAGERS}; ${provider === 'kimi-code' ? 'export PATH="$HOME/.local/bin:$PATH"; ' : ''}${update}`,
       timeoutMs: UPDATE_TIMEOUT_MS,
     }))
   }
@@ -401,6 +411,13 @@ export async function checkCliHealth(
 
       const currentVersion = extractVersion(versionResult.output)
       const installed = currentVersion !== null || versionResult.exitCode === 0
+      if (provider === 'kimi-code' && installed) {
+        try { await checkKimiIdentity(connectionType, ssh, wsl) }
+        catch (error) {
+          return { installed: false, currentVersion, latestVersion, upToDate: null,
+            error: error instanceof Error ? error.message : String(error) }
+        }
+      }
       const upToDate = installed && currentVersion && latestVersion ? isUpToDate(currentVersion, latestVersion) : null
       // Channel is only readable from the local Cursor config; version gating
       // applies across all transports.
@@ -421,6 +438,10 @@ export async function updateCli(
 ): Promise<CliUpdateResult> {
   const provider = parseProviderId(providerId)
   if (!provider) return { success: false, output: `Unsupported provider: ${String(providerId)}` }
+  if (provider === 'kimi-code') {
+    try { await checkKimiIdentity(connectionType, ssh, wsl) }
+    catch (error) { return { success: false, output: error instanceof Error ? error.message : String(error) } }
+  }
   const result = await runUpdate(provider, connectionType, ssh, wsl)
   return {
     success: result.exitCode === 0,

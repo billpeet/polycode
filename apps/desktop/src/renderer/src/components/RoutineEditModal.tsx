@@ -97,6 +97,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
         pi: 'models:piAvailable',
         cursor: 'models:cursorAvailable',
         grok: 'models:grokAvailable',
+        'kimi-code': 'models:kimiAvailable',
       } as const
     )[provider]
     if (!channel) return
@@ -238,7 +239,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
                   setModel(getDefaultModelForProvider(next))
                 }}
               >
-                {PROVIDERS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+                {PROVIDERS.filter((p) => p.id !== 'kimi-code').map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
               </select>
             </label>
             <label className="flex flex-1 flex-col gap-1">

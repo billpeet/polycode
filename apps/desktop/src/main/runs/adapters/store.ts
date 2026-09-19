@@ -51,6 +51,7 @@ export const sqliteRunStore: RunStore = {
   },
 
   spawnRun(routine, name) {
+    if (routine.provider === 'kimi-code') throw new Error('Kimi Code cannot run Routines until background cleanup and failure reporting are verified.')
     const thread = createThread(routine.project_id, name, routine.location_id, routine.provider, routine.model, null, {
       routineId: routine.id,
       permissionMode: routine.permission_mode,

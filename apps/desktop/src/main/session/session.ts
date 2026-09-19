@@ -7,6 +7,8 @@ import { OpenCodeDriver } from '../driver/opencode'
 import { PiDriver } from '../driver/pi'
 import { CursorDriver } from '../driver/cursor'
 import { GrokDriver } from '../driver/grok'
+import { KimiDriver } from '../driver/kimi'
+import { getThreadById } from '../db/queries'
 import { CLIDriver } from '../driver/types'
 import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel, SubscriptionUsageSnapshot } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
@@ -95,6 +97,7 @@ export class Session {
       codexPersonality: getThreadCodexPersonality(this.threadId),
       codexReasoningSummary: getThreadCodexReasoningSummary(this.threadId),
       thinking: getThreadCursorThinking(this.threadId),
+      kimiThinking: provider === 'kimi-code' ? getThreadById(this.threadId)?.kimi_thinking : undefined,
       contextWindow,
       permissionMode: getThreadPermissionMode(this.threadId),
       yoloMode: getThreadPermissionMode(this.threadId) === 'yolo',
@@ -115,6 +118,8 @@ export class Session {
       ? new CursorDriver(options)
       : provider === 'grok'
       ? new GrokDriver(options)
+      : provider === 'kimi-code'
+      ? new KimiDriver(options)
       : new ClaudeDriver(options)
     this.drivers.set(sessionId, driver)
     return driver
@@ -634,6 +639,14 @@ export class Session {
     // Capture questions before clearing
     const questions = this.pendingQuestions
     const questionRequestId = this.pendingQuestionRequestId
+    // Submit typed forms before changing UI state or persistence. Invalid selections leave the question pending.
+    const structured = !!(questionRequestId && driver.answerStructuredQuestion)
+    if (structured) {
+      if (generalComment.trim() || Object.values(questionComments).some((comment) => comment.trim())) {
+        throw new Error('This provider accepts only the offered answers, without comments.')
+      }
+      driver.answerStructuredQuestion!(questionRequestId!, answers)
+    }
 
     // Build formatted Q&A for display/persistence and for Claude — in one pass
     const qaLines: string[] = []
@@ -685,7 +698,9 @@ export class Session {
     this.pendingQuestions = []
     this.setStatus('running')
 
-    if (questionRequestId && driver.answerQuestion) {
+    if (structured) {
+      // The response above continues the existing ACP prompt.
+    } else if (questionRequestId && driver.answerQuestion) {
       const structuredAnswers: Record<string, unknown> = {}
       const trimmedGeneralComment = generalComment.trim()
       let generalCommentAttached = false

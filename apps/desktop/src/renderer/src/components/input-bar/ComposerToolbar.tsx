@@ -7,6 +7,7 @@ import { Favourite } from '../../stores/favourites'
 import BackgroundTerminals from './BackgroundTerminals'
 import { client } from '../../lib/client'
 import SubscriptionUsageIndicator from './SubscriptionUsageIndicator'
+import { useThreadStore } from '../../stores/threads'
 
 function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -50,6 +51,7 @@ interface ComposerToolbarProps {
 
 // Stable empty reference so the context-window map never churns identity.
 const EMPTY_CONTEXT_WINDOWS: { value: string; label: string }[] = []
+const EMPTY_MODELS: ModelOption[] = []
 
 export default function ComposerToolbar({
   threadId,
@@ -73,6 +75,11 @@ export default function ComposerToolbar({
   elapsedSeconds,
 }: ComposerToolbarProps) {
   const permissionOptions = useMemo<Array<{ mode: PermissionMode; label: string; title: string }>>(() => {
+    if (currentThread?.provider === 'kimi-code') return [
+      { mode: 'ask', label: 'Ask', title: 'Review Kimi tool permissions' },
+      { mode: 'auto', label: 'Auto', title: 'Let Kimi approve safe operations' },
+      { mode: 'yolo', label: 'Yolo', title: 'Let Kimi approve all tool operations' },
+    ]
     if (currentThread?.provider === 'codex') {
       return [
         { mode: 'ask', label: 'Ask', title: 'Review writes and privileged actions before Codex runs them' },
@@ -112,6 +119,25 @@ export default function ComposerToolbar({
   const forcePiModelsRefresh = useRef(false)
   const [liveCursorModels, setLiveCursorModels] = useState<ModelOption[]>([])
   const [liveGrokModels, setLiveGrokModels] = useState<ModelOption[]>([])
+  const [kimiModels, setKimiModels] = useState<{ key: string; models: ModelOption[] } | null>(null)
+  const [kimiError, setKimiError] = useState<string | null>(null)
+  const [browsingProvider, setBrowsingProvider] = useState<Provider | null>(null)
+  const [kimiRefresh, setKimiRefresh] = useState(0)
+  const [kimiSettledKey, setKimiSettledKey] = useState<string | null>(null)
+  const kimiKey = `${threadId}:${currentThread?.model}:${currentThread?.use_wsl}:${currentThread?.wsl_distro}`
+  const kimiRequestKey = `${kimiKey}:${kimiRefresh}`
+  const discoverKimi = currentProvider === 'kimi-code' || browsingProvider === 'kimi-code'
+  const liveKimiModels = kimiModels?.key === kimiKey ? kimiModels.models : EMPTY_MODELS
+  useEffect(() => {
+    if (!discoverKimi) return
+    let cancelled = false
+    client.invoke('models:kimiAvailable', threadId).then((models) => {
+      if (!cancelled) { setKimiModels({ key: kimiKey, models }); setKimiError(null); setKimiSettledKey(kimiRequestKey) }
+    }).catch((error: unknown) => {
+      if (!cancelled) { setKimiError(error instanceof Error ? error.message : String(error)); setKimiSettledKey(kimiRequestKey) }
+    })
+    return () => { cancelled = true }
+  }, [discoverKimi, threadId, kimiKey, kimiRequestKey])
 
   useEffect(() => {
     if (currentProvider !== 'claude-code') return
@@ -218,7 +244,7 @@ export default function ComposerToolbar({
 
   const modelOptions = useMemo(() => {
     const staticModels = getModelsForProvider(currentProvider)
-    const baseModels = currentProvider === 'claude-code' && liveClaudeModels.length > 0
+    const baseModels = currentProvider === 'kimi-code' && liveKimiModels.length > 0 ? liveKimiModels : currentProvider === 'claude-code' && liveClaudeModels.length > 0
       ? mergeModelOptions(liveClaudeModels, staticModels)
       : currentProvider === 'codex' && liveCodexModels.length > 0
         ? liveCodexModels
@@ -234,7 +260,7 @@ export default function ComposerToolbar({
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]
-  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels, liveGrokModels])
+  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels, liveGrokModels, liveKimiModels])
 
   const selectedModel = useMemo<ModelOption | undefined>(
     () => modelOptions.find((model) => model.id === currentThread?.model),
@@ -293,7 +319,7 @@ export default function ComposerToolbar({
       <button
         onClick={() => setPlanMode(threadId, !planMode)}
         disabled={isProcessing}
-        title={planMode ? 'Plan mode: ON - Claude will create a plan before executing' : 'Plan mode: OFF - Claude will execute directly'}
+        title={planMode ? 'Plan mode: ON - create a plan before executing' : 'Plan mode: OFF - execute directly'}
         className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
         style={{
           background: planMode ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
@@ -434,6 +460,13 @@ export default function ComposerToolbar({
           providerLocked={providerLocked}
           currentThread={currentThread}
           modelOptions={modelOptions}
+          onBrowseProvider={setBrowsingProvider}
+          providerCatalogs={{ 'kimi-code': {
+            models: liveKimiModels.length ? liveKimiModels : getModelsForProvider('kimi-code'),
+            loading: discoverKimi && kimiSettledKey !== kimiRequestKey,
+            error: kimiSettledKey === kimiRequestKey ? kimiError : null,
+            retry: () => setKimiRefresh((value) => value + 1),
+          } }}
           modelsLoading={currentProvider === 'pi' && piModelsLoading}
           modelsError={currentProvider === 'pi' ? piModelsError : null}
           onRetryModels={currentProvider === 'pi' ? () => {
@@ -447,6 +480,14 @@ export default function ComposerToolbar({
           onSelectProvider={handleProviderChange}
           onSelectModel={handleModelChange}
           onSelectReasoning={(level) => setReasoningLevel(threadId, level)}
+          onSelectKimiThinking={(value) => {
+            void client.invoke('threads:setKimiThinking', threadId, value).then(() => {
+              useThreadStore.setState((state) => ({ byProject: Object.fromEntries(Object.entries(state.byProject).map(([id, threads]) => [id,
+                threads.map((thread) => thread.id === threadId ? { ...thread, kimi_thinking: value } : thread),
+              ])) }))
+              setKimiError(null)
+            }).catch((error: unknown) => setKimiError(error instanceof Error ? error.message : String(error)))
+          }}
           onSelectCodexSummary={(summary) => setCodexReasoningSummary(threadId, summary)}
           onSelectPersonality={(personality) => setCodexPersonality(threadId, personality)}
           onSelectContextWindow={(context) => setCursorContext(threadId, context)}

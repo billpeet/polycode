@@ -42,6 +42,7 @@ const PROVIDER_LABELS: Record<Provider, string> = {
   'pi': 'Pi',
   'cursor': 'Cursor',
   'grok': 'Grok Build',
+  'kimi-code': 'Kimi Code',
 }
 
 interface PanelProps {

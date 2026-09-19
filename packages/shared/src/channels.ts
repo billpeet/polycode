@@ -192,6 +192,8 @@ export const CHANNEL_REGISTRY = {
   'models:piAvailable': { local: true, remote: true },
   'models:cursorAvailable': { local: true, remote: true },
   'models:grokAvailable': { local: true, remote: true },
+  'models:kimiAvailable': { local: true, remote: true },
+  'threads:setKimiThinking': { local: true, remote: true },
   'subscription-usage:get': { local: true, remote: true },
   // Routines run on the host that owns the project, so a remote client manages them
   // there. The Run lifecycle the last three need reaches every transport through

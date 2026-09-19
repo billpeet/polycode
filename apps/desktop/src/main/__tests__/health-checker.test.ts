@@ -12,6 +12,11 @@ import { FakeRunner } from '../driver/runner/fake'
 import type { RunResult } from '../driver/runner'
 
 const createRunnerMock = vi.fn()
+const kimi = vi.hoisted(() => ({ start: vi.fn(), close: vi.fn() }))
+vi.mock('../driver/kimi-acp', () => ({ KimiConnection: class {
+  start = kimi.start
+  close = kimi.close
+} }))
 
 vi.mock('../driver/runner', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../driver/runner')>()
@@ -35,11 +40,37 @@ function fakeFor(type: 'local' | 'wsl' | 'ssh', result: Partial<RunResult> = {})
 }
 
 beforeEach(() => {
+  kimi.start.mockReset().mockResolvedValue(undefined)
+  kimi.close.mockReset()
   createRunnerMock.mockReset()
   vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ version: '9.9.9' }) })))
 })
 
 describe('checkCliHealth — transport selection', () => {
+  it('verifies Kimi Code identity and reads the correct package version', async () => {
+    fakeFor('local', { stdout: '2.0.0\n' })
+    const { checkCliHealth } = await loadChecker()
+    expect(await checkCliHealth('kimi-code', 'local')).toMatchObject({ installed: true, currentVersion: '2.0.0' })
+    expect(kimi.start).toHaveBeenCalledOnce()
+    expect(kimi.close).toHaveBeenCalledOnce()
+    expect(fetch).toHaveBeenCalledWith('https://registry.npmjs.org/%40moonshot-ai%2Fkimi-code/latest')
+  })
+
+  it('refuses to update a legacy kimi executable', async () => {
+    const runner = fakeFor('local')
+    kimi.start.mockRejectedValue(new Error('Legacy Kimi CLI is not supported'))
+    const { updateCli } = await loadChecker()
+    expect(await updateCli('kimi-code', 'local')).toEqual({ success: false, output: 'Legacy Kimi CLI is not supported' })
+    expect(runner.runCommands).toHaveLength(0)
+    expect(kimi.close).toHaveBeenCalledOnce()
+  })
+
+  it('updates the verified successor with its noninteractive installer', async () => {
+    const runner = fakeFor('local', { exitCode: 0, stdout: 'Updated' })
+    const { updateCli } = await loadChecker()
+    expect(await updateCli('kimi-code', 'local')).toEqual({ success: true, output: 'Updated' })
+    expect(runner.runCommands[0]).toMatchObject({ binary: 'kimi', args: ['upgrade', '--yes'] })
+  })
   it('builds an ssh Runner and probes with a script when the location is ssh', async () => {
     const runner = fakeFor('ssh', { stdout: '1.2.3\n' })
     const { checkCliHealth } = await loadChecker()

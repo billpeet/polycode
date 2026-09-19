@@ -311,6 +311,9 @@ function adoptLegacySchema(database: Database.Database): void {
   if (!threadColsCursor.some((c) => c.name === 'cursor_thinking')) {
     database.exec('ALTER TABLE threads ADD COLUMN cursor_thinking INTEGER')
   }
+  if (!threadColsCursor.some((c) => c.name === 'kimi_thinking')) {
+    database.exec('ALTER TABLE threads ADD COLUMN kimi_thinking TEXT')
+  }
   if (!threadColsCursor.some((c) => c.name === 'cursor_context')) {
     database.exec('ALTER TABLE threads ADD COLUMN cursor_context TEXT')
   }

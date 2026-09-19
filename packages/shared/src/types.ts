@@ -265,6 +265,8 @@ export interface ModelOption {
   contextWindow?: number
   reasoning?: boolean
   reasoningLevels?: ReasoningLevel[]
+  /** Kimi Code's advertised thinking values for the selected model. */
+  thinkingOptions?: { value: string; label: string }[]
   /** Cursor: model exposes a priority "fast" processing tier. */
   fast?: boolean
   /** Cursor: model exposes a separate thinking on/off toggle. */
@@ -288,7 +290,9 @@ export const GROK_MODELS = [
 
 export type GrokModelId = typeof GROK_MODELS[number]['id']
 
-export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok'
+export const KIMI_MODELS = [{ id: 'default', label: 'CLI default' }] as const satisfies readonly ModelOption[]
+
+export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok' | 'kimi-code'
 
 export type SubscriptionUsageProvider = 'claude-code' | 'codex' | 'glm'
 
@@ -333,6 +337,7 @@ export const PROVIDERS = [
   { id: 'pi' as Provider, label: 'Pi' },
   { id: 'cursor' as Provider, label: 'Cursor' },
   { id: 'grok' as Provider, label: 'Grok Build' },
+  { id: 'kimi-code' as Provider, label: 'Kimi Code' },
 ] as const
 
 const PROVIDER_IDS = new Set<string>(PROVIDERS.map(({ id }) => id))
@@ -348,6 +353,7 @@ export function parseProviderId(value: unknown): Provider | null {
 }
 
 export function getModelsForProvider(provider: Provider) {
+  if (provider === 'kimi-code') return KIMI_MODELS
   if (provider === 'codex') return OPENAI_MODELS
   if (provider === 'opencode') return OPENCODE_MODELS
   if (provider === 'pi') return PI_MODELS
@@ -357,6 +363,7 @@ export function getModelsForProvider(provider: Provider) {
 }
 
 export function getDefaultModelForProvider(provider: Provider): string {
+  if (provider === 'kimi-code') return 'default'
   if (provider === 'codex') return OPENAI_MODELS[0].id
   if (provider === 'opencode') return OPENCODE_MODELS[0].id
   if (provider === 'pi') return PI_MODELS[0].id
@@ -379,6 +386,8 @@ export interface Thread {
   codex_reasoning_summary: CodexReasoningSummary
   /** Cursor: thinking toggle override; null = use provider default. */
   cursor_thinking: boolean | null
+  /** Null uses the model's default. Values come from Kimi ACP config options. */
+  kimi_thinking?: string | null
   /** Cursor: selected context-window value; null = use provider default. */
   cursor_context: string | null
   status: ThreadStatus
@@ -822,6 +831,8 @@ export interface QuestionOption {
 
 /** A single question from AskUserQuestion tool */
 export interface Question {
+  /** False for provider forms that only accept the listed choices. */
+  allowComments?: boolean
   id?: string
   question: string
   header: string

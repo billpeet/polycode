@@ -48,7 +48,7 @@ Node.js.
 ## Features
 
 - **Multi-session management** — run and switch between multiple agent threads per project.
-- **Multi-provider support** — Claude Code, Codex, OpenCode, Pi, Cursor, and Grok Build.
+- **Multi-provider support** — Claude Code, Codex, OpenCode, Pi, Cursor, Grok Build, and Kimi Code.
 - **Provider/model selection** — choose supported models per thread and preserve recent choices.
 - **Session persistence** — stores projects, threads, sessions, messages, token usage, and settings in SQLite.
 - **Streaming output** — real-time assistant output with structured tool-call, thinking, question, and permission blocks.
@@ -75,8 +75,22 @@ Install one or more of these and make sure they are available on your `PATH` in 
 | Pi | `pi` | [`@mariozechner/pi-coding-agent`](https://www.npmjs.com/package/@mariozechner/pi-coding-agent) |
 | Cursor | `cursor-agent` | [Cursor CLI](https://cursor.com/cli) |
 | Grok Build | `grok` | [Grok Build CLI](https://x.ai/cli) — authenticate with `grok login` or `XAI_API_KEY` |
+| Kimi Code | `kimi` | [`@moonshot-ai/kimi-code`](https://github.com/MoonshotAI/kimi-code) 2.0.0 or newer; authenticate with `kimi login` |
 
 PolyCode can also check and update these CLIs from the app for local, SSH, and WSL locations.
+
+Kimi Code uses `kimi acp`. Install and authenticate it in each execution environment.
+On Windows it requires Git Bash; set `KIMI_SHELL_PATH` if Bash is in a custom location.
+The older Python Kimi CLI is not supported, despite sharing the `kimi` command name.
+Updates use `kimi upgrade --yes` for both native and package-manager installations.
+
+Kimi supports streaming, resumed sessions, model/thinking selection, Ask/Auto/Yolo,
+plan review, and structured questions. Question forms accept offered choices only.
+Context occupancy is reported; billing token totals, cost and quota are unavailable.
+Local image files and embedded image data are supported; SSH/WSL attachments require
+embedded data. Mid-turn steering and audio/video attachments are not supported.
+Kimi is unavailable for Routines until upstream failure reporting and background-task
+cleanup can be verified. See [integration notes](docs/kimi-code-integration-plan.md).
 
 ## Prerequisites
 

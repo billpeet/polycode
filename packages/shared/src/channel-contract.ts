@@ -291,6 +291,8 @@ export interface ChannelContract {
   'models:piAvailable': [[threadId?: string | null, forceRefresh?: boolean], ModelOption[]]
   'models:cursorAvailable': [[threadId?: string | null], ModelOption[]]
   'models:grokAvailable': [[threadId?: string | null], ModelOption[]]
+  'models:kimiAvailable': [[threadId?: string | null], ModelOption[]]
+  'threads:setKimiThinking': [[threadId: string, value: string | null], void]
   'subscription-usage:get': [[threadId: string], SubscriptionUsageSnapshot]
   'terminal:spawn': [[threadId: string, cols: number, rows: number], string]
   'terminal:kill': [[terminalId: string], void]

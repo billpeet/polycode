@@ -281,6 +281,8 @@ import { listOpenCodeAvailableModels } from '../opencode-models'
 import { listPiAvailableModels } from '../pi-models'
 import { listCursorAvailableModels } from '../cursor-models'
 import { listGrokAvailableModels } from '../grok-models'
+import { listKimiAvailableModels } from '../kimi-models'
+import { updateThreadKimiThinking } from '../db/queries'
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
@@ -1758,6 +1760,15 @@ export const channelHandlers = {
     listCursorAvailableModels(modelQueryOptions(threadId)),
 
   'models:grokAvailable': (_ctx, threadId) => listGrokAvailableModels(modelQueryOptions(threadId)),
+  'models:kimiAvailable': (_ctx, threadId) => {
+    const thread = threadId ? getThreadById(threadId) : null
+    return listKimiAvailableModels({ ...modelQueryOptions(threadId), model: thread?.provider === 'kimi-code' ? thread.model : undefined })
+  },
+  'threads:setKimiThinking': (_ctx, threadId, value) => {
+    if (sessionManager.get(threadId)?.isRunning()) throw new Error('Stop the current turn before changing thinking.')
+    updateThreadKimiThinking(threadId, value)
+    sessionManager.remove(threadId)
+  },
 
   'subscription-usage:get': (ctx, threadId) => {
     if (!threadExists(threadId)) throw new Error('Thread not found')

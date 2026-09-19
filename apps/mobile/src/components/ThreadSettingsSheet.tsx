@@ -13,6 +13,9 @@ import { useFavouritesStore, favouriteEquals, formatFavourite, type Favourite } 
 import { colors, permissionAccent, radii, sectionLabel } from '@/theme/colors'
 import { effortLabel } from './ThreadControls'
 import { Chip } from './ui'
+import { rpc } from '@/api/rpc'
+import { requireConnection } from '@/stores/hosts'
+import { useThreadsStore } from '@/stores/threads'
 
 const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
@@ -29,7 +32,7 @@ function ThreadSettingsSheetContent(props: {
   const { thread, visible, onClose } = props
   const insets = useSafeAreaInsets()
   const [provider, setProvider] = useState<Provider>(isProvider(thread.provider) ? thread.provider : 'claude-code')
-  const models = useAvailableModels(provider, thread.id, visible)
+  const models = useAvailableModels(provider, thread.id, visible, thread.model)
   const favourites = useFavouritesStore((s) => s.favourites)
   const addFavourite = useFavouritesStore((s) => s.add)
   const removeFavourite = useFavouritesStore((s) => s.removeAt)
@@ -91,7 +94,20 @@ function ThreadSettingsSheetContent(props: {
             </View>
 
             {/* Effort */}
-            <View style={{ gap: 8 }}>
+            {thread.provider === 'kimi-code' ? <View style={{ gap: 8 }}>
+              <Text style={styles.sectionTitle}>Thinking</Text>
+              <View style={styles.chipWrap}>
+                {[{ value: '', label: 'Default' }, ...(selectedModel?.thinkingOptions ?? [])].map((option) => <Chip
+                  key={option.value} label={option.label} active={(thread.kimi_thinking ?? '') === option.value}
+                  onPress={() => {
+                    const value = option.value || null
+                    void rpc(requireConnection(), 'threads:setKimiThinking', thread.id, value).then(() => {
+                      useThreadsStore.getState().patchThread(thread.id, { kimi_thinking: value })
+                    }).catch((error: unknown) => Alert.alert('Could not change thinking', error instanceof Error ? error.message : String(error)))
+                  }}
+                />)}
+              </View>
+            </View> : <View style={{ gap: 8 }}>
               <Text style={styles.sectionTitle}>Reasoning Effort</Text>
               <View style={styles.chipWrap}>
                 {effortLevels.map((level) => (
@@ -103,7 +119,7 @@ function ThreadSettingsSheetContent(props: {
                   />
                 ))}
               </View>
-            </View>
+            </View>}
 
             {/* Permission mode */}
             <View style={{ gap: 8 }}>

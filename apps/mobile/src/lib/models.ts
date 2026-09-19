@@ -10,6 +10,7 @@ type ModelsChannel =
   | 'models:piAvailable'
   | 'models:cursorAvailable'
   | 'models:grokAvailable'
+  | 'models:kimiAvailable'
 
 export const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
   'claude-code': 'models:claudeAvailable',
@@ -18,6 +19,7 @@ export const MODEL_CHANNEL_BY_PROVIDER: Record<Provider, ModelsChannel> = {
   pi: 'models:piAvailable',
   cursor: 'models:cursorAvailable',
   grok: 'models:grokAvailable',
+  'kimi-code': 'models:kimiAvailable',
 }
 
 export function isProvider(value: string): value is Provider {
@@ -35,8 +37,9 @@ export function modelLabel(provider: string, model: string): string {
  * catalog until then (and forever, if the provider CLI is unavailable).
  * `threadId` lets the host resolve per-thread environment (WSL distro etc.).
  */
-export function useAvailableModels(provider: Provider, threadId?: string | null, enabled = true): ModelOption[] {
-  const [live, setLive] = useState<{ provider: Provider; models: ModelOption[] } | null>(null)
+export function useAvailableModels(provider: Provider, threadId?: string | null, enabled = true, model?: string): ModelOption[] {
+  const key = `${provider}:${threadId}:${model}`
+  const [live, setLive] = useState<{ key: string; models: ModelOption[] } | null>(null)
 
   useEffect(() => {
     if (!enabled) return
@@ -46,14 +49,14 @@ export function useAvailableModels(provider: Provider, threadId?: string | null,
     rpc(connection, MODEL_CHANNEL_BY_PROVIDER[provider], threadId ?? null)
       .then((available) => {
         if (!cancelled && Array.isArray(available) && available.length > 0) {
-          setLive({ provider, models: available })
+          setLive({ key, models: available })
         }
       })
       .catch(() => undefined)
     return () => {
       cancelled = true
     }
-  }, [enabled, provider, threadId])
+  }, [enabled, provider, threadId, key])
 
-  return live?.provider === provider ? live.models : [...getModelsForProvider(provider)]
+  return live?.key === key ? live.models : [...getModelsForProvider(provider)]
 }

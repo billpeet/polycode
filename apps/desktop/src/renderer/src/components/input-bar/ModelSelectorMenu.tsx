@@ -21,6 +21,8 @@ interface ModelSelectorMenuProps {
   currentThread: Thread | undefined
   /** Models for the *current* provider (live discovery merged with the registry). */
   modelOptions: readonly ModelOption[]
+  providerCatalogs?: Partial<Record<Provider, { models: readonly ModelOption[]; loading: boolean; error: string | null; retry: () => void }>>
+  onBrowseProvider?: (provider: Provider | null) => void
   modelsLoading?: boolean
   modelsError?: string | null
   onRetryModels?: () => void
@@ -31,6 +33,7 @@ interface ModelSelectorMenuProps {
   onSelectProvider: (provider: Provider) => void
   onSelectModel: (model: string) => void
   onSelectReasoning: (level: ReasoningLevel) => void
+  onSelectKimiThinking?: (value: string | null) => void
   onSelectCodexSummary: (summary: CodexReasoningSummary) => void
   onSelectPersonality: (personality: CodexPersonality) => void
   onSelectContextWindow: (context: string | null) => void
@@ -179,6 +182,8 @@ export default function ModelSelectorMenu({
   providerLocked,
   currentThread,
   modelOptions,
+  providerCatalogs,
+  onBrowseProvider,
   modelsLoading = false,
   modelsError = null,
   onRetryModels,
@@ -189,6 +194,7 @@ export default function ModelSelectorMenu({
   onSelectProvider: _onSelectProvider,
   onSelectModel,
   onSelectReasoning,
+  onSelectKimiThinking,
   onSelectCodexSummary,
   onSelectPersonality,
   onSelectContextWindow,
@@ -206,6 +212,10 @@ export default function ModelSelectorMenu({
 
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
   const [tab, setTab] = useState<Tab>(currentProvider)
+
+  useEffect(() => {
+    onBrowseProvider?.(open && tab !== FAVOURITES_TAB ? tab : null)
+  }, [open, tab, onBrowseProvider])
 
   useEffect(() => {
     if (!open) return
@@ -239,9 +249,13 @@ export default function ModelSelectorMenu({
     : null
 
   const modelsFor = (provider: Provider): readonly ModelOption[] =>
-    provider === currentProvider ? modelOptions : getModelsForProvider(provider)
+    provider === currentProvider ? modelOptions : providerCatalogs?.[provider]?.models ?? getModelsForProvider(provider)
   /** The provider whose catalogue the pane is browsing, or null on the favourites tab. */
   const browsing: Provider | null = tab === FAVOURITES_TAB ? null : tab
+  const catalog = browsing ? providerCatalogs?.[browsing] : undefined
+  const paneLoading = catalog?.loading ?? (tab === currentProvider && modelsLoading)
+  const paneError = catalog?.error ?? (tab === currentProvider ? modelsError : null)
+  const paneRetry = catalog?.retry ?? (tab === currentProvider ? onRetryModels : undefined)
 
   const needle = query.trim().toLowerCase()
   const searching = needle.length > 0
@@ -265,7 +279,7 @@ export default function ModelSelectorMenu({
     return rows
     // modelsFor closes over modelOptions/currentProvider, which are the real inputs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searching, needle, browsing, modelOptions, currentProvider])
+  }, [searching, needle, browsing, modelOptions, currentProvider, providerCatalogs])
 
   const favouriteSlotFor = (provider: Provider, model: string): number | undefined => {
     const entry = Object.entries(bySlot).find(([, fav]) => fav.provider === provider && fav.model === model)
@@ -314,10 +328,12 @@ export default function ModelSelectorMenu({
 
   const modelLabel = modelOptions.find((m) => m.id === currentThread?.model)?.label ?? currentThread?.model ?? ''
   const summaryParts = [modelLabel]
+  const thinkingOptions = modelOptions.find((model) => model.id === currentThread?.model)?.thinkingOptions ?? []
+  if (currentProvider === 'kimi-code' && currentThread?.kimi_thinking) summaryParts.push(currentThread.kimi_thinking)
   if (showReasoningSelector && currentReasoningLevel !== 'off') summaryParts.push(currentReasoningLevel)
   const summary = summaryParts.filter(Boolean).join(' · ')
 
-  const effortLabel = currentProvider === 'claude-code' || currentProvider === 'cursor' || currentProvider === 'opencode' ? 'Effort' : 'Reasoning'
+  const effortLabel = 'Effort'
   const paneTitle = searching
     ? `Results for “${query.trim()}”`
     : browsing ? providerLabel(browsing) : 'Favourites'
@@ -437,26 +453,27 @@ export default function ModelSelectorMenu({
                 <span className="truncate text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)', opacity: 0.8 }}>
                   {paneTitle}
                 </span>
-                {!searching && tab === currentProvider && (
+                {!searching && browsing && (
                   <span className="flex items-center gap-1.5">
-                    {modelsLoading && (
+                    {paneLoading && (
                       <span className="status-spinner h-3 w-3 flex-shrink-0" title="Loading models" aria-label="Loading models" />
                     )}
-                    {!modelsLoading && onRetryModels && (
+                    {!paneLoading && paneRetry && (
                       <button
                         type="button"
-                        onClick={onRetryModels}
+                        onClick={paneRetry}
                         className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px]"
-                        style={{ color: modelsError ? 'var(--color-claude)' : 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
-                        title={modelsError ?? 'Refresh models from Pi'}
+                        style={{ color: paneError ? 'var(--color-claude)' : 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                        title={paneError ?? `Refresh models from ${providerLabel(browsing)}`}
                       >
-                        {modelsError ? 'Retry' : 'Refresh'}
+                        {paneError ? 'Retry' : 'Refresh'}
                       </button>
                     )}
                   </span>
                 )}
               </div>
 
+              {!searching && paneError && <div role="status" className="px-3 py-1 text-red-400">{paneError}</div>}
               <div id="model-browser-options" role="listbox" aria-label={paneTitle} className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
                 {!searching && tab === FAVOURITES_TAB ? (
                   <FavouritesList
@@ -511,7 +528,26 @@ export default function ModelSelectorMenu({
               <span className="truncate" style={{ color: 'var(--color-text)' }}>{modelLabel}</span>
             </span>
             <span className="flex-1" />
-            {showReasoningSelector && (
+            {currentProvider === 'kimi-code' && (
+              <FineTuneField label="Effort">
+                <select
+                  aria-label="Kimi effort"
+                  title="Select effort level"
+                  value={currentThread?.kimi_thinking ?? ''}
+                  onChange={(event) => onSelectKimiThinking?.(event.target.value || null)}
+                  disabled={isProcessing || (!thinkingOptions.length && !currentThread?.kimi_thinking)}
+                  className={selectClassName}
+                  style={selectStyle}
+                >
+                  <option value="" style={optionStyle}>Default</option>
+                  {currentThread?.kimi_thinking && !thinkingOptions.some((option) => option.value === currentThread.kimi_thinking) && (
+                    <option value={currentThread.kimi_thinking} style={optionStyle}>{currentThread.kimi_thinking} (unavailable)</option>
+                  )}
+                  {thinkingOptions.map((option) => <option key={option.value} value={option.value} style={optionStyle}>{option.label.replace(/^Thinking /i, '')}</option>)}
+                </select>
+              </FineTuneField>
+            )}
+            {showReasoningSelector && currentProvider !== 'kimi-code' && (
               <FineTuneField label={effortLabel}>
                 <select
                   value={currentReasoningLevel}

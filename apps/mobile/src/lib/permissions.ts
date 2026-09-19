@@ -13,6 +13,11 @@ export interface PermissionOption {
  * Pi has no desktop options; on mobile it gets the generic Ask/Yolo pair.
  */
 export function permissionOptionsForProvider(provider: string): PermissionOption[] {
+  if (provider === 'kimi-code') return [
+    { mode: 'ask', label: 'Ask', description: 'Review Kimi tool permissions' },
+    { mode: 'auto', label: 'Auto', description: 'Let Kimi approve safe operations' },
+    { mode: 'yolo', label: 'YOLO', description: 'Let Kimi approve all tool operations' },
+  ]
   if (provider === 'codex') {
     return [
       { mode: 'ask', label: 'Ask', description: 'Review writes and privileged actions before Codex runs them' },

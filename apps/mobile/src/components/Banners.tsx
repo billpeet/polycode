@@ -115,25 +115,25 @@ function QuestionBannerContent(props: {
                   )
                 })}
               </View>
-              <TextInput
+              {question.allowComments !== false && <TextInput
                 style={styles.commentInput}
                 placeholder="Comment (optional)"
                 placeholderTextColor={colors.textMuted}
                 value={comments[key] ?? ''}
                 onChangeText={(text) => setComments((prev) => ({ ...prev, [key]: text }))}
-              />
+              />}
             </View>
           )
         })}
       </ScrollView>
-      <TextInput
+      {props.questions.every((question) => question.allowComments !== false) && <TextInput
         style={styles.commentInput}
         placeholder="General comments… (optional)"
         placeholderTextColor={colors.textMuted}
         value={generalComment}
         onChangeText={setGeneralComment}
-      />
-      <Button small title="Submit Answers" onPress={() => props.onSubmit(answers, comments, generalComment)} />
+      />}
+      <Button small title="Submit Answers" disabled={props.questions.some((question) => question.allowComments === false && !answers[question.id ?? question.question]?.length)} onPress={() => props.onSubmit(answers, comments, generalComment)} />
     </View>
   )
 }

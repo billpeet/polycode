@@ -427,6 +427,7 @@ function rowToThread(r: ThreadRow): Thread {
     codex_personality: normalizeCodexPersonality(r.codex_personality),
     codex_reasoning_summary: normalizeCodexReasoningSummary(r.codex_reasoning_summary),
     cursor_thinking: r.cursor_thinking == null ? null : r.cursor_thinking === 1,
+    kimi_thinking: r.kimi_thinking ?? null,
     cursor_context: r.cursor_context ?? null,
     status: r.status as Thread['status'],
     archived: r.archived === 1,
@@ -922,6 +923,7 @@ export interface RoutineInput {
 }
 
 export function createRoutine(input: RoutineInput): Routine {
+  if (input.provider === 'kimi-code') throw new Error('Kimi Code Routines are not yet supported; use an interactive Thread.')
   const now = new Date().toISOString()
   const row: RoutineRow = {
     id: uuidv4(),
@@ -961,6 +963,7 @@ export function updateRoutine(id: string, patch: Partial<Omit<RoutineInput, 'pro
     permission_mode: patch.permission_mode ?? existing.permission_mode,
     enabled: patch.enabled ?? existing.enabled,
   }
+  if (merged.provider === 'kimi-code') throw new Error('Kimi Code Routines are not yet supported; use an interactive Thread.')
   getDb('updateRoutine')
     .prepare('UPDATE routines SET location_id = ?, name = ?, prompt = ?, trigger_type = ?, schedule = ?, provider = ?, model = ?, permission_mode = ?, enabled = ?, updated_at = ? WHERE id = ?')
     .run(merged.location_id, merged.name, merged.prompt, merged.trigger_type, merged.schedule, merged.provider, merged.model, merged.permission_mode, merged.enabled ? 1 : 0, new Date().toISOString(), id)
@@ -1076,6 +1079,13 @@ export function updateThreadCursorThinking(id: string, thinking: boolean | null)
   getDb('updateThreadCursorThinking')
     .prepare('UPDATE threads SET cursor_thinking = ?, updated_at = ? WHERE id = ?')
     .run(thinking == null ? null : thinking ? 1 : 0, new Date().toISOString(), id)
+}
+
+export function updateThreadKimiThinking(id: string, value: string | null): void {
+  if (value !== null && (typeof value !== 'string' || !/^[a-z0-9_-]{1,40}$/i.test(value))) throw new Error('Invalid Kimi thinking option')
+  getDb('updateThreadKimiThinking')
+    .prepare('UPDATE threads SET kimi_thinking = ?, updated_at = ? WHERE id = ?')
+    .run(value, new Date().toISOString(), id)
 }
 
 export function updateThreadCursorContext(id: string, context: string | null): void {

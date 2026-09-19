@@ -11,7 +11,7 @@ export interface MessageOptions extends SendOptions {
 }
 
 export interface CLIDriver {
-  /** Send a user message; spawns a new process per call */
+  /** Send a user message; the driver owns its process lifecycle. */
   sendMessage(
     content: string,
     onEvent: (event: OutputEvent) => void,
@@ -40,6 +40,8 @@ export interface CLIDriver {
   sendControlResponse(requestId: string, behavior: 'allow' | 'deny', message?: string): void
   /** Structured answer path for drivers that surface AskUserQuestion via a permission callback. */
   answerQuestion?(requestId: string, answers: Record<string, unknown>, message?: string): void
+  /** Form answers keyed by field ID, preserving arrays. Throws before submission on invalid input. */
+  answerStructuredQuestion?(requestId: string, answers: Record<string, unknown>): void
   listBackgroundTerminals?(): Promise<BackgroundTerminal[]>
   terminateBackgroundTerminal?(processId: string): Promise<boolean>
   cleanBackgroundTerminals?(): Promise<void>
@@ -56,6 +58,7 @@ export interface DriverOptions {
   codexReasoningSummary?: CodexReasoningSummary
   /** Cursor: thinking toggle override; null/undefined = use provider default. */
   thinking?: boolean | null
+  kimiThinking?: string | null
   /** Cursor: selected context-window value; null/undefined = use provider default. */
   contextWindow?: string | null
   permissionMode?: PermissionMode

@@ -187,10 +187,10 @@ export function QuestionBanner({
         </div>
         <div className="min-w-0">
           <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
-            Claude needs your input
+            The agent needs your input
           </div>
           <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>
-            Select an option or add a comment - all fields are optional
+            {questions.some((question) => question.allowComments === false) ? 'Choose an offered answer for each question' : 'Select an option or add a comment - all fields are optional'}
           </div>
         </div>
       </div>
@@ -245,21 +245,21 @@ export function QuestionBanner({
               )
             })}
           </div>
-          <input
+          {q.allowComments !== false && <input
             type="text"
             value={questionComments[questionKey] ?? ''}
             onChange={(e) => setQuestionComments((prev) => ({ ...prev, [questionKey]: e.target.value }))}
             placeholder="Add a comment for this question... (optional)"
             className="mt-2 w-full rounded-lg px-3 py-1.5 text-xs outline-none"
             style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
-          />
+          />}
               </>
             )
           })()}
         </div>
       ))}
 
-      <div className="mt-3">
+      {questions.every((question) => question.allowComments !== false) && <div className="mt-3">
         <textarea
           value={generalComment}
           onChange={(e) => setGeneralComment(e.target.value)}
@@ -268,11 +268,12 @@ export function QuestionBanner({
           className="w-full resize-none rounded-lg px-3 py-2 text-xs outline-none"
           style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
         />
-      </div>
+      </div>}
 
       <div className="mt-3 flex justify-end">
         <button
           onClick={onSubmit}
+          disabled={questions.some((question) => question.allowComments === false && !(selectedAnswers[question.id ?? question.question]?.length))}
           className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
           style={{
             background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
