@@ -13,6 +13,7 @@ const PHASE_DOT: Record<RemoteConnectionPhase, { color: string; label: string; p
 
 export default function TitleBar() {
   const [isMaximized, setIsMaximized] = useState(false)
+  const [development, setDevelopment] = useState(false)
   const [hosts, setHosts] = useState<RemoteHost[]>([])
   const [activeHost, setActiveHost] = useState<RemoteHost | null>(null)
   const connection = useRemoteConnectionStore((s) => s.connection)
@@ -27,6 +28,7 @@ export default function TitleBar() {
 
   useEffect(() => {
     if (!windowControls) return
+    void client.invoke('app:profile').then((profile) => setDevelopment(profile.isDevelopment)).catch(() => undefined)
     client.invoke('window:is-maximized').then((maximized) => {
       setIsMaximized((prev) => (prev === maximized ? prev : maximized))
     })
@@ -111,7 +113,7 @@ export default function TitleBar() {
             userSelect: 'none',
           }}
         >
-          PolyCode
+          {development ? 'PolyCode · Development' : 'PolyCode'}
         </span>
         {remoteActive && (() => {
           const dot = PHASE_DOT[connection.phase]

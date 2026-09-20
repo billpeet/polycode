@@ -2,12 +2,17 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import { randomUUID } from 'node:crypto'
+import { attachmentDirectoryName } from './profile'
 
-const ATTACHMENT_DIR_NAME = 'polycode-attachments'
+let attachmentDirName = 'polycode-attachments'
+
+export function configureAttachmentDirectory(dataPath: string): void {
+  attachmentDirName = attachmentDirectoryName(dataPath)
+}
 
 /** Get or create the temp attachments directory */
 export function getAttachmentDir(): string {
-  const tempDir = path.join(os.tmpdir(), ATTACHMENT_DIR_NAME)
+  const tempDir = path.join(os.tmpdir(), attachmentDirName)
   if (!fs.existsSync(tempDir)) {
     fs.mkdirSync(tempDir, { recursive: true })
   }
@@ -94,7 +99,7 @@ export function cleanupThreadAttachments(threadId: string): void {
 
 /** Clean up all temp attachments (called on app exit) */
 export function cleanupAllAttachments(): void {
-  const attachDir = path.join(os.tmpdir(), ATTACHMENT_DIR_NAME)
+  const attachDir = path.join(os.tmpdir(), attachmentDirName)
   if (fs.existsSync(attachDir)) {
     fs.rmSync(attachDir, { recursive: true, force: true })
   }

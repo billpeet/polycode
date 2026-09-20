@@ -1,3 +1,4 @@
+import './profile-startup'
 import { installCrashDiagnostics } from './crash-diagnostics'
 import { app, BrowserWindow, shell, protocol, net, dialog, ipcMain, powerMonitor } from 'electron'
 import { join } from 'path'

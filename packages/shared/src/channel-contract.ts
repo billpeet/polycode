@@ -64,6 +64,7 @@ import type {
   SubscriptionUsageSnapshot,
 } from './types'
 import type { Channel } from './channels'
+import type { AppProfile, SeedBrowseRequest, SeedCatalog, SeedImportRequest, SeedImportResult } from './seed'
 
 export type ChannelContractEntry = readonly [args: readonly unknown[], result: unknown]
 
@@ -248,6 +249,10 @@ export interface ChannelContract {
   'window:is-maximized': [[], boolean]
   'app:getVersion': [[], string]
   'app:open-logs-folder': [[], string]
+  'app:profile': [[], AppProfile]
+  'seed:choose-source': [[], string | null]
+  'seed:browse': [[request: SeedBrowseRequest], SeedCatalog]
+  'seed:import': [[request: SeedImportRequest], SeedImportResult]
   'update:check': [[], UpdateState]
   'update:apply': [[], { success: boolean }]
   'update:get-state': [[], UpdateState]

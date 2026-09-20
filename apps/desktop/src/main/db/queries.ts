@@ -1169,13 +1169,12 @@ export function hasRunningThreads(): boolean {
   return row.count > 0
 }
 
-/** Reset any threads left in 'running' state from a previous crash/restart.
- * The interrupted turn is stamped as completed so these threads surface in the
- * Queue's attention bucket rather than sorting on a stale timestamp. */
+/** Recover running/stopping turns after acquiring exclusive ownership of the profile.
+ * Mark them stopped and stamp the end of the interrupted turn for Queue ordering. */
 export function resetRunningThreads(): void {
   const now = new Date().toISOString()
   getDb('resetRunningThreads')
-    .prepare("UPDATE threads SET status = 'idle', last_turn_completed_at = ?, updated_at = ? WHERE status = 'running'")
+    .prepare("UPDATE threads SET status = 'stopped', last_turn_completed_at = ?, updated_at = ? WHERE status IN ('running', 'stopping')")
     .run(now, now)
 }
 

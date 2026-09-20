@@ -1,4 +1,7 @@
 import { runAppOperation } from '../app-lifecycle'
+import { getAppProfile } from '../profile'
+import { browseSeedDatabase, importSeedDatabase } from '../db/seed'
+import { getDb as getSeedDestination } from '../db'
 import { hasAzurePat, saveAzurePat } from '../azure-devops-client'
 /**
  * The single implementation of every channel, typed against `ChannelContract`.
@@ -2140,6 +2143,27 @@ export const channelHandlers = {
   // contract's result is the `string` it resolves to, which is empty on success and an
   // error message otherwise, and the settings UI shows it.
   'app:open-logs-folder': () => shell.openPath(getLogsDirPath()),
+  'app:profile': () => getAppProfile(),
+  'seed:choose-source': async (ctx) => {
+    if (!getAppProfile().isDevelopment) throw new Error('Seeding is only available in development profiles.')
+    const result = await dialog.showOpenDialog(ctx.window, {
+      title: 'Seed from production DB',
+      defaultPath: getAppProfile().productionDatabasePath,
+      properties: ['openFile'],
+      filters: [{ name: 'SQLite database', extensions: ['db', 'sqlite', 'sqlite3'] }],
+    })
+    return result.canceled ? null : result.filePaths[0] ?? null
+  },
+  'seed:browse': (ctx, request) => {
+    if (!getAppProfile().isDevelopment) throw new Error('Seeding is only available in development profiles.')
+    if (ctx.remoteClient.getActiveHost()) throw new Error('Switch to the local development host before seeding.')
+    return browseSeedDatabase(getSeedDestination('seed:browse'), request)
+  },
+  'seed:import': (ctx, request) => {
+    if (!getAppProfile().isDevelopment) throw new Error('Seeding is only available in development profiles.')
+    if (ctx.remoteClient.getActiveHost()) throw new Error('Switch to the local development host before seeding.')
+    return importSeedDatabase(getSeedDestination('seed:import'), request)
+  },
 
   // Two calls, and the *second* one's value is the result. `checkForUpdates` is `: void`
   // and only starts a background check, so there is nothing to pass through from it; the

@@ -2,6 +2,39 @@
 
 PolyCode is an Electron desktop app for orchestrating multiple AI coding-agent sessions across projects. It provides a React UI around local or remote CLI agents, with streaming output, SQLite persistence, git tooling, terminals, project commands, todos, plans, and integrations.
 
+## Developing alongside production
+
+`pnpm dev` uses a separate data directory: the normal Electron `userData` path
+with `-dev` appended. On Windows this is typically
+`%APPDATA%/polycode-electron-dev`. Production keeps its existing directory.
+Each profile has its own database, logs, browser storage and temporary attachments.
+Only one backend can own a profile at a time; launching the same profile again
+focuses its existing window. Development and production can run together.
+
+Set `POLYCODE_USER_DATA_DIR` to use another isolated profile. Development refuses
+the normal production directory, including junctions or symlinks to it.
+`pnpm start:prod` continues to use the production profile.
+
+In development, open **Settings → Seed production DB** to import test data:
+
+- **Projects only** copies selected projects, locations and project commands,
+  without their threads.
+- **Individual threads** offers recent history, search, project filtering and
+  pagination. Selected threads include their project, sessions and messages.
+- Existing development project configuration is preserved. Every thread import
+  creates a fresh copy, so reimporting does not overwrite an active debug thread.
+- Production is read through a read-only SQLite transaction, including committed
+  WAL data. It can stay running; no full database copy is needed.
+
+Imported active turns are stopped. Provider resume IDs, routines, global settings,
+credentials and attachment files are excluded. New turns use fresh provider
+sessions. Repository paths still refer to the same files; this does not clone
+repositories. Imported worktrees become ordinary locations, and automatic
+project commands are disabled, so development does not acquire cleanup ownership.
+
+Restart production on a version with profile locking before relying on duplicate
+launch protection. Older running versions do not participate in the lock.
+
 ## Remote control security
 
 PolyCode's desktop-to-desktop and mobile remote-control protocol uses bearer-authenticated HTTP. HTTP does not encrypt bearer tokens, stored integration credentials, filesystem data, or command results in transit. When a remote host uses an `http://` URL, only run it on a trusted LAN or behind a trusted encrypted tunnel/reverse proxy; use HTTPS for traffic that crosses an untrusted network.

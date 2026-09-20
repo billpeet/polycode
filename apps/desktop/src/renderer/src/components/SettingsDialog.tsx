@@ -1,5 +1,7 @@
 import { AzureDevOpsSettingsPanel } from './AzureDevOpsSettingsPanel'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { AppProfile } from '@polycode/shared'
+import { SeedProductionPanel } from './SeedProductionPanel'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { CliHealthPanel } from './CliHealthDialog'
 import { SlashCommandsPanel } from './SlashCommandsDialog'
@@ -8,7 +10,7 @@ import { WebhookPanel } from './WebhookPanel'
 import { RemoteControlPanel } from './RemoteControlPanel'
 import { client, type ClientCapabilities } from '../lib/client'
 
-type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote'
+type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote' | 'seed'
 
 /** Tabs that configure the host process itself only exist where that process is attached. */
 const TABS: { id: Tab; label: string; requires?: keyof ClientCapabilities }[] = [
@@ -29,7 +31,16 @@ interface Props {
 export default function SettingsDialog({ projectId, projectName, onClose }: Props) {
   const backdropClose = useBackdropClose(onClose)
   const [activeTab, setActiveTab] = useState<Tab>('health')
+  const [profile, setProfile] = useState<AppProfile | null>(null)
+  useEffect(() => {
+    if (!client.capabilities.nativeDialogs) return
+    let cancelled = false
+    void client.invoke('app:profile').then((value) => { if (!cancelled) setProfile(value) })
+      .catch((error: unknown) => console.error('[settings] Failed to read profile', error))
+    return () => { cancelled = true }
+  }, [])
   const tabs = TABS.filter((tab) => !tab.requires || client.capabilities[tab.requires])
+  if (profile?.isDevelopment) tabs.push({ id: 'seed', label: 'Seed production DB' })
 
   async function openLogsFolder(): Promise<void> {
     try {
@@ -50,7 +61,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
       onPointerDown={backdropClose.onPointerDown}
     >
       <div
-        className="flex w-[640px] h-[520px] rounded-xl shadow-2xl overflow-hidden"
+        className={`flex rounded-xl shadow-2xl overflow-hidden max-w-[calc(100vw-32px)] max-h-[calc(100vh-32px)] ${activeTab === 'seed' ? 'w-[840px] h-[680px]' : 'w-[640px] h-[520px]'}`}
         style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
         onClick={(e) => e.stopPropagation()}
       >
@@ -117,6 +128,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
             {activeTab === 'youtrack' && <YouTrackSettingsPanel hideHeader />}
             {activeTab === 'webhook' && <WebhookPanel hideHeader />}
             {activeTab === 'remote' && <RemoteControlPanel hideHeader />}
+            {activeTab === 'seed' && profile?.isDevelopment && <SeedProductionPanel profile={profile} />}
           </div>
         </div>
       </div>
