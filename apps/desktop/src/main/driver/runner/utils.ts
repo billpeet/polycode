@@ -127,6 +127,26 @@ export function augmentWindowsPath(env: NodeJS.ProcessEnv = process.env): NodeJS
   }
 }
 
+const PACKAGE_BIN_DIR = /[\\/]node_modules[\\/]\.bin[\\/]?$/i
+
+/**
+ * PATH overrides for spawning a provider CLI the user installed, not one a
+ * dependency bundles. `@openai/codex-sdk` pulls in its own pinned `codex`,
+ * and under `pnpm dev` the repo's `node_modules/.bin` leads PATH, so a bare
+ * `codex` would run that copy — lagging the user's install and its models.
+ * Pass the result as a local spawn's `extraEnv`; remote runners ignore it.
+ */
+export function installedCliPathEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  return withoutPackageBins(process.platform === 'win32' ? augmentWindowsPath(env) : env)
+}
+
+/** `installedCliPathEnv` for an env that is already augmented. */
+export function withoutPackageBins(env: NodeJS.ProcessEnv): Record<string, string> {
+  const current = env.PATH ?? env.Path ?? ''
+  const next = current.split(path.delimiter).filter((dir) => dir && !PACKAGE_BIN_DIR.test(dir)).join(path.delimiter)
+  return process.platform === 'win32' ? { PATH: next, Path: next } : { PATH: next }
+}
+
 /**
  * Resolve the Claude Code executable path from PATH and common install locations.
  * Falls back to the bare `claude` command if no absolute path can be found.

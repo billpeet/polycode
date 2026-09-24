@@ -2,8 +2,25 @@ import { describe, it, expect } from 'vitest'
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
-import { shellEscape, winQuote, cdTarget, buildSshBaseArgs, augmentWindowsPath, resolveClaudeCodeExecutable, expandHomePath } from '../runner/utils'
+import { shellEscape, winQuote, cdTarget, buildSshBaseArgs, augmentWindowsPath, resolveClaudeCodeExecutable, expandHomePath, withoutPackageBins } from '../runner/utils'
 import type { SshConfig } from '../../../shared/types'
+
+// ── withoutPackageBins ──
+
+describe('withoutPackageBins', () => {
+  it('drops dependency bin dirs so a bare CLI name resolves to the user install', () => {
+    const PATH = [
+      path.join('repo', 'node_modules', '.bin'),
+      'C:\\repo\\apps\\desktop\\node_modules\\.bin\\',
+      '/repo/node_modules/.bin',
+      path.join('usr', 'local', 'bin'),
+      path.join('home', 'node_modules', '.bin-tools'),
+    ].join(path.delimiter)
+    expect(withoutPackageBins({ PATH }).PATH).toBe(
+      [path.join('usr', 'local', 'bin'), path.join('home', 'node_modules', '.bin-tools')].join(path.delimiter),
+    )
+  })
+})
 
 // ── shellEscape ───────────────────────────────────────────────────────────────
 

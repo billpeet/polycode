@@ -211,8 +211,8 @@ export const ANTHROPIC_MODELS = [
 export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
 
 export const OPENAI_MODELS = [
-  { id: 'gpt-6-astra', label: 'GPT-6 Astra', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'gpt-6-sol', label: 'GPT-6 Sol', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] },
   { id: 'gpt-6-luna', label: 'GPT-6 Luna', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
 ] as const satisfies readonly ModelOption[]
 
@@ -246,7 +246,7 @@ export const PI_MODELS = [
 
 export type PiModelId = typeof PI_MODELS[number]['id']
 
-export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+export type ReasoningLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
 export type CodexImageDetail = 'auto' | 'low' | 'high' | 'original'
 export type CodexPersonality = 'none' | 'friendly' | 'pragmatic'
 export type CodexReasoningSummary = 'auto' | 'concise' | 'detailed' | 'none'

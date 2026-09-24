@@ -39,6 +39,8 @@ type SDKRateLimitEvent = Extract<SDKMessage, { type: 'rate_limit_event' }>
 function reasoningLevelToClaudeEffort(level?: ReasoningLevel): ClaudeEffort | undefined {
   if (!level || level === 'off') return undefined
   if (level === 'minimal') return 'low'
+  // Codex's `ultra` sits above anything Claude offers; clamp to Claude's highest effort.
+  if (level === 'ultra') return 'max'
   return level
 }
 

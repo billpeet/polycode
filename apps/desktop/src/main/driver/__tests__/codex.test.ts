@@ -72,6 +72,10 @@ describe('buildCodexArgs', () => {
     ])
   })
 
+  it('passes ultra effort through to the CLI', () => {
+    expect(buildCodexArgs(null, 'gpt-6-sol', 'think hard', false, 'ultra', false)).toContain('model_reasoning_effort=ultra')
+  })
+
   it('omits the service tier when fast mode is disabled', () => {
     expect(buildCodexArgs(null, undefined, 'normal', false, undefined, false)).toEqual([
       'exec',
@@ -1522,6 +1526,17 @@ describe('buildCodexEnvironment', () => {
 
     expect(env.HOME).toBe('C:\\Users\\marti')
     expect(env.CODEX_HOME).toBe('C:\\Users\\marti\\.codex')
+  })
+
+  it('keeps the bundled SDK codex off PATH so the installed CLI runs', () => {
+    const installed = path.join('opt', 'codex', 'bin')
+    const env = buildCodexEnvironment({
+      HOME: '/tmp/home',
+      PATH: [path.join('repo', 'node_modules', '.bin'), installed].join(path.delimiter),
+    })
+
+    expect(env.PATH?.split(path.delimiter)).toContain(installed)
+    expect(env.PATH).not.toContain(path.join('node_modules', '.bin'))
   })
 
   it('preserves an explicit CODEX_HOME', () => {

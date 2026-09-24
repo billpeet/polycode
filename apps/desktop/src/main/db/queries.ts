@@ -2,7 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
 import { foldMessages } from '@polycode/shared'
-import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState, WorktreeCleanupCandidate } from '../../shared/types'
+import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState, WorktreeCleanupCandidate } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
 
@@ -387,7 +387,7 @@ export function getLocationByPath(path: string): RepoLocation | null {
 
 // ── Threads ───────────────────────────────────────────────────────────────────
 
-const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const VALID_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 const VALID_PERMISSION_MODES: PermissionMode[] = ['ask', 'auto', 'workspace', 'yolo']
 const VALID_CODEX_PERSONALITIES: CodexPersonality[] = ['none', 'friendly', 'pragmatic']
 const VALID_CODEX_SUMMARIES: CodexReasoningSummary[] = ['auto', 'concise', 'detailed', 'none']
@@ -807,7 +807,7 @@ export function createThreadForLocation(
   })()
 }
 
-export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = 'claude-opus-4-8', gitBranch: string | null = null, opts: CreateThreadOptions = {}): Thread {
+export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = getDefaultModelForProvider('claude-code'), gitBranch: string | null = null, opts: CreateThreadOptions = {}): Thread {
   const now = new Date().toISOString()
   const permissionMode = normalizePermissionMode(opts.permissionMode ?? 'ask')
   const thread: ThreadRow = {
@@ -1220,7 +1220,7 @@ export function getThreadModel(threadId: string): string {
   const row = getDb('getThreadModel')
     .prepare('SELECT model FROM threads WHERE id = ?')
     .get(threadId) as { model: string | null } | undefined
-  return row?.model ?? 'claude-opus-4-8'
+  return row?.model ?? getDefaultModelForProvider('claude-code')
 }
 
 export function getThreadProvider(threadId: string): string {
@@ -1288,7 +1288,7 @@ export function getLastUsedProviderAndModel(projectId: string): { provider: stri
     )
     .get(projectId) as { provider: string; model: string } | undefined
 
-  if (!row) return { provider: 'claude-code', model: 'claude-opus-4-8' }
+  if (!row) return { provider: 'claude-code', model: getDefaultModelForProvider('claude-code') }
 
   // Model ids are passed through exactly as stored — they may be live-discovered
   // and absent from any hardcoded fallback list (see rowToThread).

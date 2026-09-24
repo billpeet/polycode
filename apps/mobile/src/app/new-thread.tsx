@@ -36,7 +36,7 @@ import { useProjectsStore } from '@/stores/projects'
 import { useThreadsStore } from '@/stores/threads'
 import { colors, permissionAccent, radii, sectionLabel } from '@/theme/colors'
 
-const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 const EMPTY_LOCATIONS: RepoLocation[] = []
 
 function errorText(error: unknown): string {

@@ -14,7 +14,7 @@ import { DriverOptions, MessageOptions, CLIDriver } from './types'
 import { BackgroundTerminal, OutputEvent, PermissionMode, ReasoningLevel } from '../../shared/types'
 import { SpawnCommand } from './runner/types'
 import { BaseDriver } from './base'
-import { augmentWindowsPath } from './runner'
+import { augmentWindowsPath, installedCliPathEnv, withoutPackageBins } from './runner'
 import { homedir } from 'os'
 import path from 'path'
 import readline from 'readline'
@@ -1434,7 +1434,8 @@ function sanitizeEnv(env: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 export function buildCodexEnvironment(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
-  const nextEnv = process.platform === 'win32' ? augmentWindowsPath(env) : { ...env }
+  const augmented = process.platform === 'win32' ? augmentWindowsPath(env) : env
+  const nextEnv = { ...augmented, ...withoutPackageBins(augmented) }
   const homeDir = nextEnv.HOME ?? nextEnv.USERPROFILE ?? homedir()
   const homePath = nextEnv.USERPROFILE && homeDir === nextEnv.USERPROFILE ? path.win32 : path
 
@@ -1522,7 +1523,7 @@ class CodexCliDriver extends BaseDriver {
 
   protected buildCommand(
     content: string,
-    _runnerType: 'local' | 'wsl' | 'ssh',
+    runnerType: 'local' | 'wsl' | 'ssh',
     options?: MessageOptions
   ): SpawnCommand {
     return {
@@ -1539,6 +1540,7 @@ class CodexCliDriver extends BaseDriver {
         options?.fastMode ?? false
       ),
       workDir: this.options.workingDir,
+      ...(runnerType === 'local' ? { extraEnv: installedCliPathEnv() } : {}),
     }
   }
 

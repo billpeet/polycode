@@ -1,6 +1,6 @@
 import { homedir } from 'os'
 import { ReasoningLevel, SshConfig, WslConfig } from '../shared/types'
-import { createRunner } from './driver/runner'
+import { createRunner, installedCliPathEnv } from './driver/runner'
 
 export interface CodexAvailableModelOption {
   id: string
@@ -52,7 +52,7 @@ function cacheKey(ssh?: SshConfig | null, wsl?: WslConfig | null): string {
   return 'local'
 }
 
-const REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 
 function normalizeReasoningLevel(value: unknown): ReasoningLevel | null {
   if (value === 'none') return 'off'
@@ -145,6 +145,7 @@ async function queryCodexAvailableModels(
       binary: 'codex',
       args: ['app-server', '--listen', 'stdio://'],
       workDir: cwd,
+      extraEnv: installedCliPathEnv(),
       keepStdinOpen: true,
     })
 

@@ -17,7 +17,7 @@ import { rpc } from '@/api/rpc'
 import { requireConnection } from '@/stores/hosts'
 import { useThreadsStore } from '@/stores/threads'
 
-const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 
 function ThreadSettingsSheetContent(props: {
   thread: Thread

@@ -15,6 +15,7 @@ import ThreadLogsModal from './ThreadLogsModal'
 import { Tooltip } from './ui/tooltip'
 import { client } from '../lib/client'
 import { writeClipboardText } from '../lib/clipboard'
+import { getDefaultModelForProvider } from '../types/ipc'
 
 const EMPTY_RATE_LIMITS: Record<string, RateLimitEntry> = {}
 
@@ -478,7 +479,7 @@ export default function ThreadHeader({ threadId }: Props) {
         {usage && (() => {
           const contextLimit = resolveDisplayedContextLimit(
             thread?.provider ?? 'claude-code',
-            thread?.model ?? 'claude-opus-4-8',
+            thread?.model ?? getDefaultModelForProvider('claude-code'),
             thread?.cursor_context,
             usage.max_context_window,
           )

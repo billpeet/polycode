@@ -65,7 +65,7 @@ export function ModelPickerSheet(props: Parameters<typeof ModelPickerSheetConten
   return <ModelPickerSheetContent key={`${props.thread.id}:${props.visible ? 'open' : 'closed'}`} {...props} />
 }
 
-const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 
 /**
  * Desktop parity: 'off' means "provider default" for Claude/OpenCode/Cursor

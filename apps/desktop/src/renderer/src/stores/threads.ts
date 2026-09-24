@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { Thread, QueueThread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary, ThreadArchiveResult } from '../types/ipc'
+import { Thread, QueueThread, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, TokenUsage, PermissionMode, ReasoningLevel, CodexPersonality, CodexReasoningSummary, ThreadArchiveResult, getDefaultModelForProvider } from '../types/ipc'
 import { useToastStore } from './toast'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { isAppShuttingDownError } from '@polycode/shared'
@@ -211,7 +211,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       name: 'New thread',
       is_pending: true,
       provider: sourceThread?.provider ?? 'claude-code',
-      model: sourceThread?.model ?? 'claude-opus-4-8',
+      model: sourceThread?.model ?? getDefaultModelForProvider('claude-code'),
       reasoning_level: sourceThread?.reasoning_level ?? 'off',
       codex_personality: sourceThread?.codex_personality ?? 'none',
       codex_reasoning_summary: sourceThread?.codex_reasoning_summary ?? 'auto',
@@ -542,7 +542,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       name,
       is_pending: true,
       provider: sourceThread?.provider ?? 'claude-code',
-      model: sourceThread?.model ?? 'claude-opus-4-8',
+      model: sourceThread?.model ?? getDefaultModelForProvider('claude-code'),
       reasoning_level: sourceThread?.reasoning_level ?? 'off',
       codex_personality: sourceThread?.codex_personality ?? 'none',
       codex_reasoning_summary: sourceThread?.codex_reasoning_summary ?? 'auto',
