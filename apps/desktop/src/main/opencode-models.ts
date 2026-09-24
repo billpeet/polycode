@@ -186,9 +186,11 @@ export async function listOpenCodeAvailableModels(options: {
   cwd?: string | null
   ssh?: SshConfig | null
   wsl?: WslConfig | null
+  /** Skip the cache; used when the user explicitly refreshes the list. */
+  forceRefresh?: boolean
 } = {}): Promise<OpenCodeAvailableModelOption[]> {
   const key = cacheKey(options.ssh, options.wsl)
-  const cached = readCached(key)
+  const cached = options.forceRefresh ? undefined : readCached(key)
   if (cached) return cached
 
   const existing = inFlight.get(key)

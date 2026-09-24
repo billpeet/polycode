@@ -29,7 +29,7 @@ it('loads Kimi models when browsing from a Codex thread, then selects the discov
     (args[0] === 'models:kimiAvailable' ? [{ id: 'kimi-test', label: 'Kimi discovered model' }] : []) as never)
   const select = browseKimi()
   expect(await screen.findByRole('option', { name: 'Kimi discovered model' })).toBeTruthy()
-  expect(client.invoke).toHaveBeenCalledWith('models:kimiAvailable', 'thread-1')
+  expect(client.invoke).toHaveBeenCalledWith('models:kimiAvailable', 'thread-1', false)
   expect(select).not.toHaveBeenCalled()
   fireEvent.click(screen.getByRole('button', { name: /^Kimi discovered model/ }))
   expect(select).toHaveBeenCalledWith('thread-1', 'kimi-code', 'kimi-test')

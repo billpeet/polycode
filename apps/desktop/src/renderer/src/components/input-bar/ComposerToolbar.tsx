@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { CodexPersonality, CodexReasoningSummary, Thread, Provider, PermissionMode, ModelOption, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
+import { useMemo, useState } from 'react'
+import { CodexPersonality, CodexReasoningSummary, Thread, Provider, PermissionMode, ModelOption, PROVIDERS, ReasoningLevel, getDefaultModelForProvider, getModelsForProvider } from '../../types/ipc'
 import CliHealthIndicator from './CliHealthIndicator'
 import ModelSelectorMenu from './ModelSelectorMenu'
 import { PlanIcon, YoloIcon, FastIcon, formatElapsed } from './icons'
@@ -8,6 +8,7 @@ import BackgroundTerminals from './BackgroundTerminals'
 import { client } from '../../lib/client'
 import SubscriptionUsageIndicator from './SubscriptionUsageIndicator'
 import { useThreadStore } from '../../stores/threads'
+import { useProviderModels } from './useProviderModels'
 
 function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly ModelOption[]): ModelOption[] {
   const seen = new Set<string>()
@@ -16,6 +17,14 @@ function mergeModelOptions(primary: readonly ModelOption[], fallback: readonly M
     seen.add(model.id)
     return true
   })
+}
+
+/** Live models when discovery has them, the static registry otherwise. */
+function catalogFor(provider: Provider, live: readonly ModelOption[]): readonly ModelOption[] {
+  const staticModels = getModelsForProvider(provider)
+  if (live.length === 0) return staticModels
+  // Claude's discovery omits aliases the registry still offers.
+  return provider === 'claude-code' ? mergeModelOptions(live, staticModels) : live
 }
 
 // Per-mode highlight colors for the permission segmented control. Auto gets
@@ -51,7 +60,6 @@ interface ComposerToolbarProps {
 
 // Stable empty reference so the context-window map never churns identity.
 const EMPTY_CONTEXT_WINDOWS: { value: string; label: string }[] = []
-const EMPTY_MODELS: ModelOption[] = []
 
 export default function ComposerToolbar({
   threadId,
@@ -109,158 +117,28 @@ export default function ComposerToolbar({
     return []
   }, [currentThread?.provider])
   const currentProvider = (currentThread?.provider ?? 'claude-code') as Provider
-  const [liveClaudeModels, setLiveClaudeModels] = useState<ModelOption[]>([])
-  const [liveCodexModels, setLiveCodexModels] = useState<ModelOption[]>([])
-  const [liveOpenCodeModels, setLiveOpenCodeModels] = useState<ModelOption[]>([])
-  const [livePiModels, setLivePiModels] = useState<ModelOption[]>([])
-  const [piModelsLoading, setPiModelsLoading] = useState(false)
-  const [piModelsError, setPiModelsError] = useState<string | null>(null)
-  const [piModelsRefresh, setPiModelsRefresh] = useState(0)
-  const forcePiModelsRefresh = useRef(false)
-  const [liveCursorModels, setLiveCursorModels] = useState<ModelOption[]>([])
-  const [liveGrokModels, setLiveGrokModels] = useState<ModelOption[]>([])
-  const [kimiModels, setKimiModels] = useState<{ key: string; models: ModelOption[] } | null>(null)
-  const [kimiError, setKimiError] = useState<string | null>(null)
   const [browsingProvider, setBrowsingProvider] = useState<Provider | null>(null)
-  const [kimiRefresh, setKimiRefresh] = useState(0)
-  const [kimiSettledKey, setKimiSettledKey] = useState<string | null>(null)
-  const kimiKey = `${threadId}:${currentThread?.model}:${currentThread?.use_wsl}:${currentThread?.wsl_distro}`
-  const kimiRequestKey = `${kimiKey}:${kimiRefresh}`
-  const discoverKimi = currentProvider === 'kimi-code' || browsingProvider === 'kimi-code'
-  const liveKimiModels = kimiModels?.key === kimiKey ? kimiModels.models : EMPTY_MODELS
-  useEffect(() => {
-    if (!discoverKimi) return
-    let cancelled = false
-    client.invoke('models:kimiAvailable', threadId).then((models) => {
-      if (!cancelled) { setKimiModels({ key: kimiKey, models }); setKimiError(null); setKimiSettledKey(kimiRequestKey) }
-    }).catch((error: unknown) => {
-      if (!cancelled) { setKimiError(error instanceof Error ? error.message : String(error)); setKimiSettledKey(kimiRequestKey) }
-    })
-    return () => { cancelled = true }
-  }, [discoverKimi, threadId, kimiKey, kimiRequestKey])
+  const discovery = useProviderModels(threadId, currentThread, [currentProvider, browsingProvider])
+  const [kimiThinkingError, setKimiThinkingError] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (currentProvider !== 'claude-code') return
+  const providerCatalogs = Object.fromEntries(PROVIDERS.map(({ id }) => {
+    const { loading, error, retry } = discovery[id]
+    const shownError = id === 'kimi-code' ? kimiThinkingError ?? error : error
+    return [id, {
+      models: catalogFor(id, discovery[id].models),
+      loading,
+      error: shownError,
+      retry: () => { if (id === 'kimi-code') setKimiThinkingError(null); retry() },
+    }]
+  })) as Record<Provider, { models: readonly ModelOption[]; loading: boolean; error: string | null; retry: () => void }>
 
-    let cancelled = false
-    client.invoke('models:claudeAvailable', threadId)
-      .then((models) => {
-        if (!cancelled && models.length > 0) setLiveClaudeModels(models)
-      })
-      .catch(() => {
-        // Keep static fallback models when Claude Code is unavailable or unauthenticated.
-      })
-
-    return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
-
-  useEffect(() => {
-    if (currentProvider !== 'codex') return
-
-    let cancelled = false
-    client.invoke('models:codexAvailable', threadId)
-      .then((models) => {
-        if (!cancelled && models.length > 0) setLiveCodexModels(models)
-      })
-      .catch(() => {
-        // Keep static fallback models when codex is unavailable or unauthenticated.
-      })
-
-    return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
-
-  useEffect(() => {
-    if (currentProvider !== 'opencode') return
-
-    let cancelled = false
-    client.invoke('models:opencodeAvailable', threadId)
-      .then((models) => {
-        if (!cancelled && models.length > 0) setLiveOpenCodeModels(models)
-      })
-      .catch(() => {
-        // Keep static fallback models when opencode is unavailable or unauthenticated.
-      })
-
-    return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
-
-  useEffect(() => {
-    if (currentProvider !== 'pi') return
-
-    let cancelled = false
-    setTimeout(() => {
-      if (!cancelled) {
-        setPiModelsLoading(true)
-        setPiModelsError(null)
-      }
-    }, 0)
-    const forceRefresh = forcePiModelsRefresh.current
-    forcePiModelsRefresh.current = false
-    client.invoke('models:piAvailable', threadId, forceRefresh)
-      .then((models) => {
-        if (cancelled) return
-        setLivePiModels(models)
-        if (models.length === 0) setPiModelsError('Pi returned no available models')
-      })
-      .catch((error) => {
-        if (!cancelled) setPiModelsError(error instanceof Error ? error.message : 'Could not load Pi models')
-      })
-      .finally(() => {
-        if (!cancelled) setPiModelsLoading(false)
-      })
-
-    return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro, piModelsRefresh])
-
-  useEffect(() => {
-    if (currentProvider !== 'cursor') return
-
-    let cancelled = false
-    client.invoke('models:cursorAvailable', threadId)
-      .then((models) => {
-        if (!cancelled && models.length > 0) setLiveCursorModels(models)
-      })
-      .catch(() => {
-        // Keep static fallback models when Cursor is unavailable or unauthenticated.
-      })
-
-    return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
-
-  useEffect(() => {
-    if (currentProvider !== 'grok') return
-
-    let cancelled = false
-    client.invoke('models:grokAvailable', threadId)
-      .then((models) => {
-        if (!cancelled && models.length > 0) setLiveGrokModels(models)
-      })
-      .catch(() => {
-        // Keep static fallback models when Grok is unavailable or unauthenticated.
-      })
-
-    return () => { cancelled = true }
-  }, [currentProvider, threadId, currentThread?.use_wsl, currentThread?.wsl_distro])
-
-  const modelOptions = useMemo(() => {
-    const staticModels = getModelsForProvider(currentProvider)
-    const baseModels = currentProvider === 'kimi-code' && liveKimiModels.length > 0 ? liveKimiModels : currentProvider === 'claude-code' && liveClaudeModels.length > 0
-      ? mergeModelOptions(liveClaudeModels, staticModels)
-      : currentProvider === 'codex' && liveCodexModels.length > 0
-        ? liveCodexModels
-        : currentProvider === 'opencode' && liveOpenCodeModels.length > 0
-          ? liveOpenCodeModels
-          : currentProvider === 'pi' && livePiModels.length > 0
-            ? livePiModels
-            : currentProvider === 'cursor' && liveCursorModels.length > 0
-              ? liveCursorModels
-              : currentProvider === 'grok' && liveGrokModels.length > 0
-                ? liveGrokModels
-                : staticModels
+  const currentLiveModels = discovery[currentProvider].models
+  const modelOptions = useMemo<readonly ModelOption[]>(() => {
+    const baseModels = catalogFor(currentProvider, currentLiveModels)
     const currentModel = currentThread?.model
     if (!currentModel || baseModels.some((model) => model.id === currentModel)) return baseModels
     return [{ id: currentModel, label: currentModel }, ...baseModels]
-  }, [currentProvider, currentThread?.model, liveClaudeModels, liveCodexModels, liveOpenCodeModels, livePiModels, liveCursorModels, liveGrokModels, liveKimiModels])
+  }, [currentProvider, currentThread?.model, currentLiveModels])
 
   const selectedModel = useMemo<ModelOption | undefined>(
     () => modelOptions.find((model) => model.id === currentThread?.model),
@@ -293,7 +171,7 @@ export default function ComposerToolbar({
   const handleProviderChange = (provider: Provider): void => {
     if (providerLocked && provider !== currentProvider) return
     const staticDefault = getDefaultModelForProvider(provider)
-    const liveModels = provider === 'claude-code' ? liveClaudeModels : provider === 'codex' ? liveCodexModels : provider === 'opencode' ? liveOpenCodeModels : provider === 'pi' ? livePiModels : provider === 'cursor' ? liveCursorModels : provider === 'grok' ? liveGrokModels : []
+    const liveModels = discovery[provider].models
     const defaultModel = liveModels.length > 0
       ? (liveModels.some((model) => model.id === staticDefault) ? staticDefault : liveModels[0].id)
       : staticDefault
@@ -461,18 +339,7 @@ export default function ComposerToolbar({
           currentThread={currentThread}
           modelOptions={modelOptions}
           onBrowseProvider={setBrowsingProvider}
-          providerCatalogs={{ 'kimi-code': {
-            models: liveKimiModels.length ? liveKimiModels : getModelsForProvider('kimi-code'),
-            loading: discoverKimi && kimiSettledKey !== kimiRequestKey,
-            error: kimiSettledKey === kimiRequestKey ? kimiError : null,
-            retry: () => setKimiRefresh((value) => value + 1),
-          } }}
-          modelsLoading={currentProvider === 'pi' && piModelsLoading}
-          modelsError={currentProvider === 'pi' ? piModelsError : null}
-          onRetryModels={currentProvider === 'pi' ? () => {
-            forcePiModelsRefresh.current = true
-            setPiModelsRefresh((value) => value + 1)
-          } : undefined}
+          providerCatalogs={providerCatalogs}
           reasoningOptions={reasoningOptions}
           currentReasoningLevel={currentReasoningLevel}
           showReasoningSelector={showReasoningSelector}
@@ -485,8 +352,8 @@ export default function ComposerToolbar({
               useThreadStore.setState((state) => ({ byProject: Object.fromEntries(Object.entries(state.byProject).map(([id, threads]) => [id,
                 threads.map((thread) => thread.id === threadId ? { ...thread, kimi_thinking: value } : thread),
               ])) }))
-              setKimiError(null)
-            }).catch((error: unknown) => setKimiError(error instanceof Error ? error.message : String(error)))
+              setKimiThinkingError(null)
+            }).catch((error: unknown) => setKimiThinkingError(error instanceof Error ? error.message : String(error)))
           }}
           onSelectCodexSummary={(summary) => setCodexReasoningSummary(threadId, summary)}
           onSelectPersonality={(personality) => setCodexPersonality(threadId, personality)}

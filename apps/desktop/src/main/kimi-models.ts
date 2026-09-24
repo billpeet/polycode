@@ -6,9 +6,9 @@ type QueryOptions = { cwd?: string | null; ssh?: SshConfig | null; wsl?: WslConf
 const cache = new Map<string, { expires: number; models: ModelOption[] }>()
 const inFlight = new Map<string, Promise<ModelOption[]>>()
 
-export function listKimiAvailableModels(options: QueryOptions = {}): Promise<ModelOption[]> {
+export function listKimiAvailableModels({ forceRefresh, ...options }: QueryOptions & { forceRefresh?: boolean } = {}): Promise<ModelOption[]> {
   const key = JSON.stringify(options)
-  const cached = cache.get(key)
+  const cached = forceRefresh ? undefined : cache.get(key)
   if (cached && cached.expires > Date.now()) return Promise.resolve(cached.models)
   const pending = inFlight.get(key)
   if (pending) return pending

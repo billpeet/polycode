@@ -325,6 +325,14 @@ function modelQueryOptions(threadId?: string | null):
 }
 
 /**
+ * Adds `forceRefresh` to the model query only when set, so the ordinary call keeps the
+ * exact options shape (including `undefined` for thread-less probes) the callees saw before.
+ */
+function withForceRefresh<T extends object>(options: T | undefined, forceRefresh?: boolean): T | (T & { forceRefresh: true }) | undefined {
+  return forceRefresh ? { ...(options ?? ({} as T)), forceRefresh: true } : options
+}
+
+/**
  * The `data:` URL for a file on *this* machine, typed by its extension.
  *
  * Exported because `attachments:saveFromPath` needs the same value on two paths that
@@ -1747,25 +1755,29 @@ export const channelHandlers = {
   // control-rpc.ts the explicit-`undefined` form; this is the one place the two pre-fold
   // implementations were spelled differently.)
 
-  'models:claudeAvailable': (_ctx, threadId) => listClaudeAvailableModels(modelQueryOptions(threadId)),
+  'models:claudeAvailable': (_ctx, threadId, forceRefresh) =>
+    listClaudeAvailableModels(withForceRefresh(modelQueryOptions(threadId), forceRefresh)),
 
-  'models:codexAvailable': (_ctx, threadId) => listCodexAvailableModels(modelQueryOptions(threadId)),
+  'models:codexAvailable': (_ctx, threadId, forceRefresh) =>
+    listCodexAvailableModels(withForceRefresh(modelQueryOptions(threadId), forceRefresh)),
 
-  'models:opencodeAvailable': (_ctx, threadId) =>
-    listOpenCodeAvailableModels(modelQueryOptions(threadId)),
+  'models:opencodeAvailable': (_ctx, threadId, forceRefresh) =>
+    listOpenCodeAvailableModels(withForceRefresh(modelQueryOptions(threadId), forceRefresh)),
 
-  'models:piAvailable': (_ctx, threadId, forceRefresh) => {
-    const options = modelQueryOptions(threadId)
-    return listPiAvailableModels(forceRefresh ? { ...options, forceRefresh: true } : options)
-  },
+  'models:piAvailable': (_ctx, threadId, forceRefresh) =>
+    listPiAvailableModels(withForceRefresh(modelQueryOptions(threadId), forceRefresh)),
 
-  'models:cursorAvailable': (_ctx, threadId) =>
-    listCursorAvailableModels(modelQueryOptions(threadId)),
+  'models:cursorAvailable': (_ctx, threadId, forceRefresh) =>
+    listCursorAvailableModels(withForceRefresh(modelQueryOptions(threadId), forceRefresh)),
 
-  'models:grokAvailable': (_ctx, threadId) => listGrokAvailableModels(modelQueryOptions(threadId)),
-  'models:kimiAvailable': (_ctx, threadId) => {
+  'models:grokAvailable': (_ctx, threadId, forceRefresh) =>
+    listGrokAvailableModels(withForceRefresh(modelQueryOptions(threadId), forceRefresh)),
+  'models:kimiAvailable': (_ctx, threadId, forceRefresh) => {
     const thread = threadId ? getThreadById(threadId) : null
-    return listKimiAvailableModels({ ...modelQueryOptions(threadId), model: thread?.provider === 'kimi-code' ? thread.model : undefined })
+    return listKimiAvailableModels({
+      ...withForceRefresh(modelQueryOptions(threadId), forceRefresh),
+      model: thread?.provider === 'kimi-code' ? thread.model : undefined,
+    })
   },
   'threads:setKimiThinking': (_ctx, threadId, value) => {
     if (sessionManager.get(threadId)?.isRunning()) throw new Error('Stop the current turn before changing thinking.')
