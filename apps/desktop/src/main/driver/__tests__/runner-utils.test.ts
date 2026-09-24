@@ -11,7 +11,8 @@ describe('withoutPackageBins', () => {
   it('drops dependency bin dirs so a bare CLI name resolves to the user install', () => {
     const PATH = [
       path.join('repo', 'node_modules', '.bin'),
-      'C:\\repo\\apps\\desktop\\node_modules\\.bin\\',
+      // Backslash separators without a drive letter: `C:` would split on POSIX's `:` delimiter.
+      '\\repo\\apps\\desktop\\node_modules\\.bin\\',
       '/repo/node_modules/.bin',
       path.join('usr', 'local', 'bin'),
       path.join('home', 'node_modules', '.bin-tools'),
