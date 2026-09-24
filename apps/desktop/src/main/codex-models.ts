@@ -52,7 +52,7 @@ function cacheKey(ssh?: SshConfig | null, wsl?: WslConfig | null): string {
   return 'local'
 }
 
-const REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh']
+const REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']
 
 function normalizeReasoningLevel(value: unknown): ReasoningLevel | null {
   if (value === 'none') return 'off'

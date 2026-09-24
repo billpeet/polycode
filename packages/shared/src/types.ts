@@ -198,57 +198,50 @@ export interface TailscaleStatus {
   error: string | null
 }
 
+// Static fallbacks shown until live discovery answers, or when a CLI is
+// unavailable. Each list is the provider's common lineup as its CLI reported
+// it in September 2026; discovery adds whatever the account can also reach.
 export const ANTHROPIC_MODELS = [
-  { id: 'claude-fable-5[1m]', label: 'Fable 5', contextWindow: 1_000_000 },
-  { id: 'claude-opus-4-8', label: 'Opus 4.8', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-opus-4-7', label: 'Opus 4.7', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'claude-opus-4-6', label: 'Opus 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], contextWindows: [{ value: '200k', label: '200k' }, { value: '1m', label: '1M' }] },
-  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'], contextWindows: [{ value: '200k', label: '200k' }, { value: '1m', label: '1M' }] },
-  { id: 'claude-opus-4-5', label: 'Opus 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'claude-sonnet-4-5', label: 'Sonnet 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'claude-haiku-4-5', label: 'Haiku 4.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'] },
+  { id: 'claude-opus-5-5[1m]', label: 'Opus 5.5', contextWindow: 1_000_000, reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-fable-5-1[1m]', label: 'Fable 5.1', contextWindow: 1_000_000, reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' },
 ] as const satisfies readonly ModelOption[]
 
 export type AnthropicModelId = typeof ANTHROPIC_MODELS[number]['id']
 
 export const OPENAI_MODELS = [
-  { id: 'gpt-5.5', label: 'GPT-5.5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.4', label: 'GPT-5.4', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.3-codex', label: 'GPT-5.3 Codex', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] },
-  { id: 'gpt-5.1-codex', label: 'GPT-5.1 Codex', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
-  { id: 'codex-mini-latest', label: 'Codex Mini', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'] },
+  { id: 'gpt-6-astra', label: 'GPT-6 Astra', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'gpt-6-sol', label: 'GPT-6 Sol', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'gpt-6-luna', label: 'GPT-6 Luna', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'] },
 ] as const satisfies readonly ModelOption[]
 
 export type OpenAIModelId = typeof OPENAI_MODELS[number]['id']
 
+// OpenCode Zen's built-in models only, since they need no provider
+// credentials. Models from the user's own providers arrive via discovery.
 export const OPENCODE_MODELS = [
-  // OpenCode Zen (free)
-  { id: 'opencode/big-pickle', label: 'Big Pickle (Free)' },
-  { id: 'opencode/glm-5-free', label: 'GLM-5 (Free)' },
-  { id: 'opencode/minimax-m2.5-free', label: 'MiniMax M2.5 (Free)' },
-  { id: 'opencode/trinity-large-preview-free', label: 'Trinity Large Preview (Free)' },
-  { id: 'opencode/kimi-k2.5-free', label: 'Kimi K2.5 (Free)' },
-  // Anthropic
-  { id: 'anthropic/claude-opus-4-5', label: 'Claude Opus 4.5' },
-  { id: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5' },
-  { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5' },
-  // OpenAI
-  { id: 'openai/gpt-4o', label: 'GPT-4o' },
-  // Google
-  { id: 'google/gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-] as const
+  { id: 'opencode/big-pickle', label: 'Big Pickle', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'], contextWindow: 200_000 },
+  { id: 'opencode/space-bunny-free', label: 'Space Bunny (Free)', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], contextWindow: 1_048_576 },
+  { id: 'opencode/muse-spark-1.3-contributor-free', label: 'Muse Spark 1.3 (Free)', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'], contextWindow: 1_048_576 },
+  { id: 'opencode/nemotron-3-ultra-free', label: 'Nemotron 3 Ultra (Free)', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'], contextWindow: 1_000_000 },
+  { id: 'opencode/mimo-v2.6-flash-free', label: 'MiMo V2.6 Flash (Free)', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'], contextWindow: 200_000 },
+] as const satisfies readonly ModelOption[]
 
 export type OpenCodeModelId = typeof OPENCODE_MODELS[number]['id']
 
+// Pi's first-party subscriptions (Codex, Claude, Z.ai). The long OpenRouter
+// catalogue arrives via discovery.
 export const PI_MODELS = [
-  { id: 'openai-codex/gpt-5.6-sol', label: 'GPT-5.6 Sol', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai-codex/gpt-5.6-terra', label: 'GPT-5.6 Terra', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'openai-codex/gpt-5.6-luna', label: 'GPT-5.6 Luna', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
-  { id: 'anthropic/claude-fable-5', label: 'Claude Fable 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] },
+  { id: 'openai-codex/gpt-6-astra', label: 'GPT-6 Astra', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 272_000 },
+  { id: 'openai-codex/gpt-6-sol', label: 'GPT-6 Sol', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 272_000 },
+  { id: 'openai-codex/gpt-6-luna', label: 'GPT-6 Luna', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 272_000 },
+  { id: 'anthropic/claude-opus-5-5', label: 'Claude Opus 5.5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 1_000_000 },
+  { id: 'anthropic/claude-fable-5-1', label: 'Claude Fable 5.1', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 1_000_000 },
+  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 1_000_000 },
+  { id: 'anthropic/claude-haiku-4-5', label: 'Claude Haiku 4.5', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 200_000 },
+  { id: 'zai/glm-5.3', label: 'GLM-5.3', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 1_000_000 },
+  { id: 'zai/glm-5.3-flash', label: 'GLM-5.3 Flash', reasoning: true, reasoningLevels: ['off', 'minimal', 'low', 'medium', 'high'], contextWindow: 1_000_000 },
 ] as const satisfies readonly ModelOption[]
 
 export type PiModelId = typeof PI_MODELS[number]['id']
@@ -278,6 +271,13 @@ export interface ModelOption {
 export const CURSOR_MODELS = [
   { id: 'default', label: 'Default' },
   { id: 'auto', label: 'Auto' },
+  { id: 'composer-2.5', label: 'Composer 2.5', fast: true },
+  { id: 'claude-opus-5-5', label: 'Claude Opus 5.5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], fast: true, contextWindows: [{ value: '300k', label: '300K' }, { value: '1m', label: '1M' }] },
+  { id: 'claude-fable-5-1', label: 'Claude Fable 5.1', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], thinking: true, contextWindows: [{ value: '300k', label: '300K' }, { value: '1m', label: '1M' }] },
+  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], thinking: true, contextWindows: [{ value: '300k', label: '300K' }, { value: '1m', label: '1M' }] },
+  { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], fast: true, contextWindows: [{ value: '272k', label: '272K' }, { value: '1m', label: '1M' }] },
+  { id: 'grok-4.7', label: 'Grok 4.7', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high', 'xhigh'], fast: true, contextWindows: [{ value: '256k', label: '256K' }, { value: '500k', label: '500K' }] },
+  { id: 'gemini-3.8-flash', label: 'Gemini 3.8 Flash', reasoning: true, reasoningLevels: ['off', 'low', 'medium', 'high'] },
 ] as const satisfies readonly ModelOption[]
 
 export type CursorModelId = typeof CURSOR_MODELS[number]['id']
@@ -286,11 +286,16 @@ export type CursorModelId = typeof CURSOR_MODELS[number]['id']
 // product's default model slug (mirrors t3code's GROK_BUILT_IN_MODELS floor).
 export const GROK_MODELS = [
   { id: 'grok-build', label: 'Grok Build' },
+  { id: 'grok-4.7', label: 'Grok 4.7' },
 ] as const satisfies readonly ModelOption[]
 
 export type GrokModelId = typeof GROK_MODELS[number]['id']
 
-export const KIMI_MODELS = [{ id: 'default', label: 'CLI default' }] as const satisfies readonly ModelOption[]
+export const KIMI_MODELS = [
+  { id: 'default', label: 'CLI default' },
+  { id: 'kimi-code/k3', label: 'Kimi Code: K3' },
+  { id: 'kimi-code/kimi-for-coding', label: 'Kimi Code: K2.8 Preview' },
+] as const satisfies readonly ModelOption[]
 
 export type Provider = 'claude-code' | 'codex' | 'opencode' | 'pi' | 'cursor' | 'grok' | 'kimi-code'
 
@@ -526,6 +531,8 @@ export interface TokenUsage {
 
 export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'claude-fable-5[1m]': 1_000_000,
+  'claude-fable-5-1[1m]': 1_000_000,
+  'claude-opus-5-5[1m]': 1_000_000,
   // Opus 4.8 / 4.7 run at the 1M context window by default in Claude Code
   // (no `[1m]` suffix needed), matching t3code's selectedClaudeContextWindow.
   // The other 1M-capable models default to 200k and only reach 1M via the
@@ -556,7 +563,7 @@ export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
   'anthropic/claude-opus-4-7': 200_000,
   'anthropic/claude-sonnet-4-6': 200_000,
   'google/gemini-2.5-pro': 1_000_000,
-  'opencode/big-pickle': 128_000,
+  'opencode/big-pickle': 200_000,
   'opencode/glm-5-free': 128_000,
   'opencode/minimax-m2.5-free': 40_960,
   'opencode/trinity-large-preview-free': 128_000,

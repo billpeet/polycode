@@ -24,7 +24,7 @@ function renderMenu(overrides: {
   providerLocked?: boolean
 }) {
   const {
-    modelOptions = [{ id: 'openai-codex/gpt-5.6-sol', label: 'GPT-5.6 Sol' }],
+    modelOptions = [{ id: 'openai-codex/gpt-6-sol', label: 'GPT-6 Sol' }],
     onSelectModel = vi.fn(),
     applyFavourite = vi.fn(),
     providerLocked = false,
@@ -34,7 +34,7 @@ function renderMenu(overrides: {
     <ModelSelectorMenu
       isProcessing={false}
       providerLocked={providerLocked}
-      currentThread={{ provider: 'pi', model: 'openai-codex/gpt-5.6-sol' } as Thread}
+      currentThread={{ provider: 'pi', model: 'openai-codex/gpt-6-sol' } as Thread}
       modelOptions={modelOptions}
       reasoningOptions={['off']}
       currentReasoningLevel="off"
@@ -84,7 +84,7 @@ describe('ModelSelectorMenu model discovery feedback', () => {
       onSelectModel: selectModel,
       modelOptions: [
         { id: 'google/gemini-3.7-flash', label: 'Google: Gemini 3.7 Flash' },
-        { id: 'openai-codex/gpt-5.6-sol', label: 'GPT-5.6 Sol' },
+        { id: 'openai-codex/gpt-6-sol', label: 'GPT-6 Sol' },
         { id: 'anthropic/claude-opus-5', label: 'Claude Opus 5' },
       ],
     })
@@ -92,7 +92,7 @@ describe('ModelSelectorMenu model discovery feedback', () => {
     fireEvent.change(screen.getByRole('combobox', { name: 'Search models' }), { target: { value: 'gemini' } })
 
     expect(screen.getByRole('option', { name: 'Google: Gemini 3.7 Flash' })).toBeTruthy()
-    expect(screen.queryByRole('option', { name: 'GPT-5.6 Sol' })).toBeNull()
+    expect(screen.queryByRole('option', { name: 'GPT-6 Sol' })).toBeNull()
 
     fireEvent.click(screen.getByRole('button', { name: /^Google: Gemini 3.7 Flash/ }))
     expect(selectModel).toHaveBeenCalledWith('google/gemini-3.7-flash')
@@ -102,9 +102,9 @@ describe('ModelSelectorMenu model discovery feedback', () => {
     const selectModel = vi.fn()
     renderMenu({ onSelectModel: selectModel })
     const search = screen.getByRole('combobox', { name: 'Search models' })
-    fireEvent.change(search, { target: { value: 'sol' } })
+    fireEvent.change(search, { target: { value: 'openai-codex/gpt-6-sol' } })
     fireEvent.keyDown(search, { key: 'Enter' })
-    expect(selectModel).toHaveBeenCalledWith('openai-codex/gpt-5.6-sol')
+    expect(selectModel).toHaveBeenCalledWith('openai-codex/gpt-6-sol')
   })
 })
 
@@ -112,24 +112,24 @@ describe('ModelSelectorMenu provider rail', () => {
   it('opens on the current provider tab and lists its live models', () => {
     renderMenu({})
     expect(screen.getByRole('tab', { name: 'Pi' }).getAttribute('aria-selected')).toBe('true')
-    expect(screen.getByRole('option', { name: 'GPT-5.6 Sol' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'GPT-6 Sol' })).toBeTruthy()
   })
 
   it('switches tabs to browse another provider and selects across providers', () => {
     const applyFavourite = vi.fn()
     renderMenu({ applyFavourite })
     fireEvent.click(screen.getByRole('tab', { name: 'Claude Code' }))
-    expect(screen.getByRole('option', { name: 'Opus 4.8' })).toBeTruthy()
+    expect(screen.getByRole('option', { name: 'Opus 5.5' })).toBeTruthy()
 
-    fireEvent.click(screen.getByRole('button', { name: /^Opus 4.8/ }))
-    expect(applyFavourite).toHaveBeenCalledWith({ provider: 'claude-code', model: 'claude-opus-4-8', reasoningLevel: 'off' })
+    fireEvent.click(screen.getByRole('button', { name: /^Opus 5.5/ }))
+    expect(applyFavourite).toHaveBeenCalledWith({ provider: 'claude-code', model: 'claude-opus-5-5[1m]', reasoningLevel: 'off' })
   })
 
   it("refuses another provider's models once the provider is locked", () => {
     const applyFavourite = vi.fn()
     renderMenu({ applyFavourite, providerLocked: true })
     fireEvent.click(screen.getByRole('tab', { name: 'Codex' }))
-    const row = screen.getByRole('button', { name: /^GPT-5.5 /}) as HTMLButtonElement
+    const row = screen.getByRole('button', { name: /^GPT-6 Luna /}) as HTMLButtonElement
     expect(row.disabled).toBe(true)
     fireEvent.click(row)
     expect(applyFavourite).not.toHaveBeenCalled()
@@ -139,17 +139,17 @@ describe('ModelSelectorMenu provider rail', () => {
 describe('ModelSelectorMenu favourites', () => {
   it('stars a model into the first free slot and shows it on the favourites tab', () => {
     renderMenu({})
-    fireEvent.click(screen.getByRole('button', { name: 'Add GPT-5.6 Sol to favourites' }))
-    expect(useFavouritesStore.getState().bySlot[1]).toEqual({ provider: 'pi', model: 'openai-codex/gpt-5.6-sol', reasoningLevel: 'off' })
+    fireEvent.click(screen.getByRole('button', { name: 'Add GPT-6 Sol to favourites' }))
+    expect(useFavouritesStore.getState().bySlot[1]).toEqual({ provider: 'pi', model: 'openai-codex/gpt-6-sol', reasoningLevel: 'off' })
 
     fireEvent.click(screen.getByRole('tab', { name: 'Favourites' }))
-    expect(within(screen.getByRole('listbox')).getByRole('button', { name: /Pi · GPT-5.6 Sol/ })).toBeTruthy()
+    expect(within(screen.getByRole('listbox')).getByRole('button', { name: /Pi · GPT-6 Sol/ })).toBeTruthy()
   })
 
   it('un-stars a favourited model', () => {
-    useFavouritesStore.setState({ bySlot: { 3: { provider: 'pi', model: 'openai-codex/gpt-5.6-sol', reasoningLevel: 'high' } } })
+    useFavouritesStore.setState({ bySlot: { 3: { provider: 'pi', model: 'openai-codex/gpt-6-sol', reasoningLevel: 'high' } } })
     renderMenu({})
-    fireEvent.click(screen.getByRole('button', { name: 'Remove GPT-5.6 Sol from favourites' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Remove GPT-6 Sol from favourites' }))
     expect(useFavouritesStore.getState().bySlot[3]).toBeUndefined()
   })
 })
