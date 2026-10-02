@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { canonicalToolName, foldMessages } from '@polycode/shared'
-import { useVirtualizer } from '@tanstack/react-virtual'
+import { measureElement, useVirtualizer } from '@tanstack/react-virtual'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import { renderEntry } from './renderEntry'
@@ -25,8 +25,6 @@ const AUTO_SCROLL_THRESHOLD_PX = 64
 // Persistent height cache — survives thread switches and re-renders.
 // Keyed by entry.key (message id or group id).
 const heightCache = new Map<string, number>()
-let heightCacheWidth: number | null = null
-const WIDTH_CHANGE_THRESHOLD = 16
 
 function safeParseJson(str: string | null): Record<string, unknown> | null {
   if (!str) return null
@@ -540,6 +538,18 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
       return estimateEntryHeight(entry, containerWidth)
     },
     overscan: 5,
+    // Mirror every ResizeObserver measurement into heightCache. estimateSize
+    // reads heightCache, and for a mounted row whose real size happened to
+    // equal its estimate TanStack never records a size of its own (resizeItem
+    // only stores non-zero deltas) — the estimate *is* its position. Keeping
+    // heightCache at the row's latest real height keeps that position correct
+    // when the row later grows (tool call expanded, highlighting settles).
+    measureElement: (element, entry, instance) => {
+      const size = measureElement(element, entry, instance)
+      const key = (element as HTMLElement).dataset.entryKey
+      if (entry && key && size > 0) heightCache.set(key, size)
+      return size
+    },
   })
 
   // Prevent scroll adjustment when near bottom (avoids jumps during streaming)
@@ -555,19 +565,17 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     }
   }, [rowVirtualizer])
 
-  // Re-measure when container width changes; clear height cache if width shifted significantly
-  useEffect(() => {
-    if (containerWidth != null) {
-      if (
-        heightCacheWidth != null &&
-        Math.abs(containerWidth - heightCacheWidth) > WIDTH_CHANGE_THRESHOLD
-      ) {
-        heightCache.clear()
-      }
-      heightCacheWidth = containerWidth
-      rowVirtualizer.measure()
-    }
-  }, [containerWidth, rowVirtualizer])
+  // Width changes deliberately do NOT call rowVirtualizer.measure() or clear
+  // heightCache. Every mounted row is w-full, so a width change resizes it and
+  // its ResizeObserver re-measures it on its own. measure() ran *after* those
+  // observers (it is triggered by our container observer's state update), threw
+  // their fresh sizes away, and nothing re-measured the rows afterwards — so
+  // mounted rows fell back to estimates and overlapped until remounted.
+  // Clearing heightCache did the same thing more quietly: TanStack only records
+  // a size when it differs from the estimate, so a mounted row whose estimate
+  // (its heightCache entry) already matched the DOM is positioned by that
+  // estimate. Changing the estimate under it moves it. Off-screen rows keep
+  // their old-width sizes until they remount and are measured again.
 
   // Reset to "follow bottom" when thread changes
   useEffect(() => {
@@ -630,8 +638,8 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   // back to heightCache estimates — an underestimated long row then overlapped
   // the rows below it until it was scrolled out of overscan and remounted.
   // Mount-time measureElement + TanStack's per-element ResizeObserver already
-  // cover fresh rows and later size changes; the only measure() we still need
-  // is the width-change one above.
+  // cover fresh rows and later size changes, including width changes — do not
+  // reintroduce measure() anywhere (see the width-change note above).
 
   const measureVirtualRow = useCallback((node: HTMLDivElement | null) => {
     if (!node) return
