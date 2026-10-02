@@ -10,29 +10,70 @@ const reasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oo
 const views = new Set(['chat', 'diff', 'file', 'command', 'terminal', 'browser', 'tasks', 'files', 'commands', 'plan', 'workspace'])
 const processTypes = new Set(['Browser', 'Tab', 'Utility', 'Zygote', 'Sandbox helper', 'GPU', 'Pepper Plugin', 'Pepper Plugin Broker'])
 
+/**
+ * Exit code Windows gives processes it terminates while ending the user's
+ * session (`DBG_TERMINATE_PROCESS`, 0x40010004). Seen on GPU, Utility and
+ * renderer processes when Windows Update restarted the machine (GitHub #97).
+ */
+export const WINDOWS_SESSION_TERMINATED_EXIT_CODE = 0x40010004
+
+/** Exits closer together than this are one incident. */
+const INCIDENT_WINDOW_MS = 1500
+/** How long a Windows session-end signal suppresses reports; the user can still cancel a shutdown. */
+const SESSION_END_SUPPRESSION_MS = 60_000
+const MAX_REPORTED_EXITS = 20
+
+type ShutdownSignal = 'app-quit' | 'windows-session-end' | 'windows-session-terminated'
+
+interface ProcessExit {
+  at: number
+  processType: string
+  reason: string
+  exitCode: number | null
+  contents?: WebContents
+  context: Record<string, unknown>
+}
+
 export function installCrashDiagnostics(options: {
   capture: boolean
   locationId: (contents: WebContents) => string | undefined | null
+  /** Test hook: how long to collect exits into one incident. */
+  incidentWindowMs?: number
 }): void {
+  const incidentWindowMs = options.incidentWindowMs ?? INCIDENT_WINDOW_MS
   const activeViews = new Map<number, string>()
-  let crashes: number[] = []
+  let incidents: number[] = []
   let presenting = false
+  let pending: ProcessExit[] = []
+  let pendingTimer: ReturnType<typeof setTimeout> | undefined
+  let shutdown: { signal: ShutdownSignal; at: number } | null = null
+
   ipcMain.on('telemetry:view', (event, view: unknown) => {
     if (event.sender.getType() === 'window' && typeof view === 'string' && views.has(view)) {
       activeViews.set(event.sender.id, view)
     }
   })
 
-  async function report(details: Electron.RenderProcessGoneDetails, type: string, contents?: WebContents): Promise<void> {
-    if (details.reason === 'clean-exit') return
-    const now = Date.now()
-    crashes = [...crashes.filter((at) => now - at < 5 * 60_000), now].slice(-3)
+  function signalShutdown(signal: ShutdownSignal): void {
+    if (shutdown?.signal === 'app-quit') return
+    shutdown = { signal, at: Date.now() }
+  }
+
+  /** The app quitting never reverses; a Windows session end can be cancelled. */
+  function activeShutdown(): ShutdownSignal | null {
+    if (!shutdown) return null
+    if (shutdown.signal === 'app-quit') return shutdown.signal
+    return Date.now() - shutdown.at < SESSION_END_SUPPRESSION_MS ? shutdown.signal : null
+  }
+
+  function describeExit(details: Electron.RenderProcessGoneDetails, type: string, contents?: WebContents): ProcessExit {
     const location = contents?.getType() === 'webview' ? options.locationId(contents) : null
     let gpu: Record<string, string> = {}
     try { gpu = { ...app.getGPUFeatureStatus() } } catch { /* GPU may be unavailable during startup. */ }
+    const reason = reasons.has(details.reason) ? details.reason : 'unknown'
+    const exitCode = Number.isInteger(details.exitCode) ? details.exitCode : null
     const context = {
-      reason: reasons.has(details.reason) ? details.reason : 'unknown',
-      exitCode: Number.isInteger(details.exitCode) ? details.exitCode : null,
+      reason, exitCode,
       processType: type,
       appVersion: app.getVersion(), electronVersion: process.versions.electron,
       chromiumVersion: process.versions.chrome,
@@ -40,40 +81,97 @@ export function installCrashDiagnostics(options: {
       activeView: contents?.getType() === 'webview' ? 'browser' : contents ? activeViews.get(contents.id) ?? 'unknown' : 'unknown',
       guestLocationId: location ? createHash('sha256').update(location).digest('hex') : null,
       memory: latestMemorySamples(), breadcrumbs: crashBreadcrumbs(),
+      shutdownSignal: activeShutdown(),
     }
-    writeFatalLog('process-gone', JSON.stringify(context))
-    recordLog('FATAL', 'Electron process exited unexpectedly', { 'crash.context': JSON.stringify(context) })
+    return { at: Date.now(), processType: type, reason, exitCode, contents, context }
+  }
+
+  function onProcessGone(details: Electron.RenderProcessGoneDetails, type: string, contents?: WebContents): void {
+    if (details.reason === 'clean-exit') return
+    if (process.platform === 'win32' && details.reason === 'killed' && details.exitCode === WINDOWS_SESSION_TERMINATED_EXIT_CODE) {
+      signalShutdown('windows-session-terminated')
+    }
+    const exit = describeExit(details, type, contents)
+    // The local log is written at once: the main process may not outlive the burst.
+    writeFatalLog('process-gone', JSON.stringify(exit.context))
+    flushAppLogs()
+    if (activeShutdown()) return
+    pending.push(exit)
+    pendingTimer ??= setTimeout(() => {
+      pendingTimer = undefined
+      const exits = pending
+      pending = []
+      void resolveIncident(exits).catch(reportFailure)
+    }, incidentWindowMs)
+  }
+
+  /**
+   * One process-tree failure makes Electron report each child separately.
+   * Report the burst once, and not at all if the app or the Windows session
+   * started ending while it was collected.
+   */
+  async function resolveIncident(exits: ProcessExit[]): Promise<void> {
+    if (exits.length === 0) return
+    const signal = activeShutdown()
+    if (signal) {
+      writeFatalLog('process-gone-suppressed', JSON.stringify({ shutdownSignal: signal, exits: exits.length }))
+      flushAppLogs()
+      return
+    }
+    // The first exit that was not merely killed is the likeliest trigger.
+    const primary = exits.find((exit) => exit.reason !== 'killed') ?? exits[0]
+    const unexpected = exits.some((exit) => exit.reason !== 'killed')
+    const context = {
+      ...primary.context,
+      exitCount: exits.length,
+      exits: exits.slice(0, MAX_REPORTED_EXITS).map((exit) => ({
+        processType: exit.processType, reason: exit.reason, exitCode: exit.exitCode, offsetMs: exit.at - exits[0].at,
+      })),
+    }
+    const breadcrumbs = primary.context.breadcrumbs as ReturnType<typeof crashBreadcrumbs>
+    recordLog(unexpected ? 'FATAL' : 'WARN', 'Electron process exited unexpectedly', { 'crash.context': JSON.stringify(context) })
     if (options.capture) Sentry.captureEvent({
-      message: 'Electron process exited unexpectedly', level: 'fatal',
-      tags: { source: 'process-gone', processType: type, reason: context.reason },
+      message: 'Electron process exited unexpectedly', level: unexpected ? 'fatal' : 'warning',
+      fingerprint: ['process-gone', primary.processType, primary.reason, String(primary.exitCode)],
+      tags: {
+        source: 'process-gone', processType: primary.processType, reason: primary.reason,
+        exitCode: String(primary.exitCode), exitCount: String(exits.length),
+      },
       contexts: { crash: context },
       // Do not inherit SDK breadcrumbs that may contain URLs or IPC payloads.
-      breadcrumbs: context.breadcrumbs.map(({ at, name, durationMs }) => ({
+      breadcrumbs: breadcrumbs.map(({ at, name, durationMs }) => ({
         timestamp: at / 1000, category: 'performance', message: name, data: { durationMs },
       })),
     })
-    flushAppLogs()
     let timer: ReturnType<typeof setTimeout> | undefined
     await Promise.race([
       Promise.allSettled([flushObservability(), ...(options.capture ? [Sentry.flush(2000)] : [])]),
       new Promise<void>((resolve) => { timer = setTimeout(resolve, 2000) }),
     ])
     clearTimeout(timer)
-    if (!app.isReady() || presenting || contents?.isDestroyed()) return
+    const now = Date.now()
+    incidents = [...incidents.filter((at) => now - at < 5 * 60_000), now].slice(-3)
+    if (!app.isReady() || presenting || activeShutdown()) return
+    const renderers = [...new Set(exits.flatMap((exit) => exit.contents && !exit.contents.isDestroyed() ? [exit.contents] : []))]
     // Electron restarts child processes itself. Offer GPU diagnostics if failures repeat.
-    if (!contents && crashes.length < 3) return
+    // A renderer whose contents were destroyed meanwhile has nothing to recover.
+    const repeated = incidents.length >= 3
+    const rendererGone = exits.some((exit) => exit.contents)
+    if (renderers.length === 0 && (rendererGone || !repeated)) return
     presenting = true
     try {
-      const repeated = crashes.length >= 3
-      const buttons = contents ? ['Reload', 'Dismiss'] : ['Dismiss']
+      const buttons = renderers.length ? ['Reload', 'Dismiss'] : ['Dismiss']
       if (repeated) buttons.push('Restart with GPU disabled')
+      const others = exits.length > 1 ? ` ${exits.length - 1} other process exit${exits.length > 2 ? 's' : ''} followed.` : ''
       const { response } = await dialog.showMessageBox({
         type: 'error', title: 'PolyCode process stopped',
-        message: `${type} stopped (${context.reason}).`,
-        detail: 'Diagnostics were written to the app logs.' + (repeated ? ' Repeated crashes detected. Restarting stops running sessions; disabling GPU can help diagnose graphics problems.' : ''),
-        buttons, cancelId: contents ? 1 : 0, noLink: true,
+        message: `${primary.processType} stopped (${primary.reason}).`,
+        detail: 'Diagnostics were written to the app logs.' + others + (repeated ? ' Repeated crashes detected. Restarting stops running sessions; disabling GPU can help diagnose graphics problems.' : ''),
+        buttons, cancelId: renderers.length ? 1 : 0, noLink: true,
       })
-      if (buttons[response] === 'Reload' && contents && !contents.isDestroyed()) contents.reload()
+      if (buttons[response] === 'Reload') {
+        for (const contents of renderers) if (!contents.isDestroyed()) contents.reload()
+      }
       if (buttons[response] === 'Restart with GPU disabled') {
         app.relaunch({ args: [...process.argv.slice(1).filter((arg) => arg !== '--disable-gpu'), '--disable-gpu'] })
         app.quit()
@@ -81,18 +179,28 @@ export function installCrashDiagnostics(options: {
     } finally { presenting = false }
   }
 
+  function reportFailure(error: unknown): void {
+    writeFatalLog('crash-diagnostics-failed', error)
+    flushAppLogs()
+  }
+
+  // Covers every quit this app starts: window close, updater install, relaunch.
+  app.on('before-quit', () => signalShutdown('app-quit'))
+  // On Windows, a shutdown, restart or log-off skips `before-quit`.
+  app.on('browser-window-created', (_event, window) => {
+    window.on('query-session-end', () => signalShutdown('windows-session-end'))
+    window.on('session-end', () => signalShutdown('windows-session-end'))
+  })
   app.on('web-contents-created', (_event, contents) => {
     const type = contents.getType()
     if (type !== 'window' && type !== 'webview') return
     contents.on('destroyed', () => activeViews.delete(contents.id))
     contents.on('render-process-gone', (_event, details) => {
-      void report(details, type === 'webview' ? 'webview' : 'main-renderer', contents)
-        .catch((error) => { writeFatalLog('crash-diagnostics-failed', error); flushAppLogs() })
+      try { onProcessGone(details, type === 'webview' ? 'webview' : 'main-renderer', contents) } catch (error) { reportFailure(error) }
     })
   })
   app.on('child-process-gone', (_event, details) => {
     // Service names are arbitrary strings and can contain user data. Report the known type only.
-    void report(details, processTypes.has(details.type) ? details.type : 'unknown-child')
-      .catch((error) => { writeFatalLog('crash-diagnostics-failed', error); flushAppLogs() })
+    try { onProcessGone(details, processTypes.has(details.type) ? details.type : 'unknown-child') } catch (error) { reportFailure(error) }
   })
 }
