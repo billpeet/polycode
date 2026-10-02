@@ -13,6 +13,9 @@ interface MessageStore {
 
   appendEvent: (threadId: string, event: OutputEvent) => void
   appendEventToSession: (sessionId: string, threadId: string, event: OutputEvent) => void
+  /** One store write for a batch of frames; see lib/outputBatcher.ts. */
+  appendEvents: (threadId: string, events: OutputEvent[]) => void
+  appendEventsToSession: (sessionId: string, threadId: string, events: OutputEvent[]) => void
 
   appendUserMessage: (threadId: string, content: string, messageId?: string) => void
   appendUserMessageToSession: (sessionId: string, threadId: string, content: string, messageId?: string) => void
@@ -20,6 +23,20 @@ interface MessageStore {
 
   clear: (threadId: string) => void
   clearSession: (sessionId: string) => void
+}
+
+/** The transient message a streamed frame becomes, or nothing for frames that are not messages. */
+function streamMessageFor(threadId: string, sessionId: string | null, event: OutputEvent): Message[] {
+  if (event.type === 'status' || event.type === 'rate_limit' || event.type === 'usage') return []
+  return [{
+    id: `stream-${Date.now()}-${Math.random()}`,
+    thread_id: threadId,
+    session_id: sessionId ?? event.sessionId ?? null,
+    role: eventRole(event),
+    content: event.content,
+    metadata: event.metadata ? JSON.stringify(event.metadata) : null,
+    created_at: new Date().toISOString()
+  }]
 }
 
 export const useMessageStore = create<MessageStore>((set) => ({
@@ -87,6 +104,28 @@ export const useMessageStore = create<MessageStore>((set) => ({
       messagesBySession: {
         ...s.messagesBySession,
         [sessionId]: appendFoldedMessage(s.messagesBySession[sessionId] ?? [], msg)
+      }
+    }))
+  },
+
+  appendEvents: (threadId, events) => {
+    const incoming = events.flatMap((event) => streamMessageFor(threadId, null, event))
+    if (incoming.length === 0) return
+    set((s) => ({
+      messagesByThread: {
+        ...s.messagesByThread,
+        [threadId]: incoming.reduce(appendFoldedMessage, s.messagesByThread[threadId] ?? [])
+      }
+    }))
+  },
+
+  appendEventsToSession: (sessionId, threadId, events) => {
+    const incoming = events.flatMap((event) => streamMessageFor(threadId, sessionId, event))
+    if (incoming.length === 0) return
+    set((s) => ({
+      messagesBySession: {
+        ...s.messagesBySession,
+        [sessionId]: incoming.reduce(appendFoldedMessage, s.messagesBySession[sessionId] ?? [])
       }
     }))
   },

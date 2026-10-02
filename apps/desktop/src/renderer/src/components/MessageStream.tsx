@@ -33,6 +33,17 @@ function safeParseJson(str: string | null): Record<string, unknown> | null {
   try { return JSON.parse(str) } catch { return null }
 }
 
+// `groupByAgent` runs on every transcript update. Streaming replaces only the tail message
+// object, so parsing metadata once per object (not once per update per message) turns the
+// per-frame cost from "JSON.parse the whole transcript" into a map lookup per message.
+const parsedMetadata = new WeakMap<Message, Record<string, unknown> | null>()
+function messageMetadata(msg: Message): Record<string, unknown> | null {
+  if (parsedMetadata.has(msg)) return parsedMetadata.get(msg) ?? null
+  const parsed = safeParseJson(msg.metadata)
+  parsedMetadata.set(msg, parsed)
+  return parsed
+}
+
 export interface MessageEntry {
   kind: 'single'
   key: string
@@ -93,7 +104,7 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   // Build a lookup of tool_result messages by tool_use_id
   const resultByToolUseId = new Map<string, Message>()
   for (const msg of messages) {
-    const meta = safeParseJson(msg.metadata)
+    const meta = messageMetadata(msg)
     if (meta?.type === 'tool_result') {
       const id = meta.tool_use_id as string | undefined
       if (id) resultByToolUseId.set(id, msg)
@@ -104,7 +115,7 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
   const consumedIds = new Set<string>()
 
   for (const msg of messages) {
-    const meta = safeParseJson(msg.metadata)
+    const meta = messageMetadata(msg)
 
     // Skip tool_results that have been paired — they'll be rendered inside their call
     if (meta?.type === 'tool_result') {
@@ -122,7 +133,7 @@ function pairMessages(messages: Message[]): (MessageEntry | MessageGroup)[] {
         message: msg,
         metadata: meta,
         result,
-        resultMetadata: safeParseJson(result?.metadata ?? null),
+        resultMetadata: result ? messageMetadata(result) : null,
       })
     } else {
       flat.push({
@@ -236,7 +247,7 @@ function deriveAgentMeta(bucketMessages: Message[]): {
   let lastToolName: string | undefined
 
   for (const msg of bucketMessages) {
-    const meta = safeParseJson(msg.metadata)
+    const meta = messageMetadata(msg)
     if (!meta) continue
     if (typeof meta.agent_subagent_type === 'string' && meta.agent_subagent_type) {
       subagentType = meta.agent_subagent_type
@@ -286,7 +297,7 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
 
   for (const [position, msg] of messages.entries()) {
     messagePosition.set(msg.id, position)
-    const meta = safeParseJson(msg.metadata)
+    const meta = messageMetadata(msg)
     const parentKey = messageParentKey(meta)
     if (parentKey) {
       let bucket = buckets.get(parentKey)
@@ -305,7 +316,7 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
   // No sub-agents at all → plain paired list.
   if (buckets.size === 0) {
     const visible = foldMessages(
-      mainMessages.filter((message) => !isAgentStatusBubble(safeParseJson(message.metadata)))
+      mainMessages.filter((message) => !isAgentStatusBubble(messageMetadata(message)))
     )
     return pairMessages(visible)
   }
@@ -350,7 +361,7 @@ export function groupByAgent(messages: Message[]): StreamEntry[] {
     // Compact again after bucketing: concurrent agents can interleave their raw
     // deltas, breaking global adjacency even when this agent produced one stream.
     const visible = foldMessages(
-      scopeMessages.filter((m) => !isAgentStatusBubble(safeParseJson(m.metadata)))
+      scopeMessages.filter((m) => !isAgentStatusBubble(messageMetadata(m)))
     )
     const paired = pairMessages(visible)
     const result: StreamEntry[] = []

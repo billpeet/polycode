@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { sanitizeMarkdownHtml } from '../lib/sanitizeMarkdown'
 import { getHighlighter, onReady } from '../lib/shiki'
@@ -70,7 +70,7 @@ interface Props {
   className?: string
 }
 
-export default function MarkdownContent({ content, className = '' }: Props) {
+function MarkdownContent({ content, className = '' }: Props) {
   const ref = useRef<HTMLDivElement>(null)
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
   const selectFile = useFilesStore((state) => state.selectFile)
@@ -151,3 +151,7 @@ export default function MarkdownContent({ content, className = '' }: Props) {
     />
   )
 }
+
+// Memoised: a parent re-render with the same `content` must not re-run the parse/sanitize
+// effect's component body; completed messages re-render on every streamed frame otherwise.
+export default memo(MarkdownContent)
