@@ -31,7 +31,10 @@ export interface ObservabilityConfig {
   endpoint?: string
   headers?: Record<string, string>
   serviceVersion: string
+  /** Unique per running process. Two processes sharing one id interleave their counters. */
   serviceInstanceId?: string
+  /** Stable per installation (derived from the userData path), for grouping across launches. */
+  installId?: string
   environment: string
   exportIntervalMs?: number
 }
@@ -74,8 +77,23 @@ export function observabilityConfigFromEnv(serviceVersion: string, userDataPath?
     endpoint: process.env.OTEL_EXPORTER_OTLP_ENDPOINT?.trim() || packagedEndpoint.trim() || undefined,
     headers: parseOtlpHeaders(process.env.OTEL_EXPORTER_OTLP_HEADERS ?? packagedHeaders),
     serviceVersion,
-    ...(userDataPath ? { serviceInstanceId: createHash('sha256').update(userDataPath).digest('hex') } : {}),
+    ...(userDataPath ? installIdentity(userDataPath) : {}),
     environment: process.env.OTEL_ENVIRONMENT?.trim() || (process.env.NODE_ENV === 'production' ? 'production' : 'development'),
+  }
+}
+
+/**
+ * `service.instance.id` was the installation hash alone until a second process from the
+ * same install (a lingering main process after an update) exported the same series:
+ * Prometheus saw the two cumulative counters interleaved, counted a reset every 30s, and
+ * reported call rates a thousand times too high. The id is now per process; the
+ * installation hash moves to its own attribute so launches can still be grouped.
+ */
+function installIdentity(userDataPath: string): Pick<ObservabilityConfig, 'serviceInstanceId' | 'installId'> {
+  const installId = createHash('sha256').update(userDataPath).digest('hex')
+  return {
+    installId,
+    serviceInstanceId: `${installId.slice(0, 16)}-${process.pid}-${Date.now().toString(36)}`,
   }
 }
 
@@ -89,6 +107,7 @@ export function initializeObservability(config: ObservabilityConfig): boolean {
     'deployment.environment.name': config.environment,
     'process.type': 'electron-main',
     ...(config.serviceInstanceId ? { 'service.instance.id': config.serviceInstanceId } : {}),
+    ...(config.installId ? { 'polycode.install.id': config.installId } : {}),
   })
   const exporterOptions = { headers: config.headers }
 

@@ -77,9 +77,10 @@ describe('observability configuration', () => {
   })
 })
 
-it('derives a stable anonymous installation identity from userData', () => {
-  const first = observabilityConfigFromEnv('1', '/users/alice/polycode').serviceInstanceId
-  expect(first).toMatch(/^[a-f0-9]{64}$/)
-  expect(observabilityConfigFromEnv('2', '/users/alice/polycode').serviceInstanceId).toBe(first)
-  expect(observabilityConfigFromEnv('1', '/users/bob/polycode').serviceInstanceId).not.toBe(first)
+it('derives a stable installation identity and a per-process instance identity from userData', () => {
+  const first = observabilityConfigFromEnv('1', '/users/alice/polycode')
+  expect(first.installId).toMatch(/^[a-f0-9]{64}$/)
+  expect(observabilityConfigFromEnv('2', '/users/alice/polycode').installId).toBe(first.installId)
+  expect(observabilityConfigFromEnv('1', '/users/bob/polycode').installId).not.toBe(first.installId)
+  expect(first.serviceInstanceId).toMatch(new RegExp(`^${first.installId!.slice(0, 16)}-${process.pid}-[0-9a-z]+$`))
 })

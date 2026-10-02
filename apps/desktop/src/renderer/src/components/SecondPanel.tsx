@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { memo, useState, useEffect, useCallback, useRef } from 'react'
 import { useFilesStore } from '../stores/files'
 import { useUiStore } from '../stores/ui'
 import { useAvailableAuxTabs, AUX_TAB_LABELS, type AuxTab } from '../hooks/useAvailableAuxTabs'
@@ -73,7 +73,7 @@ function useResize(defaultWidth: number) {
 
 // ─── SecondPanel ──────────────────────────────────────────────────────────────
 
-export default function SecondPanel({ threadId }: { threadId: string }) {
+function SecondPanel({ threadId }: { threadId: string }) {
   const layoutMode = useUiStore((s) => s.layoutMode)
   const isFull = layoutMode === 'full'
   const chatTabActive = useUiStore((s) => s.isChatTabActive(threadId))
@@ -324,3 +324,5 @@ export default function SecondPanel({ threadId }: { threadId: string }) {
     </div>
   )
 }
+
+export default memo(SecondPanel)

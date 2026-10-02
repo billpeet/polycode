@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { memo, useEffect, useState } from 'react'
 import { useMessageStore } from '../stores/messages'
 import { useThreadStore } from '../stores/threads'
 import { useToastStore } from '../stores/toast'
@@ -336,7 +336,9 @@ function ThreadViewContent({ threadId }: Props) {
   )
 }
 
-export default function ThreadView(props: Props) {
+function ThreadView(props: Props) {
   const activeSessionId = useSessionStore((s) => s.activeSessionByThread[props.threadId])
   return <ThreadViewContent key={`${props.threadId}:${activeSessionId ?? ''}`} {...props} />
 }
+
+export default memo(ThreadView)
