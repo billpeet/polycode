@@ -96,16 +96,22 @@ export const reportReactCommit: ProfilerOnRenderCallback = (
   startTime,
   commitTime
 ) => {
+  // Only `phase` is a metric attribute; the timings vary per commit and would otherwise
+  // become one Prometheus series each, and would defeat the throttle key.
   reportPerf(
     `react-commit:${id}`,
     actualDuration,
+    { phase },
     {
-      phase,
-      baseDuration: baseDuration.toFixed(1),
-      startTime: startTime.toFixed(1),
-      commitTime: commitTime.toFixed(1),
-    },
-    { thresholdMs: REACT_COMMIT_THRESHOLD_MS, minIntervalMs: 2000 }
+      thresholdMs: REACT_COMMIT_THRESHOLD_MS,
+      minIntervalMs: 2000,
+      throttleKey: `react-commit:${id}`,
+      logDetails: {
+        baseDuration: baseDuration.toFixed(1),
+        startTime: startTime.toFixed(1),
+        commitTime: commitTime.toFixed(1),
+      },
+    }
   )
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { useCommandStore, instKey } from '../stores/commands'
 import { useLocationStore } from '../stores/locations'
 import { useProjectStore, sortProjects } from '../stores/projects'
@@ -52,7 +52,7 @@ function playChime() {
   }
 }
 
-export default function Sidebar() {
+function Sidebar() {
   const { isCollapsed, toggle } = useSidebar()
 
   const projects = useProjectStore((s) => s.projects)
@@ -738,3 +738,7 @@ export default function Sidebar() {
     />
   )
 }
+
+// Memoised: these panels subscribe to every store they need, so a parent render carries no
+// new information for them. Without this, any App render re-rendered the whole tree.
+export default memo(Sidebar)

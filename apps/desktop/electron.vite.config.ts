@@ -30,6 +30,12 @@ export default defineConfig({
   },
   renderer: {
     plugins: [react(), tailwindcss(), ...(sentryPlugin ? [sentryPlugin] : [])],
+    // The profiling build keeps `<Profiler onRender>` alive in production. The default
+    // build strips it, which is why `react-commit:*` perf reports were absent from a
+    // whole week of telemetry while renderer long tasks were not.
+    resolve: {
+      alias: [{ find: /^react-dom\/client$/, replacement: 'react-dom/profiling' }],
+    },
     // Web-client dev loop: open http://localhost:5173 in a browser while `electron-vite
     // dev` runs. There is no preload there, so the renderer takes the web path and its
     // API calls proxy to the running app's remote-control server. `changeOrigin` rewrites

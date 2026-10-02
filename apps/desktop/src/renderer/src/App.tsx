@@ -60,7 +60,16 @@ export default function App() {
   const expandProject = useProjectStore((s) => s.expand)
 
   const fetchThreads = useThreadStore((s) => s.fetch)
-  const byProject = useThreadStore((s) => s.byProject)
+  // A string, not the `byProject` object: subscribing to the object re-rendered the whole
+  // application tree on every thread-list write, which is where the ~1s renderer block on
+  // each worktree removal was measured.
+  const ownerProjectId = useThreadStore((s) => {
+    if (!s.selectedThreadId) return null
+    for (const [projectId, threads] of Object.entries(s.byProject)) {
+      if ((threads ?? []).some((thread) => thread.id === s.selectedThreadId)) return projectId
+    }
+    return null
+  })
   const fetchLocations = useLocationStore((s) => s.fetch)
   const fetchPools = useLocationStore((s) => s.fetchPools)
   const selectedThreadId = useThreadStore((s) => s.selectedThreadId)
@@ -404,12 +413,6 @@ export default function App() {
 
   // Keep the selected project aligned with the currently selected thread.
   useEffect(() => {
-    if (!selectedThreadId) return
-
-    const ownerProjectId = Object.entries(byProject).find(([, threads]) =>
-      (threads ?? []).some((thread) => thread.id === selectedThreadId)
-    )?.[0]
-
     if (!ownerProjectId || ownerProjectId === selectedProjectId) return
 
     selectProject(ownerProjectId)
@@ -420,7 +423,7 @@ export default function App() {
     if (!useLocationStore.getState().poolsByProject[ownerProjectId]) {
       void fetchPools(ownerProjectId)
     }
-  }, [byProject, expandProject, fetchLocations, fetchPools, selectedProjectId, selectedThreadId, selectProject])
+  }, [ownerProjectId, expandProject, fetchLocations, fetchPools, selectedProjectId, selectProject])
 
   return (
     <UiErrorBoundary

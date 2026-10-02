@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { memo, useState } from 'react'
 import { PanelRight } from 'lucide-react'
 import FileTree from './FileTree'
 import CommandsSection from './right-panel/CommandsSection'
@@ -13,7 +13,7 @@ interface Props {
   threadId: string
 }
 
-export default function RightPanel({ threadId }: Props) {
+function RightPanel({ threadId }: Props) {
   const [tasksCollapsed, setTasksCollapsed] = useState(false)
   const [gitCollapsed, setGitCollapsed] = useState(false)
   const activeTab = useUiStore((s) => s.rightPanelTab)
@@ -131,3 +131,5 @@ export default function RightPanel({ threadId }: Props) {
     </aside>
   )
 }
+
+export default memo(RightPanel)
