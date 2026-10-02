@@ -3,7 +3,6 @@
  * and the remote-control RPC surface (extracted from ipc/handlers.ts).
  */
 import { existsSync, mkdirSync } from 'fs'
-import { rm } from 'fs/promises'
 import { homedir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
 import {
@@ -25,6 +24,8 @@ import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
 import { runSerialized } from './keyed-queue'
 import { withSpan } from './observability'
+import { stopWatchesUnder } from './file-watch'
+import { discardDirectory, sweepLeftovers } from './worktree-trash'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
 
 /** Expand a leading `~` to the user's home directory. */
@@ -175,23 +176,6 @@ export function isWorktreeDirectoryCleanupError(error: unknown): boolean {
   )
 }
 
-async function removeWorktreeDirectoryBestEffort(path: string): Promise<void> {
-  if (!existsSync(path)) return
-  try {
-    // `rm`, not `rmSync`: a worktree routinely holds tens of thousands of
-    // files, and a synchronous recursive delete runs on Electron's main
-    // process, freezing the whole UI — composer included — until the
-    // directory is gone. The promise-based API deletes on the threadpool.
-    await rm(path, { recursive: true, force: true })
-  } catch (removeError) {
-    const code = removeError && typeof removeError === 'object' && 'code' in removeError
-      ? String((removeError as { code?: unknown }).code)
-      : ''
-    if (code !== 'EBUSY' && code !== 'EPERM') throw removeError
-    console.warn(`[worktree] Could not remove locked worktree directory "${path}"; removing PolyCode location only.`)
-  }
-}
-
 /**
  * Atomically provision a brand-new project *and* its first local location.
  * All filesystem/git work happens BEFORE any DB rows are written, so a
@@ -321,14 +305,34 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
   const queuedAt = performance.now()
   await runSerialized(worktreeQueueKey(parent?.path ?? location.path), async () => {
     const waitedMs = performance.now() - queuedAt
+    // A live `fs.watch` holds a Windows handle on the directory, which is one way
+    // `git worktree remove` ends in "Permission denied".
+    const restoreWatches = stopWatchesUnder(location.path)
     try {
-      await phase('git-remove', () => runGit(['worktree', 'remove', '--force', location.path], gitCwd), { 'worktree.queue_wait_ms': waitedMs })
+      // `core.longpaths`: without it git on Windows cannot delete paths past MAX_PATH and
+      // exits 255 with "Filename too long" — 43% of removals in the week this was measured,
+      // each then paying for the fallback below.
+      await phase(
+        'git-remove',
+        () => runGit(['-c', 'core.longpaths=true', 'worktree', 'remove', '--force', location.path], gitCwd),
+        { 'worktree.queue_wait_ms': waitedMs },
+      )
+      // A removal interrupted by app exit can leave a tombstone behind; a successful
+      // git removal would otherwise never look for one.
+      void sweepLeftovers(dirname(location.path))
     } catch (error) {
-      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
+      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) {
+        // The worktree lives on, so the renderer's subscriptions must too.
+        restoreWatches()
+        throw error
+      }
+      // Move the directory aside first so `prune` sees it gone, then let it be deleted in
+      // the background: awaiting the delete here held the IPC (and the per-repo queue) for
+      // 20–40s and starved every other filesystem call in the main process.
+      await phase('delete-directory', () => discardDirectory(location.path))
       if (parent?.path && existsSync(parent.path)) {
         await phase('git-prune', () => runGit(['worktree', 'prune'], parent.path).catch(() => undefined))
       }
-      await phase('delete-directory', () => removeWorktreeDirectoryBestEffort(location.path))
     }
     if (waitedMs >= 1000) {
       console.warn(`[worktree] Removal of "${location.path}" waited ${waitedMs.toFixed(0)}ms behind another worktree operation.`)
