@@ -9,8 +9,27 @@ const FIRST_CHECK_DELAY = 10_000 // 10 seconds after launch
 const UPDATE_CHECK_INTERVAL = 30 * 60 * 1000 // every 30 minutes
 const MAX_TRANSIENT_RETRIES = 3
 const RETRY_BASE_DELAY = 2_000
+// Once fast retries are spent, recovery retries double from here up to the normal
+// check cadence, so a long outage costs one attempt per interval rather than one a minute.
 const RECOVERY_DELAY = 60_000
+const MAX_RECOVERY_DELAY = UPDATE_CHECK_INTERVAL
 const PERSISTENT_FAILURE_WINDOW = 30 * 60 * 1000
+
+const TRANSIENT_ERROR_CODES = [
+  'ERR_NAME_NOT_RESOLVED',
+  'ERR_INTERNET_DISCONNECTED',
+  'ERR_NETWORK_CHANGED',
+  'ERR_NETWORK_IO_SUSPENDED',
+  'ERR_CONNECTION_TIMED_OUT',
+  'ERR_CONNECTION_RESET',
+  'ERR_CONNECTION_REFUSED',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'ETIMEDOUT',
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'EPIPE',
+]
 
 let getWindow: () => BrowserWindow | null = () => null
 let transientRetryCount = 0
@@ -31,29 +50,42 @@ function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-function isTransientUpdateError(error: unknown): boolean {
+/**
+ * Names the recoverable condition behind an updater failure, or returns undefined
+ * when the failure is not one worth retrying. The name is low-cardinality so it
+ * can be a Sentry tag.
+ */
+function transientUpdateErrorCode(error: unknown): string | undefined {
   const message = getErrorMessage(error)
   const code = typeof error === 'object' && error !== null && 'code' in error
     ? String((error as { code?: unknown }).code)
     : ''
 
-  return [
-    'ERR_NAME_NOT_RESOLVED',
-    'ERR_INTERNET_DISCONNECTED',
-    'ERR_NETWORK_CHANGED',
-    'ERR_NETWORK_IO_SUSPENDED',
-    'ERR_CONNECTION_TIMED_OUT',
-    'ERR_CONNECTION_RESET',
-    'ERR_CONNECTION_REFUSED',
-    'EAI_AGAIN',
-    'ENOTFOUND',
-    'ETIMEDOUT',
-    'ECONNRESET',
-    'ECONNREFUSED',
-    'EPIPE',
-  ].some((token) => code === token || message.includes(token))
-    || /\b(?:HTTP(?:Error)?[: ]*)?(?:500|502|503|504)\b/i.test(message)
-    || /\b404\b.*\blatest(?:-[^\s/]+)?\.yml\b|\blatest(?:-[^\s/]+)?\.yml\b.*\b404\b/i.test(message)
+  // electron-updater wraps network failures in its own codes (for example
+  // ERR_UPDATER_LATEST_VERSION_NOT_FOUND) but keeps the cause in the message.
+  const networkCode = TRANSIENT_ERROR_CODES.find((token) => code === token || message.includes(token))
+  if (networkCode) return networkCode
+  const serverStatus = /\b(?:HTTP(?:Error)?[: ]*)?(500|502|503|504)\b/i.exec(message)?.[1]
+  if (serverStatus) return `HTTP_${serverStatus}`
+  if (/\b404\b.*\blatest(?:-[^\s/]+)?\.yml\b|\blatest(?:-[^\s/]+)?\.yml\b.*\b404\b/i.test(message)) {
+    return 'CHANNEL_FILE_404'
+  }
+  return undefined
+}
+
+/**
+ * The host named in an updater error, when there is one. Only the hostname is
+ * kept: download URLs can carry signed query strings. A DNS failure on the
+ * release feed arrives as a bare `net::ERR_NAME_NOT_RESOLVED` with no URL.
+ */
+function updateHostFromError(error: unknown): string | undefined {
+  const url = /https?:\/\/[^\s)'"]+/.exec(getErrorMessage(error))?.[0]
+  if (!url) return undefined
+  try {
+    return new URL(url).hostname || undefined
+  } catch {
+    return undefined
+  }
 }
 
 function resetTransientRetries(): void {
@@ -66,7 +98,8 @@ function resetTransientRetries(): void {
 
 function handleUpdateError(error: unknown): void {
   const message = getErrorMessage(error)
-  if (!isTransientUpdateError(error)) {
+  const transientCode = transientUpdateErrorCode(error)
+  if (!transientCode) {
     resetTransientRetries()
     Sentry.captureException(error, { tags: { source: 'auto-updater' } })
     console.error('[updater] error:', message)
@@ -84,15 +117,28 @@ function handleUpdateError(error: unknown): void {
 
   if (!persistentFailureReported && Date.now() - firstTransientFailure >= PERSISTENT_FAILURE_WINDOW) {
     persistentFailureReported = true
+    // One event per outage. It reports lost update connectivity, not an app defect:
+    // a warning, grouped as one issue whatever the underlying network error.
+    const updateHost = updateHostFromError(error)
     Sentry.captureException(error, {
-      tags: { source: 'auto-updater', retriesExhausted: 'true', persistent: 'true' },
+      level: 'warning',
+      fingerprint: ['auto-updater', 'persistent-outage'],
+      tags: {
+        source: 'auto-updater',
+        retriesExhausted: 'true',
+        persistent: 'true',
+        updateErrorCode: transientCode,
+        ...(updateHost ? { updateHost } : {}),
+      },
       extra: { retryCount: transientRetryCount, failureDurationMs: Date.now() - firstTransientFailure },
     })
   }
 
   const retryNumber = transientRetryCount + 1
   const exhausted = transientRetryCount >= MAX_TRANSIENT_RETRIES
-  const exponentialDelay = exhausted ? RECOVERY_DELAY : RETRY_BASE_DELAY * (2 ** transientRetryCount)
+  const exponentialDelay = exhausted
+    ? Math.min(RECOVERY_DELAY * (2 ** (transientRetryCount - MAX_TRANSIENT_RETRIES)), MAX_RECOVERY_DELAY)
+    : RETRY_BASE_DELAY * (2 ** transientRetryCount)
   const jitteredDelay = Math.round(exponentialDelay * (0.75 + Math.random() * 0.5))
   transientRetryCount = retryNumber
   console.warn(

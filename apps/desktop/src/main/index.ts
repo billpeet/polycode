@@ -12,7 +12,7 @@ import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
-import { SENTRY_DSN } from '../shared/sentry.config'
+import { initMainErrorReporting } from './error-reporting'
 import { startWebhookServer, stopWebhookServer } from './webhook/server'
 import { readWebhookConfig } from './webhook/config'
 import { startRemoteControlServer, stopRemoteControlServer } from './remote/server'
@@ -154,14 +154,7 @@ process.on('unhandledRejection', (reason) => {
   reportFatalProcessError('unhandledRejection', reason)
 })
 
-if (!isDev) {
-  Sentry.init({
-    dsn: SENTRY_DSN,
-    release: `polycode@${process.env.npm_package_version ?? '0.0.0'}`,
-    environment: 'production',
-    tracesSampleRate: 0.1,
-  })
-}
+if (!isDev) initMainErrorReporting()
 
 let isQuitting = false
 let runLifecycle: RunLifecycle | null = null

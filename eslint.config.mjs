@@ -96,6 +96,27 @@ const boundaryOwners = {
   },
 }
 
+/**
+ * npm_package_version exists only while a package-manager script runs. Packaged
+ * Electron has no such environment, so reading it there falls back silently: every
+ * main-process Sentry event was once attributed to polycode@0.0.0 (GitHub #95).
+ * Use app.getVersion() in the main process and __APP_VERSION__ in the renderer.
+ */
+const appVersionMessage =
+  'npm_package_version is unset in a packaged app. Use app.getVersion() (main) or __APP_VERSION__ (renderer).'
+
+const noNpmPackageVersionAtRuntime = {
+  files: ['apps/desktop/src/**/*.{ts,tsx}'],
+  // Tests may set and clear the variable to simulate the packaged environment.
+  ignores: ['**/__tests__/**'],
+  rules: {
+    'no-restricted-syntax': ['error',
+      { selector: "MemberExpression[property.name='npm_package_version']", message: appVersionMessage },
+      { selector: "MemberExpression[property.value='npm_package_version']", message: appVersionMessage },
+    ],
+  },
+}
+
 export default tseslint.config(
   {
     ignores: [
@@ -134,6 +155,7 @@ export default tseslint.config(
   runnerOwnsSubprocesses,
   driversMayReachIntoTheSeam,
   boundaryOwners,
+  noNpmPackageVersionAtRuntime,
   {
     files: reactFiles,
     plugins: {

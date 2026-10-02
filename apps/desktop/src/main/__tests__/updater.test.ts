@@ -145,7 +145,9 @@ describe('auto-updater transient failures', () => {
     H.listeners.get('error')?.(error)
     await vi.advanceTimersByTimeAsync(29 * 60_000)
     expect(H.captureException).not.toHaveBeenCalled()
-    await vi.advanceTimersByTimeAsync(2 * 60_000)
+    // Backed-off recovery attempts land at 74s, 194s, 434s, 914s and 1874s; the
+    // first failure after the 30-minute window is the one reported.
+    await vi.advanceTimersByTimeAsync(3 * 60_000)
     expect(H.captureException).toHaveBeenCalledTimes(1)
     expect(H.captureException).toHaveBeenCalledWith(error, expect.objectContaining({
       tags: expect.objectContaining({ persistent: 'true' }),
@@ -159,6 +161,63 @@ describe('auto-updater transient failures', () => {
     expect(H.checkForUpdates).toHaveBeenCalledTimes(1)
     expect(H.captureException).toHaveBeenCalledTimes(1)
     expect(H.count).toHaveBeenCalledWith('polycode.updater.transient_failure')
+  })
+
+  it('backs off recovery retries to the normal check cadence during a long outage', async () => {
+    await initialise()
+    vi.clearAllTimers()
+    const error = new Error('net::ERR_NAME_NOT_RESOLVED')
+    H.checkForUpdates.mockImplementation(async () => {
+      H.listeners.get('error')?.(error)
+    })
+    H.listeners.get('error')?.(error)
+
+    const fast = [2_000, 4_000, 8_000]
+    const recovery = [60_000, 120_000, 240_000, 480_000, 960_000, 1_800_000, 1_800_000]
+    for (const [index, delay] of [...fast, ...recovery].entries()) {
+      await vi.advanceTimersByTimeAsync(delay - 1)
+      expect(H.checkForUpdates).toHaveBeenCalledTimes(index)
+      await vi.advanceTimersByTimeAsync(1)
+      expect(H.checkForUpdates).toHaveBeenCalledTimes(index + 1)
+    }
+  })
+
+  it.each([
+    {
+      error: new Error('net::ERR_NAME_NOT_RESOLVED'),
+      tags: { updateErrorCode: 'ERR_NAME_NOT_RESOLVED' },
+    },
+    {
+      error: Object.assign(
+        new Error(
+          'Unable to find latest version on GitHub (https://github.com/billpeet/polycode/releases/latest), '
+          + 'please ensure a production release exists: Error: net::ERR_NAME_NOT_RESOLVED',
+        ),
+        { code: 'ERR_UPDATER_LATEST_VERSION_NOT_FOUND' },
+      ),
+      tags: { updateErrorCode: 'ERR_NAME_NOT_RESOLVED', updateHost: 'github.com' },
+    },
+    {
+      error: new Error('HttpError: 503 Service Unavailable'),
+      tags: { updateErrorCode: 'HTTP_503' },
+    },
+  ])('reports a persistent outage as a grouped availability warning: $error.message', async ({ error, tags }) => {
+    await initialise()
+    vi.clearAllTimers()
+    H.checkForUpdates.mockImplementation(async () => {
+      H.listeners.get('error')?.(error)
+    })
+    H.listeners.get('error')?.(error)
+
+    await vi.advanceTimersByTimeAsync(32 * 60_000)
+
+    expect(H.captureException).toHaveBeenCalledTimes(1)
+    expect(H.captureException).toHaveBeenCalledWith(error, {
+      level: 'warning',
+      fingerprint: ['auto-updater', 'persistent-outage'],
+      tags: { source: 'auto-updater', retriesExhausted: 'true', persistent: 'true', ...tags },
+      extra: { retryCount: expect.any(Number), failureDurationMs: expect.any(Number) },
+    })
   })
 
   it('does not restart the fast retry budget when metadata succeeds but downloads fail', async () => {
