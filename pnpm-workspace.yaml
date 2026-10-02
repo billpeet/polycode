@@ -34,8 +34,8 @@ overrides:
   vite: ^8.0.0
 
 # pnpm 11 blocks unreviewed dependency lifecycle scripts. These packages need
-# their platform binaries during install; better-sqlite3 is handled by the root
-# postinstall so it gets the Electron ABI build rather than the host Node build.
+# their platform binaries during install. better-sqlite3 ships N-API prebuilds
+# that load in both Node and Electron, so it must never fall back to compiling.
 allowBuilds:
   '@sentry/cli': true
   better-sqlite3: false
