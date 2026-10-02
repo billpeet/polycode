@@ -1,6 +1,13 @@
 import { randomUUID } from 'crypto'
 import { app, BrowserWindow, powerMonitor } from 'electron'
-import { isRemoteChannel, RemoteEventStream, RemoteReads, rpcTimeoutMs } from '@polycode/shared'
+import {
+  isRemoteChannel,
+  isRemoteHostBusyResponse,
+  RemoteEventStream,
+  RemoteHostBusyError,
+  RemoteReads,
+  rpcTimeoutMs,
+} from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
 import { count, recordDuration, currentTraceHeaders } from '../observability'
@@ -557,6 +564,9 @@ export class RemoteControlClient {
       if (body.code === 'REMOTE_UNSUPPORTED_CHANNEL' || (response.status === 400 && body.error === 'Unsupported channel')) {
         throw new RemoteUnsupportedChannelError(channel, body.version ?? capabilities.version, app.getVersion())
       }
+      if (isRemoteHostBusyResponse(response.status, body)) {
+        throw new RemoteHostBusyError(body.error)
+      }
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
       }
@@ -564,7 +574,7 @@ export class RemoteControlClient {
       return body.value
     } catch (error) {
       if (!isTransportError(error)) {
-        outcome = 'error'
+        outcome = error instanceof RemoteHostBusyError ? 'busy' : 'error'
         throw error
       }
       outcome = controller.signal.aborted && this.streamConnected ? 'timeout' : 'unavailable'

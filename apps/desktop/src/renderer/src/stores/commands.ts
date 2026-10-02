@@ -2,6 +2,7 @@ import { create } from 'zustand'
 import { ProjectCommand, CommandStatus, CommandLogLine } from '../types/ipc'
 import { useUiStore } from './ui'
 import { client } from '../lib/client'
+import { settleRemoteRefresh } from '../lib/remoteErrors'
 
 export const EMPTY_COMMANDS: ProjectCommand[] = []
 export const EMPTY_LOGS: CommandLogLine[] = []
@@ -73,7 +74,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   pinnedInstancesByLocation: {},
 
   fetch: async (projectId) => {
-    const commands = await client.invoke('commands:list', projectId)
+    const commands = await settleRemoteRefresh(client.invoke('commands:list', projectId))
+    if (!commands) return
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: commands },
     }))

@@ -74,6 +74,8 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
       const eligible = list.filter((l) => l.connection_type === 'local' && !l.is_worktree)
       setLocations(eligible)
       setLocationId((current) => current || (eligible[0]?.id ?? ''))
+    }).catch((err: unknown) => {
+      setError(err instanceof Error ? err.message : String(err))
     })
   }, [projectId])
 

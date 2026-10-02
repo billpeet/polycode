@@ -124,8 +124,11 @@ it('counts abandoned handlers against the limit and recovers only when handlers 
     await abandoned
     const overloaded = await rpc()
     expect(overloaded.status).toBe(503)
-    expect(overloaded.headers['retry-after']).toBe('30')
-    expect(JSON.parse(overloaded.body).error).toContain('This request was not started')
+    expect(overloaded.headers['retry-after']).toBe('1')
+    expect(JSON.parse(overloaded.body)).toMatchObject({
+      code: 'REMOTE_HOST_BUSY',
+      error: expect.stringContaining('This request was not started'),
+    })
     expect(h.deps.handleRpc).toHaveBeenCalledTimes(8)
     expect((await h.request({ path: '/api/remote/health', headers: BEARER })).status).toBe(200)
   } finally {

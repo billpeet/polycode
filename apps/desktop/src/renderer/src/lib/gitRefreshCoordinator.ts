@@ -81,7 +81,8 @@ async function startWatch(entry: RepositoryEntry): Promise<void> {
 function stopWatch(entry: RepositoryEntry): void {
   if (!entry.watching) return
   entry.watching = false
-  void client.invoke('git:watchStop', entry.path)
+  // Best-effort like startWatch: a busy or unreachable host leaves the renderer nothing to undo.
+  void client.invoke('git:watchStop', entry.path).catch(() => undefined)
 }
 
 function activate(key: string): void {

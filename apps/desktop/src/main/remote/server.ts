@@ -1,4 +1,5 @@
 import * as http from 'http'
+import { REMOTE_HOST_BUSY, REMOTE_HOST_BUSY_MESSAGE } from '@polycode/shared'
 import { getAppLifecycleState } from '../app-lifecycle'
 import { join } from 'path'
 import { app, BrowserWindow } from 'electron'
@@ -140,8 +141,10 @@ async function handleLogin(
 }
 
 export function createRequestHandler(config: RemoteServerConfig, deps: RequestHandlerDeps): http.RequestListener {
-  // No server queue: callers retain cached data and retry. A disconnected caller's
-  // handler still occupies its slot until it finishes, since handlers cannot be cancelled.
+  // No server queue: clients queue below this limit and retry a refusal, which is safe
+  // because a refused handler never started (`RemoteReads` in @polycode/shared). A
+  // disconnected caller's handler still occupies its slot until it finishes, since
+  // handlers cannot be cancelled.
   let activeRpc = 0
   return async (req, res) => {
     if (!isAllowedHostHeader(req.headers.host, config.host, config.port, { allowedHostnames: config.allowedHostnames })) {
@@ -258,10 +261,12 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
         const args = body.args
         if (activeRpc >= 8) {
           count('polycode.remote.server.rejected', { 'rpc.channel': channel })
+          // Slots free in milliseconds during a hydration burst, so ask for a short wait.
           return sendJson(res, 503, {
             ok: false,
-            error: '[REMOTE_REQUEST_TIMEOUT] Remote host is busy. This request was not started; retry shortly.',
-          }, { 'Retry-After': '30' })
+            code: REMOTE_HOST_BUSY,
+            error: REMOTE_HOST_BUSY_MESSAGE,
+          }, { 'Retry-After': '1' })
         }
         if (res.destroyed) return
         activeRpc++

@@ -76,6 +76,19 @@ describe('invoke', () => {
     await expect(web.invoke('sessions:list', 't')).resolves.toEqual([])
     expect(await web.invoke('remote:getConnectionState')).toMatchObject({ phase: 'connected', rpcDegraded: false })
   })
+  it('retries a request the busy host refused unstarted', async () => {
+    vi.useFakeTimers()
+    let refusals = 2
+    route({
+      '/api/remote/rpc': () => refusals-- > 0
+        ? json(503, { ok: false, code: 'REMOTE_HOST_BUSY', error: '[REMOTE_REQUEST_TIMEOUT] Remote host is busy. This request was not started; retry shortly.' }, { 'Retry-After': '1' })
+        : json(200, { ok: true, value: [{ id: 's1' }] }),
+    })
+    const request = getWebClient().invoke('skills:list', 'claude-code', null)
+    await vi.advanceTimersByTimeAsync(2_000)
+    await expect(request).resolves.toEqual([{ id: 's1' }])
+    expect(calls().filter((call) => call.url === '/api/remote/rpc')).toHaveLength(3)
+  })
   it('posts the channel and args to the RPC endpoint with the session cookie', async () => {
     route({ '/api/remote/rpc': () => json(200, { ok: true, value: [{ id: 'p1' }] }) })
 
