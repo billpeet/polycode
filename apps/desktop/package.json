@@ -75,7 +75,7 @@
     "@types/uuid": "^10.0.0",
     "@vitejs/plugin-react": "^6.0.3",
     "cross-env": "^10.1.0",
-    "electron": "39.8.10",
+    "electron": "41.10.6",
     "electron-builder": "^26.15.3",
     "electron-vite": "^5.0.0",
     "happy-dom": "^20.11.1",
