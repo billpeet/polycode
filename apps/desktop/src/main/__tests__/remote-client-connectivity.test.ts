@@ -130,6 +130,40 @@ describe('RemoteControlClient connectivity failures', () => {
     client.stop()
   })
 
+  const BUSY_MESSAGE = '[REMOTE_REQUEST_TIMEOUT] Remote host is busy. This request was not started; retry shortly.'
+  const rpcCount = () => H.fetch.mock.calls.filter(([url]) => String(url).endsWith('/api/remote/rpc')).length
+
+  it('retries a mutation the busy host refused unstarted, without opening the circuit', async () => {
+    vi.useFakeTimers()
+    let refusals = 2
+    H.fetch.mockImplementation(async () => refusals-- > 0
+      ? jsonResponse(503, { ok: false, code: 'REMOTE_HOST_BUSY', error: BUSY_MESSAGE })
+      : jsonResponse(200, { ok: true, value: 'created' }))
+    const client = activeClient()
+    const request = client.invokeIfActive('threads:create', ['p'])
+    await vi.advanceTimersByTimeAsync(2_000)
+    await expect(request).resolves.toEqual({ handled: true, value: 'created' })
+    expect(rpcCount()).toBe(3)
+    expect(client.getConnectionState().phase).not.toBe('unavailable')
+    client.stop()
+  })
+
+  it('gives up on an older host that keeps refusing, with an error the renderer settles', async () => {
+    vi.useFakeTimers()
+    H.fetch.mockImplementation(async () => jsonResponse(503, { ok: false, error: BUSY_MESSAGE }))
+    const client = activeClient()
+    const request = client.invokeIfActive('locations:list', ['p'])
+    const verdict = expect(request).rejects.toMatchObject({
+      name: 'RemoteHostBusyError',
+      code: 'REMOTE_HOST_BUSY',
+      message: expect.stringContaining('[REMOTE_REQUEST_TIMEOUT]'),
+    })
+    await vi.advanceTimersByTimeAsync(5_000)
+    await verdict
+    expect(rpcCount()).toBe(4)
+    client.stop()
+  })
+
   it('times out a hung RPC and opens the unavailable circuit', async () => {
     vi.useFakeTimers()
     H.fetch.mockImplementation((_url, init) => new Promise((_resolve, reject) => {

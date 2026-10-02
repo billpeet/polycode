@@ -1,4 +1,9 @@
-import type { RemoteConnectionStatus } from '@polycode/shared'
+import {
+  isRemoteHostBusyResponse,
+  RemoteHostBusyError,
+  retryWhileHostBusy,
+  type RemoteConnectionStatus,
+} from '@polycode/shared'
 
 export interface HostConnection {
   baseUrl: string
@@ -9,6 +14,7 @@ interface RpcResponse {
   ok?: boolean
   value?: unknown
   error?: string
+  code?: string
 }
 
 export function normalizeBaseUrl(input: string): string {
@@ -48,9 +54,14 @@ async function readJsonResponse(response: Response): Promise<RpcResponse> {
 
 /**
  * Call one remote-control RPC channel: POST /api/remote/rpc {channel, args}.
- * Resolves the unwrapped value or throws with the server's error message.
+ * Resolves the unwrapped value or throws with the server's error message. A request the
+ * host refused unstarted because it was at capacity is retried with backoff.
  */
-export async function rpcRequest(host: HostConnection, channel: string, args: unknown[]): Promise<unknown> {
+export function rpcRequest(host: HostConnection, channel: string, args: unknown[]): Promise<unknown> {
+  return retryWhileHostBusy(() => rpcAttempt(host, channel, args))
+}
+
+async function rpcAttempt(host: HostConnection, channel: string, args: unknown[]): Promise<unknown> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 30_000)
   try {
@@ -69,6 +80,7 @@ export async function rpcRequest(host: HostConnection, channel: string, args: un
       throw new Error(errorMessage(error))
     }
     const body = await readJsonResponse(response)
+    if (isRemoteHostBusyResponse(response.status, body)) throw new RemoteHostBusyError(body.error)
     if (!response.ok || !body.ok) {
       throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
     }

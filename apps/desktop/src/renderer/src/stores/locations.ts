@@ -3,6 +3,7 @@ import { RepoLocation, SshConfig, WslConfig, ConnectionType, LocationPool } from
 import { useThreadStore } from './threads'
 import { useBrowserStore } from './browser'
 import { client } from '../lib/client'
+import { settleRemoteRefresh } from '../lib/remoteErrors'
 
 interface LocationStore {
   byProject: Record<string, RepoLocation[]>
@@ -28,7 +29,9 @@ export const useLocationStore = create<LocationStore>((set) => ({
   deletingWorktreesByProject: {},
 
   fetch: async (projectId) => {
-    const locations = await client.invoke('locations:list', projectId)
+    // Hydration fires this from many effects; a remote transport failure keeps the cache.
+    const locations = await settleRemoteRefresh(client.invoke('locations:list', projectId))
+    if (!locations) return
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: locations }
     }))

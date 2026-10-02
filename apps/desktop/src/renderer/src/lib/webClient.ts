@@ -1,8 +1,10 @@
 import {
   RemoteEventStream,
+  RemoteHostBusyError,
   RemoteReads,
   createSlowInvokeTracker,
   isRemoteChannel,
+  isRemoteHostBusyResponse,
   rpcTimeoutMs,
   type ChannelArgs,
   type ChannelResult,
@@ -61,6 +63,7 @@ interface RpcResponse {
   ok?: boolean
   value?: unknown
   error?: string
+  code?: string
 }
 
 type Listener = (...args: unknown[]) => void
@@ -281,6 +284,7 @@ class BrowserClient implements WebClient {
         throw new Error('[UNAUTHORIZED] The host no longer accepts this session')
       }
       const body = await readJson(response)
+      if (isRemoteHostBusyResponse(response.status, body)) throw new RemoteHostBusyError(body.error)
       if (!response.ok || !body.ok) {
         throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
       }

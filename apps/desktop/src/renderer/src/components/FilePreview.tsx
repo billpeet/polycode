@@ -581,12 +581,12 @@ export function DiffPane() {
 
     void client.invoke('files:watchStart', watchedPath).then((watching) => {
       if (disposed) {
-        if (watching) void client.invoke('files:watchStop', watchedPath)
+        if (watching) void client.invoke('files:watchStop', watchedPath).catch(() => undefined)
         return
       }
 
       if (watching) {
-        stopWatching = () => { void client.invoke('files:watchStop', watchedPath) }
+        stopWatching = () => { void client.invoke('files:watchStop', watchedPath).catch(() => undefined) }
         return
       }
 
@@ -696,12 +696,12 @@ export function FilePane() {
 
     void client.invoke('files:watchStart', selectedFilePath).then((watching) => {
       if (disposed) {
-        if (watching) void client.invoke('files:watchStop', selectedFilePath)
+        if (watching) void client.invoke('files:watchStop', selectedFilePath).catch(() => undefined)
         return
       }
 
       if (watching) {
-        stopWatching = () => { void client.invoke('files:watchStop', selectedFilePath) }
+        stopWatching = () => { void client.invoke('files:watchStop', selectedFilePath).catch(() => undefined) }
         return
       }
 

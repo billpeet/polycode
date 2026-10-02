@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useThreadStore } from '../threads'
 import { useSessionStore } from '../sessions'
 import { useMessageStore } from '../messages'
+import { useLocationStore } from '../locations'
+import { useCommandStore } from '../commands'
+import { useSlashCommandStore } from '../slashCommands'
 
 describe('background refreshes during a remote stall', () => {
   const invoke = vi.fn()
@@ -33,6 +36,52 @@ describe('background refreshes during a remote stall', () => {
       await useThreadStore.getState().fetchQueue()
       expect(log).not.toHaveBeenCalled()
     } finally { log.mockRestore() }
+  })
+
+  describe('hydration reads (#94)', () => {
+    const cached = [{ id: 'cached' }] as never[]
+    beforeEach(() => {
+      useLocationStore.setState({ byProject: { p: cached } })
+      useCommandStore.setState({ byProject: { p: cached } })
+      useSlashCommandStore.setState({ commandsByScope: { p: cached } })
+    })
+    const hydrate = () => Promise.all([
+      useLocationStore.getState().fetch('p'),
+      useCommandStore.getState().fetch('p'),
+      useSlashCommandStore.getState().fetch('p', 'claude-code', null),
+    ])
+
+    it('keeps cached data when a busy host refuses the burst', async () => {
+      invoke.mockRejectedValue(new Error(
+        "Error invoking remote method 'locations:list': RemoteHostBusyError: [REMOTE_REQUEST_TIMEOUT] Remote host is busy. This request was not started; retry shortly.",
+      ))
+      await expect(hydrate()).resolves.toEqual([undefined, undefined, undefined])
+      expect(useLocationStore.getState().byProject.p).toBe(cached)
+      expect(useCommandStore.getState().byProject.p).toBe(cached)
+      expect(useSlashCommandStore.getState().commandsByScope.p).toBe(cached)
+    })
+
+    it('updates the palette only when both slash commands and skills arrive', async () => {
+      invoke.mockImplementation(async (channel: string) => {
+        if (channel === 'skills:list') throw new Error('[REMOTE_REQUEST_TIMEOUT] Host is slow')
+        return [{ id: 'fresh' }]
+      })
+      await useSlashCommandStore.getState().fetch('p', 'claude-code', null)
+      expect(useSlashCommandStore.getState().commandsByScope.p).toBe(cached)
+
+      invoke.mockImplementation(async (channel: string) => [{ id: channel }])
+      await useSlashCommandStore.getState().fetch('p', 'claude-code', null)
+      expect(useSlashCommandStore.getState().commandsByScope.p).toEqual([{ id: 'skills:list' }, { id: 'slash-commands:list' }])
+    })
+
+    it('still propagates unexpected failures', async () => {
+      invoke.mockRejectedValue(new Error('SQLITE_CORRUPT'))
+      for (const fetch of [
+        () => useLocationStore.getState().fetch('p'),
+        () => useCommandStore.getState().fetch('p'),
+        () => useSlashCommandStore.getState().fetch('p', 'claude-code', null),
+      ]) await expect(fetch()).rejects.toThrow('SQLITE_CORRUPT')
+    })
   })
 
   it('propagates unexpected failures and mutation timeouts', async () => {
