@@ -52,6 +52,27 @@ describe('message store streaming merge', () => {
     useMessageStore.setState({ messagesByThread: {}, messagesBySession: {} })
   })
 
+  it('folds a batch of frames exactly as the same frames applied one at a time', () => {
+    const meta = { type: 'thinking', agent_scope: 'subagent', agent_parent_tool_use_id: 'X' }
+    const frames: OutputEvent[] = [
+      thinking('Hello ', meta),
+      thinking('world', meta),
+      { type: 'usage', content: '', metadata: { input_tokens: 1 } },
+      { type: 'text', content: 'Done.', metadata: {} },
+    ]
+    for (const frame of frames) useMessageStore.getState().appendEvent(THREAD, frame)
+    const oneAtATime = useMessageStore.getState().messagesByThread[THREAD].map(({ role, content }) => ({ role, content }))
+
+    useMessageStore.setState({ messagesByThread: {}, messagesBySession: {} })
+    useMessageStore.getState().appendEvents(THREAD, frames)
+    const batched = useMessageStore.getState().messagesByThread[THREAD].map(({ role, content }) => ({ role, content }))
+
+    expect(batched).toEqual(oneAtATime)
+    expect(batched.map((m) => m.content)).toEqual(['Hello world', 'Done.'])
+    useMessageStore.getState().appendEvents(THREAD, [])
+    expect(useMessageStore.getState().messagesByThread[THREAD]).toHaveLength(2)
+  })
+
   it('merges consecutive same-scope regular thinking bubbles', () => {
     const meta = { type: 'thinking', agent_scope: 'subagent', agent_parent_tool_use_id: 'X' }
     useMessageStore.getState().appendEvent(THREAD, thinking('Hello ', meta))

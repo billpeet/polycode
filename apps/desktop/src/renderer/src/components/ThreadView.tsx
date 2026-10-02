@@ -17,6 +17,8 @@ import UiErrorBoundary from './UiErrorBoundary'
 import { useRemoteConnectionStore } from '../stores/remoteConnection'
 import { client } from '../lib/client'
 import { settleBackgroundIpc } from '../lib/backgroundIpc'
+import { createOutputBatcher } from '../lib/outputBatcher'
+import { reportPerf } from '../lib/perf'
 
 interface Props {
   threadId: string
@@ -35,8 +37,8 @@ function formatThreadEventErrorDetails(event: OutputEvent, threadId: string): st
 function ThreadViewContent({ threadId }: Props) {
   const fetchMessages = useMessageStore((s) => s.fetch)
   const fetchMessagesBySession = useMessageStore((s) => s.fetchBySession)
-  const appendEvent = useMessageStore((s) => s.appendEvent)
-  const appendEventToSession = useMessageStore((s) => s.appendEventToSession)
+  const appendEvents = useMessageStore((s) => s.appendEvents)
+  const appendEventsToSession = useMessageStore((s) => s.appendEventsToSession)
   const setStatus = useThreadStore((s) => s.setStatus)
   const setName = useThreadStore((s) => s.setName)
   const fetchThreads = useThreadStore((s) => s.fetch)
@@ -101,17 +103,30 @@ function ThreadViewContent({ threadId }: Props) {
   useEffect(() => {
     if (isPendingThread) return
     let disposed = false
+    // Frames reach the store in batches (see lib/outputBatcher.ts); consecutive frames bound
+    // for the same store go in one write so the fold sees them in arrival order.
+    const batcher = createOutputBatcher<OutputEvent>((events) => {
+      const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
+      const routeOf = (event: OutputEvent) =>
+        event.sessionId && currentActiveSession && event.sessionId === currentActiveSession ? event.sessionId : null
+      let index = 0
+      while (index < events.length) {
+        const route = routeOf(events[index])
+        let end = index + 1
+        while (end < events.length && routeOf(events[end]) === route) end += 1
+        const group = events.slice(index, end)
+        if (route) appendEventsToSession(route, threadId, group)
+        else appendEvents(threadId, group)
+        index = end
+      }
+      // Frames per flush, sampled: tells Grafana how bursty providers are and whether the
+      // interval is doing anything.
+      reportPerf('stream:flush', events.length, {}, { thresholdMs: 0, minIntervalMs: 10_000, throttleKey: 'stream:flush', level: 'info' })
+    })
     // Subscribe to streaming events
     const unsubOutput = client.on(`thread:output:${threadId}`, (...args) => {
       const event = args[0] as OutputEvent
-      const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
-
-      // Route event to session-based store if we have an active session and event matches
-      if (event.sessionId && currentActiveSession && event.sessionId === currentActiveSession) {
-        appendEventToSession(event.sessionId, threadId, event)
-      } else {
-        appendEvent(threadId, event)
-      }
+      batcher.push(event)
 
       // Intercept TodoWrite/todo_list/TaskCreate/TaskUpdate tool calls and update the todo store.
       // Only main-scope activity drives the thread's todo panel — sub-agent todo activity
@@ -189,6 +204,7 @@ function ThreadViewContent({ threadId }: Props) {
 
     const unsubStatus = client.on(`thread:status:${threadId}`, (...args) => {
       const status = args[0] as 'idle' | 'running' | 'stopping' | 'error' | 'stopped'
+      if (status !== 'running') batcher.flush()
       setStatus(threadId, status)
       if (status === 'error') {
         useToastStore.getState().add({
@@ -211,6 +227,7 @@ function ThreadViewContent({ threadId }: Props) {
       // Use the status sent directly with the complete event to avoid race conditions
       // with the separate thread:status IPC event
       const completionStatus = (args[0] as ThreadStatus | undefined) ?? 'idle'
+      batcher.flush()
 
       // Ensure the store reflects the final status (handles cases where the
       // thread:status event hasn't been processed yet)
@@ -303,6 +320,7 @@ function ThreadViewContent({ threadId }: Props) {
     return () => {
       disposed = true
       cleanups.forEach((fn) => fn())
+      batcher.dispose()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [threadId, isPendingThread])
