@@ -3,6 +3,7 @@ import { basename, dirname } from 'node:path'
 import { BrowserWindow } from 'electron'
 import { emitAppEvent } from './app-events'
 import { getAppLifecycleState } from './app-lifecycle'
+import { isPathInside } from './worktree-trash'
 
 interface FileWatchEntry {
   watcher: FSWatcher
@@ -218,5 +219,21 @@ function safeMtimeMs(filePath: string): number {
     return statSync(filePath).mtimeMs
   } catch {
     return Date.now()
+  }
+}
+
+/**
+ * Close every watcher on or under `directory`, ignoring reference counts.
+ *
+ * Called before a worktree is deleted: on Windows a live `fs.watch` holds a handle on the
+ * directory, and `git worktree remove` then fails with "Permission denied". The renderer's
+ * later `watchStop` calls for these paths find nothing and are harmless.
+ */
+export function stopWatchesUnder(directory: string): void {
+  for (const [filePath, entry] of watchers) {
+    if (isPathInside(directory, filePath)) closeWatchEntry(filePath, entry)
+  }
+  for (const [repoPath, entry] of repoWatchers) {
+    if (isPathInside(directory, repoPath)) closeRepoWatchEntry(repoPath, entry)
   }
 }
