@@ -148,10 +148,27 @@ export function installRendererPerfObservers(): void {
     }
   }
 
+  // Both monitors below measure gaps between their own ticks, and Chromium throttles timers
+  // and pauses rAF while the window is hidden or occluded — down to one timer fire a minute
+  // after five minutes. Checking visibility only when a tick fires let a window that had
+  // just been brought back to the front report its whole hidden spell as a "stall": 429
+  // renderer stalls over 5s in two weeks, of which 44 had JavaScript demonstrably running
+  // mid-"stall" and only 14 had a matching long task. A gap that began while hidden is
+  // throttling, not a freeze, so the baselines reset when the window becomes visible.
   let previousFrameAt = performance.now()
+  let expectedHeartbeatAt = performance.now() + HEARTBEAT_SAMPLE_MS
+  let visibleSince = document.visibilityState === 'visible' ? performance.now() : Infinity
+  document.addEventListener('visibilitychange', () => {
+    const now = performance.now()
+    visibleSince = document.visibilityState === 'visible' ? now : Infinity
+    previousFrameAt = now
+    expectedHeartbeatAt = now + HEARTBEAT_SAMPLE_MS
+  })
+  const gapStartedWhileVisible = (gapStartAt: number) => gapStartAt >= visibleSince
+
   const tick = (now: number) => {
     const frameGapMs = now - previousFrameAt
-    if (document.visibilityState === 'visible' && frameGapMs >= FRAME_JANK_THRESHOLD_MS && frameGapMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
+    if (gapStartedWhileVisible(previousFrameAt) && frameGapMs >= FRAME_JANK_THRESHOLD_MS && frameGapMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
       reportPerf(
         'frame-jank',
         frameGapMs,
@@ -165,12 +182,12 @@ export function installRendererPerfObservers(): void {
 
   window.requestAnimationFrame(tick)
 
-  let expectedHeartbeatAt = performance.now() + HEARTBEAT_SAMPLE_MS
   window.setInterval(() => {
     const now = performance.now()
     const driftMs = now - expectedHeartbeatAt
+    const gapStartAt = expectedHeartbeatAt - HEARTBEAT_SAMPLE_MS
     expectedHeartbeatAt = now + HEARTBEAT_SAMPLE_MS
-    if (document.visibilityState === 'visible' && driftMs >= HEARTBEAT_STALL_THRESHOLD_MS && driftMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
+    if (gapStartedWhileVisible(gapStartAt) && driftMs >= HEARTBEAT_STALL_THRESHOLD_MS && driftMs <= SUSPECTED_SLEEP_THRESHOLD_MS) {
       reportPerf(
         'event-loop-stall',
         driftMs,
