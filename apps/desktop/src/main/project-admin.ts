@@ -25,7 +25,7 @@ import { commandManager } from './commands/manager'
 import { runSerialized } from './keyed-queue'
 import { withSpan } from './observability'
 import { stopWatchesUnder } from './file-watch'
-import { discardDirectory } from './worktree-trash'
+import { discardDirectory, sweepLeftovers } from './worktree-trash'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
 
 /** Expand a leading `~` to the user's home directory. */
@@ -307,7 +307,7 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
     const waitedMs = performance.now() - queuedAt
     // A live `fs.watch` holds a Windows handle on the directory, which is one way
     // `git worktree remove` ends in "Permission denied".
-    stopWatchesUnder(location.path)
+    const restoreWatches = stopWatchesUnder(location.path)
     try {
       // `core.longpaths`: without it git on Windows cannot delete paths past MAX_PATH and
       // exits 255 with "Filename too long" — 43% of removals in the week this was measured,
@@ -317,8 +317,15 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
         () => runGit(['-c', 'core.longpaths=true', 'worktree', 'remove', '--force', location.path], gitCwd),
         { 'worktree.queue_wait_ms': waitedMs },
       )
+      // A removal interrupted by app exit can leave a tombstone behind; a successful
+      // git removal would otherwise never look for one.
+      void sweepLeftovers(dirname(location.path))
     } catch (error) {
-      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) throw error
+      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) {
+        // The worktree lives on, so the renderer's subscriptions must too.
+        restoreWatches()
+        throw error
+      }
       // Move the directory aside first so `prune` sees it gone, then let it be deleted in
       // the background: awaiting the delete here held the IPC (and the per-repo queue) for
       // 20–40s and starved every other filesystem call in the main process.

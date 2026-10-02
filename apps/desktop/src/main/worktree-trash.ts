@@ -4,6 +4,8 @@ import { basename, dirname, join, resolve, sep } from 'node:path'
 import { Worker } from 'node:worker_threads'
 
 const TOMBSTONE_PREFIX = '.polycode-trash-'
+/** Exactly the shape `tombstonePath` produces: prefix, original name, `-`, base-36 timestamp. */
+const TOMBSTONE_NAME = /^\.polycode-trash-.+-[0-9a-z]{6,}$/
 
 /**
  * Runs in a worker thread. `rmSync` there blocks only the worker: it neither
@@ -42,17 +44,46 @@ export function isPathInside(directory: string, candidate: string): boolean {
   return child === parent || child.startsWith(parent.endsWith(sep) ? parent : parent + sep)
 }
 
+function tombstonePath(path: string): string {
+  return join(dirname(path), `${TOMBSTONE_PREFIX}${basename(path)}-${Date.now().toString(36)}`)
+}
+
+function errorCode(error: unknown): string {
+  return error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : 'UNKNOWN'
+}
+
+/** Tombstones this module created earlier, by name shape; nothing else in the directory qualifies. */
 function leftoverTombstones(parentDir: string): string[] {
   try {
-    return readdirSync(parentDir)
-      .filter((name) => name.startsWith(TOMBSTONE_PREFIX))
-      .map((name) => join(parentDir, name))
+    return readdirSync(parentDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory() && TOMBSTONE_NAME.test(entry.name))
+      .map((entry) => join(parentDir, entry.name))
   } catch {
     return []
   }
 }
 
+/**
+ * A directory that could not be deleted in place (handles were open) is moved
+ * aside once the worker gives up, so a later sweep retries it rather than the
+ * directory lingering with no PolyCode row pointing at it.
+ */
+async function reportFailure(failure: { path: string; code: string }): Promise<void> {
+  if (TOMBSTONE_NAME.test(basename(failure.path))) {
+    console.warn(`[worktree] Could not delete "${failure.path}" (${failure.code}); it will be retried on the next worktree removal.`)
+    return
+  }
+  try {
+    const tombstone = tombstonePath(failure.path)
+    await rename(failure.path, tombstone)
+    console.warn(`[worktree] Could not delete "${failure.path}" (${failure.code}); moved to "${tombstone}" for retry on the next worktree removal.`)
+  } catch (error) {
+    console.warn(`[worktree] Could not delete "${failure.path}" (${failure.code}) or move it aside (${errorCode(error)}); it must be removed by hand.`)
+  }
+}
+
 function deleteInBackground(paths: string[]): Promise<void> {
+  if (paths.length === 0) return Promise.resolve()
   return new Promise((resolveDone) => {
     let worker: Worker
     try {
@@ -62,19 +93,23 @@ function deleteInBackground(paths: string[]): Promise<void> {
       resolveDone()
       return
     }
+    let reported: Promise<void> = Promise.resolve()
     worker.once('message', (failures: Array<{ path: string; code: string }>) => {
-      for (const failure of failures) {
-        console.warn(`[worktree] Could not delete "${failure.path}" (${failure.code}); it will be retried on the next worktree removal.`)
-      }
+      reported = Promise.all(failures.map(reportFailure)).then(() => undefined)
     })
     worker.once('error', (error) => {
       console.warn('[worktree] Background delete worker failed', error)
       resolveDone()
     })
-    worker.once('exit', () => resolveDone())
+    worker.once('exit', () => { void reported.then(resolveDone) })
     // A half-deleted tombstone is swept on the next removal, so quitting need not wait.
     worker.unref()
   })
+}
+
+/** Delete tombstones left in `parentDir` by an earlier interrupted removal. */
+export function sweepLeftovers(parentDir: string): Promise<void> {
+  return deleteInBackground(leftoverTombstones(parentDir))
 }
 
 /**
@@ -88,22 +123,20 @@ function deleteInBackground(paths: string[]): Promise<void> {
  * the actual delete then happens on a worker thread.
  */
 export async function discardDirectory(path: string): Promise<DiscardResult> {
-  const parentDir = dirname(path)
-  const stale = leftoverTombstones(parentDir)
+  const stale = leftoverTombstones(dirname(path))
   if (!existsSync(path)) {
-    return { movedTo: null, done: stale.length > 0 ? deleteInBackground(stale) : Promise.resolve() }
+    return { movedTo: null, done: deleteInBackground(stale) }
   }
 
-  const tombstone = join(parentDir, `${TOMBSTONE_PREFIX}${basename(path)}-${Date.now().toString(36)}`)
   let movedTo: string | null = null
   try {
+    const tombstone = tombstonePath(path)
     await rename(path, tombstone)
     movedTo = tombstone
   } catch (error) {
     // Typically EBUSY/EPERM on Windows: something still holds a handle inside.
-    // Delete in place instead; whatever is locked is reported by the worker.
-    const code = error && typeof error === 'object' && 'code' in error ? String((error as { code?: unknown }).code) : 'UNKNOWN'
-    console.warn(`[worktree] Could not move "${path}" aside (${code}); deleting it in place.`)
+    // Delete in place instead; if that fails too, the worker's report moves it aside.
+    console.warn(`[worktree] Could not move "${path}" aside (${errorCode(error)}); deleting it in place.`)
   }
   return { movedTo, done: deleteInBackground([...stale, movedTo ?? path]) }
 }

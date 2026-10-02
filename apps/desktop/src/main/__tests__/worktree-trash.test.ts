@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { discardDirectory, isPathInside } from '../worktree-trash'
+import { discardDirectory, isPathInside, sweepLeftovers } from '../worktree-trash'
 
 let root: string
 
@@ -29,13 +29,23 @@ describe('discardDirectory', () => {
   })
 
   it('sweeps tombstones left behind by an interrupted earlier delete', async () => {
-    const leftover = makeWorktree('.polycode-trash-old-abc')
+    const leftover = makeWorktree('.polycode-trash-old-mabc12')
     const path = makeWorktree('wt2')
 
     await (await discardDirectory(path)).done
 
     expect(existsSync(leftover)).toBe(false)
     expect(readdirSync(root)).toEqual([])
+  })
+
+  it('leaves alone directories that merely share the tombstone prefix', async () => {
+    const lookalike = makeWorktree('.polycode-trash-notes')
+    const real = makeWorktree('.polycode-trash-old-abc123')
+
+    await sweepLeftovers(root)
+
+    expect(existsSync(lookalike)).toBe(true)
+    expect(existsSync(real)).toBe(false)
   })
 
   it('is a no-op for a directory that is already gone', async () => {

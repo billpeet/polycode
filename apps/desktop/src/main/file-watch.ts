@@ -7,12 +7,14 @@ import { isPathInside } from './worktree-trash'
 
 interface FileWatchEntry {
   watcher: FSWatcher
+  win: BrowserWindow
   refCount: number
   debounceTimer: ReturnType<typeof setTimeout> | null
 }
 
 interface RepoWatchEntry {
   watcher: FSWatcher
+  win: BrowserWindow
   refCount: number
   debounceTimer: ReturnType<typeof setTimeout> | null
 }
@@ -85,7 +87,7 @@ export function startFileWatch(win: BrowserWindow, filePath: string): boolean {
       }, 200)
     })
 
-    watchers.set(filePath, { watcher, refCount: 1, debounceTimer: null })
+    watchers.set(filePath, { watcher, win, refCount: 1, debounceTimer: null })
     watcher.on('error', (error: NodeJS.ErrnoException) => {
       const current = watchers.get(filePath)
       if (current) closeWatchEntry(filePath, current)
@@ -173,7 +175,7 @@ export function startRepoGitWatch(win: BrowserWindow, repoPath: string): boolean
       }, REPO_CHANGE_THROTTLE_MS)
     })
 
-    repoWatchers.set(repoPath, { watcher, refCount: 1, debounceTimer: null })
+    repoWatchers.set(repoPath, { watcher, win, refCount: 1, debounceTimer: null })
     watcher.on('error', (error: NodeJS.ErrnoException) => {
       const current = repoWatchers.get(repoPath)
       if (current) closeRepoWatchEntry(repoPath, current)
@@ -228,12 +230,31 @@ function safeMtimeMs(filePath: string): number {
  * Called before a worktree is deleted: on Windows a live `fs.watch` holds a handle on the
  * directory, and `git worktree remove` then fails with "Permission denied". The renderer's
  * later `watchStop` calls for these paths find nothing and are harmless.
+ *
+ * Returns a function that re-creates the closed watchers with their reference counts, for
+ * the case where the removal fails and the worktree lives on.
  */
-export function stopWatchesUnder(directory: string): void {
+export function stopWatchesUnder(directory: string): () => void {
+  const closedFiles: Array<{ path: string; win: BrowserWindow; refCount: number }> = []
+  const closedRepos: Array<{ path: string; win: BrowserWindow; refCount: number }> = []
   for (const [filePath, entry] of watchers) {
-    if (isPathInside(directory, filePath)) closeWatchEntry(filePath, entry)
+    if (!isPathInside(directory, filePath)) continue
+    closedFiles.push({ path: filePath, win: entry.win, refCount: entry.refCount })
+    closeWatchEntry(filePath, entry)
   }
   for (const [repoPath, entry] of repoWatchers) {
-    if (isPathInside(directory, repoPath)) closeRepoWatchEntry(repoPath, entry)
+    if (!isPathInside(directory, repoPath)) continue
+    closedRepos.push({ path: repoPath, win: entry.win, refCount: entry.refCount })
+    closeRepoWatchEntry(repoPath, entry)
+  }
+  return () => {
+    for (const closed of closedFiles) {
+      if (closed.win.isDestroyed() || !startFileWatch(closed.win, closed.path)) continue
+      watchers.get(closed.path)!.refCount = closed.refCount
+    }
+    for (const closed of closedRepos) {
+      if (closed.win.isDestroyed() || !startRepoGitWatch(closed.win, closed.path)) continue
+      repoWatchers.get(closed.path)!.refCount = closed.refCount
+    }
   }
 }
