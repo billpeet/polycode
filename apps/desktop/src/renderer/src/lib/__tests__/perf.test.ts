@@ -17,7 +17,7 @@ it('drops sleep artifacts, resumes monitoring, and reports signed heap deltas', 
     requestAnimationFrame: (callback: typeof frame) => { frame = callback },
     setInterval: (callback: typeof heartbeat) => { heartbeat = callback },
   })
-  vi.stubGlobal('document', { visibilityState: 'visible' })
+  vi.stubGlobal('document', { visibilityState: 'visible', addEventListener: () => {} })
   vi.stubGlobal('PerformanceObserver', class {
     constructor(callback: typeof observe) { observe = callback }
     observe() {}
@@ -55,4 +55,47 @@ it('buckets content sizes into a bounded label set', async () => {
   ])
   expect(sizeBucket(-1)).toBe('unknown')
   expect(sizeBucket(Number.NaN)).toBe('unknown')
+})
+
+it('does not report a hidden window as stalled once it is shown again', () => {
+  // Past the first test's clock: reportPerf's throttle map is module-level.
+  let now = 500_000
+  let heartbeat!: () => void
+  let frame!: (time: number) => void
+  let onVisibility: () => void = () => {}
+  const send = vi.fn()
+  const doc = { visibilityState: 'visible', addEventListener: (_: string, cb: () => void) => { onVisibility = cb } }
+  vi.stubGlobal('performance', { now: () => now })
+  vi.stubGlobal('window', {
+    api: { send },
+    requestAnimationFrame: (callback: typeof frame) => { frame = callback },
+    setInterval: (callback: typeof heartbeat) => { heartbeat = callback },
+  })
+  vi.stubGlobal('document', doc)
+  vi.stubGlobal('PerformanceObserver', undefined)
+  try {
+    installRendererPerfObservers()
+    now = 500_100
+    heartbeat()
+    frame(now)
+    // Window goes to the background; Chromium stops firing the timer for 20s.
+    doc.visibilityState = 'hidden'
+    onVisibility()
+    now = 520_100
+    doc.visibilityState = 'visible'
+    onVisibility()
+    heartbeat()
+    frame(now)
+    expect(send).not.toHaveBeenCalled()
+    // A real stall while visible is still reported.
+    now = 520_200
+    heartbeat()
+    now = 525_200
+    heartbeat()
+    const stalls = send.mock.calls.filter(([channel, report]) => channel === 'telemetry:duration' && report.name === 'polycode.renderer.event-loop-stall')
+    expect(stalls).toHaveLength(1)
+    expect(stalls[0][1].durationMs).toBeCloseTo(4900, 0)
+  } finally {
+    vi.unstubAllGlobals()
+  }
 })
