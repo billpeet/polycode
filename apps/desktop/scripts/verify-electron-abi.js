@@ -1,4 +1,6 @@
 #!/usr/bin/env node
+// Proves the better-sqlite3 binary that electron-builder will package loads and
+// runs under the installed Electron, resolving it exactly as the app does.
 
 const { spawnSync } = require('child_process')
 const fs = require('fs')
@@ -30,29 +32,24 @@ const electronExe = path.join(
   'dist',
   fs.readFileSync(electronPathFile, 'utf8').trim()
 )
-const binding = path.join(betterSqliteDir, 'build', 'Release', 'better_sqlite3.node')
-if (!fs.existsSync(binding)) {
-  console.error(`[verify-electron-abi] Packaged binding is missing: ${binding}`)
-  process.exit(1)
-}
 
 const probe = [
-  "const binding = process.argv[1]",
-  "require(binding)",
-  "process.stdout.write(JSON.stringify({ abi: process.versions.modules, binding }))"
+  "const dir = process.argv[1]",
+  "const binary = require(require('path').join(dir, 'lib', 'binding.js')).getPrebuildPath()",
+  "const Database = require(dir)",
+  "const db = new Database(':memory:')",
+  "const sqlite = db.prepare('select sqlite_version() as v').get().v",
+  "db.close()",
+  "process.stdout.write(JSON.stringify({ abi: process.versions.modules, electron: process.versions.electron, binary, sqlite }))"
 ].join(';')
-const result = spawnSync(electronExe, ['-e', probe, binding], {
+const result = spawnSync(electronExe, ['-e', probe, betterSqliteDir], {
   env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   encoding: 'utf8'
 })
 
 if (result.status !== 0) {
-  console.error('[verify-electron-abi] Packaged better-sqlite3 binding failed to load in Electron.')
-  if (result.stderr) {
-    const lines = result.stderr.trim().split(/\r?\n/)
-    const mismatch = lines.findIndex((line) => line.includes('was compiled against a different'))
-    console.error(lines.slice(mismatch >= 0 ? mismatch : -12).join('\n'))
-  }
+  console.error('[verify-electron-abi] better-sqlite3 failed to load in Electron.')
+  if (result.stderr) console.error(result.stderr.trim().split(/\r?\n/).slice(-12).join('\n'))
   process.exit(1)
 }
 
@@ -60,21 +57,18 @@ let output
 try {
   output = JSON.parse(result.stdout)
 } catch {
-  console.error('[verify-electron-abi] Electron ABI probe returned invalid output.')
+  console.error('[verify-electron-abi] Electron probe returned invalid output.')
   process.exit(1)
 }
 
-const expectedAbiFile = path.join(electronDir, 'abi_version')
-const expectedAbi = fs.existsSync(expectedAbiFile)
-  ? fs.readFileSync(expectedAbiFile, 'utf8').trim()
-  : output.abi
-if (output.abi !== expectedAbi) {
-  console.error(
-    `[verify-electron-abi] Electron reported ABI ${output.abi}; expected ${expectedAbi}.`
-  )
+// Without a prebuild, better-sqlite3 falls back to a node-gyp build/ output,
+// compiled for whatever runtime built it — not what we intend to ship.
+if (!output.binary) {
+  console.error('[verify-electron-abi] better-sqlite3 has no N-API prebuild for this platform.')
   process.exit(1)
 }
 
 console.log(
-  `[verify-electron-abi] Packaged better-sqlite3 binding loads successfully under Electron ABI ${output.abi}.`
+  `[verify-electron-abi] better-sqlite3 (SQLite ${output.sqlite}) loads under Electron ${output.electron} ` +
+  `(ABI ${output.abi}) from ${path.relative(betterSqliteDir, output.binary)}.`
 )

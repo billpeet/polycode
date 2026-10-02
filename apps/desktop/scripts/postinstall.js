@@ -2,19 +2,21 @@
 /**
  * postinstall.js
  *
- * Runs under pnpm's project-managed Node 22 after `pnpm install` to ensure
- * native binaries are present:
- *   1. Electron binary  — runs node_modules/electron/install.js if path.txt is missing
- *   2. better-sqlite3   — downloads the prebuilt .node for the installed Electron ABI
+ * Runs under pnpm's project-managed Node 22 after `pnpm install` to ensure the
+ * Electron binary is present. Since Electron 42 the `electron` package no longer
+ * downloads itself in a postinstall script, so this runs its install.js
+ * explicitly.
+ *
+ * better-sqlite3 needs nothing here: from v13 it ships N-API prebuilds that load
+ * under both the host Node (tests) and Electron, independent of Electron's ABI.
  *
  * The managed runtime matters: newer host Node versions can exit during Electron
  * extraction without an error and leave the package without path.txt.
  */
 
-const { execSync, spawnSync } = require('child_process')
+const { spawnSync } = require('child_process')
 const fs = require('fs')
 const path = require('path')
-const https = require('https')
 
 // Resolve package directories via require.resolve rather than assuming a
 // node_modules layout — the pnpm workspace uses a hoisted linker so dependencies
@@ -33,138 +35,13 @@ if (!electronDir) {
   process.exit(1)
 }
 
-// ── 1. Electron binary ────────────────────────────────────────────────────────
-
-const electronPathTxt = path.join(electronDir, 'path.txt')
-if (!fs.existsSync(electronPathTxt)) {
-  console.log('[postinstall] Downloading Electron binary...')
-  const result = spawnSync(process.execPath, [
-    path.join(electronDir, 'install.js')
-  ], { stdio: 'inherit', cwd: electronDir })
-  if (result.status !== 0) {
-    console.error('[postinstall] Electron install failed')
-    process.exit(1)
-  }
-} else {
-  console.log('[postinstall] Electron binary already present.')
-}
-
-// ── 2. better-sqlite3 prebuilt ────────────────────────────────────────────────
-
-const bsq3Dir = resolvePackageDir('better-sqlite3')
-if (!bsq3Dir) {
-  console.log('[postinstall] better-sqlite3 not found, skipping.')
-  process.exit(0)
-}
-
-const bsq3Version = require(path.join(bsq3Dir, 'package.json')).version
-
-// Determine the installed Electron's ABI directly — a hardcoded version→ABI
-// map silently goes stale the moment Electron is bumped, which packages a
-// prebuilt for the wrong ABI and crashes the app at startup.
-// Recent electron packages ship an abi_version file; fall back to asking the
-// binary itself for older versions.
-let abiNumber = null
-const abiVersionFile = path.join(electronDir, 'abi_version')
-if (fs.existsSync(abiVersionFile)) {
-  abiNumber = fs.readFileSync(abiVersionFile, 'utf8').trim()
-} else {
-  const electronExeName = fs
-    .readFileSync(path.join(electronDir, 'path.txt'), 'utf8')
-    .trim()
-  const electronExe = path.join(electronDir, 'dist', electronExeName)
-  const abiProbe = spawnSync(electronExe, ['-p', 'process.versions.modules'], {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    encoding: 'utf8'
-  })
-  abiNumber = (abiProbe.stdout || '').trim()
-}
-if (!/^\d+$/.test(abiNumber)) {
-  console.error('[postinstall] Could not determine Electron ABI.')
+// install.js exits immediately when dist/ already holds this exact version, and
+// re-downloads when it holds a different one, so it is always safe to run.
+const result = spawnSync(process.execPath, [
+  path.join(electronDir, 'install.js')
+], { stdio: 'inherit', cwd: electronDir })
+if (result.status !== 0 || !fs.existsSync(path.join(electronDir, 'path.txt'))) {
+  console.error('[postinstall] Electron install failed')
   process.exit(1)
 }
-const abi = `v${abiNumber}`
-
-// The ABI-specific binding path is the source of truth for "already installed" —
-// checking an ABI-less path would let a stale binary from a previous Electron
-// version short-circuit the download.
-const bindingDir = path.join(bsq3Dir, 'lib', 'binding', `node-${abi}-win32-x64`)
-const bindingNode = path.join(bindingDir, 'better_sqlite3.node')
-const buildReleaseDir = path.join(bsq3Dir, 'build', 'Release')
-const genericPrebuilt = path.join(bsq3Dir, 'prebuilds', 'win32-x64')
-
-// These ABI-less locations are the ones packaged by electron-builder and found
-// first by bindings.js. Remove them before selecting the Electron prebuild so a
-// failed preparation can never leave a host-Node binary looking shippable.
-fs.rmSync(buildReleaseDir, { recursive: true, force: true })
-fs.rmSync(genericPrebuilt, { recursive: true, force: true })
-
-if (fs.existsSync(bindingNode)) {
-  // Refresh the generic copies from the ABI-specific source of truth.
-  fs.mkdirSync(buildReleaseDir, { recursive: true })
-  fs.copyFileSync(bindingNode, path.join(buildReleaseDir, 'better_sqlite3.node'))
-  const genericPrebuiltRelease = path.join(genericPrebuilt, 'build', 'Release')
-  fs.mkdirSync(genericPrebuiltRelease, { recursive: true })
-  fs.copyFileSync(bindingNode, path.join(genericPrebuiltRelease, 'better_sqlite3.node'))
-  console.log(`[postinstall] better-sqlite3 prebuilt already present (electron ${abi}).`)
-  process.exit(0)
-}
-
-const tarball = `better-sqlite3-v${bsq3Version}-electron-${abi}-win32-x64.tar.gz`
-const url = `https://github.com/WiseLibs/better-sqlite3/releases/download/v${bsq3Version}/${tarball}`
-// Two places bindings looks: prebuilds/ and lib/binding/
-const prebuildsDir = genericPrebuilt
-// Download into the extraction dir and extract with cwd set so tar only ever
-// sees a bare filename — GNU tar interprets "C:\..." as a remote host.
-const tmp = path.join(prebuildsDir, tarball)
-
-console.log(`[postinstall] Downloading better-sqlite3 prebuilt (electron ${abi})...`)
-console.log(`[postinstall] ${url}`)
-
-fs.mkdirSync(prebuildsDir, { recursive: true })
-fs.mkdirSync(bindingDir, { recursive: true })
-
-downloadFile(url, tmp, (err) => {
-  if (err) {
-    console.error('[postinstall] Download failed:', err.message)
-    process.exit(1)
-  }
-  console.log('[postinstall] Extracting...')
-  const result = spawnSync('tar', ['-xzf', tarball], { stdio: 'inherit', cwd: prebuildsDir })
-  if (result.status !== 0) {
-    console.error('[postinstall] Extraction failed')
-    process.exit(1)
-  }
-  fs.unlinkSync(tmp)
-  const src = path.join(prebuildsDir, 'build', 'Release', 'better_sqlite3.node')
-  if (!fs.existsSync(src)) {
-    console.error(`[postinstall] Expected Electron prebuild is missing: ${src}`)
-    process.exit(1)
-  }
-  // Copy to lib/binding/ path that bindings.js resolves at runtime
-  const dst = path.join(bindingDir, 'better_sqlite3.node')
-  fs.copyFileSync(src, dst)
-  // Overwrite build/Release/ so the Electron prebuilt wins over any
-  // node-gyp artefact compiled against the host Node.js version
-  fs.mkdirSync(buildReleaseDir, { recursive: true })
-  fs.copyFileSync(src, path.join(buildReleaseDir, 'better_sqlite3.node'))
-  console.log('[postinstall] better-sqlite3 prebuilt installed.')
-})
-
-function downloadFile(url, dest, cb) {
-  const follow = (u, redirects) => {
-    if (redirects > 5) return cb(new Error('Too many redirects'))
-    const mod = u.startsWith('https') ? https : require('http')
-    mod.get(u, { headers: { 'User-Agent': 'node' } }, (res) => {
-      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-        return follow(res.headers.location, redirects + 1)
-      }
-      if (res.statusCode !== 200) return cb(new Error(`HTTP ${res.statusCode}`))
-      const out = fs.createWriteStream(dest)
-      res.pipe(out)
-      out.on('finish', () => out.close(cb))
-      out.on('error', cb)
-    }).on('error', cb)
-  }
-  follow(url, 0)
-}
+console.log('[postinstall] Electron binary ready.')

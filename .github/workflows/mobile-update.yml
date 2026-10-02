@@ -30,8 +30,8 @@ jobs:
           node-version: 22.23.1
           cache: pnpm
 
-      # --ignore-scripts skips the desktop postinstall (Electron binary +
-      # better-sqlite3 prebuilt downloads) — not needed to export JS.
+      # --ignore-scripts skips the desktop postinstall (Electron binary
+      # download) — not needed to export JS.
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
