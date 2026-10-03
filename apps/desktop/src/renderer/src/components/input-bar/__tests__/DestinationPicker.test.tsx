@@ -7,6 +7,8 @@ import DestinationPicker from '../DestinationPicker'
 import { useProjectStore } from '../../../stores/projects'
 import { useLocationStore } from '../../../stores/locations'
 import { useThreadStore } from '../../../stores/threads'
+import { useUnifiedStore } from '../../../stores/unified'
+import { mergeUnifiedSources, type UnifiedSource } from '@polycode/shared'
 
 const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }))
 
@@ -143,5 +145,62 @@ describe('DestinationPicker worktree names', () => {
       expect(within(select).getByRole('option', { name: '↳ feat/renamed-by-agent' })).toBeTruthy()
     })
     expect(within(select).getByRole('option', { name: 'Local' })).toBeTruthy()
+  })
+})
+
+describe('DestinationPicker in the unified view', () => {
+  const sources: UnifiedSource[] = [
+    {
+      sourceId: 'local', label: 'Local', status: 'ok', error: null, archivedProjects: [],
+      projects: [{
+        project: makeProject({ id: 'zeta', name: 'Zeta', git_url: 'https://github.com/x/zeta.git' }),
+        locations: [makeLocation({})], pools: [], threads: [], archivedCount: 0, snoozedCount: 0,
+      }],
+    },
+    {
+      sourceId: 'h1', label: 'Build box', status: 'ok', error: null, archivedProjects: [],
+      projects: [{
+        project: makeProject({ id: 'zeta-remote', name: 'zeta', git_url: 'git@github.com:x/zeta' }),
+        locations: [makeLocation({ id: 'rloc', project_id: 'zeta-remote', label: 'Checkout', path: '/srv/zeta' })],
+        pools: [], threads: [], archivedCount: 0, snoozedCount: 0,
+      }],
+    },
+  ]
+
+  beforeEach(() => {
+    useUnifiedStore.setState({
+      enabled: true,
+      activeSourceId: 'local',
+      snapshot: { sources, fetchedAt: 't' },
+      projects: mergeUnifiedSources(sources),
+    })
+  })
+  afterEach(() => useUnifiedStore.setState({ enabled: false, snapshot: null, projects: [] }))
+
+  it('groups the merged project’s locations by source', () => {
+    render(<DestinationPicker draftThread={draft()} />)
+    const select = screen.getByTitle('Location on any source, worktree or pull request') as HTMLSelectElement
+    const groups = [...select.querySelectorAll('optgroup')].map((g) => g.label)
+    expect(groups.slice(0, 2)).toEqual(['Local', 'Build box'])
+    expect(within(select).getByRole('option', { name: 'Checkout' })).toBeTruthy()
+    // The draft's current destination is selected, and its source is named beside it.
+    expect(select.selectedOptions[0].textContent).toBe('Local')
+    expect(screen.getByTitle('This thread runs on this machine')).toBeTruthy()
+  })
+
+  it('moves the draft to the chosen source when a location on another source is picked', () => {
+    const setDraftDestination = vi.fn(async () => undefined)
+    useUnifiedStore.setState({ setDraftDestination })
+    render(<DestinationPicker draftThread={draft()} />)
+    const select = screen.getByTitle('Location on any source, worktree or pull request') as HTMLSelectElement
+    const option = within(select).getByRole('option', { name: 'Checkout' }) as HTMLOptionElement
+    fireEvent.change(select, { target: { value: option.value } })
+    expect(setDraftDestination).toHaveBeenCalledWith('h1', 'zeta-remote', 'rloc', { newWorktree: undefined, pullRequest: undefined })
+  })
+
+  it('falls back to the single-source picker for a project the snapshot does not know', () => {
+    useUnifiedStore.setState({ projects: [] })
+    render(<DestinationPicker draftThread={draft()} />)
+    expect(screen.getByTitle('Location, worktree or pull request')).toBeTruthy()
   })
 })

@@ -200,6 +200,7 @@ import { restartWebhookServer } from '../webhook/server'
 import { readWebhookConfig, saveWebhookConfig } from '../webhook/config'
 import { readRemoteServerConfig, saveRemoteServerConfig } from '../remote/config'
 import { getPairingInfo } from '../remote/lan'
+import { collectUnifiedSnapshot, invokeOnSource, setUnifiedWatch } from '../remote/unified'
 import { openExternalLink } from '../open-external-link'
 import { disableTailscaleServe, enableTailscaleServe, getTailscaleStatus } from '../remote/tailscale'
 // `import type`, and it has to stay that way — see `LocalHandlerContext` below and the
@@ -2328,6 +2329,22 @@ export const channelHandlers = {
 
   // User-initiated retry from the offline banner: drops the circuit and redials.
   'remote:reconnect': (ctx) => ctx.remoteClient.reconnect(),
+
+  // Local + every saved host, read independently of the active host (see remote/unified.ts).
+  'remote:getUnifiedSnapshot': (ctx, sourceIds) => collectUnifiedSnapshot(ctx.remoteClient.getHosts(), sourceIds),
+
+  // Runs a `{ remote: true }` channel against one chosen source, leaving the active host
+  // alone, so the unified view can archive/snooze/etc. on a host it is not pointed at.
+  // Annotated return types: the local leg calls back into this map's own dispatcher, which
+  // TypeScript cannot infer through without them.
+  'remote:invokeOnSource': (ctx, sourceId, channel, args): Promise<unknown> =>
+    invokeOnSource(ctx.remoteClient.getHosts(), sourceId, channel, args ?? [], async (local, localArgs): Promise<unknown> => {
+      if (!isMigratedChannel(local)) throw new Error(`Unsupported channel: ${local}`)
+      return invokeChannelHandler(local, ctx, localArgs)
+    }),
+
+  'remote:setUnifiedWatch': (ctx, enabled) =>
+    setUnifiedWatch(ctx.window, () => ctx.remoteClient.getHosts(), enabled),
 
   // ── Tailscale ─────────────────────────────────────────────────────────────
   //

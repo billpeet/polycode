@@ -19,6 +19,7 @@ import { startRemoteControlServer, stopRemoteControlServer } from './remote/serv
 import { readRemoteServerConfig } from './remote/config'
 import { openExternalLink } from './open-external-link'
 import { stopRemoteControlClient } from './remote/client'
+import { stopUnifiedWatch } from './remote/unified'
 import { browserSessionManager } from './browser/manager'
 import { startPlanWatcher, stopPlanWatcher } from './plans'
 import { stopAllFileWatches } from './file-watch'
@@ -400,6 +401,7 @@ registerAppShutdown(app, {
     sessionManager.stopAll()
     stopWebhookServer()
     stopRemoteControlClient()
+    stopUnifiedWatch()
     stopRemoteControlServer()
     browserSessionManager.stopAll()
     stopPlanWatcher()

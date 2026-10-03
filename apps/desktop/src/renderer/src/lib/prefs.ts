@@ -16,6 +16,8 @@ export type PrefKey =
   | 'selectedThreadId'
   | 'sidebar:viewMode'
   | 'sidebar:width'
+  /** 'all' while the unified view across Local and every Remote Host is selected. */
+  | 'sidebar:source'
   | 'layout:mode'
   | 'projects:sortMode'
   | 'favourites:combos'
