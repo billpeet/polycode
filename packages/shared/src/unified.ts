@@ -84,6 +84,19 @@ export interface UnifiedProject {
 }
 
 /**
+ * Strip leading and trailing slashes by scanning, not with a regex: `/\/+$/` backtracks
+ * quadratically on a long run of slashes that is not at the end, and this input is a
+ * Git URL that may come from another machine.
+ */
+function trimSlashes(value: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value.charCodeAt(start) === 47) start++
+  while (end > start && value.charCodeAt(end - 1) === 47) end--
+  return value.slice(start, end)
+}
+
+/**
  * Reduce a Git remote URL to a comparable repository identity, so the HTTPS, SSH and
  * scp-style spellings of one repository agree:
  *
@@ -118,7 +131,9 @@ export function normalizeGitUrl(raw: string | null | undefined): string | null {
   }
 
   host = host.toLowerCase()
-  path = path.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\.git$/i, '').toLowerCase()
+  path = trimSlashes(path)
+  if (path.toLowerCase().endsWith('.git')) path = path.slice(0, -'.git'.length)
+  path = path.toLowerCase()
 
   if (host === 'ssh.dev.azure.com' && path.startsWith('v3/')) {
     const [, org, project, repo] = path.split('/')

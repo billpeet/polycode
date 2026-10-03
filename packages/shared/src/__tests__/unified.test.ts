@@ -18,6 +18,20 @@ describe('normalizeGitUrl', () => {
     expect(normalizeGitUrl(input)).toBe(expected)
   })
 
+  it('stays linear on a pathological run of slashes', () => {
+    // Regression for a polynomial-time trailing-slash regex (CodeQL js/polynomial-redos).
+    const hostile = `https://example.com/${'/'.repeat(200_000)}x`
+    const startedAt = performance.now()
+    normalizeGitUrl(hostile)
+    normalizeGitUrl(`git@example.com:${'/'.repeat(200_000)}x`)
+    expect(performance.now() - startedAt).toBeLessThan(1_000)
+  })
+
+  it('strips surrounding slashes and a .git suffix in any case', () => {
+    expect(normalizeGitUrl('https://github.com///org/repo.GIT')).toBe('github.com/org/repo')
+    expect(normalizeGitUrl('https://github.com/org/repo///')).toBe('github.com/org/repo')
+  })
+
   it('treats blank and missing URLs as having no identity', () => {
     expect(normalizeGitUrl(null)).toBeNull()
     expect(normalizeGitUrl('   ')).toBeNull()
