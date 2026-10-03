@@ -1,8 +1,9 @@
 import { canonicalToolName } from '@polycode/shared'
 import { Message } from '../types/ipc'
-import { useState, useMemo, type CSSProperties } from 'react'
+import { useEffect, useState, useMemo, type CSSProperties } from 'react'
 import EditDiffView from './EditDiffView'
 import MarkdownContent from './MarkdownContent'
+import { client } from '../lib/client'
 import { normalizeShellToolPresentation } from '../../../shared/shell-command'
 
 interface Props {
@@ -185,6 +186,111 @@ function BodyContent({ text }: { text: string }) {
         </div>
       ))}
     </pre>
+  )
+}
+
+const IMAGE_PATH_RE = /\.(avif|bmp|gif|ico|jpe?g|png|webp)$/i
+const ABSOLUTE_PATH_RE = /^(?:[a-zA-Z]:[\\/]|\/|\\\\)/
+const READ_TOOL_NAMES = new Set(['read', 'read file', 'imageview'])
+
+interface ReadTarget {
+  path: string
+  isImage: boolean
+  offset: number | null
+  limit: number | null
+}
+
+/**
+ * The file a read-style tool call looked at, when it can be previewed.
+ * Relative paths are skipped: the file reader would resolve them against the
+ * main process's working directory rather than the Thread's.
+ */
+export function getReadTarget(toolName: string, input: unknown): ReadTarget | null {
+  if (!READ_TOOL_NAMES.has(toolName.toLowerCase()) || !input || typeof input !== 'object') return null
+  const inp = input as Record<string, unknown>
+  const path = [inp.file_path, inp.filePath, inp.path].find((value): value is string => typeof value === 'string' && value.length > 0)
+  if (!path || !ABSOLUTE_PATH_RE.test(path)) return null
+  const numberOrNull = (value: unknown) => (value != null && Number.isFinite(Number(value)) ? Number(value) : null)
+  return { path, isImage: IMAGE_PATH_RE.test(path), offset: numberOrNull(inp.offset), limit: numberOrNull(inp.limit) }
+}
+
+/** An image the provider returned inline with the tool result (Codex `inputImage` content items). */
+function getInlineResultImage(resultMetadata: Record<string, unknown> | null): string | null {
+  const items = resultMetadata?.content_items
+  if (!Array.isArray(items)) return null
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const rec = item as Record<string, unknown>
+    const url = rec.imageUrl ?? rec.image_url
+    if (typeof url === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(url)) return url
+  }
+  return null
+}
+
+type FilePreviewState =
+  | { status: 'loading' }
+  | { status: 'unavailable' }
+  | { status: 'image'; dataUrl: string }
+  | { status: 'text'; text: string; truncated: boolean }
+
+/**
+ * Previews the file a read call targeted. Providers such as Codex report a
+ * read without echoing the file back, so the details would otherwise only say
+ * "Completed". The file is read as it is now, which may differ from what the
+ * provider saw.
+ */
+function FilePreview({ target, inlineImage, fallback }: { target: ReadTarget; inlineImage: string | null; fallback: string }) {
+  const { path, offset, limit } = target
+  const requestKey = `${path}\n${offset}\n${limit}`
+  const [loaded, setLoaded] = useState<{ key: string; state: FilePreviewState } | null>(null)
+
+  useEffect(() => {
+    if (inlineImage) return
+    let cancelled = false
+    const finish = (state: FilePreviewState) => {
+      if (!cancelled) setLoaded({ key: requestKey, state })
+    }
+    client.invoke('files:read', path).then((file) => {
+      if (!file) {
+        finish({ status: 'unavailable' })
+      } else if (file.mimeType?.startsWith('image/') && file.dataUrl?.startsWith(`data:${file.mimeType};base64,`)) {
+        finish({ status: 'image', dataUrl: file.dataUrl })
+      } else {
+        let text = file.content
+        if (offset != null || limit != null) {
+          const start = Math.max(0, offset ?? 0)
+          text = text.split('\n').slice(start, limit != null ? start + limit : undefined).join('\n')
+        }
+        finish({ status: 'text', text, truncated: file.truncated })
+      }
+    }).catch(() => finish({ status: 'unavailable' }))
+    return () => { cancelled = true }
+  }, [path, offset, limit, inlineImage, requestKey])
+
+  const state: FilePreviewState = inlineImage
+    ? { status: 'image', dataUrl: inlineImage }
+    : loaded?.key === requestKey ? loaded.state : { status: 'loading' }
+
+  if (state.status === 'loading') {
+    return <div style={{ fontSize: '0.72rem', color: 'var(--color-text-muted)' }}>Loading preview…</div>
+  }
+  if (state.status === 'unavailable') return <BodyContent text={fallback} />
+  if (state.status === 'image') {
+    return (
+      <img
+        src={state.dataUrl}
+        alt={path}
+        style={{ display: 'block', maxWidth: '100%', maxHeight: 400, objectFit: 'contain', borderRadius: 4, border: '1px solid var(--color-border)' }}
+      />
+    )
+  }
+  return (
+    <>
+      <BodyContent text={state.text} />
+      {state.truncated && (
+        <div style={{ fontSize: '0.65rem', color: 'var(--color-text-muted)', marginTop: '0.25rem' }}>Preview truncated to the first 1 MB.</div>
+      )}
+    </>
   )
 }
 
@@ -443,15 +549,18 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
   const diffBlocks = extractDiffBlocks(resultMetadata)
   const rawOutputText = getRawOutputText(resultMetadata?.rawOutput)
   const showInput = hasMeaningfulInput(metadata?.input)
-  const resultBody = result
-    ? diffBlocks.length > 0
-      ? null
-      : rawOutputText ?? (typeof resultMetadata?.content === 'string'
-        ? resultMetadata.content
-        : result.content.trim().length > 0
-          ? result.content
-          : 'Completed')
+  const resultText = result
+    ? rawOutputText ?? (typeof resultMetadata?.content === 'string'
+      ? resultMetadata.content
+      : result.content.trim().length > 0
+        ? result.content
+        : null)
     : null
+  const resultBody = result && diffBlocks.length === 0 ? resultText ?? 'Completed' : null
+  // A read that returned no text (Codex), or one that read an image, is shown
+  // as a preview of the file instead of a bare "Completed".
+  const readTarget = result && !isError ? getReadTarget(toolName, presentedInput) : null
+  const previewTarget = readTarget && (readTarget.isImage || resultText === null) ? readTarget : null
   const detailEntries = [
     ['cwd', metadata?.cwd ?? input?.cwd],
     ['process', metadata?.process_id ?? input?.processId],
@@ -556,9 +665,11 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
           {resultBody !== null && diffBlocks.length === 0 && !isCancelled && (
             <div>
               <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
-                {isError ? 'Error' : 'Output'}
+                {isError ? 'Error' : previewTarget ? 'Preview' : 'Output'}
               </div>
-              {isUnifiedDiff ? <UnifiedDiffBody diff={resultBody} /> : <BodyContent text={resultBody} />}
+              {previewTarget
+                ? <FilePreview target={previewTarget} inlineImage={getInlineResultImage(resultMetadata)} fallback={resultBody} />
+                : isUnifiedDiff ? <UnifiedDiffBody diff={resultBody} /> : <BodyContent text={resultBody} />}
             </div>
           )}
         </div>
