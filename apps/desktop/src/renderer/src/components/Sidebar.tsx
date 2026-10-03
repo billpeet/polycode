@@ -19,6 +19,8 @@ import { useKeyed } from '../lib/useKeyed'
 import CollapsedSidebar from './sidebar/CollapsedSidebar'
 import ExpandedSidebar from './sidebar/ExpandedSidebar'
 import QueueSidebar from './sidebar/QueueSidebar'
+import UnifiedSidebar from './sidebar/UnifiedSidebar'
+import { useUnifiedStore } from '../stores/unified'
 import SidebarDialogs, {
   SidebarConfirmDeleteState,
   SidebarLocationDialogState,
@@ -26,31 +28,7 @@ import SidebarDialogs, {
 } from './sidebar/SidebarDialogs'
 import { useSidebar } from './ui/sidebar-context'
 import { client } from '../lib/client'
-
-function playChime() {
-  try {
-    const ctx = new AudioContext()
-    const now = ctx.currentTime
-
-    // Two-tone chime: C5 then E5
-    for (const [freq, start] of [[523.25, 0], [659.25, 0.12]] as const) {
-      const osc = ctx.createOscillator()
-      const gain = ctx.createGain()
-      osc.type = 'sine'
-      osc.frequency.value = freq
-      gain.gain.setValueAtTime(0.18, now + start)
-      gain.gain.exponentialRampToValueAtTime(0.001, now + start + 0.35)
-      osc.connect(gain).connect(ctx.destination)
-      osc.start(now + start)
-      osc.stop(now + start + 0.35)
-    }
-
-    // Clean up context after sounds finish
-    setTimeout(() => ctx.close(), 600)
-  } catch {
-    // Audio not available — silently ignore
-  }
-}
+import { playChime } from '../lib/chime'
 
 function Sidebar() {
   const { isCollapsed, toggle } = useSidebar()
@@ -102,6 +80,7 @@ function Sidebar() {
   const queueThreads = useThreadStore((s) => s.queueThreads)
   const fetchQueue = useThreadStore((s) => s.fetchQueue)
 
+  const unifiedEnabled = useUnifiedStore((s) => s.enabled)
   const sidebarViewMode = useUiStore((s) => s.sidebarViewMode)
   const setSidebarViewMode = useUiStore((s) => s.setSidebarViewMode)
   const loadSidebarViewMode = useUiStore((s) => s.loadSidebarViewMode)
@@ -647,6 +626,38 @@ function Sidebar() {
         onToggleProject={handleToggleProject}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenProjectDialog={() => setProjectDialog({ mode: 'create' })}
+        dialogs={dialogs}
+      />
+    )
+  }
+
+  // "All" in the title-bar switcher. Rendered from here rather than in place of <Sidebar />
+  // so this component's live thread/command subscriptions for the active source keep running.
+  if (unifiedEnabled) {
+    return (
+      <UnifiedSidebar
+        sidebarWidth={sidebarWidth}
+        sidebarResizing={sidebarResizing}
+        onToggleSidebar={toggle}
+        onOpenSettings={() => setSettingsOpen(true)}
+        actions={{
+          archiveThread: handleArchiveThread,
+          unarchiveThread: handleUnarchiveThread,
+          snoozeThread: handleSnoozeThread,
+          wakeThread: handleWakeThread,
+          archiveProject: handleArchiveProject,
+          unarchiveProject: handleUnarchiveProject,
+          checkoutLocation: async (locationId, projectId) => { await checkoutLocation(locationId, projectId) },
+          returnLocationToPool: async (locationId, projectId) => { await returnLocationToPool(locationId, projectId) },
+          newThread: handleNewThread,
+          newWorktreeThread: handleNewWorktreeThread,
+          removeWorktree: handleRemoveWorktree,
+          editProject: (project) => setProjectDialog({ mode: 'edit', project }),
+          confirmDeleteProject: (project) => setConfirmDelete({ type: 'project', id: project.id, name: project.name, projectId: project.id }),
+          openLocationDialog: (projectId) => setLocationDialog({ mode: 'create', projectId }),
+          openProjectDialog: () => setProjectDialog({ mode: 'create' }),
+          openNewThreadComposer: handleOpenNewThreadComposer,
+        }}
         dialogs={dialogs}
       />
     )

@@ -104,6 +104,9 @@ describe('remote control RPC channel contract', () => {
       'remote:getPairingInfo',
       'remote:getConnectionState',
       'remote:reconnect',
+      'remote:getUnifiedSnapshot',
+      'remote:invokeOnSource',
+      'remote:setUnifiedWatch',
     ])
   })
 

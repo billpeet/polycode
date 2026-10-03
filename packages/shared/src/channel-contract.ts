@@ -63,6 +63,7 @@ import type {
   RoutineDraft,
   SubscriptionUsageSnapshot,
 } from './types'
+import type { UnifiedSnapshot } from './unified'
 import type { Channel } from './channels'
 import type { AppProfile, SeedBrowseRequest, SeedCatalog, SeedImportRequest, SeedImportResult } from './seed'
 
@@ -321,6 +322,9 @@ export interface ChannelContract {
   'remote:getPairingInfo': [[], RemotePairingInfo]
   'remote:getConnectionState': [[], RemoteConnectionState]
   'remote:reconnect': [[], RemoteConnectionState]
+  'remote:getUnifiedSnapshot': [[sourceIds?: string[] | null], UnifiedSnapshot]
+  'remote:invokeOnSource': [[sourceId: string, channel: string, args: unknown[]], unknown]
+  'remote:setUnifiedWatch': [[enabled: boolean], void]
   'terminal:write': [[terminalId: string, data: string], void]
   'terminal:resize': [[terminalId: string, cols: number, rows: number], void]
   'attachments:readDataUrl': [[threadId: string, filename: string], string | null]

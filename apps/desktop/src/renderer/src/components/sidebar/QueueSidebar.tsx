@@ -26,6 +26,45 @@ interface QueueSidebarProps {
   onSnoozeThread: (thread: QueueThread, untilIso: string) => void | Promise<void>
   onWakeThread: (thread: QueueThread) => void | Promise<void>
   dialogs: ReactNode
+  /** Header label; defaults to "PolyCode". */
+  title?: ReactNode
+  /** Extra header buttons, placed before Settings. */
+  headerActions?: ReactNode
+  /** Rendered between the view switch and the search box. */
+  subHeader?: ReactNode
+  /**
+   * Row identity. Defaults to the thread id; the unified view prefixes the source,
+   * since two sources may hold Threads with the same id (a seeded database).
+   */
+  rowKey?: (thread: QueueThread) => string
+  /** `rowKey` of the selected Thread; defaults to `selectedThreadId`. */
+  selectedKey?: string | null
+  /** Project icon per row; defaults to the active source's favicon. */
+  renderProjectIcon?: (thread: QueueThread) => ReactNode
+  /** Trailing badge per row (the unified view's source pill). */
+  renderRowBadge?: (thread: QueueThread) => ReactNode
+  /** Loads Snoozed/Archived pages and their search matches; defaults to this client's source. */
+  loadCollapsed?: QueueCollapsedLoader
+}
+
+export type QueueCollapsedVariant = 'archived' | 'snoozed'
+
+/**
+ * One page of the Snoozed or Archived section. `hasMore` is the loader's call because a
+ * page merged from several sources can be longer than `limit` and still not be the end.
+ */
+export type QueueCollapsedLoader = (
+  variant: QueueCollapsedVariant,
+  search: string | null,
+  offset: number,
+  limit: number,
+) => Promise<{ rows: QueueThread[]; hasMore: boolean }>
+
+const loadOwnSource: QueueCollapsedLoader = async (variant, search, offset, limit) => {
+  const rows = variant === 'snoozed'
+    ? await client.invoke('threads:listQueueSnoozed', search, limit, offset)
+    : await client.invoke('threads:listQueueArchived', search, limit, offset)
+  return { rows, hasMore: rows.length === limit }
 }
 
 function SectionHeader({ label, count }: { label: string; count: number }) {
@@ -53,7 +92,11 @@ function QueueRow({
   onArchive,
   onSnooze,
   onWake,
+  projectIcon,
+  badge,
 }: {
+  projectIcon?: ReactNode
+  badge?: ReactNode
   thread: QueueThread
   statusMap: Record<string, ThreadStatus | undefined>
   unreadByThread: Record<string, boolean | undefined>
@@ -107,10 +150,11 @@ function QueueRow({
             className="flex flex-shrink-0 items-center gap-1 rounded px-1"
             style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
           >
-            <ProjectFavicon projectId={thread.project_id} className="h-2.5 w-2.5" />
+            {projectIcon ?? <ProjectFavicon projectId={thread.project_id} className="h-2.5 w-2.5" />}
             {thread.project_name}
           </span>
           {locationHint && <span className="truncate min-w-0">{locationHint}</span>}
+          {badge}
           {isEscalated && (
             <span className="flex-shrink-0 rounded px-1 font-semibold" style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}>
               escalated
@@ -190,6 +234,8 @@ function QueueRow({
 
 const ARCHIVED_PAGE_SIZE = 30
 
+const threadIdKey = (thread: QueueThread): string => thread.id
+
 /**
  * A collapsed-by-default section at the bottom of the Queue for threads kept
  * apart from the ordered list: cross-project, searchable (server-side name
@@ -211,7 +257,10 @@ function CollapsedQueueSection({
   emptyLabel,
   queueThreads,
   renderRow,
+  load,
 }: {
+  /** Must be stable across renders: it sits in the fetch effect's dependencies. */
+  load: QueueCollapsedLoader
   /**
    * Which list to load. A plain discriminator rather than a loader callback:
    * an inline `load` prop would be a fresh closure every render and so could
@@ -235,18 +284,16 @@ function CollapsedQueueSection({
       setLoading(true)
       try {
         const trimmed = search.trim() || null
-        const rows = variant === 'snoozed'
-          ? await client.invoke('threads:listQueueSnoozed', trimmed, ARCHIVED_PAGE_SIZE, offset)
-          : await client.invoke('threads:listQueueArchived', trimmed, ARCHIVED_PAGE_SIZE, offset)
-        setThreads((prev) => append ? [...prev, ...rows] : rows)
-        setHasMore(rows.length === ARCHIVED_PAGE_SIZE)
+        const page = await load(variant, trimmed, offset, ARCHIVED_PAGE_SIZE)
+        setThreads((prev) => append ? [...prev, ...page.rows] : page.rows)
+        setHasMore(page.hasMore)
       } catch (err) {
         console.error(`Failed to fetch ${emptyLabel}`, err)
       } finally {
         setLoading(false)
       }
     },
-    [variant, emptyLabel]
+    [variant, emptyLabel, load]
   )
 
   // Debounced (re)load on expand, search, or live-queue changes.
@@ -332,7 +379,16 @@ export default function QueueSidebar({
   onSnoozeThread,
   onWakeThread,
   dialogs,
+  title = 'PolyCode',
+  headerActions,
+  subHeader,
+  rowKey = threadIdKey,
+  selectedKey,
+  renderProjectIcon,
+  renderRowBadge,
+  loadCollapsed = loadOwnSource,
 }: QueueSidebarProps) {
+  const selected = selectedKey === undefined ? selectedThreadId : selectedKey
   const { woken, attention, running, fresh } = bucketQueueThreads(queueThreads, statusMap)
   const isEmpty = woken.length === 0 && attention.length === 0 && running.length === 0 && fresh.length === 0
 
@@ -354,15 +410,15 @@ export default function QueueSidebar({
       return
     }
     const timeoutId = window.setTimeout(() => {
-      client.invoke('threads:listQueueArchived', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
-        .then(setArchivedMatches)
+      loadCollapsed('archived', trimmedQuery, 0, ARCHIVED_PAGE_SIZE)
+        .then((page) => setArchivedMatches(page.rows))
         .catch((err) => console.error('Failed to search archived queue threads', err))
-      client.invoke('threads:listQueueSnoozed', trimmedQuery, ARCHIVED_PAGE_SIZE, 0)
-        .then(setSnoozedMatches)
+      loadCollapsed('snoozed', trimmedQuery, 0, ARCHIVED_PAGE_SIZE)
+        .then((page) => setSnoozedMatches(page.rows))
         .catch((err) => console.error('Failed to search snoozed queue threads', err))
     }, 200)
     return () => window.clearTimeout(timeoutId)
-  }, [trimmedQuery, queueThreads])
+  }, [trimmedQuery, queueThreads, loadCollapsed])
 
   const activeMatches = trimmedQuery
     ? queueThreads.filter((t) => t.name.toLowerCase().includes(trimmedQuery.toLowerCase()))
@@ -391,11 +447,12 @@ export default function QueueSidebar({
           >
             <PanelLeft size={16} />
           </button>
-          <span className="text-sm font-semibold" style={{ color: 'var(--color-claude)' }}>
-            PolyCode
+          <span className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: 'var(--color-claude)' }}>
+            {title}
           </span>
         </div>
         <div className="flex items-center gap-0.5">
+          {headerActions}
           <button
             onClick={onOpenSettings}
             className="flex items-center justify-center rounded p-1.5 opacity-60 transition-opacity hover:opacity-100"
@@ -416,6 +473,7 @@ export default function QueueSidebar({
       </div>
 
       <ViewModeSwitch mode="queue" onSetMode={onSetViewMode} />
+      {subHeader}
 
       <div className="border-b px-3 py-1.5 flex-shrink-0" style={{ borderColor: 'var(--color-border)' }}>
         <input
@@ -437,11 +495,13 @@ export default function QueueSidebar({
           <>
             {activeMatches.map((thread) => (
               <QueueRow
-                key={thread.id}
+                key={rowKey(thread)}
                 thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                 statusMap={statusMap}
                 unreadByThread={unreadByThread}
-                isSelected={selectedThreadId === thread.id}
+                isSelected={selected === rowKey(thread)}
                 sortTimestamp={thread.last_turn_completed_at}
                 onSelect={() => onSelectThread(thread)}
                 onArchive={() => onArchiveThread(thread)}
@@ -453,11 +513,13 @@ export default function QueueSidebar({
                 <SectionHeader label="Snoozed" count={snoozedMatches.length} />
                 {snoozedMatches.map((thread) => (
                   <QueueRow
-                    key={thread.id}
+                    key={rowKey(thread)}
                     thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                     statusMap={statusMap}
                     unreadByThread={unreadByThread}
-                    isSelected={selectedThreadId === thread.id}
+                    isSelected={selected === rowKey(thread)}
                     sortTimestamp={thread.last_turn_completed_at}
                     isSnoozed
                     onSelect={() => onSelectThread(thread)}
@@ -472,11 +534,13 @@ export default function QueueSidebar({
                 <SectionHeader label="Archived" count={archivedMatches.length} />
                 {archivedMatches.map((thread) => (
                   <QueueRow
-                    key={thread.id}
+                    key={rowKey(thread)}
                     thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                     statusMap={statusMap}
                     unreadByThread={unreadByThread}
-                    isSelected={selectedThreadId === thread.id}
+                    isSelected={selected === rowKey(thread)}
                     sortTimestamp={thread.last_turn_completed_at}
                     isArchived
                     onSelect={() => onSelectThread(thread)}
@@ -508,11 +572,13 @@ export default function QueueSidebar({
             */}
             {woken.map((thread) => (
               <QueueRow
-                key={thread.id}
+                key={rowKey(thread)}
                 thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                 statusMap={statusMap}
                 unreadByThread={unreadByThread}
-                isSelected={selectedThreadId === thread.id}
+                isSelected={selected === rowKey(thread)}
                 sortTimestamp={thread.last_turn_completed_at}
                 isWokenRow
                 onSelect={() => onSelectThread(thread)}
@@ -525,11 +591,13 @@ export default function QueueSidebar({
                 <SectionHeader label="Needs attention" count={attention.length} />
                 {attention.map((thread) => (
                   <QueueRow
-                    key={thread.id}
+                    key={rowKey(thread)}
                     thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                     statusMap={statusMap}
                     unreadByThread={unreadByThread}
-                    isSelected={selectedThreadId === thread.id}
+                    isSelected={selected === rowKey(thread)}
                     sortTimestamp={thread.last_turn_completed_at}
                     onSelect={() => onSelectThread(thread)}
                     onArchive={() => onArchiveThread(thread)}
@@ -543,11 +611,13 @@ export default function QueueSidebar({
                 <SectionHeader label="Running" count={running.length} />
                 {running.map((thread) => (
                   <QueueRow
-                    key={thread.id}
+                    key={rowKey(thread)}
                     thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                     statusMap={statusMap}
                     unreadByThread={unreadByThread}
-                    isSelected={selectedThreadId === thread.id}
+                    isSelected={selected === rowKey(thread)}
                     sortTimestamp={thread.last_turn_started_at}
                     onSelect={() => onSelectThread(thread)}
                     onArchive={() => onArchiveThread(thread)}
@@ -561,11 +631,13 @@ export default function QueueSidebar({
                 <SectionHeader label="New" count={fresh.length} />
                 {fresh.map((thread) => (
                   <QueueRow
-                    key={thread.id}
+                    key={rowKey(thread)}
                     thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                     statusMap={statusMap}
                     unreadByThread={unreadByThread}
-                    isSelected={selectedThreadId === thread.id}
+                    isSelected={selected === rowKey(thread)}
                     sortTimestamp={thread.created_at}
                     onSelect={() => onSelectThread(thread)}
                     onArchive={() => onArchiveThread(thread)}
@@ -584,13 +656,16 @@ export default function QueueSidebar({
               label="Snoozed"
               emptyLabel="snoozed threads"
               queueThreads={queueThreads}
+              load={loadCollapsed}
               renderRow={(thread) => (
                 <QueueRow
-                  key={thread.id}
+                  key={rowKey(thread)}
                   thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                   statusMap={statusMap}
                   unreadByThread={unreadByThread}
-                  isSelected={selectedThreadId === thread.id}
+                  isSelected={selected === rowKey(thread)}
                   sortTimestamp={thread.last_turn_completed_at}
                   isSnoozed
                   onSelect={() => onSelectThread(thread)}
@@ -604,13 +679,16 @@ export default function QueueSidebar({
               label="Archived"
               emptyLabel="archived threads"
               queueThreads={queueThreads}
+              load={loadCollapsed}
               renderRow={(thread) => (
                 <QueueRow
-                  key={thread.id}
+                  key={rowKey(thread)}
                   thread={thread}
+                projectIcon={renderProjectIcon?.(thread)}
+                badge={renderRowBadge?.(thread)}
                   statusMap={statusMap}
                   unreadByThread={unreadByThread}
-                  isSelected={selectedThreadId === thread.id}
+                  isSelected={selected === rowKey(thread)}
                   sortTimestamp={thread.last_turn_completed_at}
                   isArchived
                   onSelect={() => onSelectThread(thread)}

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { RemoteConnectionPhase, RemoteHost } from '../types/ipc'
 import { initRemoteConnectionStore, useRemoteConnectionStore } from '../stores/remoteConnection'
 import { client } from '../lib/client'
+import { initUnifiedStore, useUnifiedStore } from '../stores/unified'
+import { SourceBadge, useActiveSource } from './SourceBadge'
 
 const PHASE_DOT: Record<RemoteConnectionPhase, { color: string; label: string; pulse?: boolean }> = {
   local: { color: 'var(--color-text-muted)', label: 'Local instance' },
@@ -18,12 +20,15 @@ export default function TitleBar() {
   const [activeHost, setActiveHost] = useState<RemoteHost | null>(null)
   const connection = useRemoteConnectionStore((s) => s.connection)
   const slowCalls = useRemoteConnectionStore((s) => s.slowCalls)
+  const unifiedEnabled = useUnifiedStore((s) => s.enabled)
+  const activeSource = useActiveSource()
   const { windowControls, remoteHosts } = client.capabilities
   // A browser is always talking to a remote host; the desktop only when one is selected.
   const remoteActive = remoteHosts ? activeHost !== null : connection.hostId !== null
 
   useEffect(() => {
     initRemoteConnectionStore()
+    initUnifiedStore()
   }, [])
 
   useEffect(() => {
@@ -64,6 +69,14 @@ export default function TitleBar() {
   }, [remoteHosts])
 
   function switchHost(id: string) {
+    // "All" is a view over every source, not a host: the active host stays as it is and
+    // changes only when a Thread from another source is opened.
+    if (id === 'all') {
+      useUnifiedStore.getState().setEnabled(true)
+      return
+    }
+    useUnifiedStore.getState().setEnabled(false)
+    if (id === (activeHost?.id ?? 'local')) return
     void client.invoke('remote:setActiveHost', id === 'local' ? null : id)
       .then((host) => setActiveHost(host))
       .catch((error) => console.error('[remote] Failed to switch host', error))
@@ -146,9 +159,11 @@ export default function TitleBar() {
         })()}
         {remoteHosts && (
           <select
-            value={activeHost?.id ?? 'local'}
+            value={unifiedEnabled ? 'all' : activeHost?.id ?? 'local'}
             onChange={(event) => switchHost(event.target.value)}
-            title={activeHost ? `Remote: ${activeHost.label}` : 'Local instance'}
+            title={unifiedEnabled
+              ? `All sources (open thread via ${activeHost ? activeHost.label : 'Local'})`
+              : activeHost ? `Remote: ${activeHost.label}` : 'Local instance'}
             style={{
               height: 22,
               maxWidth: 220,
@@ -161,6 +176,7 @@ export default function TitleBar() {
               outline: 'none',
             }}
           >
+            <option value="all">All</option>
             <option value="local">Local</option>
             {hosts.map((host) => (
               <option key={host.id} value={host.id}>
@@ -169,6 +185,7 @@ export default function TitleBar() {
             ))}
           </select>
         )}
+        {remoteHosts && activeSource && <SourceBadge source={activeSource} size="sm" />}
         {/*
           Perceived-latency signal: at least one in-flight IPC call has been waiting on the
           remote host past the preload's slow threshold. One subtle global spinner instead

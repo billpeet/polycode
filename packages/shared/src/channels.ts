@@ -253,6 +253,10 @@ export const CHANNEL_REGISTRY = {
   'remote:getPairingInfo': { local: true, remote: false },
   'remote:getConnectionState': { local: true, remote: false },
   'remote:reconnect': { local: true, remote: false },
+  // The unified ("All") view: fans out from this desktop to every saved host.
+  'remote:getUnifiedSnapshot': { local: true, remote: false },
+  'remote:invokeOnSource': { local: true, remote: false },
+  'remote:setUnifiedWatch': { local: true, remote: false },
   // Exposing this machine over its tailnet drives the local `tailscale` CLI and rewrites
   // this machine's own server config: desktop-only by nature.
   'tailscale:getStatus': { local: true, remote: false },

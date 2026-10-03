@@ -14,6 +14,7 @@ import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
 import { Tooltip } from './ui/tooltip'
 import { client } from '../lib/client'
+import { SourceBadge, useActiveSource } from './SourceBadge'
 import { writeClipboardText } from '../lib/clipboard'
 import { getDefaultModelForProvider } from '../types/ipc'
 
@@ -166,6 +167,7 @@ export default function ThreadHeader({ threadId }: Props) {
     threadProjectId ? s.byProject[threadProjectId]?.find((t) => t.id === threadId) : undefined
   )
   const isPendingThread = !!thread?.is_pending
+  const activeSource = useActiveSource()
   // A draft (create-on-send) thread already has a real destination unless it
   // targets a worktree that only comes into existence on send; its directory
   // is usable before the first message.
@@ -288,10 +290,17 @@ export default function ThreadHeader({ threadId }: Props) {
   return (
     <div
       className="flex flex-col flex-shrink-0 border-b"
-      style={{ borderColor: 'var(--color-border)', background: 'var(--color-surface)' }}
+      style={{
+        borderColor: 'var(--color-border)',
+        background: 'var(--color-surface)',
+        // In the unified view the workspace can be on any machine: a strip in the
+        // source's colour ties the whole thread pane to the badge and the sidebar pills.
+        borderTop: activeSource ? `2px solid ${activeSource.color}` : undefined,
+      }}
     >
     <div className="flex items-center justify-between px-4 py-3">
       <div className="flex items-center gap-3 min-w-0">
+        {activeSource && <SourceBadge source={activeSource} />}
         {status === 'running' || status === 'stopping' ? (
           <span className="flex items-center gap-1 flex-shrink-0">
             <span

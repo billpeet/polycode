@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { AlertTriangle, ChevronDown, ChevronRight, Copy, FolderOpen, GitBranchPlus, SquareTerminal, Trash2 } from 'lucide-react'
 import { client } from '../../lib/client'
 import { writeClipboardText } from '../../lib/clipboard'
@@ -12,6 +13,10 @@ interface LocationSectionProps {
   location: RepoLocation
   projectThreads: Thread[]
   showPoolActions?: boolean
+  /** Extra badge after the connection badge (the unified view's source pill). */
+  badge?: ReactNode
+  /** False when the path is not on this desktop (another source), so shell actions are hidden. */
+  shellAvailable?: boolean
   collapsedLocationIds: Set<string>
   pathExistsByLocation: Record<string, boolean>
   branchByLocation: Record<string, string>
@@ -36,6 +41,8 @@ export default function LocationSection({
   location,
   projectThreads,
   showPoolActions = false,
+  badge,
+  shellAvailable = true,
   collapsedLocationIds,
   pathExistsByLocation,
   branchByLocation,
@@ -60,7 +67,7 @@ export default function LocationSection({
   const pathMissing = location.connection_type === 'local' && pathExistsByLocation[location.id] === false
   const invalidWorktree = location.is_worktree && location.worktree_valid === false
   // Explorer/terminal need a directory the desktop shell can reach: local or WSL, not SSH.
-  const canOpenShell = client.capabilities.shell && location.connection_type !== 'ssh' && !pathMissing
+  const canOpenShell = shellAvailable && client.capabilities.shell && location.connection_type !== 'ssh' && !pathMissing
   const projectCommands = useCommandStore((s) => s.byProject[projectId] ?? EMPTY_COMMANDS)
   const commandStatusMap = useCommandStore((s) => s.statusMap)
   const activeCommandCount = projectCommands.reduce((count, command) => {
@@ -121,6 +128,7 @@ export default function LocationSection({
             </span>
           )}
           <ConnectionBadge connectionType={location.connection_type} />
+          {badge}
           {location.pool_id && !isCheckedOut && (
             <span
               className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
