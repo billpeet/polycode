@@ -5,9 +5,11 @@
  * with stdout/stderr/exit-code extraction and result diff blocks.
  */
 import { canonicalToolName } from '@polycode/shared'
-import { memo, useState, type ReactNode } from 'react'
-import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { memo, useEffect, useState, type ReactNode } from 'react'
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
+import { rpc } from '@/api/rpc'
 import { stripAnsi } from '@/lib/diff'
+import { useHostsStore } from '@/stores/hosts'
 import { colors } from '@/theme/colors'
 import { EditDiffView } from './EditDiffView'
 import { Markdown } from './Markdown'
@@ -226,6 +228,132 @@ function BodyContent({ text }: { text: string }) {
   )
 }
 
+// ── Read preview (ported from desktop ToolCallBlock.tsx) ─────────────────────
+
+const IMAGE_PATH_RE = /\.(avif|bmp|gif|ico|jpe?g|png|webp)$/i
+const ABSOLUTE_PATH_RE = /^(?:[a-zA-Z]:[\\/]|\/|\\\\)/
+const READ_TOOL_NAMES = new Set(['read', 'read file', 'imageview'])
+
+interface ReadTarget {
+  path: string
+  isImage: boolean
+  offset: number | null
+  limit: number | null
+}
+
+/**
+ * The file a read-style tool call looked at, when it can be previewed.
+ * Relative paths are skipped: the host's file reader would resolve them
+ * against its own working directory rather than the Thread's.
+ */
+function getReadTarget(toolName: string, input: unknown): ReadTarget | null {
+  if (!READ_TOOL_NAMES.has(toolName.toLowerCase()) || !input || typeof input !== 'object') return null
+  const inp = input as Record<string, unknown>
+  const path = [inp.file_path, inp.filePath, inp.path].find(
+    (value): value is string => typeof value === 'string' && value.length > 0,
+  )
+  if (!path || !ABSOLUTE_PATH_RE.test(path)) return null
+  const numberOrNull = (value: unknown) => (value != null && Number.isFinite(Number(value)) ? Number(value) : null)
+  return { path, isImage: IMAGE_PATH_RE.test(path), offset: numberOrNull(inp.offset), limit: numberOrNull(inp.limit) }
+}
+
+/** An image the provider returned inline with the tool result (Codex `inputImage` content items). */
+function getInlineResultImage(resultMetadata: Record<string, unknown> | null): string | null {
+  const items = resultMetadata?.content_items
+  if (!Array.isArray(items)) return null
+  for (const item of items) {
+    if (!item || typeof item !== 'object') continue
+    const rec = item as Record<string, unknown>
+    const url = rec.imageUrl ?? rec.image_url
+    if (typeof url === 'string' && /^data:image\/[a-z0-9.+-]+;base64,/i.test(url)) return url
+  }
+  return null
+}
+
+type FilePreviewState =
+  | { status: 'loading' }
+  | { status: 'unavailable' }
+  | { status: 'image'; dataUrl: string }
+  | { status: 'text'; text: string; truncated: boolean }
+
+function PreviewImage({ dataUrl }: { dataUrl: string }) {
+  const [aspectRatio, setAspectRatio] = useState(4 / 3)
+  return (
+    <Image
+      source={{ uri: dataUrl }}
+      style={[bodyStyles.previewImage, { aspectRatio }]}
+      resizeMode="contain"
+      onLoad={(event) => {
+        const { width, height } = event.nativeEvent.source
+        if (width > 0 && height > 0) setAspectRatio(width / height)
+      }}
+    />
+  )
+}
+
+/**
+ * Previews the file a read call targeted. Providers such as Codex report a
+ * read without echoing the file back, so the details would otherwise only say
+ * "Completed". The file is fetched from the host as it is now, which may
+ * differ from what the provider saw.
+ */
+function FilePreview({ target, inlineImage, fallback }: { target: ReadTarget; inlineImage: string | null; fallback: string }) {
+  const { path, offset, limit } = target
+  const requestKey = `${path}\n${offset}\n${limit}`
+  const [loaded, setLoaded] = useState<{ key: string; state: FilePreviewState } | null>(null)
+
+  useEffect(() => {
+    if (inlineImage) return
+    let cancelled = false
+    const finish = (state: FilePreviewState) => {
+      if (!cancelled) setLoaded({ key: requestKey, state })
+    }
+    const connection = useHostsStore.getState().activeConnection()
+    if (!connection) {
+      finish({ status: 'unavailable' })
+      return
+    }
+    rpc(connection, 'files:read', path)
+      .then((file) => {
+        if (!file) {
+          finish({ status: 'unavailable' })
+        } else if (file.mimeType?.startsWith('image/') && file.dataUrl?.startsWith(`data:${file.mimeType};base64,`)) {
+          finish({ status: 'image', dataUrl: file.dataUrl })
+        } else {
+          let text = file.content
+          if (offset != null || limit != null) {
+            const start = Math.max(0, offset ?? 0)
+            text = text
+              .split('\n')
+              .slice(start, limit != null ? start + limit : undefined)
+              .join('\n')
+          }
+          finish({ status: 'text', text, truncated: file.truncated })
+        }
+      })
+      .catch(() => finish({ status: 'unavailable' }))
+    return () => {
+      cancelled = true
+    }
+  }, [path, offset, limit, inlineImage, requestKey])
+
+  const state: FilePreviewState = inlineImage
+    ? { status: 'image', dataUrl: inlineImage }
+    : loaded?.key === requestKey
+      ? loaded.state
+      : { status: 'loading' }
+
+  if (state.status === 'loading') return <Text style={bodyStyles.more}>Loading preview…</Text>
+  if (state.status === 'unavailable') return <BodyContent text={fallback} />
+  if (state.status === 'image') return <PreviewImage dataUrl={state.dataUrl} />
+  return (
+    <View>
+      <BodyContent text={state.text} />
+      {state.truncated ? <Text style={bodyStyles.more}>Preview truncated to the first 1 MB.</Text> : null}
+    </View>
+  )
+}
+
 function FieldLabel({ children }: { children: string }) {
   return <Text style={bodyStyles.label}>{children}</Text>
 }
@@ -431,10 +559,15 @@ export const ToolCallBlock = memo(function ToolCallBlock(props: ToolCallProps) {
   const summary = getInputSummary(toolName, input) ?? getResultSummary(result?.metadata ?? null)
 
   const resultDiffs = status !== 'cancelled' ? extractDiffBlocks(result?.metadata ?? null) : []
-  const resultText =
+  const resultOutput =
     status !== 'cancelled' && result
-      ? (getRawOutputText(result.metadata?.rawOutput) ?? (result.content?.trim() ? result.content : 'Completed'))
+      ? (getRawOutputText(result.metadata?.rawOutput) ?? (result.content?.trim() ? result.content : null))
       : null
+  const resultText = status !== 'cancelled' && result ? (resultOutput ?? 'Completed') : null
+  // A read that returned no text (Codex), or one that read an image, is shown
+  // as a preview of the file instead of a bare "Completed".
+  const readTarget = status === 'done' ? getReadTarget(toolName, input) : null
+  const previewTarget = readTarget && (readTarget.isImage || resultOutput === null) ? readTarget : null
 
   return (
     <View style={[blockStyles.block, { borderLeftColor: visuals.accent, backgroundColor: visuals.tint }, props.subagent && blockStyles.subagent]}>
@@ -479,8 +612,19 @@ export const ToolCallBlock = memo(function ToolCallBlock(props: ToolCallProps) {
           ) : null}
 
           {resultDiffs.length === 0 && resultText ? (
-            <Section label={status === 'error' ? 'Error' : 'Output'} color={status === 'error' ? '#f87171' : colors.textMuted}>
-              <BodyContent text={resultText} />
+            <Section
+              label={status === 'error' ? 'Error' : previewTarget ? 'Preview' : 'Output'}
+              color={status === 'error' ? '#f87171' : colors.textMuted}
+            >
+              {previewTarget ? (
+                <FilePreview
+                  target={previewTarget}
+                  inlineImage={getInlineResultImage(result?.metadata ?? null)}
+                  fallback={resultText}
+                />
+              ) : (
+                <BodyContent text={resultText} />
+              )}
             </Section>
           ) : null}
 
@@ -536,4 +680,12 @@ const bodyStyles = StyleSheet.create({
     marginRight: 8,
   },
   more: { color: colors.textMuted, fontSize: 11, fontStyle: 'italic', marginTop: 3 },
+  previewImage: {
+    width: '100%',
+    maxHeight: 320,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.codeBg,
+  },
 })
