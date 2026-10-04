@@ -1,4 +1,5 @@
 import type { useRouter } from 'expo-router'
+import { activateHost } from './sources'
 
 type Router = ReturnType<typeof useRouter>
 
@@ -9,6 +10,15 @@ type Router = ReturnType<typeof useRouter>
  */
 export function openThread(router: Router, thread: { id: string; project_id: string }): void {
   router.push({ pathname: '/thread/[threadId]', params: { threadId: thread.id, projectId: thread.project_id } })
+}
+
+/**
+ * Opens a thread that lives on `sourceId` from the unified view. A Thread is conducted
+ * through the active host, so its host is made active first.
+ */
+export function openSourceThread(router: Router, sourceId: string, thread: { id: string; project_id: string }): void {
+  activateHost(sourceId)
+  openThread(router, thread)
 }
 
 /** Opens the New-thread sheet, optionally preselecting a project. */

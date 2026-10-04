@@ -20,6 +20,7 @@ import {
   type PermissionMode,
   type Provider,
   type ReasoningLevel,
+  type QueueThread,
   type RepoLocation,
 } from '@polycode/shared'
 import { ActionSheet } from '@/components/ActionSheet'
@@ -31,13 +32,17 @@ import { locationLabel, worktreeParent } from '@/lib/locations'
 import { modelLabel, useAvailableModels } from '@/lib/models'
 import { openThread } from '@/lib/navigation'
 import { permissionOptionsForProvider } from '@/lib/permissions'
+import { activateHost } from '@/lib/sources'
 import { favouriteChipLabel, favouriteEquals, useFavouritesStore, type Favourite } from '@/stores/favourites'
+import { useHostsStore } from '@/stores/hosts'
 import { useProjectsStore } from '@/stores/projects'
 import { useThreadsStore } from '@/stores/threads'
+import { useUnifiedStore } from '@/stores/unified'
 import { colors, permissionAccent, radii, sectionLabel } from '@/theme/colors'
 
 const ALL_REASONING_LEVELS: ReasoningLevel[] = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
 const EMPTY_LOCATIONS: RepoLocation[] = []
+const EMPTY_QUEUE: QueueThread[] = []
 
 function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
@@ -101,6 +106,10 @@ function AgentPickerSheet(props: {
  * phone has no side panel to hold a half-configured draft, so the form is the
  * draft. The result is the same row on both clients — a `'New thread'` that
  * the provider auto-titles.
+ *
+ * A thread is created on the active host. In the unified ("All") view that is one of
+ * several, so the sheet starts with a Host row: picking another host makes it the active
+ * one and reloads the Project list from it.
  */
 export default function NewThreadScreen() {
   const router = useRouter()
@@ -110,7 +119,13 @@ export default function NewThreadScreen() {
   const projects = useProjectsStore((s) => s.projects)
   const fetchProjects = useProjectsStore((s) => s.fetch)
   const fetchLocations = useProjectsStore((s) => s.fetchLocations)
+  const unified = useUnifiedStore((s) => s.enabled)
+  const hosts = useHostsStore((s) => s.hosts)
+  const activeHostId = useHostsStore((s) => s.activeHostId)
+  // "Running" counts come from whichever Queue is being kept fresh.
   const queueThreads = useThreadsStore((s) => s.queueThreads)
+  const unifiedQueue = useUnifiedStore((s) => (activeHostId ? s.queueBySource[activeHostId] : undefined) ?? EMPTY_QUEUE)
+  const runningSource = unified ? unifiedQueue : queueThreads
   const favourites = useFavouritesStore((s) => s.favourites)
 
   const [chosenProjectId, setProjectId] = useState<string | null>(params.projectId ?? null)
@@ -125,9 +140,11 @@ export default function NewThreadScreen() {
   const [showAgentPicker, setShowAgentPicker] = useState(false)
   const [locationsLoading, setLocationsLoading] = useState(false)
 
+  // Also on a host switch: the list was just cleared, and a host with no Projects
+  // would otherwise leave `projects.length` unchanged and never be asked.
   useEffect(() => {
     if (projects.length === 0) void fetchProjects()
-  }, [projects.length, fetchProjects])
+  }, [projects.length, fetchProjects, activeHostId])
 
   // The param wins; otherwise the first project, once the list arrives.
   const projectId = chosenProjectId ?? projects[0]?.id ?? null
@@ -167,15 +184,15 @@ export default function NewThreadScreen() {
 
   const runningByLocation = useMemo(() => {
     const counts = new Map<string, number>()
-    for (const t of queueThreads) {
+    for (const t of runningSource) {
       if (t.project_id !== projectId || t.status !== 'running') continue
       if (t.location_id) counts.set(t.location_id, (counts.get(t.location_id) ?? 0) + 1)
     }
     return counts
-  }, [queueThreads, projectId])
+  }, [runningSource, projectId])
   const runningInProject = useMemo(
-    () => queueThreads.filter((t) => t.project_id === projectId && t.status === 'running').length,
-    [queueThreads, projectId],
+    () => runningSource.filter((t) => t.project_id === projectId && t.status === 'running').length,
+    [runningSource, projectId],
   )
   const parent = worktreeParent(locations)
 
@@ -240,6 +257,27 @@ export default function NewThreadScreen() {
       </View>
 
       <ScrollView contentContainerStyle={styles.body} keyboardShouldPersistTaps="handled">
+        {/* 0. Host — only where the choice exists: the unified view, with several hosts. */}
+        {unified && hosts.length > 1 ? (
+          <>
+            <Text style={sectionLabel}>Host</Text>
+            <View style={[styles.chipWrap, { marginBottom: 8 }]}>
+              {hosts.map((host) => (
+                <Chip
+                  key={host.id}
+                  label={host.label}
+                  active={host.id === activeHostId}
+                  onPress={() => {
+                    if (host.id === activeHostId) return
+                    activateHost(host.id)
+                    setProjectId(null)
+                  }}
+                />
+              ))}
+            </View>
+          </>
+        ) : null}
+
         {/* 1. Project */}
         <Text style={sectionLabel}>Project</Text>
         <Pressable

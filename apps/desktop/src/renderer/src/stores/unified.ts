@@ -1,12 +1,16 @@
 import { create } from 'zustand'
 import {
+  createUnifiedCollapsedLoader,
   LOCAL_SOURCE_ID,
   mergeUnifiedSources,
   replaceUnifiedSources,
+  sourceKey,
+  tagUnifiedQueue,
   type ChannelArgs,
   type ChannelResult,
   type RemoteChannel,
   type UnifiedProject,
+  type UnifiedQueueThread,
   type UnifiedSnapshot,
   type UnifiedSourceEvent,
 } from '@polycode/shared'
@@ -17,7 +21,7 @@ import { useProjectStore } from './projects'
 import { useThreadStore, type DraftDestinationOptions } from './threads'
 import { useLocationStore } from './locations'
 import { useToastStore } from './toast'
-import type { QueueThread, RepoLocation, Thread, ThreadStatus } from '../types/ipc'
+import type { RepoLocation, Thread, ThreadStatus } from '../types/ipc'
 import { useUiStore } from './ui'
 
 /**
@@ -40,66 +44,25 @@ const POLL_INTERVAL_MS = 120_000
 const SOURCE_REFRESH_DEBOUNCE_MS = 1_500
 export const SECTION_PAGE_SIZE = 10
 
-/** Key for anything scoped to one source: `${sourceId}:${id}`. */
-export function sourceKey(sourceId: string, id: string): string {
-  return `${sourceId}:${id}`
-}
+export { sourceKey }
+export type { UnifiedQueueThread }
 
 export type SectionKind = 'archived' | 'snoozed'
-
-/** A Queue row from any source. `source_id`/`source_label` say whose it is. */
-export interface UnifiedQueueThread extends QueueThread {
-  source_id: string
-  source_label: string
-}
-
-function queueActivity(thread: QueueThread): number {
-  const time = new Date(thread.last_turn_completed_at ?? thread.updated_at).getTime()
-  return Number.isNaN(time) ? 0 : time
-}
-
-function tagQueue(sourceId: string, label: string, rows: QueueThread[]): UnifiedQueueThread[] {
-  return rows.map((row) => ({ ...row, source_id: sourceId, source_label: label }))
-}
-
-/**
- * Per-source cursors for the merged Snoozed/Archived pages. Each source is paged on its
- * own (it only knows its own offsets); a page is the union of every source's next rows,
- * newest activity first. Reset whenever a section restarts at offset 0.
- */
-const collapsedCursors = new Map<string, { cursors: Record<string, number>; exhausted: Set<string> }>()
 
 /**
  * Snoozed/Archived loader for the unified Queue: same contract as the single-source one,
  * fanned out across every reachable source. Module-level so its identity is stable.
  */
-export async function loadUnifiedCollapsed(
-  variant: SectionKind,
-  search: string | null,
-  offset: number,
-  limit: number,
-): Promise<{ rows: QueueThread[]; hasMore: boolean }> {
-  const state = useUnifiedStore.getState()
-  const sources = (state.snapshot?.sources ?? []).filter((source) => source.status === 'ok')
-  const cursorKey = `${variant}:${search ?? ''}`
-  let entry = collapsedCursors.get(cursorKey)
-  if (offset === 0 || !entry) {
-    entry = { cursors: {}, exhausted: new Set() }
-    collapsedCursors.set(cursorKey, entry)
-  }
-  const channel = variant === 'snoozed' ? 'threads:listQueueSnoozed' : 'threads:listQueueArchived'
-  const pages = await Promise.all(sources
-    .filter((source) => !entry.exhausted.has(source.sourceId))
-    .map(async (source) => {
-      const from = entry.cursors[source.sourceId] ?? 0
-      const rows = await state.invokeOn(source.sourceId, channel, search, limit, from).catch(() => [] as QueueThread[])
-      entry.cursors[source.sourceId] = from + rows.length
-      if (rows.length < limit) entry.exhausted.add(source.sourceId)
-      return tagQueue(source.sourceId, source.label, rows)
-    }))
-  const rows = pages.flat().sort((a, b) => queueActivity(b) - queueActivity(a))
-  return { rows, hasMore: sources.some((source) => !entry.exhausted.has(source.sourceId)) }
-}
+export const loadUnifiedCollapsed = createUnifiedCollapsedLoader(
+  () => (useUnifiedStore.getState().snapshot?.sources ?? []).filter((source) => source.status === 'ok'),
+  (sourceId, variant, search, limit, offset) => useUnifiedStore.getState().invokeOn(
+    sourceId,
+    variant === 'snoozed' ? 'threads:listQueueSnoozed' : 'threads:listQueueArchived',
+    search,
+    limit,
+    offset,
+  ),
+)
 
 export interface SectionState {
   open: boolean
@@ -224,7 +187,7 @@ export const useUnifiedStore = create<UnifiedStore>((set, get) => ({
     try {
       const results = await Promise.all(sources.map(async (source) => {
         const rows = await get().invokeOn(source.sourceId, 'threads:listQueue').catch(() => null)
-        return [source.sourceId, rows ? tagQueue(source.sourceId, source.label, rows) : null] as const
+        return [source.sourceId, rows ? tagUnifiedQueue(source.sourceId, source.label, rows) : null] as const
       }))
       set((s) => {
         const next = sourceIds ? { ...s.queueBySource } : {}

@@ -1,4 +1,4 @@
-import type { LocationPool, Project, RepoLocation, Thread } from './types'
+import type { LocationPool, Project, QueueThread, RepoLocation, Thread } from './types'
 
 /**
  * The unified ("All") view: every Project, Project Location and Thread from the local
@@ -63,6 +63,132 @@ export function replaceUnifiedSources(previous: UnifiedSource[], next: UnifiedSo
     if (!previous.some((existing) => existing.sourceId === source.sourceId)) merged.push(source)
   }
   return merged
+}
+
+/** Key for anything scoped to one source: `${sourceId}:${id}`. */
+export function sourceKey(sourceId: string, id: string): string {
+  return `${sourceId}:${id}`
+}
+
+/** Runs one remote-capable channel against a single source. */
+export type UnifiedSourceCall = (channel: string, args: unknown[]) => Promise<unknown>
+
+/**
+ * RPCs a snapshot read keeps in flight against one source. A Remote Host refuses a ninth
+ * concurrent RPC (`remote/server.ts`), and the snapshot shares those slots with whatever
+ * else is talking to the host, so it takes half.
+ */
+export const UNIFIED_SOURCE_CONCURRENCY = 4
+
+function limitConcurrency(call: UnifiedSourceCall, limit: number): UnifiedSourceCall {
+  let active = 0
+  const waiting: (() => void)[] = []
+  return async (channel, args) => {
+    // A finishing call hands its slot straight to the next waiter, so `active` only
+    // moves when nobody is waiting; a newcomer can never slip in between the two.
+    if (active >= limit) await new Promise<void>((resolve) => waiting.push(resolve))
+    else active++
+    try {
+      return await call(channel, args)
+    } finally {
+      const next = waiting.shift()
+      if (next) next()
+      else active--
+    }
+  }
+}
+
+/**
+ * Read one Remote Host's half of the snapshot: its Projects, and each Project's
+ * Locations, pools, live Threads and collapsed-section counts. Rejects when the Project
+ * list itself cannot be read (the source is unreachable); any other read that fails
+ * falls back to empty rather than hiding the whole source. Shared by every client that
+ * builds a unified view, so they cannot disagree about what a source contains.
+ */
+export async function readUnifiedSourceProjects(
+  call: UnifiedSourceCall,
+  concurrency: number = UNIFIED_SOURCE_CONCURRENCY,
+): Promise<Pick<UnifiedSource, 'projects' | 'archivedProjects'>> {
+  const limited = limitConcurrency(call, concurrency)
+  const read = <T>(channel: string, args: unknown[], fallback: T): Promise<T> =>
+    (limited(channel, args) as Promise<T>).catch(() => fallback)
+  const [list, archivedProjects] = await Promise.all([
+    limited('projects:list', []) as Promise<Project[]>,
+    read<Project[]>('projects:listArchived', [], []),
+  ])
+  const projects = await Promise.all(list.map(async (project): Promise<UnifiedSourceProject> => {
+    const [locations, pools, threads, archivedCount, snoozedCount] = await Promise.all([
+      read<RepoLocation[]>('locations:list', [project.id], []),
+      read<LocationPool[]>('location-pools:list', [project.id], []),
+      read<Thread[]>('threads:list', [project.id], []),
+      read<number>('threads:archivedCount', [project.id], 0),
+      read<number>('threads:snoozedCount', [project.id], 0),
+    ])
+    return { project, locations, pools, threads, archivedCount, snoozedCount }
+  }))
+  return { projects, archivedProjects }
+}
+
+/** A Queue row from any source. `source_id`/`source_label` say whose it is. */
+export interface UnifiedQueueThread extends QueueThread {
+  source_id: string
+  source_label: string
+}
+
+export function tagUnifiedQueue(sourceId: string, label: string, rows: QueueThread[]): UnifiedQueueThread[] {
+  return rows.map((row) => ({ ...row, source_id: sourceId, source_label: label }))
+}
+
+function queueActivity(thread: QueueThread): number {
+  const time = new Date(thread.last_turn_completed_at ?? thread.updated_at).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+export type UnifiedCollapsedVariant = 'archived' | 'snoozed'
+
+/**
+ * Builds the Snoozed/Archived loader for a unified Queue. Each source is paged on its
+ * own (it only knows its own offsets), so the loader keeps a cursor per source; a page
+ * is the union of every source's next rows, newest activity first, and can therefore be
+ * longer than `limit`. Cursors restart whenever a section is loaded from offset 0.
+ */
+export function createUnifiedCollapsedLoader(
+  getSources: () => Pick<UnifiedSource, 'sourceId' | 'label'>[],
+  list: (
+    sourceId: string,
+    variant: UnifiedCollapsedVariant,
+    search: string | null,
+    limit: number,
+    offset: number,
+  ) => Promise<QueueThread[]>,
+): (
+  variant: UnifiedCollapsedVariant,
+  search: string | null,
+  offset: number,
+  limit: number,
+) => Promise<{ rows: UnifiedQueueThread[]; hasMore: boolean }> {
+  const cursorsByQuery = new Map<string, { cursors: Record<string, number>; exhausted: Set<string> }>()
+  return async (variant, search, offset, limit) => {
+    const sources = getSources()
+    const cursorKey = `${variant}:${search ?? ''}`
+    let entry = cursorsByQuery.get(cursorKey)
+    if (offset === 0 || !entry) {
+      entry = { cursors: {}, exhausted: new Set() }
+      cursorsByQuery.set(cursorKey, entry)
+    }
+    const { cursors, exhausted } = entry
+    const pages = await Promise.all(sources
+      .filter((source) => !exhausted.has(source.sourceId))
+      .map(async (source) => {
+        const from = cursors[source.sourceId] ?? 0
+        const rows = await list(source.sourceId, variant, search, limit, from).catch(() => [] as QueueThread[])
+        cursors[source.sourceId] = from + rows.length
+        if (rows.length < limit) exhausted.add(source.sourceId)
+        return tagUnifiedQueue(source.sourceId, source.label, rows)
+      }))
+    const rows = pages.flat().sort((a, b) => queueActivity(b) - queueActivity(a))
+    return { rows, hasMore: sources.some((source) => !exhausted.has(source.sourceId)) }
+  }
 }
 
 /** One source's copy of a merged Project. */

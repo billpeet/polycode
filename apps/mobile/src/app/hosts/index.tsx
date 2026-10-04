@@ -4,10 +4,9 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'rea
 import { useState } from 'react'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Button, Card, EmptyState } from '@/components/ui'
+import { selectSource } from '@/lib/sources'
 import { useHostsStore, type HostMeta } from '@/stores/hosts'
-import { useProjectsStore } from '@/stores/projects'
-import { useThreadsStore } from '@/stores/threads'
-import { useUiStore } from '@/stores/ui'
+import { useUnifiedStore } from '@/stores/unified'
 import { colors } from '@/theme/colors'
 
 function HostCard(props: { host: HostMeta }) {
@@ -15,21 +14,18 @@ function HostCard(props: { host: HostMeta }) {
   const { host } = props
   const activeHostId = useHostsStore((s) => s.activeHostId)
   const health = useHostsStore((s) => s.health[host.id])
-  const setActiveHost = useHostsStore((s) => s.setActiveHost)
-  const isActive = activeHostId === host.id
+  const unified = useUnifiedStore((s) => s.enabled)
+  // In the unified view no single host is "the" one being shown.
+  const isActive = !unified && activeHostId === host.id
 
   const healthColor = health === undefined ? colors.textMuted : health.ok ? colors.success : colors.danger
 
   return (
     <Pressable
       onPress={() => {
-        if (activeHostId !== host.id) {
-          // Switching hosts: reset everything scoped to the previous host.
-          setActiveHost(host.id)
-          useUiStore.getState().setQueueFilter('all')
-          useProjectsStore.getState().clear()
-          useThreadsStore.setState({ threadsByProject: {}, queueThreads: [] })
-        }
+        // Picking a host here means "show me this one": it becomes the active host
+        // and the unified view, if it was on, gives way to it.
+        selectSource({ hostId: host.id })
         if (router.canGoBack()) router.back()
         else router.replace('/(tabs)/queue')
       }}

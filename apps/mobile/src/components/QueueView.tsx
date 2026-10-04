@@ -1,4 +1,3 @@
-import { useRouter } from 'expo-router'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ActivityIndicator,
@@ -20,14 +19,15 @@ import {
   SNOOZE_PRESETS,
   timeUntil,
 } from '@polycode/shared'
-import { openThread } from '@/lib/navigation'
 import { QUEUE_BADGE_LABEL, queueBadgeKind } from '@/lib/queue-badge'
+import { useQueueModel, type QueueModel } from '@/lib/queue-model'
 import { relativeTime } from '@/lib/time'
-import { QUEUE_PAGE_SIZE, useThreadsStore } from '@/stores/threads'
+import { useThreadsStore } from '@/stores/threads'
 import { useUiStore, type QueueFilter } from '@/stores/ui'
 import { badge, colors, radii, sectionLabel } from '@/theme/colors'
 import { ThreadStatusIndicator } from './StatusDot'
 import { ActionSheet } from './ActionSheet'
+import { SourcePill, UnreachableSources } from './SourceBadge'
 
 /** Debounce for the search box, matching the desktop Queue. */
 const SEARCH_DEBOUNCE_MS = 200
@@ -39,10 +39,11 @@ function isUnreadForAttention(thread: QueueThread): boolean {
   return thread.unread && thread.status !== 'running' && thread.status !== 'stopping'
 }
 
-function matchesFilter(thread: QueueThread, filter: QueueFilter): boolean {
+/** A Project filter holds whatever `projectKey` returns for its rows (see `QueueModel`). */
+function matchesFilter(thread: QueueThread, filter: QueueFilter, projectKey: QueueModel['projectKey']): boolean {
   if (filter === 'all') return true
   if (filter === 'unread') return isUnreadForAttention(thread)
-  return thread.project_id === filter.projectId
+  return projectKey(thread) === filter.projectId
 }
 
 function matchesSearch(thread: QueueThread, term: string): boolean {
@@ -55,13 +56,16 @@ function matchesSearch(thread: QueueThread, term: string): boolean {
  * line, and a badge naming what the thread is waiting on.
  *
  * Rows carry their project name because the Queue is cross-project — without
- * it "fix the parser" is ambiguous across three repos. Actions live behind a
+ * it "fix the parser" is ambiguous across three repos — and, in the unified
+ * view, a pill for the host, since one repo can be on several. Actions live behind a
  * long-press ActionSheet rather than the desktop's hover buttons, since there
  * is no hover on a phone and Android's Alert.alert silently drops options past
  * the third.
  */
 function QueueRow(props: {
   thread: QueueThread
+  /** The host this row belongs to; set only in the unified view. */
+  source?: { id: string; label: string } | null
   woken?: boolean
   onLongPress: (thread: QueueThread) => void
   onPress: (thread: QueueThread) => void
@@ -97,6 +101,7 @@ function QueueRow(props: {
           <Text style={[styles.rowName, thread.unread && styles.rowNameUnread]} numberOfLines={1}>
             {thread.name}
           </Text>
+          {props.source ? <SourcePill sourceId={props.source.id} label={props.source.label} /> : null}
           {badgeKind ? (
             <View style={[styles.badge, { backgroundColor: badge[badgeKind].bg }]}>
               <Text style={[styles.badgeText, { color: badge[badgeKind].fg }]}>{QUEUE_BADGE_LABEL[badgeKind]}</Text>
@@ -154,32 +159,28 @@ function CollapsedQueueSection(props: {
   variant: 'snoozed' | 'archived'
   search: string
   filter: QueueFilter
-  onSelect: (thread: QueueThread) => void
+  model: QueueModel
   onLongPress: (thread: QueueThread) => void
   /** Bumped by the parent whenever a mutation may have changed membership. */
   revision: number
 }) {
-  const { variant, search, filter, revision } = props
+  const { variant, search, filter, revision, model } = props
+  const { loadCollapsed, projectKey } = model
   const [expanded, setExpanded] = useState(false)
   const [threads, setThreads] = useState<QueueThread[]>([])
-  const [offset, setOffset] = useState(0)
   const [exhausted, setExhausted] = useState(false)
   const [loading, setLoading] = useState(false)
-  const listQueueSnoozed = useThreadsStore((s) => s.listQueueSnoozed)
-  const listQueueArchived = useThreadsStore((s) => s.listQueueArchived)
 
   const fetchPage = useCallback(
-    async (nextOffset: number, signal?: { cancelled: boolean }) => {
-      const list = variant === 'snoozed' ? listQueueSnoozed : listQueueArchived
+    async (offset: number, signal?: { cancelled: boolean }) => {
       setLoading(true)
       try {
-        const page = await list(search || null, nextOffset)
+        const page = await loadCollapsed(variant, search || null, offset)
         // A superseded fetch must not overwrite the current one: search and
         // expansion both retrigger this, and responses can land out of order.
         if (signal?.cancelled) return
-        setThreads((prev) => (nextOffset === 0 ? page : [...prev, ...page]))
-        setOffset(nextOffset)
-        setExhausted(page.length < QUEUE_PAGE_SIZE)
+        setThreads((prev) => (offset === 0 ? page.rows : [...prev, ...page.rows]))
+        setExhausted(!page.hasMore)
       } catch (error) {
         if (signal?.cancelled) return
         Alert.alert(`Could not load ${props.label.toLowerCase()} threads`, String(error))
@@ -187,7 +188,7 @@ function CollapsedQueueSection(props: {
         if (!signal?.cancelled) setLoading(false)
       }
     },
-    [variant, search, listQueueSnoozed, listQueueArchived, props.label],
+    [variant, search, loadCollapsed, props.label],
   )
 
   // A search term forces the section open, so a match can never hide behind a
@@ -208,7 +209,7 @@ function CollapsedQueueSection(props: {
     }
   }, [open, fetchPage, revision])
 
-  const visible = threads.filter((t) => matchesFilter(t, filter))
+  const visible = threads.filter((t) => matchesFilter(t, filter, projectKey))
 
   return (
     <View>
@@ -221,10 +222,16 @@ function CollapsedQueueSection(props: {
         <View>
           {visible.length === 0 && !loading ? <Text style={styles.emptySection}>Nothing here.</Text> : null}
           {visible.map((thread) => (
-            <QueueRow key={thread.id} thread={thread} onPress={props.onSelect} onLongPress={props.onLongPress} />
+            <QueueRow
+              key={model.rowKey(thread)}
+              thread={thread}
+              source={model.source(thread)}
+              onPress={model.open}
+              onLongPress={props.onLongPress}
+            />
           ))}
           {!exhausted && threads.length > 0 ? (
-            <Pressable style={styles.showMore} onPress={() => void fetchPage(offset + QUEUE_PAGE_SIZE)}>
+            <Pressable style={styles.showMore} onPress={() => void fetchPage(threads.length)}>
               <Text style={styles.showMoreText}>Show more</Text>
             </Pressable>
           ) : null}
@@ -241,16 +248,14 @@ function CollapsedQueueSection(props: {
  * the single source of that truth, shared with the desktop so the two clients
  * cannot disagree about what needs the user first. Filter chips and search
  * narrow the *input* to bucketing, so there is only one bucketing pass.
+ *
+ * Where the rows come from is the `QueueModel`'s business: the active host, or
+ * every host at once in the unified ("All") view, where each row names its host.
  */
 export function QueueView() {
-  const router = useRouter()
-  const queueThreads = useThreadsStore((s) => s.queueThreads)
-  const queueLoading = useThreadsStore((s) => s.queueLoading)
-  const fetchQueue = useThreadsStore((s) => s.fetchQueue)
-  const snooze = useThreadsStore((s) => s.snooze)
-  const wake = useThreadsStore((s) => s.wake)
-  const archive = useThreadsStore((s) => s.archive)
-  const unarchive = useThreadsStore((s) => s.unarchive)
+  const model = useQueueModel()
+  const { threads: queueThreads, unified, projectKey } = model
+  const fetchActiveQueue = useThreadsStore((s) => s.fetchQueue)
   const filter = useUiStore((s) => s.queueFilter)
   const setFilter = useUiStore((s) => s.setQueueFilter)
 
@@ -266,18 +271,23 @@ export function QueueView() {
     return () => clearTimeout(id)
   }, [rawSearch])
 
+  // The unified view loads every host's Queue when it is switched on; a single
+  // host's is fetched here, on mount and on leaving the unified view.
   useEffect(() => {
-    void fetchQueue()
-  }, [fetchQueue])
+    if (!unified) void fetchActiveQueue()
+  }, [unified, fetchActiveQueue])
 
   // Project chips come from the Queue rows themselves rather than the
   // Projects store, so they work before that store has loaded and never list
   // a project with nothing in the Queue.
   const projectChips = useMemo(() => {
     const byId = new Map<string, string>()
-    for (const t of queueThreads) byId.set(t.project_id, t.project_name)
+    for (const t of queueThreads) {
+      const key = projectKey(t)
+      if (key !== null) byId.set(key, t.project_name)
+    }
     return [...byId.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name))
-  }, [queueThreads])
+  }, [queueThreads, projectKey])
 
   const unreadCount = useMemo(() => queueThreads.filter(isUnreadForAttention).length, [queueThreads])
 
@@ -285,11 +295,9 @@ export function QueueView() {
   // rows stay current without a refetch; bucketing re-runs on every change.
   const visible = useMemo(() => {
     const term = search.toLowerCase()
-    const input = queueThreads.filter((t) => matchesFilter(t, filter) && matchesSearch(t, term))
+    const input = queueThreads.filter((t) => matchesFilter(t, filter, projectKey) && matchesSearch(t, term))
     return bucketQueueThreads(input, {})
-  }, [queueThreads, filter, search])
-
-  const handleSelect = useCallback((thread: QueueThread) => openThread(router, thread), [router])
+  }, [queueThreads, filter, search, projectKey])
 
   const runAction = useCallback(
     async (label: string, action: () => Promise<void>) => {
@@ -311,7 +319,7 @@ export function QueueView() {
     if (thread.archived) {
       options.push({
         label: 'Unarchive',
-        onPress: () => void runAction('unarchive thread', () => unarchive(thread.project_id, thread.id)),
+        onPress: () => void runAction('unarchive thread', () => model.unarchive(thread)),
       })
       return options
     }
@@ -319,7 +327,7 @@ export function QueueView() {
     if (isSnoozed(thread)) {
       options.push({
         label: 'Wake now',
-        onPress: () => void runAction('wake thread', () => wake(thread.project_id, thread.id)),
+        onPress: () => void runAction('wake thread', () => model.wake(thread)),
       })
     } else {
       options.push({ label: 'Snooze', onPress: () => setSnoozeTarget({ thread }) })
@@ -327,10 +335,10 @@ export function QueueView() {
 
     options.push({
       label: 'Archive',
-      onPress: () => void runAction('archive thread', () => archive(thread.project_id, thread.id)),
+      onPress: () => void runAction('archive thread', () => model.archive(thread)),
     })
     return options
-  }, [actionTarget, runAction, wake, archive, unarchive])
+  }, [actionTarget, runAction, model])
 
   const isEmpty =
     visible.woken.length === 0 &&
@@ -339,6 +347,17 @@ export function QueueView() {
     visible.fresh.length === 0
 
   const activeProjectId = typeof filter === 'object' ? filter.projectId : null
+
+  const row = (thread: QueueThread, woken?: boolean) => (
+    <QueueRow
+      key={model.rowKey(thread)}
+      thread={thread}
+      source={model.source(thread)}
+      woken={woken}
+      onPress={model.open}
+      onLongPress={setActionTarget}
+    />
+  )
 
   return (
     <View style={styles.container}>
@@ -384,15 +403,17 @@ export function QueueView() {
         keyboardShouldPersistTaps="handled"
         refreshControl={
           <RefreshControl
-            refreshing={queueLoading}
+            refreshing={model.loading}
             onRefresh={() => {
-              void fetchQueue()
+              model.refresh()
               bumpRevision()
             }}
             tintColor={colors.textMuted}
           />
         }
       >
+        {unified ? <UnreachableSources /> : null}
+
         {isEmpty && !search ? (
           <View style={styles.empty}>
             <Text style={styles.emptyIcon}>▤</Text>
@@ -407,42 +428,40 @@ export function QueueView() {
           to be shown them at this moment, which is a stronger claim than any
           bucket membership.
         */}
-        {visible.woken.map((thread) => (
-          <QueueRow key={thread.id} thread={thread} woken onPress={handleSelect} onLongPress={setActionTarget} />
-        ))}
+        {visible.woken.map((thread) => row(thread, true))}
 
         <SectionHeader label="Needs attention" count={visible.attention.length} />
-        {visible.attention.map((thread) => (
-          <QueueRow key={thread.id} thread={thread} onPress={handleSelect} onLongPress={setActionTarget} />
-        ))}
+        {visible.attention.map((thread) => row(thread))}
 
         <SectionHeader label="Running" count={visible.running.length} />
-        {visible.running.map((thread) => (
-          <QueueRow key={thread.id} thread={thread} onPress={handleSelect} onLongPress={setActionTarget} />
-        ))}
+        {visible.running.map((thread) => row(thread))}
 
         <SectionHeader label="New" count={visible.fresh.length} />
-        {visible.fresh.map((thread) => (
-          <QueueRow key={thread.id} thread={thread} onPress={handleSelect} onLongPress={setActionTarget} />
-        ))}
+        {visible.fresh.map((thread) => row(thread))}
 
         {/* Snoozed above Archived: temporary and returning vs terminal. */}
         <CollapsedQueueSection
           label="Snoozed"
           variant="snoozed"
+          // Remount on a source switch: rows paged in from the previous source must
+          // not linger, to be opened or acted on as if they belonged to this one.
+          key={`snoozed:${model.scope}`}
           search={search}
           filter={filter}
           revision={revision}
-          onSelect={handleSelect}
+          model={model}
           onLongPress={setActionTarget}
         />
         <CollapsedQueueSection
           label="Archived"
           variant="archived"
+          // Remount on a source switch: rows paged in from the previous source must
+          // not linger, to be opened or acted on as if they belonged to this one.
+          key={`archived:${model.scope}`}
           search={search}
           filter={filter}
           revision={revision}
-          onSelect={handleSelect}
+          model={model}
           onLongPress={setActionTarget}
         />
       </ScrollView>
@@ -470,9 +489,7 @@ export function QueueView() {
                 return {
                   label: `${preset.label} · ${formatWakeTime(at)}`,
                   onPress: () =>
-                    void runAction('snooze thread', () =>
-                      snooze(snoozeTarget.thread.project_id, snoozeTarget.thread.id, at.toISOString()),
-                    ),
+                    void runAction('snooze thread', () => model.snooze(snoozeTarget.thread, at.toISOString())),
                 }
               })
             : []

@@ -4,6 +4,7 @@ import { rpcRequest, type HostConnection } from './client'
 /** Remote channels intentionally exposed by the mobile adapter. */
 export const MOBILE_RPC_CHANNELS = [
   'projects:list',
+  'projects:listArchived',
   'projects:create',
   'projects:createFull',
   'projects:update',
