@@ -38,7 +38,9 @@ export function modelLabel(provider: string, model: string): string {
  * `threadId` lets the host resolve per-thread environment (WSL distro etc.).
  */
 export function useAvailableModels(provider: Provider, threadId?: string | null, enabled = true, model?: string): ModelOption[] {
-  const key = `${provider}:${threadId}:${model}`
+  // The live list is the host's, so a host switch (the New-thread sheet's Host row) refetches it.
+  const hostId = useHostsStore((s) => s.activeHostId)
+  const key = `${hostId}:${provider}:${threadId}:${model}`
   const [live, setLive] = useState<{ key: string; models: ModelOption[] } | null>(null)
 
   useEffect(() => {

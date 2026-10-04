@@ -17,6 +17,8 @@ interface RpcResponse {
   code?: string
 }
 
+const RPC_TIMEOUT_MS = 30_000
+
 export function normalizeBaseUrl(input: string): string {
   const trimmed = input.trim()
   if (!trimmed) throw new Error('Host URL is required')
@@ -57,13 +59,18 @@ async function readJsonResponse(response: Response): Promise<RpcResponse> {
  * Resolves the unwrapped value or throws with the server's error message. A request the
  * host refused unstarted because it was at capacity is retried with backoff.
  */
-export function rpcRequest(host: HostConnection, channel: string, args: unknown[]): Promise<unknown> {
-  return retryWhileHostBusy(() => rpcAttempt(host, channel, args))
+export function rpcRequest(
+  host: HostConnection,
+  channel: string,
+  args: unknown[],
+  timeoutMs: number = RPC_TIMEOUT_MS,
+): Promise<unknown> {
+  return retryWhileHostBusy(() => rpcAttempt(host, channel, args, timeoutMs))
 }
 
-async function rpcAttempt(host: HostConnection, channel: string, args: unknown[]): Promise<unknown> {
+async function rpcAttempt(host: HostConnection, channel: string, args: unknown[], timeoutMs: number): Promise<unknown> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 30_000)
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
   try {
     let response: Response
     try {

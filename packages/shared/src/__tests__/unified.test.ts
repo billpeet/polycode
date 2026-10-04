@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Project, Thread } from '../types'
-import { isUnifiedWatchedChannel, mergeUnifiedSources, normalizeGitUrl, replaceUnifiedSources, type UnifiedSource, type UnifiedSourceProject } from '../unified'
+import { isUnifiedWatchedChannel, mergeUnifiedSources, normalizeGitUrl, readUnifiedSourceProjects, replaceUnifiedSources, type UnifiedSource, type UnifiedSourceProject } from '../unified'
 
 describe('normalizeGitUrl', () => {
   it.each([
@@ -121,5 +121,45 @@ describe('isUnifiedWatchedChannel', () => {
     expect(isUnifiedWatchedChannel('thread:title:abc')).toBe(true)
     expect(isUnifiedWatchedChannel('thread:output:abc')).toBe(false)
     expect(isUnifiedWatchedChannel('terminal:data:x')).toBe(false)
+  })
+})
+
+describe('readUnifiedSourceProjects', () => {
+  const projects = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, name: `P${i}` }) as Project)
+
+  it('reads every Project without exceeding the concurrency limit', async () => {
+    let inFlight = 0
+    let peak = 0
+    const call = async (channel: string, args: unknown[]): Promise<unknown> => {
+      inFlight++
+      peak = Math.max(peak, inFlight)
+      await new Promise((resolve) => setTimeout(resolve, 1))
+      inFlight--
+      if (channel === 'projects:list') return projects
+      if (channel === 'threads:list') return [{ id: `t-${String(args[0])}` }]
+      if (channel === 'threads:archivedCount') return 2
+      return channel.endsWith('Count') ? 0 : []
+    }
+    const result = await readUnifiedSourceProjects(call, 3)
+    expect(peak).toBe(3)
+    expect(inFlight).toBe(0)
+    expect(result.projects.map((entry) => entry.project.id)).toEqual(projects.map((p) => p.id))
+    expect(result.projects[4]).toMatchObject({ threads: [{ id: 't-p4' }], archivedCount: 2, snoozedCount: 0 })
+  })
+
+  it('rejects when the Project list cannot be read', async () => {
+    await expect(readUnifiedSourceProjects(async () => { throw new Error('unreachable') })).rejects.toThrow('unreachable')
+  })
+
+  it('falls back to empty for any other read that fails, and keeps its slot count straight', async () => {
+    const call = async (channel: string): Promise<unknown> => {
+      if (channel === 'projects:list') return projects
+      if (channel === 'threads:list') return [{ id: 't' }]
+      throw new Error('refused')
+    }
+    const result = await readUnifiedSourceProjects(call, 2)
+    expect(result.archivedProjects).toEqual([])
+    expect(result.projects).toHaveLength(projects.length)
+    expect(result.projects[0]).toMatchObject({ locations: [], pools: [], threads: [{ id: 't' }], archivedCount: 0 })
   })
 })

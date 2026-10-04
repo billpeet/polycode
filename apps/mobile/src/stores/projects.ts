@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Project, RepoLocation } from '@polycode/shared'
 import { rpc } from '../api/rpc'
-import { requireConnection } from './hosts'
+import { requireConnection, useHostsStore } from './hosts'
 
 interface ProjectsState {
   projects: Project[]
@@ -21,12 +21,16 @@ export const useProjectsStore = create<ProjectsState>((set) => ({
   error: null,
 
   fetch: async () => {
+    // The active host can change while this is in flight (the unified view switches it
+    // whenever a Thread on another host is opened); the old host's answer is then stale.
+    const hostId = useHostsStore.getState().activeHostId
+    const current = (): boolean => useHostsStore.getState().activeHostId === hostId
     set({ loading: true, error: null })
     try {
       const projects = await rpc(requireConnection(), 'projects:list')
-      set({ projects, loading: false })
+      if (current()) set({ projects, loading: false })
     } catch (error) {
-      set({ loading: false, error: error instanceof Error ? error.message : String(error) })
+      if (current()) set({ loading: false, error: error instanceof Error ? error.message : String(error) })
     }
   },
 

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { QueueThread, SendOptions, Thread, ThreadStatus } from '@polycode/shared'
 import { rpc } from '../api/rpc'
-import { requireConnection } from './hosts'
+import { requireConnection, useHostsStore } from './hosts'
 
 /** Page size for the Queue's collapsed Snoozed/Archived sections. */
 export const QUEUE_PAGE_SIZE = 30
@@ -87,6 +87,16 @@ function patchInAllProjects(
   return changed ? next : threadsByProject
 }
 
+/**
+ * A check that the active host is still the one a read was started against. The active
+ * host can change mid-flight — the unified view switches it whenever a Thread on another
+ * host is opened — and the previous host's answer must not land in these stores.
+ */
+function activeHostGuard(): () => boolean {
+  const hostId = useHostsStore.getState().activeHostId
+  return () => useHostsStore.getState().activeHostId === hostId
+}
+
 export const useThreadsStore = create<ThreadsState>((set, get) => ({
   threadsByProject: {},
   queueThreads: [],
@@ -95,12 +105,14 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
   error: null,
 
   fetch: async (projectId) => {
+    const stillActive = activeHostGuard()
     set({ loading: true, error: null })
     try {
       const threads = await rpc(requireConnection(), 'threads:list', projectId)
+      if (!stillActive()) return
       set((s) => ({ threadsByProject: { ...s.threadsByProject, [projectId]: threads }, loading: false }))
     } catch (error) {
-      set({ loading: false, error: error instanceof Error ? error.message : String(error) })
+      if (stillActive()) set({ loading: false, error: error instanceof Error ? error.message : String(error) })
     }
   },
 
@@ -110,12 +122,13 @@ export const useThreadsStore = create<ThreadsState>((set, get) => ({
    * would make the Queue flicker on a phone that is polling in the background.
    */
   fetchQueue: async () => {
+    const stillActive = activeHostGuard()
     set({ queueLoading: true })
     try {
       const threads = await rpc(requireConnection(), 'threads:listQueue')
-      set({ queueThreads: threads, queueLoading: false })
+      if (stillActive()) set({ queueThreads: threads, queueLoading: false })
     } catch (error) {
-      set({ queueLoading: false, error: error instanceof Error ? error.message : String(error) })
+      if (stillActive()) set({ queueLoading: false, error: error instanceof Error ? error.message : String(error) })
     }
   },
 

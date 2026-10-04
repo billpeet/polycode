@@ -4,6 +4,7 @@ import {
   isRemoteHostBusyResponse,
   isUnifiedWatchedChannel,
   LOCAL_SOURCE_ID,
+  readUnifiedSourceProjects,
   RemoteEventStream,
   RemoteHostBusyError,
   retryWhileHostBusy,
@@ -24,7 +25,7 @@ import {
 } from '../db/queries'
 import { listSyncedLocations } from '../project-admin'
 import { onAppEvent, sendToRenderer } from '../app-events'
-import type { LocationPool, Project, RemoteHost, RepoLocation, Thread } from '../../shared/types'
+import type { RemoteHost } from '../../shared/types'
 
 /**
  * The unified ("All") view's main-process half: reading Projects, Locations and Threads
@@ -40,8 +41,6 @@ import type { LocationPool, Project, RemoteHost, RepoLocation, Thread } from '..
 
 const HOST_BUDGET_MS = 20_000
 const SNAPSHOT_REQUEST_TIMEOUT_MS = 8_000
-/** Stay under the host's admission limit (REMOTE_MAX_IN_FLIGHT) so live traffic still fits. */
-const PER_HOST_CONCURRENCY = 3
 /** Name of the event pushed to the renderer; carries a `UnifiedSourceEvent`. */
 export const UNIFIED_EVENT_CHANNEL = 'remote:unified-event'
 
@@ -109,22 +108,12 @@ async function collectRemote(host: RemoteHost): Promise<UnifiedSource> {
   const base = { sourceId: host.id, label: host.label }
   try {
     const { signal } = controller
-    const read = <T>(channel: string, args: unknown[], fallback: T): Promise<T> =>
-      rpc<T>(host, channel, args, signal, SNAPSHOT_REQUEST_TIMEOUT_MS).catch(() => fallback)
-    const [list, archivedProjects] = await Promise.all([
-      rpc<Project[]>(host, 'projects:list', [], signal, SNAPSHOT_REQUEST_TIMEOUT_MS),
-      read<Project[]>('projects:listArchived', [], []),
-    ])
-    const projects = await mapLimited(list, PER_HOST_CONCURRENCY, async (project): Promise<UnifiedSourceProject> => {
-      const [locations, pools, threads, archivedCount, snoozedCount] = await Promise.all([
-        read<RepoLocation[]>('locations:list', [project.id], []),
-        read<LocationPool[]>('location-pools:list', [project.id], []),
-        read<Thread[]>('threads:list', [project.id], []),
-        read<number>('threads:archivedCount', [project.id], 0),
-        read<number>('threads:snoozedCount', [project.id], 0),
-      ])
-      return { project, locations, pools, threads, archivedCount, snoozedCount }
-    })
+    const { projects, archivedProjects } = await readUnifiedSourceProjects(
+      (channel, args) => rpc(host, channel, args, signal, SNAPSHOT_REQUEST_TIMEOUT_MS),
+    )
+    // Per-Project reads fall back to empty when they fail, so a blown budget would
+    // otherwise pass off a half-read host as a complete one with Thread-less Projects.
+    if (signal.aborted) throw new Error('Timed out')
     return { ...base, status: 'ok', error: null, projects, archivedProjects }
   } catch (error) {
     const message = controller.signal.aborted ? 'Timed out' : errorMessage(error)

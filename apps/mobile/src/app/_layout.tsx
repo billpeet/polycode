@@ -10,6 +10,7 @@ import { parsePairingPayload } from '@/api/pairing'
 import { sseManager } from '@/api/sse'
 import { useHostsStore } from '@/stores/hosts'
 import { useThreadsStore } from '@/stores/threads'
+import { useUnifiedStore } from '@/stores/unified'
 import { colors } from '@/theme/colors'
 
 /** Coalesces bursts of thread events into a single Queue refetch. */
@@ -83,6 +84,23 @@ function useQueueRefresh(): void {
   }, [])
 }
 
+/**
+ * Keeps the unified ("All") view in step with the saved hosts: while it is on, every
+ * host with a token is watched and loaded; adding, editing or removing a host — or the
+ * tokens arriving from SecureStore at launch — re-points it. Switching it off stops the
+ * watch. Lives here rather than in a tab so the view stays live under a pushed thread.
+ */
+function useUnifiedSync(): void {
+  const enabled = useUnifiedStore((s) => s.enabled)
+  const hydrated = useHostsStore((s) => s.hydrated)
+  const hosts = useHostsStore((s) => s.hosts)
+  const tokens = useHostsStore((s) => s.tokens)
+
+  useEffect(() => {
+    if (hydrated) useUnifiedStore.getState().sync()
+  }, [enabled, hydrated, hosts, tokens])
+}
+
 /** Handle polycode://pair?url=&token=&name= deep links (QR scans from outside the app). */
 function usePairingDeepLink(): void {
   const router = useRouter()
@@ -102,6 +120,7 @@ function usePairingDeepLink(): void {
 export default function RootLayout() {
   useGlobalEventWiring()
   useQueueRefresh()
+  useUnifiedSync()
   usePairingDeepLink()
 
   return (

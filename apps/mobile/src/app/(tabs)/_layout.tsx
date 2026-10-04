@@ -1,10 +1,11 @@
-import { Tabs, useRouter } from 'expo-router'
-import { useEffect } from 'react'
+import { Tabs, useFocusEffect, useRouter } from 'expo-router'
+import { useCallback, useEffect, useRef } from 'react'
 import { Pressable, StyleSheet, Text, View } from 'react-native'
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import { openNewThread } from '@/lib/navigation'
 import { useHostsStore } from '@/stores/hosts'
 import { useProjectsStore } from '@/stores/projects'
+import { useUnifiedStore } from '@/stores/unified'
 import { colors, radii } from '@/theme/colors'
 
 /** Floating `+ New thread` above the tab bar, present on both tabs. */
@@ -37,6 +38,22 @@ export default function TabsLayout() {
   useEffect(() => {
     if (hydrated && activeHostId) void fetchProjects()
   }, [hydrated, activeHostId, fetchProjects])
+
+  // Coming back from a thread, the New-thread sheet or the Hosts screen: whatever was
+  // done there went through the active host, and the unified view only hears about the
+  // parts that raise an event. Reload that host so the lists agree with it.
+  const mounted = useRef(false)
+  useFocusEffect(
+    useCallback(() => {
+      if (!mounted.current) {
+        mounted.current = true
+        return
+      }
+      const unified = useUnifiedStore.getState()
+      const hostId = useHostsStore.getState().activeHostId
+      if (unified.enabled && hostId) unified.scheduleRefresh(hostId)
+    }, []),
+  )
 
   const tabBarHeight = 52 + insets.bottom
 
