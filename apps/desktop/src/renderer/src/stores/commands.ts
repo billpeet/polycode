@@ -63,6 +63,7 @@ interface CommandStore {
 }
 
 const pendingLogsByKey = new Map<string, CommandLogLine[]>()
+const pendingMutations = new Map<string, symbol>()
 let logFlushTimer: ReturnType<typeof setTimeout> | null = null
 
 export const useCommandStore = create<CommandStore>((set, get) => ({
@@ -162,29 +163,12 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     })
   },
 
-  start: async (commandId, locationId) => {
-    const key = instKey(commandId, locationId)
-    set((s) => ({ statusMap: { ...s.statusMap, [key]: 'running' } }))
-    await client.invoke('commands:start', commandId, locationId)
-  },
-
-  stop: async (commandId, locationId) => {
-    const key = instKey(commandId, locationId)
-    set((s) => ({ statusMap: { ...s.statusMap, [key]: 'stopping' } }))
-    await client.invoke('commands:stop', commandId, locationId)
-  },
-
-  restart: async (commandId, locationId) => {
-    const key = instKey(commandId, locationId)
-    pendingLogsByKey.delete(key)
-    set((s) => ({
-      statusMap: { ...s.statusMap, [key]: 'stopping' },
-      logsByCommand: { ...s.logsByCommand, [key]: [] },
-    }))
-    await client.invoke('commands:restart', commandId, locationId)
-  },
+  start: (commandId, locationId) => mutate('start', commandId, locationId),
+  stop: (commandId, locationId) => mutate('stop', commandId, locationId),
+  restart: (commandId, locationId) => mutate('restart', commandId, locationId),
 
   setStatus: (key, status) => {
+    pendingMutations.delete(key)
     set((s) => {
       if (s.statusMap[key] === status) return s
       return { statusMap: { ...s.statusMap, [key]: status } }
@@ -200,7 +184,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchPorts: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    const ports = await client.invoke('commands:getPorts', commandId, locationId)
+    const ports = await settleRemoteRefresh(client.invoke('commands:getPorts', commandId, locationId))
+    if (!ports) return
     set((s) => ({ portsMap: { ...s.portsMap, [key]: ports } }))
   },
 
@@ -236,7 +221,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchLogs: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    const logs = await client.invoke('commands:getLogs', commandId, locationId)
+    const logs = await settleRemoteRefresh(client.invoke('commands:getLogs', commandId, locationId))
+    if (!logs) return
     const pending = pendingLogsByKey.get(key) ?? EMPTY_LOGS
     if (pending.length > 0) pendingLogsByKey.delete(key)
     const merged = pending.length > 0 ? logs.concat(pending) : logs
@@ -272,3 +258,41 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
     })
   },
 }))
+
+async function mutate(action: 'start' | 'stop' | 'restart', commandId: string, locationId: string): Promise<void> {
+  const key = instKey(commandId, locationId)
+  const previous = useCommandStore.getState().statusMap[key]
+  const previousLogs = new Set([
+    ...(useCommandStore.getState().logsByCommand[key] ?? EMPTY_LOGS),
+    ...(pendingLogsByKey.get(key) ?? EMPTY_LOGS),
+  ])
+  const token = Symbol(action)
+  pendingMutations.set(key, token)
+  useCommandStore.setState((s) => ({ statusMap: { ...s.statusMap, [key]: action === 'start' ? 'running' : 'stopping' } }))
+  try {
+    // A timeout may have executed remotely. Never retry a mutation here.
+    await client.invoke(`commands:${action}`, commandId, locationId)
+    if (action === 'restart') {
+      // Clear only the old run after success, retaining output received while awaiting IPC.
+      const pending = pendingLogsByKey.get(key)
+      if (pending) pendingLogsByKey.set(key, pending.filter((line) => !previousLogs.has(line)))
+      useCommandStore.setState((s) => ({ logsByCommand: {
+        ...s.logsByCommand,
+        [key]: (s.logsByCommand[key] ?? EMPTY_LOGS).filter((line) => !previousLogs.has(line)),
+      } }))
+    }
+  } catch (error) {
+    // A newer action or authoritative status event supersedes the optimistic state.
+    if (pendingMutations.get(key) === token) {
+      useCommandStore.setState((s) => {
+        const statusMap = { ...s.statusMap }
+        if (previous === undefined) delete statusMap[key]
+        else statusMap[key] = previous
+        return { statusMap }
+      })
+    }
+    throw error
+  } finally {
+    if (pendingMutations.get(key) === token) pendingMutations.delete(key)
+  }
+}

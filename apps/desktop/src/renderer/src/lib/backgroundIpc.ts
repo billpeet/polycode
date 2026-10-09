@@ -1,7 +1,7 @@
 import { isAppShuttingDownError } from '@polycode/shared'
 import { isRemoteTransportError } from './remoteErrors'
 
-/** Settle expected teardown and connectivity failures in fire-and-forget calls. */
+/** Settle expected teardown and connectivity failures while leaving real background failures observable. */
 export async function settleBackgroundIpc<T>(operation: Promise<T>): Promise<T | undefined> {
   try {
     return await operation

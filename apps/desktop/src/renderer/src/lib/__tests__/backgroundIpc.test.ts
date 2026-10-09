@@ -11,6 +11,10 @@ describe('background IPC', () => {
     await expect(settleBackgroundIpc(operation)).resolves.toBeUndefined()
   })
 
+  it.each(['REMOTE_UNAVAILABLE', 'REMOTE_REQUEST_TIMEOUT'])('settles expected remote failure %s', async (code) => {
+    await expect(settleBackgroundIpc(Promise.reject(new Error(`[${code}] offline`)))).resolves.toBeUndefined()
+  })
+
   it('keeps unexpected failures observable', async () => {
     const operation = Promise.reject(new Error('IPC unavailable'))
 

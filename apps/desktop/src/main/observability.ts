@@ -17,7 +17,7 @@ import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { resourceFromAttributes } from '@opentelemetry/resources'
 import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs'
-import { PeriodicExportingMetricReader, MeterProvider } from '@opentelemetry/sdk-metrics'
+import { AggregationType, PeriodicExportingMetricReader, MeterProvider } from '@opentelemetry/sdk-metrics'
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import {
   ATTR_SERVICE_NAME,
@@ -120,6 +120,16 @@ export function initializeObservability(config: ObservabilityConfig): boolean {
   })
   const meterProvider = new MeterProvider({
     resource,
+    // Histograms default to millisecond-shaped buckets topping out at 10,000. The first
+    // day of `response_bytes` showed every transcript in the +Inf bucket (avg 1.2MB), so a
+    // byte histogram gets byte boundaries: 1KB to 64MB, doubling.
+    views: [{
+      instrumentUnit: 'By',
+      aggregation: {
+        type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
+        options: { boundaries: Array.from({ length: 17 }, (_, i) => 1024 * 2 ** i) },
+      },
+    }],
     readers: [new PeriodicExportingMetricReader({
       exporter: new OTLPMetricExporter({
         ...exporterOptions,
