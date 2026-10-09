@@ -13,7 +13,10 @@ const originalLoad = Module._load
 let logged, captured, flushed = false, prompts = 0
 Module._load = function (id, ...args) {
   if (id === './app-logger') return {
-    writeFatalLog: (kind, value) => { assert.equal(kind, 'process-gone'); logged = JSON.parse(value) },
+    writeFatalLog: (kind, value) => {
+      assert.ok(['process-gone', 'process-gone-incident'].includes(kind))
+      logged = JSON.parse(value)
+    },
     flushAppLogs: () => {},
   }
   if (id === './observability') return { recordLog: () => {}, flushObservability: async () => { flushed = true } }

@@ -1,4 +1,7 @@
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   app: Object.assign(new (class {
@@ -7,23 +10,39 @@ const mocks = vi.hoisted(() => ({
   })(), {
     isReady: () => true, getGPUFeatureStatus: () => ({ gpu_compositing: 'enabled' }),
     getVersion: () => '1', commandLine: { hasSwitch: () => false }, relaunch: vi.fn(), quit: vi.fn(),
+    whenReady: async () => {}, getGPUInfo: vi.fn(),
   }),
+  report: vi.fn(),
   ipc: { on: vi.fn() }, dialog: vi.fn(), capture: vi.fn(), log: vi.fn(), flush: vi.fn(),
 }))
-vi.mock('electron', () => ({ app: mocks.app, ipcMain: mocks.ipc, dialog: { showMessageBox: mocks.dialog } }))
+vi.mock('electron', () => ({ app: mocks.app, crashReporter: { getLastCrashReport: mocks.report }, ipcMain: mocks.ipc, dialog: { showMessageBox: mocks.dialog } }))
 vi.mock('@sentry/electron/main', () => ({ captureEvent: mocks.capture, flush: async () => true }))
 vi.mock('../app-logger', () => ({ writeFatalLog: mocks.log, flushAppLogs: mocks.flush }))
 vi.mock('../observability', () => ({ recordLog: vi.fn(), flushObservability: async () => {} }))
 vi.mock('../memory-telemetry', () => ({ latestMemorySamples: () => ({}) }))
 import { installCrashDiagnostics, WINDOWS_SESSION_TERMINATED_EXIT_CODE } from '../crash-diagnostics'
 const platform = process.platform
+let directory: string
+let historyPath: string
+function install() {
+  installCrashDiagnostics({ capture: true, locationId: () => '/private/location', incidentWindowMs: 5, historyPath })
+}
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.app.handlers.clear()
   mocks.dialog.mockResolvedValue({ response: 1 })
-  installCrashDiagnostics({ capture: true, locationId: () => '/private/location', incidentWindowMs: 5 })
+  mocks.app.commandLine.hasSwitch = () => false
+  mocks.app.getGPUInfo.mockResolvedValue({ gpuDevice: [{ vendorId: 4318, deviceId: 123, driverVersion: '32.0.15', deviceString: 'secret-device' }], auxAttributes: { softwareRendering: false, secret: '/private/path' } })
+  mocks.report.mockReturnValue(null)
+  directory = mkdtempSync(join(tmpdir(), 'polycode-crash-test-'))
+  historyPath = join(directory, 'history.json')
+  install()
 })
-afterEach(() => { Object.defineProperty(process, 'platform', { value: platform }) })
+afterEach(() => {
+  mocks.app.handlers.get('before-quit')!({})
+  Object.defineProperty(process, 'platform', { value: platform })
+  rmSync(directory, { recursive: true, force: true })
+})
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
 const childGone = (details: { reason: string, exitCode: number, type: string, name?: string }) =>
   mocks.app.handlers.get('child-process-gone')!({}, details)
@@ -132,4 +151,83 @@ it('treats a Windows session-termination kill as shutdown when no session-end ev
   expect(mocks.capture).not.toHaveBeenCalled()
   expect(mocks.dialog).not.toHaveBeenCalled()
   expect(mocks.log.mock.calls.filter(([kind]) => kind === 'process-gone')).toHaveLength(3)
+})
+
+it('captures allowlisted GPU metadata and recent workspace activity for a GPU child', async () => {
+  await settle()
+  const handler = mocks.ipc.on.mock.calls.find(([name]) => name === 'telemetry:view')![1]
+  handler({ sender: windowContents() }, 'diff')
+  handler({ sender: windowContents() }, 'https://secret')
+  mocks.report.mockReturnValue({ id: 'abc-123', date: new Date(1000) })
+  childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+  await settle()
+  const context = mocks.capture.mock.calls[0][0].contexts.crash
+  expect(context.gpuInfo.devices).toEqual([{ vendorId: 4318, deviceId: 123, driverVersion: '32.0.15' }])
+  expect(context.activeView).toBe('diff')
+  expect(context.recentViews).toEqual([{ at: expect.any(Number), view: 'diff' }])
+  expect(context.latestUploadedReport).toEqual({ id: 'abc-123', at: 1000, correlatedToIncident: false })
+  expect(JSON.stringify(context)).not.toMatch(/secret|private/)
+})
+
+it('offers GPU recovery on the second launch with a GPU crash, counting bursts once', async () => {
+  childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+  childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+  await settle()
+  expect(mocks.dialog).not.toHaveBeenCalled()
+  expect(JSON.parse(readFileSync(historyPath, 'utf8')).incidents).toHaveLength(1)
+  install()
+  mocks.dialog.mockResolvedValue({ response: 1 })
+  childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+  await settle()
+  expect(mocks.dialog).toHaveBeenCalledOnce()
+  expect(mocks.dialog.mock.calls[0][0].detail).toContain('across app launches')
+  expect(mocks.app.relaunch).toHaveBeenCalledWith({ args: expect.arrayContaining(['--disable-gpu']) })
+  expect(mocks.capture.mock.calls[1][0].contexts.crash.gpuHistory.priorLaunchGpuIncidentCount).toBe(1)
+})
+
+it('does not persist shutdown exits or offer GPU recovery for a Utility-only recurrence', async () => {
+  childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+  mocks.app.handlers.get('before-quit')!({})
+  await settle()
+  expect(JSON.parse(readFileSync(historyPath, 'utf8')).incidents).toHaveLength(0)
+  install()
+  childGone({ reason: 'crashed', exitCode: 1, type: 'Utility' })
+  await settle()
+  install()
+  childGone({ reason: 'crashed', exitCode: 1, type: 'Utility' })
+  await settle()
+  expect(mocks.dialog).not.toHaveBeenCalled()
+})
+
+it('records observed GPU-disabled recovery time and distinguishes recurrence', async () => {
+  mocks.app.commandLine.hasSwitch = () => true
+  install()
+  await settle()
+  mocks.app.handlers.get('before-quit')!({})
+  let launch = JSON.parse(readFileSync(historyPath, 'utf8')).launches.at(-1)
+  expect(launch).toMatchObject({ disableGpu: true, gpuIncidents: 0 })
+  expect(launch.observedMs).toBeGreaterThan(0)
+  install()
+  for (let i = 0; i < 3; i++) {
+    childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+    await settle()
+  }
+  expect(mocks.dialog.mock.calls[0][0].buttons).not.toContain('Restart with GPU disabled')
+  expect(mocks.capture.mock.calls[0][0].contexts.crash.gpuHistory).toMatchObject({
+    recovery: { outcome: 'gpu-crash-recurred', gpuIncidents: 1 },
+    previousGpuDisabledLaunches: [{ at: expect.any(Number), observedMs: expect.any(Number), gpuIncidents: 0 }],
+  })
+  launch = JSON.parse(readFileSync(historyPath, 'utf8')).launches.at(-1)
+  expect(launch.gpuIncidents).toBe(3)
+})
+
+it('keeps diagnostics and recovery working with corrupt history and unavailable GPU/report APIs', async () => {
+  writeFileSync(historyPath, '{bad json')
+  mocks.app.getGPUInfo.mockRejectedValue(new Error('unavailable'))
+  mocks.report.mockImplementation(() => { throw new Error('unavailable') })
+  install()
+  childGone({ reason: 'crashed', exitCode: 34, type: 'GPU' })
+  await settle()
+  expect(mocks.capture.mock.calls[0][0].contexts.crash).toMatchObject({ gpuInfo: null, latestUploadedReport: null })
+  expect(JSON.parse(readFileSync(historyPath, 'utf8')).incidents).toHaveLength(1)
 })
