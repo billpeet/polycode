@@ -6,6 +6,8 @@ import { useBrowserStore } from '../../stores/browser'
 import { useThreadStore } from '../../stores/threads'
 import { CommandStatus } from '../../types/ipc'
 import { client } from '../../lib/client'
+import { settleBackgroundIpc } from '../../lib/backgroundIpc'
+import { runCommandAction } from '../../lib/commandActions'
 
 function StatusDot({ status }: { status: CommandStatus }) {
   const color =
@@ -58,16 +60,16 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
   const clearFileSelection = useFilesStore((s) => s.clearSelection)
 
   useEffect(() => {
-    if (projectId) fetch(projectId)
+    if (projectId) void settleBackgroundIpc(fetch(projectId))
   }, [projectId, fetch])
 
   useEffect(() => {
-    if (projectId && locationId) fetchStatuses(projectId, locationId)
+    if (projectId && locationId) void settleBackgroundIpc(fetchStatuses(projectId, locationId))
   }, [projectId, locationId, fetchStatuses])
 
   useEffect(() => {
     if (commands.length === 0 || !locationId) return
-    void Promise.all(commands.map((cmd) => fetchPorts(cmd.id, locationId)))
+    for (const cmd of commands) void settleBackgroundIpc(fetchPorts(cmd.id, locationId))
   }, [commands, locationId, fetchPorts])
 
   useEffect(() => {
@@ -138,7 +140,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                         if (!locationId) return
                         clearFileSelection()
                         selectInstance(instKey(cmd.id, locationId), locationId)
-                        fetchLogs(cmd.id, locationId)
+                        void settleBackgroundIpc(fetchLogs(cmd.id, locationId))
                       }}
                       title={cmd.command}
                     >
@@ -175,10 +177,10 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                         onClick={() => {
                           if (!locationId) return
                           const instanceKey = instKey(cmd.id, locationId)
-                          start(cmd.id, locationId)
+                          void runCommandAction(() => start(cmd.id, locationId))
                           pinInstance(instanceKey, locationId)
                           selectInstance(instanceKey, locationId)
-                          fetchLogs(cmd.id, locationId)
+                          void settleBackgroundIpc(fetchLogs(cmd.id, locationId))
                         }}
                         disabled={!locationId}
                         className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-40"
@@ -192,10 +194,10 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                           onClick={() => {
                             if (!locationId) return
                             const instanceKey = instKey(cmd.id, locationId)
-                            restart(cmd.id, locationId)
+                            void runCommandAction(() => restart(cmd.id, locationId))
                             pinInstance(instanceKey, locationId)
                             selectInstance(instanceKey, locationId)
-                            fetchLogs(cmd.id, locationId)
+                            void settleBackgroundIpc(fetchLogs(cmd.id, locationId))
                           }}
                           disabled={isStopping}
                           className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-50"
@@ -204,7 +206,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                           Restart
                         </button>
                         <button
-                          onClick={() => locationId && stop(cmd.id, locationId)}
+                          onClick={() => { if (locationId) void runCommandAction(() => stop(cmd.id, locationId)) }}
                           disabled={isStopping}
                           className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-50"
                           style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}

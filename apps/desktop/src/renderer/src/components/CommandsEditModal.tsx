@@ -4,6 +4,8 @@ import { useProjectStore } from '../stores/projects'
 import { useLocationStore } from '../stores/locations'
 import { useBackdropClose } from '../hooks/useBackdropClose'
 import { client } from '../lib/client'
+import { settleBackgroundIpc } from '../lib/backgroundIpc'
+import { runCommandAction } from '../lib/commandActions'
 
 interface Props {
   projectId: string
@@ -76,8 +78,8 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
   const [cmdError, setCmdError] = useState('')
 
   useEffect(() => {
-    fetch(projectId)
-    fetchLocations(projectId)
+    void settleBackgroundIpc(fetch(projectId))
+    void settleBackgroundIpc(fetchLocations(projectId))
   }, [projectId, fetch, fetchLocations])
 
   // Read package.json from each location, detect package manager, extract unmatched scripts
@@ -241,7 +243,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                     </button>
                     <button
                       type="button"
-                      onClick={() => project && removeCommand(cmd.id, project.id)}
+                      onClick={() => { if (project) void runCommandAction(() => removeCommand(cmd.id, project.id)) }}
                       className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0"
                       style={{ color: 'var(--color-text-muted)' }}
                       title="Remove command"
