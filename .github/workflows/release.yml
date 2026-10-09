@@ -86,6 +86,24 @@ jobs:
           POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
           POLYCODE_OTLP_ENDPOINT: https://otlp.biap.cc
           POLYCODE_OTLP_HEADERS: ${{ secrets.POLYCODE_OTLP_HEADERS }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Verify native crash correlation
+        run: pnpm --filter polycode-electron test:crash-smoke
+
+      - name: Upload matching Electron native symbols
+        shell: pwsh
+        run: |
+          if (-not $env:SENTRY_AUTH_TOKEN) { throw "SENTRY_AUTH_TOKEN is required for native symbol uploads" }
+          $electronVersion = node -p "require('electron/package.json').version"
+          $symbolsDir = Join-Path $env:RUNNER_TEMP "polycode-electron-symbols-$electronVersion"
+          $archive = "$symbolsDir.zip"
+          Invoke-WebRequest "https://github.com/electron/electron/releases/download/v$electronVersion/electron-v$electronVersion-win32-x64-symbols.zip" -OutFile $archive
+          Expand-Archive -LiteralPath $archive -DestinationPath $symbolsDir
+          node node_modules/@sentry/cli/bin/sentry-cli debug-files upload --org metroid --project polycode --wait $symbolsDir
+          if ($LASTEXITCODE -ne 0) { throw "Electron native symbol upload failed" }
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
 
       - name: Verify packaged native module ABI
         working-directory: apps/desktop

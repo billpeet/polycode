@@ -17,11 +17,12 @@ vi.mock('../observability', () => ({ recordLog: vi.fn(), flushObservability: asy
 vi.mock('../memory-telemetry', () => ({ latestMemorySamples: () => ({}) }))
 import { installCrashDiagnostics, WINDOWS_SESSION_TERMINATED_EXIT_CODE } from '../crash-diagnostics'
 const platform = process.platform
+let beforeSend: ReturnType<typeof installCrashDiagnostics>
 beforeEach(() => {
   vi.clearAllMocks()
   mocks.app.handlers.clear()
   mocks.dialog.mockResolvedValue({ response: 1 })
-  installCrashDiagnostics({ capture: true, locationId: () => '/private/location', incidentWindowMs: 5 })
+  beforeSend = installCrashDiagnostics({ capture: true, locationId: () => '/private/location', incidentWindowMs: 5 })
 })
 afterEach(() => { Object.defineProperty(process, 'platform', { value: platform }) })
 const settle = () => new Promise((resolve) => setTimeout(resolve, 30))
@@ -30,6 +31,13 @@ const childGone = (details: { reason: string, exitCode: number, type: string, na
 const windowContents = (destroyed = false) => Object.assign(new EventEmitter(), {
   id: 2, getType: () => 'window', isDestroyed: () => destroyed, reload: vi.fn(),
 })
+const minidumpHint = () => {
+  const data = new Uint8Array(32)
+  const header = new DataView(data.buffer)
+  header.setUint32(0, 0x504d444d, true)
+  header.setUint32(20, Math.floor(Date.now() / 1000), true)
+  return { attachments: [{ attachmentType: 'event.minidump', filename: 'dump.dmp', data }] }
+}
 
 it('hashes guest locations, drops arbitrary detail fields and reloads the guest', async () => {
   const guest = Object.assign(new EventEmitter(), {
@@ -111,25 +119,93 @@ it('reports nothing when processes are torn down while the app quits (#96)', asy
   expect(mocks.capture).not.toHaveBeenCalled()
   expect(mocks.dialog).not.toHaveBeenCalled()
   expect(contents.reload).not.toHaveBeenCalled()
-  expect(mocks.log).toHaveBeenCalledWith('process-gone-suppressed', expect.stringContaining('"exits":1'))
+  expect(mocks.log).toHaveBeenCalledWith('process-gone-suppressed', expect.stringContaining('"exits":3'))
 })
 
-it('reports nothing once Windows announces the session is ending (#97)', async () => {
+it('retains a genuine crash even when Windows announces shutdown', async () => {
   const window = new EventEmitter()
   mocks.app.handlers.get('browser-window-created')!({}, window)
   window.emit('query-session-end', { reasons: ['shutdown'] })
   childGone({ reason: 'crashed', exitCode: -1073741205, type: 'GPU' })
   await settle()
-  expect(mocks.capture).not.toHaveBeenCalled()
+  expect(mocks.capture).toHaveBeenCalledOnce()
 })
 
-it('treats a Windows session-termination kill as shutdown when no session-end event arrived (#97)', async () => {
+it('records Windows termination but retains subsequent genuine crashes', async () => {
   Object.defineProperty(process, 'platform', { value: 'win32' })
   childGone({ reason: 'killed', exitCode: WINDOWS_SESSION_TERMINATED_EXIT_CODE, type: 'Utility' })
   childGone({ reason: 'crashed', exitCode: -1073741205, type: 'GPU' })
   childGone({ reason: 'crashed', exitCode: -1073741205, type: 'Utility' })
   await settle()
-  expect(mocks.capture).not.toHaveBeenCalled()
+  expect(mocks.capture).toHaveBeenCalledOnce()
   expect(mocks.dialog).not.toHaveBeenCalled()
   expect(mocks.log.mock.calls.filter(([kind]) => kind === 'process-gone')).toHaveLength(3)
+})
+
+it('correlates native and synthetic events and keeps native evidence intact (#116)', async () => {
+  const details = { reason: 'crashed', exitCode: 1, type: 'GPU', name: 'secret-service' }
+  childGone(details)
+  const native = {
+    platform: 'native', event_id: 'native-event',
+    contexts: { electron: { details, crashed_url: 'https://secret' }, gpu: { driver_version: '1' } },
+    exception: { values: [{ type: 'native', value: 'DumpWithoutCrashing' }] },
+    debug_meta: { images: [{ type: 'pe', debug_id: 'module-id' }] },
+  }
+  const attachment = { attachmentType: 'event.minidump', filename: '12345678-1234-1234-1234-123456789abc.dmp', data: new Uint8Array([1]) }
+  const event = await beforeSend(native, { attachments: [attachment] })
+  await settle()
+  const synthetic = mocks.capture.mock.calls[0][0]
+  expect(event?.tags?.crashIncidentId).toBe(synthetic.tags.crashIncidentId)
+  expect(event?.contexts?.crash).toMatchObject({ incidentId: synthetic.tags.crashIncidentId, minidumpId: attachment.filename.slice(0, -4) })
+  expect(event?.exception).toBe(native.exception)
+  expect(event?.debug_meta).toBe(native.debug_meta)
+  expect(event?.contexts?.gpu).toEqual({ driver_version: '1' })
+  expect(JSON.stringify(event)).not.toMatch(/secret/)
+  expect(attachment.data).toEqual(new Uint8Array([1]))
+})
+
+it('suppresses only correlated shutdown kills and preserves native OOM evidence', async () => {
+  const details = { reason: 'killed', exitCode: 1, type: 'Utility' }
+  childGone(details)
+  mocks.app.handlers.get('before-quit')!({})
+  const hint = minidumpHint()
+  const header = new DataView(hint.attachments[0].data.buffer)
+  const native = () => ({ platform: 'native', contexts: { electron: { details, 'crashpad.process_type': 'utility' } } })
+  expect(await beforeSend(native(), hint)).toBeNull()
+  expect(await beforeSend(native(), {})).not.toBeNull()
+  header.setUint32(20, Math.floor(Date.now() / 1000) - 60, true)
+  expect(await beforeSend(native(), hint)).not.toBeNull()
+  header.setUint32(20, Math.floor(Date.now() / 1000), true)
+  expect(await beforeSend({ platform: 'native', contexts: { electron: { details, 'crashpad.process_type': 'renderer' } } }, hint)).not.toBeNull()
+  const oom = { ...native(), exception: { values: [{ type: 'OutOfMemoryError' }] } }
+  expect(await beforeSend(oom, hint)).toBe(oom)
+  const unmatched = { platform: 'native', release: 'polycode@old', contexts: { electron: { details: { reason: 'killed' } } } }
+  expect(await beforeSend(unmatched, {})).toBe(unmatched)
+  const javascript = { message: 'ordinary error' }
+  expect(await beforeSend(javascript, {})).toBe(javascript)
+})
+
+it.each(['crashed', 'oom'])('retains native and synthetic %s events during shutdown', async (reason) => {
+  const details = { reason, exitCode: 1, type: 'Utility' }
+  childGone(details)
+  mocks.app.handlers.get('before-quit')!({})
+  const event = { platform: 'native', contexts: { electron: { details, 'crashpad.process_type': 'utility' } } }
+  expect(await beforeSend(event, minidumpHint())).toBe(event)
+  await settle()
+  expect(mocks.capture).toHaveBeenCalledOnce()
+})
+
+it('does not suppress an earlier incident when shutdown starts after its collection window', async () => {
+  const details = { reason: 'killed', exitCode: 1, type: 'Utility' }
+  childGone(details)
+  const hint = minidumpHint()
+  await settle()
+  const later = Date.now() + 100
+  const now = vi.spyOn(Date, 'now').mockReturnValue(later)
+  try {
+    mocks.app.handlers.get('before-quit')!({})
+    const event = { platform: 'native', contexts: { electron: { details, 'crashpad.process_type': 'utility' } } }
+    expect(await beforeSend(event, hint)).toBe(event)
+    expect(event.contexts.crash.shutdownSignal).toBeNull()
+  } finally { now.mockRestore() }
 })

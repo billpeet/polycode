@@ -49,7 +49,7 @@ const isDev = !app.isPackaged && process.env.NODE_ENV !== 'production'
 // Must run before ready, including diagnostic relaunches.
 if (app.commandLine.hasSwitch('disable-gpu')) app.disableHardwareAcceleration()
 
-installCrashDiagnostics({
+const beforeSendCrash = installCrashDiagnostics({
   capture: !isDev,
   locationId: (contents) => browserSessionManager.locationIdForSession(contents.session),
 })
@@ -155,7 +155,7 @@ process.on('unhandledRejection', (reason) => {
   reportFatalProcessError('unhandledRejection', reason)
 })
 
-if (!isDev) initMainErrorReporting()
+if (!isDev) initMainErrorReporting(beforeSendCrash)
 
 let isQuitting = false
 let runLifecycle: RunLifecycle | null = null

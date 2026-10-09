@@ -15,7 +15,8 @@ exit listed in the context. The trigger is the first exit that was not merely
 local log still records every exit as it happens, because the main process may
 not outlive the burst.
 
-Exits during shutdown are logged locally and not reported. Shutdown starts at
+Shutdown teardown exits are logged locally and not reported. Genuine `crashed`
+and `oom` exits are retained even during shutdown. Shutdown starts at
 `before-quit`, which covers closing the app, installing an update and the GPU
 diagnostic relaunch. On Windows, `before-quit` is not emitted when the machine
 shuts down, restarts or logs off, so a window's `query-session-end` or
@@ -23,7 +24,7 @@ shuts down, restarts or logs off, so a window's `query-session-end` or
 `0x40010004`, which Windows uses for processes it terminates while ending the
 session. A Windows signal suppresses reports for 60 seconds, because a shutdown
 can still be cancelled. Signals that arrive during an incident's 1.5 seconds
-suppress the whole incident. In GitHub #97, a Windows Update restart killed
+suppress teardown incidents. In GitHub #97, a Windows Update restart killed
 PolyCode's processes, Chromium's relaunches failed, and Chromium ended the app
 with "GPU process isn't usable. Goodbye."; that produced about 21 fatal events
 and a native minidump with no defect behind them.
@@ -44,4 +45,64 @@ installed. It launches a hidden, isolated window with a temporary user-data fold
 forces a renderer crash, and asserts diagnostic capture, bounded breadcrumbs,
 flush ordering and successful reload. Exporters and the recovery dialog are stubbed;
 the renderer crash and reload use real Electron. No normal app startup or database
-is loaded. This verifies instrumentation, not the cause of Sentry POLYCODE-3A.
+is loaded. The real Sentry minidump integration uses a local transport and asserts
+that the native and synthetic envelopes share `crashIncidentId` and retain a full
+minidump attachment. This verifies instrumentation, not the cause of Sentry POLYCODE-3A.
+
+## Native evidence and correlation (#116)
+
+Each exit burst receives a generated incident UUID, recorded in the immediate
+local logs, OTLP crash context and synthetic Sentry event. Diagnostics must be
+installed before Sentry: they stamp `polycodeIncidentId` on Electron's exit
+details, which Sentry's default `SentryMinidump` integration carries into its
+native event. The main-process `beforeSend` hook reads that marker and attaches
+the incident's versions, lifecycle state, memory and privacy-safe activity.
+Native uploads wait until the burst's collection window ends so later shutdown
+signals in that window are considered; a quit after the window cannot suppress
+an earlier unexpected exit. The last 20 incident records are retained in memory.
+
+`correlationMethod: sentry-process-gone` explicitly identifies an SDK association,
+not proof that every dump loaded by Sentry belongs to that particular exit.
+Sentry can collect multiple pending dumps for one process-gone notification.
+Dumps found on the next launch or without retained exit details are kept without
+guessing a correlation or overwriting their original release. An uncorrelated
+`DumpWithoutCrashing` report remains actionable evidence, regardless of its title.
+
+Correlated native events and local `native-crash` records include a minidump UUID
+when the attachment filename supplies it, and the local record also includes the
+native Sentry event ID. Native exceptions, threads, module information, Crashpad
+annotations, GPU adapter/driver contexts and the minidump attachment are preserved.
+Renderer URLs, arbitrary exit details and SDK breadcrumbs are replaced with the
+privacy-safe diagnostics. Only incidents of shutdown kills with no native exception
+are eligible for native suppression, and the dump must also have a matching
+Crashpad process type and a minidump header timestamp within one second of the
+incident exits. Missing, stale or contradictory dump evidence stays reportable;
+native exceptions and genuine crashes/OOM survive.
+This filters uploads, not historical Sentry group state.
+
+## Native symbol pipeline
+
+The Windows release workflow downloads the **installed Electron version's**
+`win32-x64-symbols.zip` from the matching Electron GitHub release and uploads its
+debug information to `metroid/polycode`, waiting for Sentry processing before
+publishing the installer. The existing `SENTRY_AUTH_TOKEN` repository secret must
+permit debug-file uploads; a missing token or failed upload fails the release.
+The build uses the same token for JavaScript source maps. Native dependencies
+with their own symbols require additional matching debug files.
+
+The client labels symbolication as `server-pending`: it cannot observe Sentry's
+later processing result. For a future native occurrence, inspect the event's
+Debug Images/processing issues in Sentry, retain the first minidump, and verify
+module debug IDs and symbol availability against the exact Electron version,
+platform and architecture. Preserve exception/thread context before resolving
+the group. Uploading symbols helps future evidence; it does not establish the
+cause of the historical POLYCODE-3A dump.
+
+For downloadable raw dump evidence, Sentry's project `storeCrashReports` setting
+must retain at least one report per issue. Passing the full minidump to the SDK
+does not enable server retention. This repository change does not modify the
+live project's retention setting; verify it during rollout using
+[Sentry's project settings](https://docs.sentry.io/api/projects/retrieve-a-project/).
+
+References: [Sentry minidump integration](https://github.com/getsentry/sentry-electron/blob/master/src/main/integrations/sentry-minidump/index.ts),
+[Electron crash reporting and symbols](https://www.electronjs.org/docs/latest/tutorial/crash-reporting).

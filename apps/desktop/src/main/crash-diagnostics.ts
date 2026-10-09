@@ -1,5 +1,5 @@
 import { app, dialog, ipcMain, type WebContents } from 'electron'
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import * as Sentry from '@sentry/electron/main'
 import { writeFatalLog, flushAppLogs } from './app-logger'
 import { flushObservability, recordLog } from './observability'
@@ -34,12 +34,14 @@ interface ProcessExit {
   context: Record<string, unknown>
 }
 
+type BeforeSend = (event: Sentry.ErrorEvent, hint: Sentry.EventHint) => Promise<Sentry.ErrorEvent | null>
+
 export function installCrashDiagnostics(options: {
   capture: boolean
   locationId: (contents: WebContents) => string | undefined | null
   /** Test hook: how long to collect exits into one incident. */
   incidentWindowMs?: number
-}): void {
+}): BeforeSend {
   const incidentWindowMs = options.incidentWindowMs ?? INCIDENT_WINDOW_MS
   const activeViews = new Map<number, string>()
   let incidents: number[] = []
@@ -47,6 +49,10 @@ export function installCrashDiagnostics(options: {
   let pending: ProcessExit[] = []
   let pendingTimer: ReturnType<typeof setTimeout> | undefined
   let shutdown: { signal: ShutdownSignal; at: number } | null = null
+  // Sentry carries Electron's details into the native event. Stamp that object
+  // before its listeners run, rather than guessing from upload time or a title.
+  const nativeIncidents = new Map<string, ProcessExit[]>()
+  let pendingIncidentId: string | undefined
 
   ipcMain.on('telemetry:view', (event, view: unknown) => {
     if (event.sender.getType() === 'window' && typeof view === 'string' && views.has(view)) {
@@ -64,6 +70,12 @@ export function installCrashDiagnostics(options: {
     if (!shutdown) return null
     if (shutdown.signal === 'app-quit') return shutdown.signal
     return Date.now() - shutdown.at < SESSION_END_SUPPRESSION_MS ? shutdown.signal : null
+  }
+
+  function incidentShutdown(exits: ProcessExit[]): ShutdownSignal | null {
+    // A dump can upload seconds later. A subsequent quit must not turn an
+    // earlier unexpected exit into acknowledged teardown.
+    return shutdown && shutdown.at <= exits[0].at + incidentWindowMs ? activeShutdown() : null
   }
 
   function describeExit(details: Electron.RenderProcessGoneDetails, type: string, contents?: WebContents): ProcessExit {
@@ -92,15 +104,24 @@ export function installCrashDiagnostics(options: {
       signalShutdown('windows-session-terminated')
     }
     const exit = describeExit(details, type, contents)
+    const incidentId = pendingIncidentId ?? randomUUID()
+    Object.assign(details, { polycodeIncidentId: incidentId })
+    exit.context.incidentId = incidentId
+    if (!nativeIncidents.has(incidentId)) {
+      nativeIncidents.set(incidentId, [])
+      if (nativeIncidents.size > 20) nativeIncidents.delete(nativeIncidents.keys().next().value!)
+    }
+    nativeIncidents.get(incidentId)!.push(exit)
     // The local log is written at once: the main process may not outlive the burst.
     writeFatalLog('process-gone', JSON.stringify(exit.context))
     flushAppLogs()
-    if (activeShutdown()) return
     pending.push(exit)
+    pendingIncidentId = incidentId
     pendingTimer ??= setTimeout(() => {
       pendingTimer = undefined
       const exits = pending
       pending = []
+      pendingIncidentId = undefined
       void resolveIncident(exits).catch(reportFailure)
     }, incidentWindowMs)
   }
@@ -112,8 +133,8 @@ export function installCrashDiagnostics(options: {
    */
   async function resolveIncident(exits: ProcessExit[]): Promise<void> {
     if (exits.length === 0) return
-    const signal = activeShutdown()
-    if (signal) {
+    const signal = incidentShutdown(exits)
+    if (signal && exits.every((exit) => exit.reason !== 'crashed' && exit.reason !== 'oom')) {
       writeFatalLog('process-gone-suppressed', JSON.stringify({ shutdownSignal: signal, exits: exits.length }))
       flushAppLogs()
       return
@@ -123,6 +144,7 @@ export function installCrashDiagnostics(options: {
     const unexpected = exits.some((exit) => exit.reason !== 'killed')
     const context = {
       ...primary.context,
+      shutdownSignal: signal,
       exitCount: exits.length,
       exits: exits.slice(0, MAX_REPORTED_EXITS).map((exit) => ({
         processType: exit.processType, reason: exit.reason, exitCode: exit.exitCode, offsetMs: exit.at - exits[0].at,
@@ -136,6 +158,7 @@ export function installCrashDiagnostics(options: {
       tags: {
         source: 'process-gone', processType: primary.processType, reason: primary.reason,
         exitCode: String(primary.exitCode), exitCount: String(exits.length),
+        crashIncidentId: String(primary.context.incidentId),
       },
       contexts: { crash: context },
       // Do not inherit SDK breadcrumbs that may contain URLs or IPC payloads.
@@ -203,4 +226,57 @@ export function installCrashDiagnostics(options: {
     // Service names are arbitrary strings and can contain user data. Report the known type only.
     try { onProcessGone(details, processTypes.has(details.type) ? details.type : 'unknown-child') } catch (error) { reportFailure(error) }
   })
+
+  return async (event, hint) => {
+    if (event.platform !== 'native') return event
+    const electron = event.contexts?.electron
+    const details = electron?.details as { polycodeIncidentId?: unknown } | undefined
+    const id = details?.polycodeIncidentId
+    const exits = typeof id === 'string' ? nativeIncidents.get(id) : undefined
+    // Native dumps found on the next launch have no live exit details. Keep
+    // their original release, contexts and attachments; never guess a match.
+    if (!exits) return event
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, incidentWindowMs - (Date.now() - exits[0].at))))
+    const signal = incidentShutdown(exits)
+    const primary = exits.find((exit) => exit.reason !== 'killed') ?? exits[0]
+    const dump = hint.attachments?.find((attachment) => attachment.attachmentType === 'event.minidump')
+    const minidumpId = dump?.filename.match(/^([a-f0-9-]{36})\.dmp$/i)?.[1]
+    // Sentry may load older or other-process dumps in the same callback. The
+    // callback marker alone is not sufficient evidence for dropping a dump.
+    const data = dump?.data
+    const header = data instanceof Uint8Array && data.byteLength >= 32
+      ? new DataView(data.buffer, data.byteOffset, data.byteLength) : undefined
+    const dumpAt = header?.getUint32(0, true) === 0x504d444d ? header.getUint32(20, true) * 1000 : null
+    const nativeType = electron?.['crashpad.process_type']
+    const sameProcess = exits.some((exit) => {
+      const expected = exit.processType === 'main-renderer' || exit.processType === 'webview' ? 'renderer'
+        : exit.processType === 'GPU' ? 'gpu-process' : exit.processType === 'Utility' ? 'utility' : null
+      return expected !== null && nativeType === expected
+    })
+    const matchingDump = sameProcess && dumpAt !== null && dumpAt >= exits[0].at - 1000
+      && dumpAt <= exits[exits.length - 1].at + 1000
+    const context = {
+      ...primary.context, shutdownSignal: signal, exitCount: exits.length,
+      correlationMethod: 'sentry-process-gone', minidumpId: minidumpId ?? null,
+      matchingDump,
+      // Symbolication occurs at Sentry after this hook, not in JavaScript.
+      symbolicationStatus: 'server-pending',
+    }
+    writeFatalLog('native-crash', JSON.stringify({ ...context, nativeEventId: event.event_id ?? null }))
+    flushAppLogs()
+    // A native OOM exception can be parsed by Sentry even when exit details
+    // say killed. Preserve that evidence as well as crashed/oom exits.
+    if (matchingDump && signal && exits.every((exit) => exit.reason === 'killed') && !event.exception?.values?.length) return null
+    event.tags = { ...event.tags, crashIncidentId: String(id), ...(minidumpId ? { minidumpId } : {}) }
+    event.contexts = { ...event.contexts, crash: context }
+    // Sentry's default renderer details include URLs and arbitrary service names.
+    if (electron) {
+      delete electron.crashed_url
+      electron.details = { reason: primary.reason, exitCode: primary.exitCode }
+    }
+    event.breadcrumbs = (primary.context.breadcrumbs as ReturnType<typeof crashBreadcrumbs>).map(({ at, name, durationMs }) => ({
+      timestamp: at / 1000, category: 'performance', message: name, data: { durationMs },
+    }))
+    return event
+  }
 }
