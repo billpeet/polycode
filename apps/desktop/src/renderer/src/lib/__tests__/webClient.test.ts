@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { RemoteConnectionState } from '../../types/ipc'
 import { getWebClient, resetWebClientForTests, WEB_HOST_ID } from '../webClient'
+import { useSessionStore } from '../../stores/sessions'
+import { settleBackgroundIpc } from '../backgroundIpc'
 
 /**
  * The browser client against a scripted `fetch`. Requests are same-origin and carry no
@@ -53,6 +55,99 @@ afterEach(() => {
 })
 
 describe('invoke', () => {
+  it('keeps non-proxy HTTP failures observable with safe diagnostics and no retry', async () => {
+    route({ '/api/remote/rpc': () => new Response('secret-token', { status: 500 }) })
+    await expect(getWebClient().invoke('sessions:list', 't')).rejects.toThrow(
+      /Remote request failed for "sessions:list".*HTTP 500.*body omitted/,
+    )
+    expect(calls()).toHaveLength(1)
+  })
+
+  it.each([502, 504])('retries a read after an isolated HTTP %s between successful RPCs', async (status) => {
+    vi.useFakeTimers()
+    let requestCount = 0
+    route({ '/api/remote/rpc': () => ++requestCount === 2
+      ? new Response('Bad gateway', { status, headers: { 'Content-Type': 'text/plain' } })
+      : json(200, { ok: true, value: [] }),
+    })
+    const web = getWebClient()
+    await expect(web.invoke('sessions:list', 't')).resolves.toEqual([])
+    const request = web.invoke('sessions:list', 't')
+    await vi.advanceTimersByTimeAsync(1_000)
+    await expect(request).resolves.toEqual([])
+    expect(requestCount).toBe(3)
+  })
+
+  it('stops a pending proxy retry when the connection is disconnected', async () => {
+    vi.useFakeTimers()
+    route({ '/api/remote/rpc': () => new Response('Bad gateway', { status: 502 }) })
+    const web = getWebClient()
+    const result = Promise.allSettled([web.invoke('sessions:list', 't')])
+    await vi.advanceTimersByTimeAsync(0)
+    web.disconnect()
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect((await result)[0].status).toBe('rejected')
+    expect(calls()).toHaveLength(1)
+  })
+
+  it.each(['<html>secret-token https://private.test</html>', 'null', '{"error":"secret-token"}'])(
+    'omits arbitrary proxy bodies and content-type parameters from diagnostics: %s', async (body) => {
+      route({ '/api/remote/rpc': () => new Response(body, {
+        status: 502, headers: { 'Content-Type': 'text/html; secret-token=https://private.test' },
+      }) })
+      const results = await Promise.allSettled([getWebClient().invoke('threads:setUnread', 't', true)])
+      const result = results[0]
+      expect(result.status).toBe('rejected')
+      if (result.status === 'rejected') {
+        expect(result.reason.message).toContain('body omitted')
+        expect(result.reason.message).not.toMatch(/secret-token|private\.test|<html>/)
+      }
+    },
+  )
+
+  it('settles a fire-and-forget background update on a proxy failure without retrying it', async () => {
+    route({ '/api/remote/rpc': () => new Response('Bad gateway', { status: 502 }) })
+    await expect(settleBackgroundIpc(getWebClient().invoke('threads:setUnread', 't', false))).resolves.toBeUndefined()
+    expect(calls()).toHaveLength(1)
+  })
+
+  it('settles a background refresh after proxy failures, keeps its cache, and recovers', async () => {
+    vi.useFakeTimers()
+    let failing = false
+    route({
+      '/api/remote/events': () => sseResponse().response,
+      '/api/remote/rpc': () => failing
+        ? new Response('<html>Bad gateway secret-token</html>', { status: 502, headers: { 'Content-Type': 'text/html' } })
+        : json(200, { ok: true, value: [{ id: 'cached' }] }),
+    })
+    const web = getWebClient()
+    web.connect()
+    await vi.advanceTimersByTimeAsync(0)
+    await useSessionStore.getState().fetch('t')
+    const cached = useSessionStore.getState().sessionsByThread.t
+    failing = true
+    const refresh = useSessionStore.getState().fetch('t')
+    const settled = Promise.allSettled([refresh])
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(await settled).toEqual([{ status: 'fulfilled', value: undefined }])
+    expect(useSessionStore.getState().sessionsByThread.t).toBe(cached)
+    expect(calls().filter((call) => call.url === '/api/remote/rpc')).toHaveLength(4)
+    expect(await web.invoke('remote:getConnectionState')).toMatchObject({ phase: 'unavailable' })
+    failing = false
+    await useSessionStore.getState().fetch('t')
+    expect(await web.invoke('remote:getConnectionState')).toMatchObject({ phase: 'connected', error: null })
+  })
+
+  it.each([502, 504])('does not replay a mutation after HTTP %s and exposes safe diagnostics', async (status) => {
+    route({ '/api/remote/rpc': () => new Response('<html>secret-token https://private.test</html>', {
+      status, headers: { 'Content-Type': 'text/html; charset=utf-8' },
+    }) })
+    await expect(getWebClient().invoke('threads:setUnread', 't', true)).rejects.toThrow(
+      new RegExp(`REMOTE_UNAVAILABLE.*threads:setUnread.*HTTP ${status}.*text/html.*non-JSON.*may have.*Retry`),
+    )
+    expect(calls()).toHaveLength(1)
+  })
+
   it('pauses clustered RPC timeouts while its event stream remains open', async () => {
     vi.useFakeTimers()
     route({
