@@ -35,11 +35,13 @@ export default function RoutinesSection({ projectId, onSelectThread }: RoutinesS
   const [creating, setCreating] = useState(false)
 
   const refresh = useCallback(async (cancelled: () => boolean = () => false) => {
-    await client.invoke('routines:list', projectId).then(async (list) => {
+    await client.refresh('routines:list', projectId).then(async (list) => {
+      if (list === undefined) return
       const runs: Record<string, Thread[]> = {}
-      await Promise.all(list.map(async (routine) => {
-        runs[routine.id] = await client.invoke('routines:listRuns', routine.id, RUNS_SHOWN)
-      }))
+      const results = await Promise.all(list.map((routine) =>
+        client.refresh('routines:listRuns', routine.id, RUNS_SHOWN)))
+      if (results.some((result) => result === undefined)) return
+      list.forEach((routine, index) => { runs[routine.id] = results[index]! })
       if (cancelled()) return
       setRoutines(list)
       setRunsByRoutine(runs)

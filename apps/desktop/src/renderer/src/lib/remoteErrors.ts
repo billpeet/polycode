@@ -10,7 +10,10 @@
  */
 
 function messageOf(error: unknown): string {
-  if (error instanceof Error) return error.message
+  if (typeof error === 'object' && error !== null) {
+    const typed = error as { name?: unknown; message?: unknown; code?: unknown }
+    return [typed.name, typed.message, typed.code].filter((value) => typeof value === 'string').join(' ')
+  }
   return typeof error === 'string' ? error : String(error)
 }
 

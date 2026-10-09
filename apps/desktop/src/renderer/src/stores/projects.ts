@@ -101,9 +101,13 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     set({ loading: true })
     try {
       const [projects, archivedProjects] = await Promise.all([
-        client.invoke('projects:list'),
-        client.invoke('projects:listArchived'),
+        client.refresh('projects:list'),
+        client.refresh('projects:listArchived'),
       ])
+      if (projects === undefined || archivedProjects === undefined) {
+        set({ loading: false })
+        return
+      }
       set({ projects, archivedProjects, loading: false })
     } catch (err) {
       console.error('Failed to fetch projects', err)

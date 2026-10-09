@@ -46,9 +46,16 @@ export const useCliHealthStore = create<CliHealthStore>((set, get) => ({
       },
     }))
     try {
-      const result = await client.invoke('cli:health', provider, connectionType, ssh, wsl)
+      const result = await client.refresh('cli:health', provider, connectionType, ssh, wsl)
       set((s) => {
         if (s.requestIdByThread[threadId] !== requestId) return s
+        if (result === undefined) {
+          const cached = s.healthByThread[threadId]?.result ?? null
+          return { healthByThread: { ...s.healthByThread, [threadId]: {
+            status: cached ? (cached.installed ? 'ok' : 'unavailable') : 'idle',
+            result: cached, error: null,
+          } } }
+        }
         return {
           healthByThread: {
             ...s.healthByThread,

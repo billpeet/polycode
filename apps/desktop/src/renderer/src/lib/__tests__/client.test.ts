@@ -73,6 +73,15 @@ describe('client under Electron', () => {
 })
 
 describe('client without a preload bridge', () => {
+  it('settles web refresh transport failures without swallowing mutation failures', async () => {
+    vi.stubGlobal('window', {})
+    const invoke = vi.mocked(getWebClient().invoke)
+    const error = new Error('[REMOTE_REQUEST_TIMEOUT] May have completed remotely')
+    invoke.mockRejectedValueOnce(error)
+    await expect(client.refresh('locations:list', 'p')).resolves.toBeUndefined()
+    invoke.mockRejectedValueOnce(error)
+    await expect(client.invoke('sessions:switch', 't', 's')).rejects.toBe(error)
+  })
   it('reports the web kind with no desktop-only capability', () => {
     vi.stubGlobal('window', {})
 
@@ -99,6 +108,12 @@ describe('client without a preload bridge', () => {
 })
 
 describe('createElectronClient', () => {
+  it('applies the same refresh policy to a bound bridge', async () => {
+    const error = new Error('[REMOTE_UNAVAILABLE] Work disconnected')
+    const c = createElectronClient(fakeApi({ invoke: vi.fn().mockRejectedValue(error) }))
+    await expect(c.refresh('locations:list', 'p')).resolves.toBeUndefined()
+    await expect(c.invoke('sessions:switch', 't', 's')).rejects.toBe(error)
+  })
   it('binds to the bridge it was given, independent of window.api', async () => {
     const bound = fakeApi()
     vi.stubGlobal('window', { api: fakeApi() })

@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { YouTrackServer } from '../types/ipc'
 import { client } from '../lib/client'
-import { isRemoteTransportError } from '../lib/remoteErrors'
 
 interface YouTrackStore {
   servers: YouTrackServer[]
@@ -23,16 +22,19 @@ export const useYouTrackStore = create<YouTrackStore>((set) => ({
   fetch: async () => {
     set({ loading: true, unavailable: false, error: null })
     try {
-      const servers = await client.invoke('youtrack:servers:list')
+      const servers = await client.refresh('youtrack:servers:list')
+      if (servers === undefined) {
+        set({ loading: false, unavailable: true, error: null })
+        return
+      }
       set({ servers, loading: false, unavailable: false, error: null })
     } catch (error) {
       // Optional background reads settle here for both App and Sidebar callers.
       // Keep the last-good list, but expose unexpected failures in settings.
-      const unavailable = isRemoteTransportError(error)
       set({
         loading: false,
-        unavailable,
-        error: unavailable ? null : String(error),
+        unavailable: false,
+        error: String(error),
       })
     }
   },

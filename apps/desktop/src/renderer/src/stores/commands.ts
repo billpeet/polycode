@@ -2,7 +2,6 @@ import { create } from 'zustand'
 import { ProjectCommand, CommandStatus, CommandLogLine } from '../types/ipc'
 import { useUiStore } from './ui'
 import { client } from '../lib/client'
-import { settleRemoteRefresh } from '../lib/remoteErrors'
 
 export const EMPTY_COMMANDS: ProjectCommand[] = []
 export const EMPTY_LOGS: CommandLogLine[] = []
@@ -75,7 +74,7 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
   pinnedInstancesByLocation: {},
 
   fetch: async (projectId) => {
-    const commands = await settleRemoteRefresh(client.invoke('commands:list', projectId))
+    const commands = await client.refresh('commands:list', projectId)
     if (!commands) return
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: commands },
@@ -184,8 +183,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchPorts: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    const ports = await settleRemoteRefresh(client.invoke('commands:getPorts', commandId, locationId))
-    if (!ports) return
+    const ports = await client.refresh('commands:getPorts', commandId, locationId)
+    if (ports === undefined) return
     set((s) => ({ portsMap: { ...s.portsMap, [key]: ports } }))
   },
 
@@ -221,8 +220,8 @@ export const useCommandStore = create<CommandStore>((set, get) => ({
 
   fetchLogs: async (commandId, locationId) => {
     const key = instKey(commandId, locationId)
-    const logs = await settleRemoteRefresh(client.invoke('commands:getLogs', commandId, locationId))
-    if (!logs) return
+    const logs = await client.refresh('commands:getLogs', commandId, locationId)
+    if (logs === undefined) return
     const pending = pendingLogsByKey.get(key) ?? EMPTY_LOGS
     if (pending.length > 0) pendingLogsByKey.delete(key)
     const merged = pending.length > 0 ? logs.concat(pending) : logs

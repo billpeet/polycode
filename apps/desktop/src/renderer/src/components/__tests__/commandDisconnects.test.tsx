@@ -17,15 +17,18 @@ const { invoke, write, reset, listeners } = vi.hoisted(() => ({
   invoke: vi.fn(), write: vi.fn(), reset: vi.fn(),
   listeners: new Map<string, Set<(...args: unknown[]) => void>>(),
 }))
-vi.mock('../../lib/client', () => ({ client: {
+vi.mock('../../lib/client', async () => {
+  const { settleRemoteRefresh } = await import('../../lib/remoteErrors')
+  return { client: {
   capabilities: { browserPanel: false }, invoke,
+  refresh: (...args: unknown[]) => settleRemoteRefresh(invoke(...args)),
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     const callbacks = listeners.get(channel) ?? new Set()
     callbacks.add(callback)
     listeners.set(channel, callbacks)
     return () => callbacks.delete(callback)
   },
-} }))
+} } })
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
   write = write
   reset = reset

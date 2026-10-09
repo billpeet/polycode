@@ -70,7 +70,8 @@ export default function SubscriptionUsageIndicator({ threadId, provider, model }
     setLoading(true)
     setError(null)
     try {
-      setSnapshot(await client.invoke('subscription-usage:get', threadId))
+      const snapshot = await client.refresh('subscription-usage:get', threadId)
+      if (snapshot !== undefined) setSnapshot(snapshot)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Usage unavailable')
     } finally {

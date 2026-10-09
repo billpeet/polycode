@@ -12,7 +12,8 @@ export default function BackgroundTerminals({ threadId }: { threadId: string }) 
     setLoading(true)
     setError(null)
     try {
-      setTerminals(await client.invoke('threads:backgroundTerminals:list', threadId))
+      const terminals = await client.refresh('threads:backgroundTerminals:list', threadId)
+      if (terminals !== undefined) setTerminals(terminals)
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason))
     } finally {

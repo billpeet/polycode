@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { Provider, SlashCommand } from '../types/ipc'
 import { client } from '../lib/client'
-import { settleRemoteRefresh } from '../lib/remoteErrors'
 
 interface SlashCommandStore {
   /** Commands keyed by scope: projectId or 'global' */
@@ -20,12 +19,12 @@ export const useSlashCommandStore = create<SlashCommandStore>((set) => ({
 
   fetch: async (projectId, provider, cwd) => {
     // Both halves or neither: a remote transport failure keeps the last palette intact.
-    const result = await settleRemoteRefresh(Promise.all([
-      client.invoke('slash-commands:list', projectId ?? null),
-      provider ? client.invoke('skills:list', provider, cwd ?? null) : Promise.resolve<SlashCommand[]>([]),
-    ]))
-    if (!result) return
+    const result = await Promise.all([
+      client.refresh('slash-commands:list', projectId ?? null),
+      provider ? client.refresh('skills:list', provider, cwd ?? null) : Promise.resolve<SlashCommand[]>([]),
+    ])
     const [commands, skills] = result
+    if (commands === undefined || skills === undefined) return
     const key = projectId ?? 'global'
     set((s) => ({ commandsByScope: { ...s.commandsByScope, [key]: [...skills, ...commands] } }))
   },

@@ -254,7 +254,7 @@ function CommandLogPanel({
 
     // Load existing logs from backend
     let disposed = false
-    void settleBackgroundIpc(client.invoke('commands:getLogs', commandId, locationId)).then((logs) => {
+    void settleBackgroundIpc(client.refresh('commands:getLogs', commandId, locationId)).then((logs) => {
       if (disposed) return
       const cachedLogs = useCommandStore.getState().logsByCommand[instanceKey] ?? []
       const lines = logs ?? cachedLogs
@@ -336,7 +336,7 @@ function CommandLogPanel({
   useEffect(() => {
     let cancelled = false
     if (status === 'running' || status === 'stopping') {
-      void settleBackgroundIpc(client.invoke('commands:getPid', commandId, locationId))
+      void settleBackgroundIpc(client.refresh('commands:getPid', commandId, locationId))
         .then((pid) => {
           if (!cancelled && pid !== undefined) setLoadedPid(pid)
         })
