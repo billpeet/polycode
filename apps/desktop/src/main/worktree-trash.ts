@@ -27,7 +27,9 @@ parentPort.postMessage(failures)
 `
 
 export interface DiscardResult {
-  /** Where the directory was moved before deletion, or null if it had to be deleted in place. */
+  /** False when there was nothing at `path` to begin with. */
+  existed: boolean
+  /** Where the directory was moved before deletion, or null if it could not be moved aside. */
   movedTo: string | null
   /** Settles when the background delete finishes. Never rejects; callers need not await it. */
   done: Promise<void>
@@ -122,10 +124,13 @@ export function sweepLeftovers(parentDir: string): Promise<void> {
  * A same-volume rename is near-instant, so the caller can return immediately;
  * the actual delete then happens on a worker thread.
  */
-export async function discardDirectory(path: string): Promise<DiscardResult> {
+export async function discardDirectory(
+  path: string,
+  options: { inPlaceFallback?: boolean } = {},
+): Promise<DiscardResult> {
   const stale = leftoverTombstones(dirname(path))
   if (!existsSync(path)) {
-    return { movedTo: null, done: deleteInBackground(stale) }
+    return { existed: false, movedTo: null, done: deleteInBackground(stale) }
   }
 
   let movedTo: string | null = null
@@ -135,8 +140,12 @@ export async function discardDirectory(path: string): Promise<DiscardResult> {
     movedTo = tombstone
   } catch (error) {
     // Typically EBUSY/EPERM on Windows: something still holds a handle inside.
+    if (options.inPlaceFallback === false) {
+      console.warn(`[worktree] Could not move "${path}" aside (${errorCode(error)}).`)
+      return { existed: true, movedTo: null, done: deleteInBackground(stale) }
+    }
     // Delete in place instead; if that fails too, the worker's report moves it aside.
     console.warn(`[worktree] Could not move "${path}" aside (${errorCode(error)}); deleting it in place.`)
   }
-  return { movedTo, done: deleteInBackground([...stale, movedTo ?? path]) }
+  return { existed: true, movedTo, done: deleteInBackground([...stale, movedTo ?? path]) }
 }

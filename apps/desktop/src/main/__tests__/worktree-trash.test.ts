@@ -64,3 +64,20 @@ describe('isPathInside', () => {
     expect(isPathInside(base, join(root, 'repo-worktrees'))).toBe(false)
   })
 })
+
+describe('discardDirectory without in-place fallback', () => {
+  it('reports whether anything existed, and still sweeps leftovers', async () => {
+    const leftover = makeWorktree('.polycode-trash-old-mabc12')
+    const missing = await discardDirectory(join(root, 'missing'), { inPlaceFallback: false })
+    await missing.done
+    expect(missing).toMatchObject({ existed: false, movedTo: null })
+    expect(existsSync(leftover)).toBe(false)
+
+    const path = makeWorktree('wt3')
+    const moved = await discardDirectory(path, { inPlaceFallback: false })
+    expect(moved.existed).toBe(true)
+    expect(moved.movedTo).not.toBeNull()
+    expect(existsSync(path)).toBe(false)
+    await moved.done
+  })
+})

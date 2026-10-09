@@ -174,6 +174,17 @@ export function count(name: string, attributes: TelemetryAttributes = {}, value 
   counter.add(value, attributes)
 }
 
+/** Byte-sized histogram (unit `By`); `recordDuration` would label it as milliseconds. */
+export function recordSize(name: string, bytes: number, attributes: TelemetryAttributes = {}): void {
+  if (!state || !Number.isFinite(bytes) || bytes < 0) return
+  let histogram = state.histograms.get(name)
+  if (!histogram) {
+    histogram = state.meterProvider.getMeter('polycode').createHistogram(name, { unit: 'By' })
+    state.histograms.set(name, histogram)
+  }
+  histogram.record(bytes, attributes)
+}
+
 export function recordDuration(name: string, durationMs: number, attributes: TelemetryAttributes = {}): void {
   if (!state || !Number.isFinite(durationMs) || durationMs < 0) return
   let histogram = state.histograms.get(name)

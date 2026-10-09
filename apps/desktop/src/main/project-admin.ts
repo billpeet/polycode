@@ -25,7 +25,7 @@ import { commandManager } from './commands/manager'
 import { runSerialized } from './keyed-queue'
 import { withSpan } from './observability'
 import { stopWatchesUnder } from './file-watch'
-import { discardDirectory, sweepLeftovers } from './worktree-trash'
+import { discardDirectory } from './worktree-trash'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
 
 /** Expand a leading `~` to the user's home directory. */
@@ -118,6 +118,9 @@ export async function listSyncedLocations(projectId: string): Promise<RepoLocati
   for (const parent of locations.filter((location) =>
     location.connection_type === 'local' && !location.is_worktree
   )) {
+    // A location that is not a git checkout (a notes folder, say) has no worktrees to
+    // reconcile; without this check every `locations:list` spawned a failing git for it.
+    if (!existsSync(join(parent.path, '.git'))) continue
     try {
       const records = parseGitWorktreeList(await runGit(['worktree', 'list', '--porcelain', '-z'], parent.path))
       const validPaths = new Set<string>()
@@ -308,30 +311,30 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
     // A live `fs.watch` holds a Windows handle on the directory, which is one way
     // `git worktree remove` ends in "Permission denied".
     const restoreWatches = stopWatchesUnder(location.path)
-    try {
-      // `core.longpaths`: without it git on Windows cannot delete paths past MAX_PATH and
-      // exits 255 with "Filename too long" — 43% of removals in the week this was measured,
-      // each then paying for the fallback below.
-      await phase(
-        'git-remove',
-        () => runGit(['-c', 'core.longpaths=true', 'worktree', 'remove', '--force', location.path], gitCwd),
-        { 'worktree.queue_wait_ms': waitedMs },
-      )
-      // A removal interrupted by app exit can leave a tombstone behind; a successful
-      // git removal would otherwise never look for one.
-      void sweepLeftovers(dirname(location.path))
-    } catch (error) {
-      if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) {
-        // The worktree lives on, so the renderer's subscriptions must too.
-        restoreWatches()
-        throw error
-      }
-      // Move the directory aside first so `prune` sees it gone, then let it be deleted in
-      // the background: awaiting the delete here held the IPC (and the per-repo queue) for
-      // 20–40s and starved every other filesystem call in the main process.
-      await phase('delete-directory', () => discardDirectory(location.path))
+    // Rename first, delete later. Letting git delete the tree itself (even with
+    // `core.longpaths`) took 50–80s for a worktree full of node_modules and held this
+    // queue the whole time; a same-volume rename is milliseconds, after which `prune`
+    // drops the registration and the tombstone is deleted on a worker thread.
+    const discarded = await phase('move-aside', () => discardDirectory(location.path, { inPlaceFallback: false }), { 'worktree.queue_wait_ms': waitedMs })
+    if (discarded.movedTo || !discarded.existed) {
       if (parent?.path && existsSync(parent.path)) {
         await phase('git-prune', () => runGit(['worktree', 'prune'], parent.path).catch(() => undefined))
+      }
+    } else {
+      // Something holds a handle inside the directory, so it could not be moved. Let git
+      // try; if git cannot delete it either, delete it in place in the background.
+      try {
+        await phase('git-remove', () => runGit(['-c', 'core.longpaths=true', 'worktree', 'remove', '--force', location.path], gitCwd))
+      } catch (error) {
+        if (!isNotRegisteredWorktreeError(error) && !isWorktreeDirectoryCleanupError(error)) {
+          // The worktree lives on, so the renderer's subscriptions must too.
+          restoreWatches()
+          throw error
+        }
+        await phase('delete-directory', () => discardDirectory(location.path))
+        if (parent?.path && existsSync(parent.path)) {
+          await phase('git-prune', () => runGit(['worktree', 'prune'], parent.path).catch(() => undefined))
+        }
       }
     }
     if (waitedMs >= 1000) {
