@@ -3,7 +3,6 @@ import { RepoLocation, SshConfig, WslConfig, ConnectionType, LocationPool } from
 import { useThreadStore } from './threads'
 import { useBrowserStore } from './browser'
 import { client } from '../lib/client'
-import { settleRemoteRefresh } from '../lib/remoteErrors'
 
 interface LocationStore {
   byProject: Record<string, RepoLocation[]>
@@ -30,7 +29,7 @@ export const useLocationStore = create<LocationStore>((set) => ({
 
   fetch: async (projectId) => {
     // Hydration fires this from many effects; a remote transport failure keeps the cache.
-    const locations = await settleRemoteRefresh(client.invoke('locations:list', projectId))
+    const locations = await client.refresh('locations:list', projectId)
     if (!locations) return
     set((s) => ({
       byProject: { ...s.byProject, [projectId]: locations }
@@ -39,7 +38,8 @@ export const useLocationStore = create<LocationStore>((set) => ({
 
   fetchPools: async (projectId) => {
     try {
-      const pools = await client.invoke('location-pools:list', projectId)
+      const pools = await client.refresh('location-pools:list', projectId)
+      if (pools === undefined) return
       set((s) => ({
         poolsByProject: { ...s.poolsByProject, [projectId]: pools }
       }))

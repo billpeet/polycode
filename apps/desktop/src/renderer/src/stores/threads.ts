@@ -5,7 +5,7 @@ import { formatErrorDetails } from '../lib/errorDetails'
 import { isAppShuttingDownError } from '@polycode/shared'
 import { settleBackgroundIpc } from '../lib/backgroundIpc'
 import { client } from '../lib/client'
-import { isRemoteTransportError, settleRemoteRefresh } from '../lib/remoteErrors'
+import { isRemoteTransportError } from '../lib/remoteErrors'
 
 const ARCHIVED_THREADS_PAGE_SIZE = 10
 const STALE_THREAD_SELECTION_MESSAGE = 'The selected project location is no longer available.'
@@ -461,13 +461,13 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
   },
 
   fetch: async (projectId) => {
-    const result = await settleRemoteRefresh(Promise.all([
-      client.invoke('threads:list', projectId),
-      client.invoke('threads:archivedCount', projectId),
-      client.invoke('threads:snoozedCount', projectId),
-    ]))
-    if (!result) return
+    const result = await Promise.all([
+      client.refresh('threads:list', projectId),
+      client.refresh('threads:archivedCount', projectId),
+      client.refresh('threads:snoozedCount', projectId),
+    ])
     const [threads, count, snoozedCount] = result
+    if (threads === undefined || count === undefined || snoozedCount === undefined) return
     set((s) => {
       // The create-on-send draft has no DB row, so a wholesale refresh from
       // the DB would silently evict it — re-seat it at the head.
@@ -504,12 +504,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   fetchArchived: async (projectId, page) => {
     const nextPage = page ?? get().archivedPageByProject[projectId] ?? 0
-    const threads = await settleRemoteRefresh(client.invoke(
+    const threads = await client.refresh(
       'threads:listArchived',
       projectId,
       ARCHIVED_THREADS_PAGE_SIZE,
       nextPage * ARCHIVED_THREADS_PAGE_SIZE
-    ))
+    )
     if (!threads) return
     set((s) => ({
       archivedByProject: { ...s.archivedByProject, [projectId]: threads },
@@ -907,12 +907,12 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
 
   fetchSnoozed: async (projectId, page) => {
     const nextPage = page ?? get().snoozedPageByProject[projectId] ?? 0
-    const threads = await settleRemoteRefresh(client.invoke(
+    const threads = await client.refresh(
       'threads:listSnoozed',
       projectId,
       ARCHIVED_THREADS_PAGE_SIZE,
       nextPage * ARCHIVED_THREADS_PAGE_SIZE
-    ))
+    )
     if (!threads) return
     set((s) => ({
       snoozedByProject: { ...s.snoozedByProject, [projectId]: threads },

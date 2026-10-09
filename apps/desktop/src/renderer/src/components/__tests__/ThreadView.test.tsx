@@ -14,13 +14,16 @@ const { invoke, listeners } = vi.hoisted(() => ({
   invoke: vi.fn(),
   listeners: new Map<string, (...args: unknown[]) => void>(),
 }))
-vi.mock('../../lib/client', () => ({ client: {
+vi.mock('../../lib/client', async () => {
+  const { settleRemoteRefresh } = await import('../../lib/remoteErrors')
+  return { client: {
   invoke,
+  refresh: (...args: unknown[]) => settleRemoteRefresh(invoke(...args)),
   on: (channel: string, callback: (...args: unknown[]) => void) => {
     listeners.set(channel, callback)
     return () => { listeners.delete(channel) }
   },
-} }))
+} } })
 vi.mock('../ThreadHeader', () => ({ default: () => null }))
 vi.mock('../SessionTabs', () => ({ default: () => null }))
 vi.mock('../AgentTabs', () => ({ default: () => null }))

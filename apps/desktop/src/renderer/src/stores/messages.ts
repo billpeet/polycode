@@ -1,7 +1,6 @@
 import { create } from 'zustand'
 import { appendFoldedMessage, eventRole } from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
-import { settleRemoteRefresh } from '../lib/remoteErrors'
 import { client } from '../lib/client'
 
 interface MessageStore {
@@ -44,7 +43,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
   messagesBySession: {},
 
   fetch: async (threadId) => {
-    const messages = await settleRemoteRefresh(client.invoke('messages:list', threadId))
+    const messages = await client.refresh('messages:list', threadId)
     if (!messages) return
     set((s) => {
       const serverIds = new Set(messages.map((message: Message) => message.id))
@@ -60,7 +59,7 @@ export const useMessageStore = create<MessageStore>((set) => ({
   },
 
   fetchBySession: async (sessionId) => {
-    const messages = await settleRemoteRefresh(client.invoke('messages:listBySession', sessionId))
+    const messages = await client.refresh('messages:listBySession', sessionId)
     if (!messages) return
     set((s) => ({ messagesBySession: { ...s.messagesBySession, [sessionId]: messages } }))
   },

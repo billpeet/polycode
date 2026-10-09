@@ -1,6 +1,7 @@
 import type { ChannelArgs, ChannelResult, LocalChannel } from '@polycode/shared'
 import type { WindowApi } from '../types/ipc'
 import { WEB_CAPABILITIES, getWebClient } from './webClient'
+import { invokeWithTransportPolicy, refreshWithTransportPolicy, type RefreshChannel } from './transportPolicy'
 
 /**
  * The renderer's one seam onto the process that owns its data.
@@ -44,6 +45,11 @@ export interface Client extends WindowApi {
   capabilities: ClientCapabilities
 }
 
+export interface RendererClient extends Client {
+  /** undefined means retain last-good data. Unexpected failures still reject. */
+  refresh<C extends RefreshChannel>(channel: C, ...args: ChannelArgs<C>): Promise<ChannelResult<C> | undefined>
+}
+
 const ELECTRON_CAPABILITIES: ClientCapabilities = Object.freeze({
   windowControls: true,
   shell: true,
@@ -59,19 +65,20 @@ function preloadApi(): WindowApi | undefined {
 }
 
 /** Bind a `Client` to a specific preload bridge. Exposed for tests. */
-export function createElectronClient(api: WindowApi): Client {
+export function createElectronClient(api: WindowApi): RendererClient {
   return {
     kind: 'electron',
     capabilities: ELECTRON_CAPABILITIES,
     systemLocale: api.systemLocale,
-    invoke: (channel, ...args) => api.invoke(channel, ...args),
+    invoke: (channel, ...args) => invokeWithTransportPolicy(channel, () => api.invoke(channel, ...args)),
+    refresh: (channel, ...args) => refreshWithTransportPolicy(channel, () => api.invoke(channel, ...args)),
     on: (channel, callback) => api.on(channel, callback),
     send: (channel, ...args) => api.send(channel, ...args),
     onSlowInvoke: (callback) => api.onSlowInvoke(callback),
   }
 }
 
-export const client: Client = {
+export const client: RendererClient = {
   get kind(): ClientKind {
     return preloadApi() ? 'electron' : 'web'
   },
@@ -83,7 +90,10 @@ export const client: Client = {
   },
   invoke<C extends LocalChannel>(channel: C, ...args: ChannelArgs<C>): Promise<ChannelResult<C>> {
     const api = preloadApi()
-    return api ? api.invoke(channel, ...args) : getWebClient().invoke(channel, ...args)
+    return invokeWithTransportPolicy(channel, () => api ? api.invoke(channel, ...args) : getWebClient().invoke(channel, ...args))
+  },
+  refresh(channel, ...args) {
+    return refreshWithTransportPolicy(channel, () => client.invoke(channel, ...args))
   },
   on(channel, callback) {
     const api = preloadApi()
