@@ -124,10 +124,34 @@ export function sweepLeftovers(parentDir: string): Promise<void> {
  * A same-volume rename is near-instant, so the caller can return immediately;
  * the actual delete then happens on a worker thread.
  */
+/**
+ * Rename-aside retry schedule. Removal tears down the thread's agent process just before
+ * the rename, and on Windows the kill is asynchronous: in the first day of rename-first
+ * removals, 7 of 11 renames failed with EBUSY because the process still had the worktree
+ * as its working directory, and git then spent 5s deleting the tree instead. A couple of
+ * seconds of patience is far cheaper than that.
+ */
+const RENAME_RETRY_DELAYS_MS = [100, 200, 400, 800, 1600]
+
+async function renameWithRetry(from: string, to: string, delay: (ms: number) => Promise<void>): Promise<{ attempts: number }> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await rename(from, to)
+      return { attempts: attempt + 1 }
+    } catch (error) {
+      const code = errorCode(error)
+      const retryable = code === 'EBUSY' || code === 'EPERM' || code === 'EACCES'
+      if (!retryable || attempt >= RENAME_RETRY_DELAYS_MS.length) throw error
+      await delay(RENAME_RETRY_DELAYS_MS[attempt])
+    }
+  }
+}
+
 export async function discardDirectory(
   path: string,
-  options: { inPlaceFallback?: boolean } = {},
+  options: { inPlaceFallback?: boolean; delay?: (ms: number) => Promise<void> } = {},
 ): Promise<DiscardResult> {
+  const delay = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const stale = leftoverTombstones(dirname(path))
   if (!existsSync(path)) {
     return { existed: false, movedTo: null, done: deleteInBackground(stale) }
@@ -136,7 +160,8 @@ export async function discardDirectory(
   let movedTo: string | null = null
   try {
     const tombstone = tombstonePath(path)
-    await rename(path, tombstone)
+    const { attempts } = await renameWithRetry(path, tombstone, delay)
+    if (attempts > 1) console.info(`[worktree] Moved "${path}" aside after ${attempts} attempts.`)
     movedTo = tombstone
   } catch (error) {
     // Typically EBUSY/EPERM on Windows: something still holds a handle inside.
