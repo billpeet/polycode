@@ -1,10 +1,12 @@
-import { app, dialog, ipcMain, type WebContents } from 'electron'
+import { app, crashReporter, dialog, ipcMain, type WebContents } from 'electron'
 import { createHash, randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import * as Sentry from '@sentry/electron/main'
 import { writeFatalLog, flushAppLogs } from './app-logger'
 import { flushObservability, recordLog } from './observability'
 import { latestMemorySamples } from './memory-telemetry'
 import { crashBreadcrumbs } from './crash-context'
+import { GpuCrashHistory } from './gpu-crash-history'
 
 const reasons = new Set(['clean-exit', 'abnormal-exit', 'killed', 'crashed', 'oom', 'launch-failed', 'integrity-failure', 'memory-eviction'])
 const views = new Set(['chat', 'diff', 'file', 'command', 'terminal', 'browser', 'tasks', 'files', 'commands', 'plan', 'workspace'])
@@ -41,9 +43,44 @@ export function installCrashDiagnostics(options: {
   locationId: (contents: WebContents) => string | undefined | null
   /** Test hook: how long to collect exits into one incident. */
   incidentWindowMs?: number
+  /** Test hook: isolate persisted history from the user's profile. */
+  historyPath?: string
 }): BeforeSend {
   const incidentWindowMs = options.incidentWindowMs ?? INCIDENT_WINDOW_MS
   const activeViews = new Map<number, string>()
+  const recentViews: { at: number; view: string }[] = []
+  const disableGpu = app.commandLine.hasSwitch('disable-gpu')
+  const history = new GpuCrashHistory(options.historyPath ?? join(app.getPath('userData'), 'gpu-crash-history.json'), disableGpu, reportFailure)
+  let gpuInfo: Record<string, unknown> | null = null
+  let gpuInfoPending = false
+  async function refreshGpuInfo(): Promise<void> {
+    if (gpuInfoPending || !app.isReady()) return
+    gpuInfoPending = true
+    try {
+      const raw = await app.getGPUInfo('basic') as { gpuDevice?: Record<string, unknown>[]; auxAttributes?: Record<string, unknown> }
+      // Never spread Chromium's object: it may acquire identifying fields.
+      const pick = (source: Record<string, unknown>, keys: string[]) => Object.fromEntries(keys.flatMap((key) => {
+        const value = source[key]
+        return typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)) ||
+          (typeof value === 'string' && value.length <= 128 && /^[\w .()+-]*$/.test(value)) ? [[key, value]] : []
+      }))
+      gpuInfo = {
+        sampledAt: Date.now(),
+        devices: (Array.isArray(raw.gpuDevice) ? raw.gpuDevice : []).slice(0, 8)
+          .filter((device) => device && typeof device === 'object')
+          .map((device) => pick(device, ['vendorId', 'deviceId', 'active', 'driverVendor', 'driverVersion', 'gpuPreference'])),
+        attributes: pick(raw.auxAttributes ?? {}, ['softwareRendering', 'sandboxed', 'inProcessGpu', 'optimus', 'amdSwitchable', 'driverVendor', 'driverVersion', 'driverDate']),
+      }
+    } catch { /* Keep the last known sample when the GPU is unavailable. */ }
+    finally { gpuInfoPending = false }
+  }
+  app.on('gpu-info-update', () => { void refreshGpuInfo() })
+  void app.whenReady().then(refreshGpuInfo).catch(reportFailure)
+  const recoveryTimer = disableGpu ? setInterval(() => {
+    history.observe()
+    recordLog('INFO', 'GPU-disabled recovery observation', { 'crash.recovery': JSON.stringify(history.context()) })
+  }, 5 * 60_000) : undefined
+  recoveryTimer?.unref()
   let incidents: number[] = []
   let presenting = false
   let pending: ProcessExit[] = []
@@ -57,6 +94,8 @@ export function installCrashDiagnostics(options: {
   ipcMain.on('telemetry:view', (event, view: unknown) => {
     if (event.sender.getType() === 'window' && typeof view === 'string' && views.has(view)) {
       activeViews.set(event.sender.id, view)
+      recentViews.push({ at: Date.now(), view })
+      if (recentViews.length > 20) recentViews.shift()
     }
   })
 
@@ -89,8 +128,9 @@ export function installCrashDiagnostics(options: {
       processType: type,
       appVersion: app.getVersion(), electronVersion: process.versions.electron,
       chromiumVersion: process.versions.chrome,
-      gpu, disableGpu: app.commandLine.hasSwitch('disable-gpu'),
-      activeView: contents?.getType() === 'webview' ? 'browser' : contents ? activeViews.get(contents.id) ?? 'unknown' : 'unknown',
+      gpu, disableGpu, gpuInfo,
+      activeView: contents?.getType() === 'webview' ? 'browser' : contents ? activeViews.get(contents.id) ?? 'unknown' : recentViews.at(-1)?.view ?? 'unknown',
+      recentViews: recentViews.map((entry) => ({ ...entry })),
       guestLocationId: location ? createHash('sha256').update(location).digest('hex') : null,
       memory: latestMemorySamples(), breadcrumbs: crashBreadcrumbs(),
       shutdownSignal: activeShutdown(),
@@ -142,14 +182,31 @@ export function installCrashDiagnostics(options: {
     // The first exit that was not merely killed is the likeliest trigger.
     const primary = exits.find((exit) => exit.reason !== 'killed') ?? exits[0]
     const unexpected = exits.some((exit) => exit.reason !== 'killed')
+    // Retain crash evidence during shutdown without treating teardown as GPU
+    // recurrence for recovery decisions on the next launch.
+    const gpuExit = !signal ? exits.find((exit) => exit.processType === 'GPU' && exit.reason !== 'killed') : undefined
+    if (gpuExit) history.recordIncident(gpuExit.exitCode, app.getVersion())
+    const recurringGpu = !!gpuExit && history.recurringAcrossLaunches()
+    // Electron exposes the latest upload, not a dump ID on child-process-gone.
+    // It can belong to an older crash; retain its date and never claim a match.
+    let latestUploadedReport: { id: string; at: number; correlatedToIncident: false } | null = null
+    try {
+      const report = crashReporter.getLastCrashReport()
+      if (report?.id && /^[a-zA-Z0-9-]{1,128}$/.test(report.id) && Number.isFinite(report.date.getTime())) {
+        latestUploadedReport = { id: report.id, at: report.date.getTime(), correlatedToIncident: false }
+      }
+    } catch { /* Crash reporting may be disabled or not initialized. */ }
     const context = {
       ...primary.context,
       shutdownSignal: signal,
+      latestUploadedReport, gpuHistory: history.context(),
       exitCount: exits.length,
       exits: exits.slice(0, MAX_REPORTED_EXITS).map((exit) => ({
         processType: exit.processType, reason: exit.reason, exitCode: exit.exitCode, offsetMs: exit.at - exits[0].at,
       })),
     }
+    writeFatalLog('process-gone-incident', JSON.stringify(context))
+    flushAppLogs()
     const breadcrumbs = primary.context.breadcrumbs as ReturnType<typeof crashBreadcrumbs>
     recordLog(unexpected ? 'FATAL' : 'WARN', 'Electron process exited unexpectedly', { 'crash.context': JSON.stringify(context) })
     if (options.capture) Sentry.captureEvent({
@@ -178,18 +235,19 @@ export function installCrashDiagnostics(options: {
     const renderers = [...new Set(exits.flatMap((exit) => exit.contents && !exit.contents.isDestroyed() ? [exit.contents] : []))]
     // Electron restarts child processes itself. Offer GPU diagnostics if failures repeat.
     // A renderer whose contents were destroyed meanwhile has nothing to recover.
-    const repeated = incidents.length >= 3
+    const repeated = incidents.length >= 3 || recurringGpu
     const rendererGone = exits.some((exit) => exit.contents)
     if (renderers.length === 0 && (rendererGone || !repeated)) return
     presenting = true
     try {
       const buttons = renderers.length ? ['Reload', 'Dismiss'] : ['Dismiss']
-      if (repeated) buttons.push('Restart with GPU disabled')
+      if (repeated && !disableGpu) buttons.push('Restart with GPU disabled')
       const others = exits.length > 1 ? ` ${exits.length - 1} other process exit${exits.length > 2 ? 's' : ''} followed.` : ''
       const { response } = await dialog.showMessageBox({
         type: 'error', title: 'PolyCode process stopped',
         message: `${primary.processType} stopped (${primary.reason}).`,
-        detail: 'Diagnostics were written to the app logs.' + others + (repeated ? ' Repeated crashes detected. Restarting stops running sessions; disabling GPU can help diagnose graphics problems.' : ''),
+        detail: 'Diagnostics were written to the app logs.' + others + (recurringGpu ? ' GPU crashes have recurred across app launches.' : '') +
+          (repeated && !disableGpu ? ' Repeated crashes detected. Restarting stops running sessions; disabling GPU can help diagnose graphics problems.' : ''),
         buttons, cancelId: renderers.length ? 1 : 0, noLink: true,
       })
       if (buttons[response] === 'Reload') {
@@ -208,7 +266,14 @@ export function installCrashDiagnostics(options: {
   }
 
   // Covers every quit this app starts: window close, updater install, relaunch.
-  app.on('before-quit', () => signalShutdown('app-quit'))
+  app.on('before-quit', () => {
+    signalShutdown('app-quit')
+    clearInterval(recoveryTimer)
+    if (disableGpu) {
+      history.observe()
+      recordLog('INFO', 'GPU-disabled recovery observation', { 'crash.recovery': JSON.stringify(history.context()) })
+    }
+  })
   // On Windows, a shutdown, restart or log-off skips `before-quit`.
   app.on('browser-window-created', (_event, window) => {
     window.on('query-session-end', () => signalShutdown('windows-session-end'))

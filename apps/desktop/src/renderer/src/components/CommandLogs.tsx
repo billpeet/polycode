@@ -11,6 +11,7 @@ import { useLocationStore } from '../stores/locations'
 import { registerUrlLinks, shouldOpenCommandLogLinkInternally } from '../lib/xtermLinks'
 import { writeClipboardText } from '../lib/clipboard'
 import { settleBackgroundIpc } from '../lib/backgroundIpc'
+import { runCommandAction } from '../lib/commandActions'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 import { client } from '../lib/client'
 
@@ -252,14 +253,19 @@ function CommandLogPanel({
     })
 
     // Load existing logs from backend
-    client.invoke('commands:getLogs', commandId, locationId).then((logs: CommandLogLine[]) => {
-      if (logs.length > 0) {
-        term.write(buildXtermChunk(logs))
+    let disposed = false
+    void settleBackgroundIpc(client.invoke('commands:getLogs', commandId, locationId)).then((logs) => {
+      if (disposed) return
+      const cachedLogs = useCommandStore.getState().logsByCommand[instanceKey] ?? []
+      const lines = logs ?? cachedLogs
+      if (lines.length > 0) {
+        term.write(buildXtermChunk(lines))
       }
       initializedRef.current = true
     })
 
     return () => {
+      disposed = true
       disposeLinks.dispose()
       if (flushFrameRef.current !== null) {
         cancelAnimationFrame(flushFrameRef.current)
@@ -288,14 +294,17 @@ function CommandLogPanel({
     return unsub
   }, [instanceKey, queueLogLines])
 
-  // Clear terminal on restart (status transitions to 'running' after 'stopping')
-  const prevStatusRef = useRef(status)
+  // Only backend transitions clear output; an optimistic rollback must retain logs.
   useEffect(() => {
-    if (prevStatusRef.current === 'stopping' && status === 'running') {
-      xtermRef.current?.reset()
-    }
-    prevStatusRef.current = status
-  }, [status])
+    let stoppedSinceRun = false
+    return client.on(`command:status:${instanceKey}`, (next) => {
+      if (next === 'stopping') stoppedSinceRun = true
+      if (next === 'running') {
+        if (stoppedSinceRun) xtermRef.current?.reset()
+        stoppedSinceRun = false
+      }
+    })
+  }, [instanceKey])
 
   // Subscribe to port events
   useEffect(() => {
@@ -387,7 +396,7 @@ function CommandLogPanel({
           {/* Start / Stop */}
           {!isActive ? (
             <button
-              onClick={() => start(commandId, locationId)}
+              onClick={() => { void runCommandAction(() => start(commandId, locationId)) }}
               className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
               style={{ color: '#4ade80' }}
               title="Start"
@@ -398,7 +407,7 @@ function CommandLogPanel({
             </button>
           ) : (
             <button
-              onClick={() => !isStopping && stop(commandId, locationId)}
+              onClick={() => { if (!isStopping) void runCommandAction(() => stop(commandId, locationId)) }}
               disabled={isStopping}
               className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0 disabled:opacity-50"
               style={{ color: '#f87171' }}
@@ -412,7 +421,7 @@ function CommandLogPanel({
           {/* Restart */}
           {hasRun && (
             <button
-              onClick={() => !isStopping && restart(commandId, locationId)}
+              onClick={() => { if (!isStopping) void runCommandAction(() => restart(commandId, locationId)) }}
               disabled={isStopping}
               className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0 disabled:opacity-50"
               style={{ color: 'var(--color-text-muted)' }}
