@@ -1,4 +1,5 @@
 import * as http from 'node:http'
+import { gunzipSync } from 'node:zlib'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -361,5 +362,45 @@ describe('cookie-authenticated API access', () => {
     const id = h.deps.sessions.mint()
     const res = await h.request({ path: '/api/remote/health', headers: { Cookie: `polycode_session=${id}` } })
     expect(res.status).toBe(401)
+  })
+})
+
+describe('response compression', () => {
+  const rawRequest = (port: number, headers: http.OutgoingHttpHeaders, body: string) =>
+    new Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }>((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, method: 'POST', path: '/api/remote/rpc', headers }, (res) => {
+        const chunks: Buffer[] = []
+        res.on('data', (chunk: Buffer) => chunks.push(chunk))
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }))
+      })
+      req.once('error', reject)
+      req.end(body)
+    })
+  const large = Array.from({ length: 400 }, (_, i) => ({ id: `m${i}`, content: 'x'.repeat(64) }))
+
+  it('gzips a large JSON response for a client that advertises it, and the payload round-trips', async () => {
+    const h = await start()
+    vi.mocked(h.deps.handleRpc).mockResolvedValue(large)
+    const res = await rawRequest(h.port, { ...BEARER, 'Accept-Encoding': 'gzip, deflate, br' }, JSON.stringify({ channel: 'threads:list', args: [] }))
+    expect(res.status).toBe(200)
+    expect(res.headers['content-encoding']).toBe('gzip')
+    expect(res.headers.vary).toBe('Accept-Encoding')
+    expect(Number(res.headers['content-length'])).toBe(res.body.byteLength)
+    const json = JSON.parse(gunzipSync(res.body).toString('utf8'))
+    expect(json).toEqual({ ok: true, value: large })
+    expect(res.body.byteLength).toBeLessThan(JSON.stringify({ ok: true, value: large }).length / 4)
+  })
+
+  it('sends identity for small responses and for clients that do not accept gzip', async () => {
+    const h = await start()
+    vi.mocked(h.deps.handleRpc).mockResolvedValue({ small: true })
+    const small = await rawRequest(h.port, { ...BEARER, 'Accept-Encoding': 'gzip' }, JSON.stringify({ channel: 'threads:list', args: [] }))
+    expect(small.headers['content-encoding']).toBeUndefined()
+    expect(JSON.parse(small.body.toString('utf8'))).toEqual({ ok: true, value: { small: true } })
+
+    vi.mocked(h.deps.handleRpc).mockResolvedValue(large)
+    const plain = await rawRequest(h.port, { ...BEARER, 'Accept-Encoding': 'identity' }, JSON.stringify({ channel: 'threads:list', args: [] }))
+    expect(plain.headers['content-encoding']).toBeUndefined()
+    expect(JSON.parse(plain.body.toString('utf8'))).toEqual({ ok: true, value: large })
   })
 })

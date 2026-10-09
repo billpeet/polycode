@@ -10,7 +10,7 @@ import {
 } from '@polycode/shared'
 import { getSetting, setSetting } from '../db/queries'
 import { emitAppEvent, sendToRenderer } from '../app-events'
-import { count, recordDuration, currentTraceHeaders } from '../observability'
+import { count, recordDuration, recordSize, currentTraceHeaders } from '../observability'
 import {
   RemoteConnectionState,
   RemoteConnectionStatus,
@@ -172,15 +172,29 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-async function readJsonResponse(response: Response): Promise<RpcResponse> {
+async function readJsonResponse(response: Response, channel = 'unknown'): Promise<RpcResponse> {
   const contentType = response.headers.get('content-type')?.toLowerCase() ?? ''
+  const readStartedAt = Date.now()
   const raw = await response.text()
+  // Body size and parse time on the controller side: both run on the main process, and a
+  // multi-megabyte transcript showed up as a 2s main-thread stall with nothing to blame.
+  recordSize('polycode.remote.rpc.response_bytes', raw.length, { 'rpc.channel': channel })
+  const parseStartedAt = Date.now()
+  try {
+    return parseJsonResponse(raw, contentType, response.status)
+  } finally {
+    recordDuration('polycode.remote.rpc.read_ms', parseStartedAt - readStartedAt, { 'rpc.channel': channel, 'rpc.phase': 'read' })
+    recordDuration('polycode.remote.rpc.read_ms', Date.now() - parseStartedAt, { 'rpc.channel': channel, 'rpc.phase': 'parse' })
+  }
+}
+
+function parseJsonResponse(raw: string, contentType: string, status: number): RpcResponse {
   const diagnostic = raw.replace(/\s+/g, ' ').trim().slice(0, RESPONSE_DIAGNOSTIC_LIMIT)
 
   if (!contentType.includes('application/json')) {
     const mediaType = contentType.split(';', 1)[0] || 'an unknown content type'
     throw new RemoteProtocolError(
-      `Remote host returned ${mediaType} instead of JSON (HTTP ${response.status})${diagnostic ? `: ${diagnostic}` : ''}`,
+      `Remote host returned ${mediaType} instead of JSON (HTTP ${status})${diagnostic ? `: ${diagnostic}` : ''}`,
     )
   }
 
@@ -188,7 +202,7 @@ async function readJsonResponse(response: Response): Promise<RpcResponse> {
     return JSON.parse(raw) as RpcResponse
   } catch (error) {
     throw new RemoteProtocolError(
-      `Remote host returned invalid JSON (HTTP ${response.status})${diagnostic ? `: ${diagnostic}` : ''}`,
+      `Remote host returned invalid JSON (HTTP ${status})${diagnostic ? `: ${diagnostic}` : ''}`,
       { cause: error },
     )
   }
@@ -557,7 +571,7 @@ export class RemoteControlClient {
         body: JSON.stringify({ channel, args }),
         signal: controller.signal,
       })
-      const body = await readJsonResponse(response)
+      const body = await readJsonResponse(response, channel)
       if (response.status === 421) {
         throw this.markUnavailable(host, hostnameMismatchMessage(host.baseUrl))
       }

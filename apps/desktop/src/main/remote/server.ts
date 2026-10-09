@@ -1,4 +1,5 @@
 import * as http from 'http'
+import { gzipSync } from 'zlib'
 import { REMOTE_HOST_BUSY, REMOTE_HOST_BUSY_MESSAGE } from '@polycode/shared'
 import { getAppLifecycleState } from '../app-lifecycle'
 import { join } from 'path'
@@ -20,7 +21,7 @@ import {
 } from './sessions'
 import { isStaticPath, serveStaticFile } from './static'
 import { tailscaleIdentityLogin } from './identity'
-import { count, recordDuration, recordGauge, remoteTraceContext, withSpan } from '../observability'
+import { count, recordDuration, recordGauge, recordSize, remoteTraceContext, withSpan } from '../observability'
 
 let server: http.Server | null = null
 
@@ -46,14 +47,43 @@ export interface RequestHandlerDeps {
 
 const LOGIN_BODY_LIMIT = 4 * 1024
 
+/** Below this a gzip round-trip costs more than the bytes it saves. */
+const GZIP_MIN_BYTES = 4 * 1024
+
+function acceptsGzip(req: http.IncomingMessage | undefined): boolean {
+  return /(^|,)\s*gzip\s*(;|,|$)/i.test(firstHeaderValue(req?.headers['accept-encoding']) ?? '')
+}
+
+/**
+ * Transcripts for a large thread went over the tailnet as megabytes of uncompressed
+ * JSON: the host answered `messages:listBySession` in 7ms (p50) while the client waited
+ * 9s at p95 and timed out 6% of the time. JSON of this shape compresses 5–10×. Node's
+ * `fetch` and every browser advertise gzip and inflate it transparently, so clients need
+ * no change; a client that does not advertise it still gets identity.
+ */
 function sendJson(res: http.ServerResponse, status: number, body: unknown, headers: http.OutgoingHttpHeaders = {}): void {
+  writeJson(res, status, body, headers)
+}
+
+/** Like `sendJson`, compressing when `req` accepts it; returns the uncompressed byte count. */
+function writeJson(
+  res: http.ServerResponse,
+  status: number,
+  body: unknown,
+  headers: http.OutgoingHttpHeaders = {},
+  req?: http.IncomingMessage,
+): number {
   const json = JSON.stringify(body)
+  const rawBytes = Buffer.byteLength(json)
+  const payload = rawBytes >= GZIP_MIN_BYTES && acceptsGzip(req) ? gzipSync(json) : null
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(json),
+    'Content-Length': payload ? payload.byteLength : rawBytes,
+    ...(payload ? { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' } : {}),
     ...headers,
   })
-  res.end(json)
+  res.end(payload ?? json)
+  return rawBytes
 }
 
 function readBody(req: http.IncomingMessage, maxBytes = 15 * 1024 * 1024): Promise<string> {
@@ -272,7 +302,10 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
         activeRpc++
         recordGauge('polycode.remote.server.active', activeRpc, '{request}')
         const startedAt = Date.now()
-        const value = await withSpan('remote.rpc', {
+        // The span covers serialisation too: the handler was never the slow part of a
+        // large transcript, and a span that ended before `JSON.stringify` hid where the
+        // time went. `rpc.response_bytes` is the uncompressed size.
+        return await withSpan('remote.rpc', {
           'rpc.channel': channel,
           'rpc.active': activeRpc,
           'rpc.queued': 0,
@@ -284,16 +317,19 @@ export function createRequestHandler(config: RemoteServerConfig, deps: RequestHa
           }
           res.once('close', aborted)
           try {
-            return await deps.handleRpc(channel, args)
+            const value = await deps.handleRpc(channel, args)
+            recordDuration('polycode.remote.server.duration', Date.now() - startedAt, { 'rpc.channel': channel })
+            if (res.destroyed) return
+            const serializeStartedAt = Date.now()
+            const bytes = writeJson(res, 200, { ok: true, value }, {}, req)
+            span?.setAttributes({ 'rpc.response_bytes': bytes, 'rpc.serialize_ms': Date.now() - serializeStartedAt })
+            recordSize('polycode.remote.server.response_bytes', bytes, { 'rpc.channel': channel })
           } finally {
             res.off('close', aborted)
             activeRpc--
             recordGauge('polycode.remote.server.active', activeRpc, '{request}')
-            recordDuration('polycode.remote.server.duration', Date.now() - startedAt, { 'rpc.channel': channel })
           }
         }, remoteTraceContext(firstHeaderValue(req.headers.traceparent)))
-        if (res.destroyed) return
-        return sendJson(res, 200, { ok: true, value })
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         console.error('[remote-control] RPC failed:', message)
