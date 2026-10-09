@@ -3,7 +3,7 @@ import { autoUpdater } from 'electron-updater'
 import * as Sentry from '@sentry/electron/main'
 import type { UpdateState } from '../shared/types'
 import { sendToRenderer } from './app-events'
-import { count } from './observability'
+import { count, recordDuration, recordLog, type TelemetryAttributes } from './observability'
 
 const FIRST_CHECK_DELAY = 10_000 // 10 seconds after launch
 const UPDATE_CHECK_INTERVAL = 30 * 60 * 1000 // every 30 minutes
@@ -38,6 +38,7 @@ let suspended = false
 let resumeTimer: ReturnType<typeof setTimeout> | undefined
 let firstTransientFailure: number | undefined
 let persistentFailureReported = false
+let outageAttributes: TelemetryAttributes = {}
 
 let updateState: UpdateState = {
   available: false,
@@ -53,7 +54,7 @@ function getErrorMessage(error: unknown): string {
 /**
  * Names the recoverable condition behind an updater failure, or returns undefined
  * when the failure is not one worth retrying. The name is low-cardinality so it
- * can be a Sentry tag.
+ * can be a metric attribute.
  */
 function transientUpdateErrorCode(error: unknown): string | undefined {
   const message = getErrorMessage(error)
@@ -88,19 +89,33 @@ function updateHostFromError(error: unknown): string | undefined {
   }
 }
 
-function resetTransientRetries(): void {
-  transientRetryCount = 0
-  firstTransientFailure = undefined
-  persistentFailureReported = false
+function cancelPendingRetry(): void {
   if (retryTimer) clearTimeout(retryTimer)
   retryTimer = undefined
 }
 
+/** Only successful metadata (no update) or artifact download ends an outage. */
+function recoverTransientOutage(): void {
+  if (firstTransientFailure !== undefined) {
+    const failureDurationMs = Date.now() - firstTransientFailure
+    count('polycode.updater.recovered', outageAttributes)
+    recordDuration('polycode.updater.outage_duration', failureDurationMs, outageAttributes)
+    recordLog('INFO', 'Auto-updater connectivity recovered', {
+      ...outageAttributes, retryCount: transientRetryCount, failureDurationMs,
+    })
+  }
+  transientRetryCount = 0
+  firstTransientFailure = undefined
+  persistentFailureReported = false
+  outageAttributes = {}
+  cancelPendingRetry()
+}
+
 function handleUpdateError(error: unknown): void {
-  const message = getErrorMessage(error)
   const transientCode = transientUpdateErrorCode(error)
   if (!transientCode) {
-    resetTransientRetries()
+    cancelPendingRetry()
+    const message = getErrorMessage(error)
     Sentry.captureException(error, { tags: { source: 'auto-updater' } })
     console.error('[updater] error:', message)
     setState({ checking: false, downloading: false, error: message })
@@ -113,24 +128,22 @@ function handleUpdateError(error: unknown): void {
   setState({ checking: false, downloading: false, error: undefined })
   if (suspended || resumeTimer) return
   firstTransientFailure ??= Date.now()
-  count('polycode.updater.transient_failure')
+  const updateHost = updateHostFromError(error)
+  outageAttributes = {
+    updateErrorCode: transientCode,
+    ...(updateHost ? { updateHost } : {}),
+  }
+  count('polycode.updater.transient_failure', outageAttributes)
 
   if (!persistentFailureReported && Date.now() - firstTransientFailure >= PERSISTENT_FAILURE_WINDOW) {
     persistentFailureReported = true
-    // One event per outage. It reports lost update connectivity, not an app defect:
-    // a warning, grouped as one issue whatever the underlying network error.
-    const updateHost = updateHostFromError(error)
-    Sentry.captureException(error, {
-      level: 'warning',
-      fingerprint: ['auto-updater', 'persistent-outage'],
-      tags: {
-        source: 'auto-updater',
-        retriesExhausted: 'true',
-        persistent: 'true',
-        updateErrorCode: transientCode,
-        ...(updateHost ? { updateHost } : {}),
-      },
-      extra: { retryCount: transientRetryCount, failureDurationMs: Date.now() - firstTransientFailure },
+    // Fleet availability belongs in operational telemetry, not Sentry issues.
+    // Never send the original error: it may contain signed download URLs.
+    count('polycode.updater.persistent_outage', outageAttributes)
+    recordLog('WARN', 'Auto-updater connectivity outage persists', {
+      ...outageAttributes,
+      retryCount: transientRetryCount,
+      failureDurationMs: Date.now() - firstTransientFailure,
     })
   }
 
@@ -143,7 +156,7 @@ function handleUpdateError(error: unknown): void {
   transientRetryCount = retryNumber
   console.warn(
     `[updater] transient failure; ${exhausted ? 'recovery' : 'fast'} retry ${retryNumber} in ${jitteredDelay}ms:`,
-    message,
+    outageAttributes,
   )
   retryTimer = setTimeout(() => {
     retryTimer = undefined
@@ -187,13 +200,13 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
 
   powerMonitor.on('suspend', () => {
     suspended = true
-    resetTransientRetries()
+    cancelPendingRetry()
     if (resumeTimer) clearTimeout(resumeTimer)
     resumeTimer = undefined
   })
   powerMonitor.on('resume', () => {
     suspended = false
-    resetTransientRetries()
+    cancelPendingRetry()
     if (resumeTimer) clearTimeout(resumeTimer)
     // Give the OS a bounded grace period to restore DNS and network routes.
     // If connectivity is still unavailable, the slower recovery loop takes over.
@@ -209,7 +222,7 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
   })
 
   autoUpdater.on('update-not-available', () => {
-    resetTransientRetries()
+    recoverTransientOutage()
     setState({
       checking: false,
       available: false,
@@ -237,7 +250,7 @@ export function initUpdater(windowGetter: () => BrowserWindow | null): void {
   })
 
   autoUpdater.on('update-downloaded', (info) => {
-    resetTransientRetries()
+    recoverTransientOutage()
     setState({
       available: true,
       downloading: false,
