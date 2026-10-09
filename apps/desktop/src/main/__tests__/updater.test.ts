@@ -6,6 +6,8 @@ const H = vi.hoisted(() => ({
   listeners: new Map<string, Listener>(),
   powerListeners: new Map<string, Listener>(),
   count: vi.fn(),
+  recordDuration: vi.fn(),
+  recordLog: vi.fn(),
   checkForUpdates: vi.fn<() => Promise<unknown>>(),
   quitAndInstall: vi.fn(),
   captureException: vi.fn(),
@@ -29,7 +31,7 @@ vi.mock('electron-updater', () => ({
 }))
 
 vi.mock('@sentry/electron/main', () => ({ captureException: H.captureException }))
-vi.mock('../observability', () => ({ count: H.count }))
+vi.mock('../observability', () => ({ count: H.count, recordDuration: H.recordDuration, recordLog: H.recordLog }))
 
 describe('auto-updater transient failures', () => {
   beforeEach(async () => {
@@ -40,6 +42,8 @@ describe('auto-updater transient failures', () => {
     H.listeners.clear()
     H.powerListeners.clear()
     H.count.mockReset()
+    H.recordDuration.mockReset()
+    H.recordLog.mockReset()
     H.checkForUpdates.mockReset().mockResolvedValue(undefined)
     H.quitAndInstall.mockReset()
     H.captureException.mockReset()
@@ -134,7 +138,7 @@ describe('auto-updater transient failures', () => {
     expect(H.checkForUpdates).not.toHaveBeenCalled()
   })
 
-  it('reports persistent outages once and resets after recovery', async () => {
+  it('records persistent outages once and resets after recovery', async () => {
     await initialise()
     vi.clearAllTimers()
     const error = new Error('HttpError: 504 Gateway Timeout')
@@ -148,19 +152,21 @@ describe('auto-updater transient failures', () => {
     // Backed-off recovery attempts land at 74s, 194s, 434s, 914s and 1874s; the
     // first failure after the 30-minute window is the one reported.
     await vi.advanceTimersByTimeAsync(3 * 60_000)
-    expect(H.captureException).toHaveBeenCalledTimes(1)
-    expect(H.captureException).toHaveBeenCalledWith(error, expect.objectContaining({
-      tags: expect.objectContaining({ persistent: 'true' }),
-    }))
+    expect(H.captureException).not.toHaveBeenCalled()
+    expect(H.count.mock.calls.filter(([name]) => name === 'polycode.updater.persistent_outage')).toHaveLength(1)
     await vi.advanceTimersByTimeAsync(2 * 60_000)
-    expect(H.captureException).toHaveBeenCalledTimes(1)
+    expect(H.count.mock.calls.filter(([name]) => name === 'polycode.updater.persistent_outage')).toHaveLength(1)
     H.listeners.get('update-not-available')?.()
     H.checkForUpdates.mockClear()
     H.listeners.get('error')?.(error)
     await vi.advanceTimersByTimeAsync(2_000)
     expect(H.checkForUpdates).toHaveBeenCalledTimes(1)
-    expect(H.captureException).toHaveBeenCalledTimes(1)
-    expect(H.count).toHaveBeenCalledWith('polycode.updater.transient_failure')
+    expect(H.captureException).not.toHaveBeenCalled()
+    expect(H.count).toHaveBeenCalledWith('polycode.updater.transient_failure', { updateErrorCode: 'HTTP_504' })
+    expect(H.count).toHaveBeenCalledWith('polycode.updater.recovered', { updateErrorCode: 'HTTP_504' })
+    expect(H.recordDuration).toHaveBeenCalledWith('polycode.updater.outage_duration', 34 * 60_000, { updateErrorCode: 'HTTP_504' })
+    await vi.advanceTimersByTimeAsync(32 * 60_000)
+    expect(H.count.mock.calls.filter(([name]) => name === 'polycode.updater.persistent_outage')).toHaveLength(2)
   })
 
   it('backs off recovery retries to the normal check cadence during a long outage', async () => {
@@ -201,7 +207,7 @@ describe('auto-updater transient failures', () => {
       error: new Error('HttpError: 503 Service Unavailable'),
       tags: { updateErrorCode: 'HTTP_503' },
     },
-  ])('reports a persistent outage as a grouped availability warning: $error.message', async ({ error, tags }) => {
+  ])('records a persistent outage as operational telemetry: $error.message', async ({ error, tags }) => {
     await initialise()
     vi.clearAllTimers()
     H.checkForUpdates.mockImplementation(async () => {
@@ -211,13 +217,65 @@ describe('auto-updater transient failures', () => {
 
     await vi.advanceTimersByTimeAsync(32 * 60_000)
 
-    expect(H.captureException).toHaveBeenCalledTimes(1)
-    expect(H.captureException).toHaveBeenCalledWith(error, {
-      level: 'warning',
-      fingerprint: ['auto-updater', 'persistent-outage'],
-      tags: { source: 'auto-updater', retriesExhausted: 'true', persistent: 'true', ...tags },
-      extra: { retryCount: expect.any(Number), failureDurationMs: expect.any(Number) },
+    expect(H.captureException).not.toHaveBeenCalled()
+    expect(H.count).toHaveBeenCalledWith('polycode.updater.persistent_outage', tags)
+    expect(H.recordLog).toHaveBeenCalledWith('WARN', 'Auto-updater connectivity outage persists', {
+      ...tags, retryCount: 8, failureDurationMs: 1_874_000,
     })
+  })
+
+  it('keeps signed URLs out of all transient telemetry', async () => {
+    await initialise()
+    vi.clearAllTimers()
+    const error = new Error('net::ERR_CONNECTION_RESET https://user:password@releases.example.com/update.exe?signature=secret')
+    H.checkForUpdates.mockImplementation(async () => H.listeners.get('error')?.(error))
+    H.listeners.get('error')?.(error)
+    await vi.advanceTimersByTimeAsync(32 * 60_000)
+    H.listeners.get('update-downloaded')?.({ version: '1.2.3' })
+
+    expect(H.count).toHaveBeenCalledWith('polycode.updater.persistent_outage', {
+      updateErrorCode: 'ERR_CONNECTION_RESET', updateHost: 'releases.example.com',
+    })
+    const telemetry = JSON.stringify([H.count.mock.calls, H.recordDuration.mock.calls, H.recordLog.mock.calls, vi.mocked(console.warn).mock.calls])
+    for (const secret of ['password', 'signature', 'secret', 'update.exe', 'https://']) {
+      expect(telemetry).not.toContain(secret)
+    }
+    expect(H.captureException).not.toHaveBeenCalled()
+  })
+
+  it.each(['update-not-available', 'update-downloaded'])('records recovery once on %s', async (event) => {
+    await initialise()
+    vi.clearAllTimers()
+    H.listeners.get('error')?.(new Error('net::ERR_NAME_NOT_RESOLVED'))
+    await vi.advanceTimersByTimeAsync(1_000)
+    H.listeners.get(event)?.({ version: '1.2.3' })
+    H.listeners.get(event)?.({ version: '1.2.3' })
+    expect(H.recordDuration).toHaveBeenCalledExactlyOnceWith('polycode.updater.outage_duration', 1_000, { updateErrorCode: 'ERR_NAME_NOT_RESOLVED' })
+    expect(H.recordLog).toHaveBeenCalledWith('INFO', 'Auto-updater connectivity recovered', {
+      updateErrorCode: 'ERR_NAME_NOT_RESOLVED', retryCount: 1, failureDurationMs: 1_000,
+    })
+    await vi.advanceTimersByTimeAsync(2_000)
+    expect(H.checkForUpdates).not.toHaveBeenCalled()
+  })
+
+  it('preserves a persistent outage across sleep and non-transient errors until download succeeds', async () => {
+    await initialise()
+    vi.clearAllTimers()
+    const error = new Error('net::ERR_NAME_NOT_RESOLVED')
+    H.checkForUpdates.mockImplementation(async () => H.listeners.get('error')?.(error))
+    H.listeners.get('error')?.(error)
+    await vi.advanceTimersByTimeAsync(32 * 60_000)
+    H.listeners.get('update-available')?.({ version: '1.2.3' })
+    H.listeners.get('error')?.(new Error('sha512 checksum mismatch'))
+    H.powerListeners.get('suspend')?.()
+    await vi.advanceTimersByTimeAsync(60_000)
+    H.powerListeners.get('resume')?.()
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(H.count.mock.calls.filter(([name]) => name === 'polycode.updater.persistent_outage')).toHaveLength(1)
+    expect(H.recordDuration).not.toHaveBeenCalled()
+    H.listeners.get('update-downloaded')?.({ version: '1.2.3' })
+    expect(H.recordDuration).toHaveBeenCalledWith('polycode.updater.outage_duration', 34 * 60_000, { updateErrorCode: 'ERR_NAME_NOT_RESOLVED' })
+    expect(H.captureException).toHaveBeenCalledTimes(1) // Only the checksum error.
   })
 
   it('does not restart the fast retry budget when metadata succeeds but downloads fail', async () => {
