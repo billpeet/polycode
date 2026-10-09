@@ -39,4 +39,11 @@ describe('main-process error reporting', () => {
 
     expect(H.init).toHaveBeenCalledWith(expect.objectContaining({ release: 'polycode@1.2.3' }))
   })
+
+  it('installs the native crash correlation hook', async () => {
+    const { initMainErrorReporting } = await import('../error-reporting')
+    const beforeSend = vi.fn(async (event) => event)
+    initMainErrorReporting(beforeSend)
+    expect(H.init).toHaveBeenCalledWith(expect.objectContaining({ beforeSend }))
+  })
 })

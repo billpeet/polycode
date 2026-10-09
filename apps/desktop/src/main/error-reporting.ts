@@ -10,11 +10,12 @@ import { SENTRY_DSN, sentryRelease } from '../shared/sentry.config'
  * script, so an installed build reading it reported every main-process event
  * as `polycode@0.0.0` (GitHub #95).
  */
-export function initMainErrorReporting(): void {
+export function initMainErrorReporting(beforeSend?: NonNullable<Parameters<typeof Sentry.init>[0]>['beforeSend']): void {
   Sentry.init({
     dsn: SENTRY_DSN,
     release: sentryRelease(app.getVersion()),
     environment: 'production',
     tracesSampleRate: 0.1,
+    beforeSend,
   })
 }
