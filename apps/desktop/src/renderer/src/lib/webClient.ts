@@ -71,6 +71,26 @@ type Listener = (...args: unknown[]) => void
 /** `remote:*` reads the renderer makes about its own connection, answered here. */
 const LOCAL_CHANNELS = new Set<string>(['remote:getConnectionState', 'remote:reconnect', 'app:getVersion'])
 
+/** Explicitly audited reads only: a proxy failure cannot prove a mutation was not run. */
+const PROXY_RETRY_CHANNELS = new Set([
+  'projects:list', 'projects:listArchived', 'threads:list', 'threads:listQueue',
+  'threads:listQueueArchived', 'threads:listQueueSnoozed', 'threads:listArchived',
+  'threads:listSnoozed', 'threads:archivedCount', 'threads:snoozedCount',
+  'sessions:list', 'messages:list', 'messages:listBySession',
+  'locations:list', 'commands:list', 'slash-commands:list', 'skills:list',
+])
+const PROXY_RETRY_DELAYS_MS = [150, 400]
+
+class ProxyTransportError extends Error {}
+
+/** Never retain proxy text or HTML: it can contain credentials and upstream URLs. */
+function proxyDiagnostic(response: Response, body: RpcResponse): string {
+  const mediaType = response.headers.get('content-type')?.split(';', 1)[0].trim().toLowerCase() ?? ''
+  const contentType = ['application/json', 'text/html', 'text/plain'].includes(mediaType) ? mediaType : 'unknown'
+  const classification = Object.keys(body).length > 0 ? 'JSON response' : 'non-JSON or empty response'
+  return `HTTP ${response.status}; content-type=${contentType}; ${classification} (body omitted)`
+}
+
 function isTransportError(error: unknown): boolean {
   return error instanceof TypeError || (error instanceof DOMException && error.name === 'AbortError')
 }
@@ -81,7 +101,8 @@ function errorMessage(error: unknown): string {
 
 async function readJson(response: Response): Promise<RpcResponse> {
   try {
-    return (await response.json()) as RpcResponse
+    const body: unknown = await response.json()
+    return body !== null && typeof body === 'object' && !Array.isArray(body) ? body as RpcResponse : {}
   } catch {
     return {}
   }
@@ -96,6 +117,7 @@ class BrowserClient implements WebClient {
   private readonly unauthorizedListeners = new Set<() => void>()
   private readonly slowInvokes = createSlowInvokeTracker()
   private version: string | null = null
+  private connectionGeneration = 0
   /** Set by an RPC that could not reach the host; cleared by the next success. */
   private unavailable = false
   private reads = this.createReads()
@@ -150,7 +172,7 @@ class BrowserClient implements WebClient {
     if (!isRemoteChannel(channel)) {
       throw new Error(`Channel "${channel}" is not available in the browser`)
     }
-    const pending = this.reads.invoke(channel, args, () => this.rpc(channel, args))
+    const pending = this.reads.invoke(channel, args, () => this.rpcWithProxyRetry(channel, args))
     this.slowInvokes.track(pending)
     return pending
   }
@@ -198,6 +220,7 @@ class BrowserClient implements WebClient {
   // ── WebClient ──────────────────────────────────────────────────────────────
 
   connect(): void {
+    this.connectionGeneration++
     this.reads.dispose()
     this.reads = this.createReads()
     this.unavailable = false
@@ -206,6 +229,7 @@ class BrowserClient implements WebClient {
   }
 
   disconnect(): void {
+    this.connectionGeneration++
     this.reads.dispose()
     this.stream.stop()
     this.setState({ phase: 'local', reconnectAttempt: 0, error: null, hostId: null })
@@ -261,6 +285,20 @@ class BrowserClient implements WebClient {
 
   // ── Internals ──────────────────────────────────────────────────────────────
 
+  private async rpcWithProxyRetry(channel: string, args: unknown[]): Promise<unknown> {
+    const generation = this.connectionGeneration
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.rpc(channel, args)
+      } catch (error) {
+        const delay = PROXY_RETRY_DELAYS_MS[attempt]
+        if (!(error instanceof ProxyTransportError) || !PROXY_RETRY_CHANNELS.has(channel) || delay === undefined) throw error
+        await new Promise((resolve) => setTimeout(resolve, delay * (0.5 + Math.random())))
+        if (generation !== this.connectionGeneration) throw error
+      }
+    }
+  }
+
   private async rpc(channel: string, args: unknown[]): Promise<unknown> {
     const controller = new AbortController()
     const timeoutMs = rpcTimeoutMs(channel)
@@ -284,11 +322,22 @@ class BrowserClient implements WebClient {
         throw new Error('[UNAUTHORIZED] The host no longer accepts this session')
       }
       const body = await readJson(response)
+      if (response.status === 502 || response.status === 504) {
+        const detail = `Proxy failure for "${channel}": ${proxyDiagnostic(response, body)}`
+        const transport = this.transportFailure(channel, new Error(detail), false, timeoutMs)
+        throw new ProxyTransportError(
+          `${transport.message}. The operation may have completed on the host. Retry reads shortly; check the result before retrying changes.`,
+          { cause: transport },
+        )
+      }
       if (isRemoteHostBusyResponse(response.status, body)) throw new RemoteHostBusyError(body.error)
       if (!response.ok || !body.ok) {
-        throw new Error(body.error ?? `Remote request failed with HTTP ${response.status}`)
+        throw new Error(body.error ?? `Remote request failed for "${channel}": ${proxyDiagnostic(response, body)}`)
       }
       this.unavailable = false
+      if (this.state.phase === 'unavailable' && this.stream.connected) {
+        this.setState({ phase: 'connected', reconnectAttempt: 0, error: null })
+      }
       return body.value
     } finally {
       clearTimeout(timer)
