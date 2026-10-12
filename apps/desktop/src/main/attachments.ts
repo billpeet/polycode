@@ -48,7 +48,7 @@ export function saveAttachment(
   }
 
   // Parse data URL: data:image/png;base64,iVBORw0KGgo...
-  const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/)
+  const matches = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
   if (!matches) {
     throw new Error('Invalid data URL format')
   }
