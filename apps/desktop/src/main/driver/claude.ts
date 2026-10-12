@@ -14,9 +14,17 @@ import { augmentWindowsPath, expandHomePath, resolveClaudeCodeExecutable } from 
 import { normalizeClaudeSubscriptionUsage } from '../subscription-usage'
 import type { SubscriptionUsageSnapshot } from '../../shared/types'
 
+/** Cap on events held between turns, so an idle process cannot grow unbounded. */
+const MAX_HELD_EVENTS = 200
+
 type PendingTurn = {
   onEvent: (event: OutputEvent) => void
   onDone: (error?: Error) => void
+  /**
+   * True until this turn's input has been handed to Claude. An idle frame seen
+   * before then trails the previous turn's result and must not end this turn.
+   */
+  inputPending?: boolean
 }
 
 type PendingPermissionDecision = {
@@ -110,6 +118,14 @@ export class ClaudeDriver implements CLIDriver {
   private promptQueue: AsyncMessageQueue | null = null
   private streamTask: Promise<void> | null = null
   private currentTurn: PendingTurn | null = null
+  /**
+   * Callbacks of the most recently finished turn. The Claude process outlives
+   * a turn, and finished background work can wake it with no user input; the
+   * woken turn reports through these.
+   */
+  private lastTurn: PendingTurn | null = null
+  /** Events that arrived between turns, delivered when the next turn opens. */
+  private heldEvents: OutputEvent[] = []
   private stopped = false
   private specialToolIds = new Set<string>()
   private pendingPermissionDecisions = new Map<string, PendingPermissionDecision>()
@@ -152,11 +168,14 @@ export class ClaudeDriver implements CLIDriver {
     this.agentRegistry.clear()
     this.taskIdToParent.clear()
     this.currentMessageOptions = options ?? {}
-    this.currentTurn = { onEvent, onDone }
+    const turn: PendingTurn = { onEvent, onDone, inputPending: true }
+    this.currentTurn = turn
+    this.flushHeldEvents()
 
     this.ensureQuery()
       .then(async () => {
         await this.applyTurnConfiguration()
+        turn.inputPending = false
         this.promptQueue?.push({
           type: 'user',
           parent_tool_use_id: null,
@@ -232,6 +251,9 @@ export class ClaudeDriver implements CLIDriver {
     this.query = null
     this.streamTask = null
     this.finishTurn()
+    // The process is gone: nothing can wake, and nothing held is deliverable.
+    this.lastTurn = null
+    this.heldEvents = []
   }
 
   isRunning(): boolean {
@@ -306,7 +328,13 @@ export class ClaudeDriver implements CLIDriver {
     if (this.query) return
 
     const sdk = await getSdk()
-    const env = process.platform === 'win32' ? augmentWindowsPath(process.env) : process.env
+    const env = {
+      ...(process.platform === 'win32' ? augmentWindowsPath(process.env) : process.env),
+      // Opt-in: without this the CLI never sends session_state_changed, and the
+      // idle frame is the only thing that ends a turn whose result arrived
+      // while a background task was still live.
+      CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS: '1',
+    }
     const workingDir = expandHomePath(this.options.workingDir)
     const effort = reasoningLevelToClaudeEffort(this.options.reasoningLevel)
     const permissionMode = this.resolvePermissionMode(this.currentMessageOptions)
@@ -476,6 +504,10 @@ export class ClaudeDriver implements CLIDriver {
           this.options.onSessionId?.(sessionId)
         }
 
+        if (this.isStateMessage(message, 'running') && !this.currentTurn) {
+          this.reopenTurn()
+        }
+
         for (const event of this.parseMessage(message)) {
           this.emit(event)
         }
@@ -487,7 +519,7 @@ export class ClaudeDriver implements CLIDriver {
           } else {
             this.handleSuccessfulResult()
           }
-        } else if (this.isIdleStateMessage(message) && this.currentTurn) {
+        } else if (this.isIdleStateMessage(message) && this.currentTurn && !this.currentTurn.inputPending) {
           // Claude Code's session_state_changed:idle is emitted after held-back
           // background/subagent output is flushed. Treat it as a completion
           // fallback for SDK/CLI paths that do not produce a result frame.
@@ -883,9 +915,42 @@ export class ClaudeDriver implements CLIDriver {
   }
 
   private isIdleStateMessage(message: SDKMessage): boolean {
+    return this.isStateMessage(message, 'idle')
+  }
+
+  private isStateMessage(message: SDKMessage, state: 'idle' | 'running'): boolean {
     return message.type === 'system' &&
       message.subtype === 'session_state_changed' &&
-      message.state === 'idle'
+      message.state === state
+  }
+
+  /**
+   * Claude went back to work with no turn open: background work it detached in
+   * an earlier turn (a backgrounded command, a subagent) finished and woke it.
+   * Open a turn so the output reaches the Thread and it reads as running; the
+   * turn ends on the next result or idle frame like any other.
+   */
+  private reopenTurn(): void {
+    if (!this.lastTurn) return
+    this.stopped = false
+    this.queuedTurnCount = 0
+    this.currentTurn = { onEvent: this.lastTurn.onEvent, onDone: this.lastTurn.onDone }
+    try {
+      this.options.onTurnWoken?.()
+    } catch (callbackError) {
+      console.error('[ClaudeDriver] onTurnWoken callback failed', {
+        threadId: this.options.threadId,
+        sessionId: this.sessionId,
+        error: callbackError,
+      })
+    }
+    this.flushHeldEvents()
+  }
+
+  private flushHeldEvents(): void {
+    const held = this.heldEvents
+    this.heldEvents = []
+    for (const event of held) this.currentTurn?.onEvent(event)
   }
 
   /**
@@ -967,13 +1032,22 @@ ${message.description}` : ''}`
   }
 
   private emit(event: OutputEvent): void {
-    this.currentTurn?.onEvent(event)
+    if (this.currentTurn) {
+      this.currentTurn.onEvent(event)
+      return
+    }
+    // Between turns. Typically a background task reporting completion just
+    // before it wakes Claude; hold it so the bubble is not lost.
+    if (this.lastTurn && this.heldEvents.length < MAX_HELD_EVENTS) {
+      this.heldEvents.push(event)
+    }
   }
 
   private finishTurn(error?: Error): void {
     if (!this.currentTurn) return
     const turn = this.currentTurn
     this.currentTurn = null
+    this.lastTurn = turn
     try {
       turn.onDone(error)
     } catch (callbackError) {

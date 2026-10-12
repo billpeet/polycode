@@ -105,6 +105,7 @@ export class Session {
       onSessionId: (sid: string) => {
         if (!this.abandoned) updateSessionClaudeId(sessionId, sid)
       },
+      onTurnWoken: () => this.handleTurnWoken(),
       ssh: this.sshConfig,
       wsl: this.wslConfig,
     }
@@ -977,6 +978,18 @@ export class Session {
     if (event.type !== 'question' && event.type !== 'permission_request' && !shouldSuppressAssistantText) {
       this.emit(`thread:output:${this.threadId}`, { ...eventWithSession, eventId: streamEventId })
     }
+  }
+
+  /**
+   * The Provider started a Turn on its own — background work from an earlier
+   * Turn finished and woke it. Mirror the start of a user Turn so the Thread
+   * reads as running; handleDone settles it again when the Turn ends.
+   */
+  private handleTurnWoken(): void {
+    if (this.abandoned) return
+    this.stopped = false
+    logThreadEvent(this.threadId, { ts: new Date().toISOString(), type: 'turn_woken' })
+    this.setStatus('running')
   }
 
   private handleDone(error?: Error): void {

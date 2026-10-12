@@ -555,6 +555,133 @@ describe('ClaudeDriver live input', () => {
     expect((driver as any).hasLiveBackgroundWork()).toBe(true)
   })
 
+  it('opts the Claude CLI into session state events', async () => {
+    // Regression: the CLI only sends session_state_changed when this flag is
+    // set. Without it the idle frame never arrives, so a result that lands
+    // while any background task is live is deferred forever and the Thread
+    // stays reported as running.
+    let capturedInput: any
+    queryMock.mockImplementation((input: any) => {
+      capturedInput = input
+      return {
+        setPermissionMode: async () => {},
+        setModel: async () => {},
+        interrupt: async () => {},
+        close: () => {},
+        [Symbol.asyncIterator]: async function* () {},
+      }
+    })
+
+    await (makeDriver() as any).ensureQuery()
+
+    expect(capturedInput.options.env.CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS).toBe('1')
+  })
+
+  it('ignores an idle frame left over from the previous turn', async () => {
+    // The idle frame trails the result frame. If the next turn starts between
+    // the two, that stale idle must not end the new turn before its input has
+    // even reached Claude.
+    const driver = makeDriver()
+    const done = vi.fn(() => {})
+
+    ;(driver as any).currentTurn = { onEvent: () => {}, onDone: done, inputPending: true }
+    ;(driver as any).query = {
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: 'system', subtype: 'session_state_changed', state: 'idle', session_id: 'sdk-session', uuid: 'stale' }
+        expect(done).not.toHaveBeenCalled()
+        ;(driver as any).currentTurn.inputPending = false
+        yield { type: 'system', subtype: 'session_state_changed', state: 'idle', session_id: 'sdk-session', uuid: 'real' }
+      },
+    }
+
+    await (driver as any).consumeStream()
+
+    expect(done).toHaveBeenCalledTimes(1)
+    expect(done.mock.calls[0]?.[0]).toBeUndefined()
+  })
+
+  it('reopens the turn when background work wakes Claude after the turn ended', async () => {
+    // Frame order captured from a real session: Claude backgrounds a command,
+    // ends its turn, and is woken by the command finishing. The Claude process
+    // stays alive throughout; the woken output must reach the Thread instead
+    // of being dropped because no turn is open.
+    const onTurnWoken = vi.fn(() => {})
+    const driver = makeDriver({ onTurnWoken })
+    const events: OutputEvent[] = []
+    const done = vi.fn(() => {})
+    const close = vi.fn(() => {})
+    const state = (s: string, uuid: string) =>
+      ({ type: 'system', subtype: 'session_state_changed', state: s, session_id: 'sdk-session', uuid })
+    const result = (uuid: string) =>
+      ({ type: 'result', subtype: 'success', usage: {}, modelUsage: {}, session_id: 'sdk-session', uuid })
+
+    ;(driver as any).currentTurn = { onEvent: (e: OutputEvent) => events.push(e), onDone: done }
+    ;(driver as any).query = {
+      close,
+      [Symbol.asyncIterator]: async function* () {
+        yield {
+          type: 'system', subtype: 'task_started', task_id: 'bg-1', tool_use_id: 'tool-bg-1',
+          task_type: 'local_bash', description: 'Wait for CI', session_id: 'sdk-session', uuid: 's1',
+        }
+        yield result('r1')
+        yield state('idle', 'i1')
+
+        // The turn is over, but nothing was torn down and the work is tracked.
+        expect(done).toHaveBeenCalledTimes(1)
+        expect(driver.isRunning()).toBe(false)
+        expect(driver.hasLiveBackgroundWork()).toBe(true)
+        expect(close).not.toHaveBeenCalled()
+        expect((driver as any).query).not.toBeNull()
+
+        yield {
+          type: 'system', subtype: 'task_notification', task_id: 'bg-1', tool_use_id: 'tool-bg-1',
+          status: 'completed', summary: 'Wait for CI', session_id: 'sdk-session', uuid: 'n1',
+        }
+        expect(onTurnWoken).not.toHaveBeenCalled()
+        yield state('running', 'run2')
+        expect(onTurnWoken).toHaveBeenCalledTimes(1)
+        expect(driver.isRunning()).toBe(true)
+        yield {
+          type: 'assistant', parent_tool_use_id: null, session_id: 'sdk-session', uuid: 'a2',
+          message: { role: 'assistant', content: [{ type: 'text', text: 'CI is green.' }] },
+        }
+        yield result('r2')
+        yield state('idle', 'i2')
+      },
+    }
+
+    await (driver as any).consumeStream()
+
+    expect(onTurnWoken).toHaveBeenCalledTimes(1)
+    expect(done).toHaveBeenCalledTimes(2)
+    expect(done.mock.calls[1]?.[0]).toBeUndefined()
+    // The completion that arrived between turns is delivered, not lost, and
+    // precedes the woken output.
+    const tail = events.slice(-2)
+    expect(tail[0].metadata?.task_event).toBe('notification')
+    expect(tail[1]).toMatchObject({ type: 'text', content: 'CI is green.' })
+  })
+
+  it('does not reopen a turn for a running frame that belongs to a user turn', async () => {
+    const onTurnWoken = vi.fn(() => {})
+    const driver = makeDriver({ onTurnWoken })
+    const done = vi.fn(() => {})
+
+    ;(driver as any).currentTurn = { onEvent: () => {}, onDone: done }
+    ;(driver as any).query = {
+      [Symbol.asyncIterator]: async function* () {
+        yield { type: 'system', subtype: 'session_state_changed', state: 'running', session_id: 'sdk-session', uuid: 'run' }
+        yield { type: 'result', subtype: 'success', usage: {}, modelUsage: {}, session_id: 'sdk-session', uuid: 'r' }
+        yield { type: 'system', subtype: 'session_state_changed', state: 'idle', session_id: 'sdk-session', uuid: 'i' }
+      },
+    }
+
+    await (driver as any).consumeStream()
+
+    expect(onTurnWoken).not.toHaveBeenCalled()
+    expect(done).toHaveBeenCalledTimes(1)
+  })
+
   it('completes a turn on Claude idle state when no result frame arrives', async () => {
     const driver = makeDriver()
     const done = vi.fn(() => {})

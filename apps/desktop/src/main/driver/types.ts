@@ -65,6 +65,12 @@ export interface DriverOptions {
   yoloMode?: boolean
   initialSessionId?: string | null
   onSessionId?: (sessionId: string) => void
+  /**
+   * The provider started a Turn with no user input: background work detached
+   * in an earlier Turn finished and woke it. Events and completion follow
+   * through the callbacks of the most recent sendMessage.
+   */
+  onTurnWoken?: () => void
   ssh?: SshConfig | null
   wsl?: WslConfig | null
 }
