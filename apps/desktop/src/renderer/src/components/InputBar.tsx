@@ -12,7 +12,7 @@ import {
   PermissionRequest,
   SearchableFile,
   PendingAttachment,
-  SUPPORTED_ATTACHMENT_TYPES,
+  attachmentTypeFor,
   MAX_ATTACHMENT_SIZE,
   MAX_ATTACHMENTS_PER_MESSAGE,
   Thread,
@@ -464,24 +464,6 @@ function InputBarContent({ threadId }: Props) {
   }
 
   async function addAttachment(file: File): Promise<void> {
-    // Validate type
-    if (!Object.keys(SUPPORTED_ATTACHMENT_TYPES).includes(file.type)) {
-      addToast({
-        type: 'error',
-        title: 'Unsupported Attachment',
-        message: `Unsupported file type: ${file.type || 'unknown'}`,
-        details: formatErrorDetails({
-          action: 'attachment:add',
-          threadId,
-          fileName: file.name,
-          mimeType: file.type || null,
-          size: file.size,
-          supportedTypes: Object.keys(SUPPORTED_ATTACHMENT_TYPES),
-        }),
-      })
-      return
-    }
-
     // Validate size
     if (file.size > MAX_ATTACHMENT_SIZE) {
       addToast({
@@ -519,13 +501,12 @@ function InputBarContent({ threadId }: Props) {
 
     // Read as data URL for preview
     const dataUrl = await readFileAsDataUrl(file)
-    const typeInfo = SUPPORTED_ATTACHMENT_TYPES[file.type as keyof typeof SUPPORTED_ATTACHMENT_TYPES]
 
     const pending: PendingAttachment = {
       id: `pending-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       name: file.name,
-      type: typeInfo.type,
-      mimeType: file.type,
+      type: attachmentTypeFor(file.type, file.name),
+      mimeType: file.type || 'application/octet-stream',
       size: file.size,
       dataUrl,
     }
@@ -541,24 +522,6 @@ function InputBarContent({ threadId }: Props) {
         title: 'Attachment Read Failed',
         message: 'Could not read file',
         details: formatErrorDetails({ action: 'attachments:getFileInfo', threadId, filePath }),
-      })
-      return
-    }
-
-    // Validate type
-    if (!Object.keys(SUPPORTED_ATTACHMENT_TYPES).includes(info.mimeType)) {
-      addToast({
-        type: 'error',
-        title: 'Unsupported Attachment',
-        message: `Unsupported file type: ${info.mimeType}`,
-        details: formatErrorDetails({
-          action: 'attachment:addFromPath',
-          threadId,
-          filePath,
-          mimeType: info.mimeType,
-          size: info.size,
-          supportedTypes: Object.keys(SUPPORTED_ATTACHMENT_TYPES),
-        }),
       })
       return
     }
@@ -600,12 +563,12 @@ function InputBarContent({ threadId }: Props) {
 
     // Copy to temp and get path
     const { tempPath, id, dataUrl: savedDataUrl } = await client.invoke('attachments:saveFromPath', filePath, threadId) as { tempPath: string; id: string; dataUrl?: string }
-    const typeInfo = SUPPORTED_ATTACHMENT_TYPES[info.mimeType as keyof typeof SUPPORTED_ATTACHMENT_TYPES]
     const fileName = filePath.split(/[\\/]/).pop() ?? 'file'
+    const type = attachmentTypeFor(info.mimeType, fileName)
 
     // For images, read as data URL for preview
     let dataUrl: string | undefined
-    if (typeInfo.type === 'image') {
+    if (type === 'image') {
       dataUrl = savedDataUrl
       const result = dataUrl ? null : await client.invoke('files:read', tempPath)
       if (result) {
@@ -621,7 +584,7 @@ function InputBarContent({ threadId }: Props) {
     const pending: PendingAttachment = {
       id,
       name: fileName,
-      type: typeInfo.type,
+      type,
       mimeType: info.mimeType,
       size: info.size,
       tempPath,
@@ -867,7 +830,6 @@ function InputBarContent({ threadId }: Props) {
               ref={fileInputRef}
               type="file"
               multiple
-              accept={Object.keys(SUPPORTED_ATTACHMENT_TYPES).join(',')}
               onChange={(e) => void handleFileInputChange(e)}
               className="hidden"
               aria-hidden
@@ -879,7 +841,7 @@ function InputBarContent({ threadId }: Props) {
             disabled={isProcessing}
             className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all hover:bg-[var(--color-surface-2)] disabled:opacity-30"
             style={{ color: 'var(--color-text-muted)' }}
-            title="Attach files (images, PDFs)"
+            title="Attach files"
           >
             <PaperclipIcon />
           </button>

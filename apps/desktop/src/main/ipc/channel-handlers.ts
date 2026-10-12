@@ -2224,10 +2224,11 @@ export const channelHandlers = {
   'dialog:open-files': async (ctx) => {
     const result = await dialog.showOpenDialog(ctx.window, {
       properties: ['openFile', 'multiSelections'],
+      // "All Files" leads because the first filter is the one the dialog opens with.
       filters: [
+        { name: 'All Files', extensions: ['*'] },
         { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
         { name: 'PDF', extensions: ['pdf'] },
-        { name: 'All Files', extensions: ['*'] },
       ],
     })
     return result.canceled ? [] : result.filePaths

@@ -4609,9 +4609,9 @@ describe('dialog:* — local-only, and the two cancelled shapes differ', () => {
       `dialog.showOpenDialog([${JSON.stringify(window)},${JSON.stringify({
         properties: ['openFile', 'multiSelections'],
         filters: [
+          { name: 'All Files', extensions: ['*'] },
           { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
           { name: 'PDF', extensions: ['pdf'] },
-          { name: 'All Files', extensions: ['*'] },
         ],
       })}])`,
     ])

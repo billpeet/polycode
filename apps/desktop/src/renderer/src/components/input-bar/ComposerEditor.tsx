@@ -322,7 +322,7 @@ export default function ComposerEditor({
         if (!items) return false
         const files: File[] = []
         for (const item of items) {
-          if (item.type.startsWith('image/')) {
+          if (item.kind === 'file') {
             const file = item.getAsFile()
             if (file) files.push(file)
           }

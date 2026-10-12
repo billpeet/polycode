@@ -905,13 +905,34 @@ export interface PendingAttachment {
   tempPath?: string // Set after IPC save
 }
 
-/** Supported attachment MIME types */
-export const SUPPORTED_ATTACHMENT_TYPES: Record<string, { ext: string; type: 'image' | 'pdf' }> = {
-  'image/jpeg': { ext: 'jpg', type: 'image' },
-  'image/png': { ext: 'png', type: 'image' },
-  'image/gif': { ext: 'gif', type: 'image' },
-  'image/webp': { ext: 'webp', type: 'image' },
-  'application/pdf': { ext: 'pdf', type: 'pdf' },
+const ATTACHMENT_TYPE_BY_MIME: Record<string, 'image' | 'pdf'> = {
+  'image/jpeg': 'image',
+  'image/png': 'image',
+  'image/gif': 'image',
+  'image/webp': 'image',
+  'application/pdf': 'pdf',
+}
+
+const ATTACHMENT_TYPE_BY_EXT: Record<string, 'image' | 'pdf'> = {
+  jpg: 'image',
+  jpeg: 'image',
+  png: 'image',
+  gif: 'image',
+  webp: 'image',
+  pdf: 'pdf',
+}
+
+/**
+ * How an attachment is treated. Any file may be attached: it reaches the Provider as an
+ * `@path` mention. Only the image formats listed here are also previewed and sent as
+ * image input; everything else that is not a PDF is a plain `file`.
+ *
+ * The extension is the fallback because browsers report an empty MIME type for many
+ * files (Markdown on Windows, for one).
+ */
+export function attachmentTypeFor(mimeType: string, fileName: string): PendingAttachment['type'] {
+  const ext = fileName.slice(fileName.lastIndexOf('.') + 1).toLowerCase()
+  return ATTACHMENT_TYPE_BY_MIME[mimeType] ?? ATTACHMENT_TYPE_BY_EXT[ext] ?? 'file'
 }
 
 export const MAX_ATTACHMENT_SIZE = 5 * 1024 * 1024 // 5MB
