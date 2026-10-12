@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import { LocationPool, RepoLocation, Thread, ThreadStatus } from '../../types/ipc'
+import { isScratchProject } from '@polycode/shared'
 import LocationSection from './LocationSection'
 import RoutinesSection from './RoutinesSection'
 import ThreadRow from './ThreadRow'
@@ -348,7 +349,13 @@ export default function ProjectTreeBody({
               />
             ))}
 
-          {locations.length === 0 && projectThreads.length === 0 && (
+          {locations.length === 0 && projectThreads.length === 0 && isScratchProject(projectId) && (
+            <div className="pl-6 pr-4 py-2 text-xs opacity-50" style={{ color: 'var(--color-text-muted)' }}>
+              Threads that belong to no project
+            </div>
+          )}
+
+          {locations.length === 0 && projectThreads.length === 0 && !isScratchProject(projectId) && (
             <button
               onClick={() => onOpenLocationDialog(projectId)}
               className="flex w-full items-center pl-6 pr-4 py-2 text-left text-xs opacity-50 transition-opacity hover:opacity-80"
@@ -358,7 +365,7 @@ export default function ProjectTreeBody({
             </button>
           )}
 
-          {showRoutines && <RoutinesSection projectId={projectId} onSelectThread={onSelectThread} />}
+          {showRoutines && !isScratchProject(projectId) && <RoutinesSection projectId={projectId} onSelectThread={onSelectThread} />}
 
           {/*
             Snoozed sits above Archived: a snooze is temporary and

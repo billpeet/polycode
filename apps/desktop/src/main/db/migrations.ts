@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3'
+import { SCRATCH_PROJECT_ID, SCRATCH_PROJECT_NAME } from '@polycode/shared'
 
 interface Migration {
   version: number
@@ -12,6 +13,7 @@ const migrations: Migration[] = [
   { version: 4, up: addSnooze },
   { version: 5, up: addProjectFaviconOverride },
   { version: 6, up: addThreadCostUsage },
+  { version: 7, up: addScratchProject },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -41,6 +43,18 @@ export function runMigrations(database: Database.Database): void {
       database.pragma(`user_version = ${migration.version}`)
     })()
   }
+}
+
+/**
+ * Version 7 — the built-in Scratch Project, which holds Threads that belong to no
+ * Project. A row rather than a nullable `threads.project_id`: every thread query joins
+ * or filters on the project, and a fixed id keeps all of them unchanged.
+ */
+function addScratchProject(database: Database.Database): void {
+  const now = new Date().toISOString()
+  database
+    .prepare('INSERT OR IGNORE INTO projects (id, name, path, created_at, updated_at) VALUES (?, ?, ?, ?, ?)')
+    .run(SCRATCH_PROJECT_ID, SCRATCH_PROJECT_NAME, '', now, now)
 }
 
 function addProjectFaviconOverride(database: Database.Database): void {

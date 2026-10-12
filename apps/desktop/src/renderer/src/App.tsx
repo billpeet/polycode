@@ -20,6 +20,7 @@ import { useFilesStore } from './stores/files'
 import { useGitStore } from './stores/git'
 import { useCommandStore } from './stores/commands'
 import { Provider } from './types/ipc'
+import { isScratchProject } from '@polycode/shared'
 import { useToastStore } from './stores/toast'
 import './stores/plans' // Initialize plan file watcher listener
 import { useBrowserStore } from './stores/browser'
@@ -203,7 +204,8 @@ export default function App() {
             threadState.selectedThreadId,
             locations,
           )
-          if (locationId) {
+          // The Scratch Project has no locations: a new thread there is a scratch thread.
+          if (locationId || isScratchProject(selectedProjectId)) {
             // Create-on-send: opens the draft composer prefilled with the
             // current destination; the Thread materializes on first send.
             threadState.openDraftThread(selectedProjectId, locationId)

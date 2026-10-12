@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { ChevronDown, GitBranchPlus, GitPullRequest, MapPin } from 'lucide-react'
+import { ChevronDown, GitBranchPlus, GitPullRequest, MapPin, MapPinOff } from 'lucide-react'
 import { client } from '../../lib/client'
 import { locationDisplayName } from '../../lib/locationDisplay'
 import { subscribeToSidebarBranches } from '../../lib/sidebarBranchRefresh'
@@ -8,13 +8,24 @@ import { sortProjects, useProjectStore } from '../../stores/projects'
 import { useThreadStore } from '../../stores/threads'
 import { PullRequest, RepoLocation, Thread } from '../../types/ipc'
 import ProjectFavicon from '../ProjectFavicon'
-import type { UnifiedProject, UnifiedProjectMember } from '@polycode/shared'
+import { isScratchProject, type UnifiedProject, type UnifiedProjectMember } from '@polycode/shared'
 import { sourceKey, useUnifiedStore } from '../../stores/unified'
 import { SourceBadge, sourceColor, useActiveSource } from '../SourceBadge'
 import SourceProjectFavicon from '../SourceProjectFavicon'
 
 const NEW_WORKTREE_PREFIX = 'new-worktree:'
 const PULL_REQUEST_PREFIX = 'pr:'
+/** `<select>` value for "no location": the thread runs in its own Scratch Directory. */
+const NO_LOCATION = 'no-location'
+const NO_LOCATION_LABEL = 'No location (scratch)'
+const NO_LOCATION_TITLE = 'New thread with no location, in its own scratch directory'
+/** How the built-in Scratch Project reads as a destination: picking it means no project at all. */
+const NO_PROJECT_LABEL = 'No location'
+const NO_PROJECT_TITLE = 'New scratch thread: no project and no location, in its own scratch directory'
+
+function isScratchUnifiedProject(project: UnifiedProject): boolean {
+  return project.members.every((member) => isScratchProject(member.project.id))
+}
 
 /** Active = usable for a new thread: unpooled, or checked out of its pool. */
 function isActiveLocation(location: RepoLocation): boolean {
@@ -76,11 +87,13 @@ function ProjectMenu({ projectId, onSelect }: { projectId: string; onSelect: (pr
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
-  const options = useMemo(
-    () => sortProjects(projects.filter((p) => !p.archived_at || p.id === projectId), 'alphabetical'),
-    [projects, projectId]
-  )
+  // "No location" leads the list: it is the destination for work that belongs to no project.
+  const options = useMemo(() => {
+    const sorted = sortProjects(projects.filter((p) => !p.archived_at || p.id === projectId), 'alphabetical')
+    return [...sorted.filter((p) => isScratchProject(p.id)), ...sorted.filter((p) => !isScratchProject(p.id))]
+  }, [projects, projectId])
   const current = projects.find((p) => p.id === projectId)
+  const currentIsScratch = isScratchProject(projectId)
 
   useEffect(() => {
     if (!open) return
@@ -109,8 +122,10 @@ function ProjectMenu({ projectId, onSelect }: { projectId: string; onSelect: (pr
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <ProjectFavicon projectId={projectId} className="h-3.5 w-3.5" />
-        <span className="truncate">{current?.name ?? 'Unknown project'}</span>
+        {currentIsScratch
+          ? <MapPinOff size={13} className="flex-shrink-0 opacity-70" />
+          : <ProjectFavicon projectId={projectId} className="h-3.5 w-3.5" />}
+        <span className="truncate">{currentIsScratch ? NO_PROJECT_LABEL : current?.name ?? 'Unknown project'}</span>
         <ChevronDown size={12} className="flex-shrink-0 opacity-60" aria-hidden />
       </button>
       {open && (
@@ -137,8 +152,10 @@ function ProjectMenu({ projectId, onSelect }: { projectId: string; onSelect: (pr
                 onMouseEnter={(event) => { if (!selected) event.currentTarget.style.background = HOVER_BG }}
                 onMouseLeave={(event) => { if (!selected) event.currentTarget.style.background = '' }}
               >
-                <ProjectFavicon projectId={project.id} className="h-4 w-4" />
-                <span className="truncate">{project.name}</span>
+                {isScratchProject(project.id)
+                  ? <MapPinOff size={14} className="flex-shrink-0 opacity-70" />
+                  : <ProjectFavicon projectId={project.id} className="h-4 w-4" />}
+                <span className="truncate">{isScratchProject(project.id) ? NO_PROJECT_LABEL : project.name}</span>
               </button>
             )
           })}
@@ -237,7 +254,11 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
     ? pullRequestValue(draftThread.location_id ?? '', draftPullRequest.id)
     : draftNewWorktree
       ? `${NEW_WORKTREE_PREFIX}${draftThread.location_id ?? ''}`
-      : draftThread.location_id ?? ''
+      : draftThread.location_id ?? NO_LOCATION
+  const noLocation = locationValue === NO_LOCATION
+  // The Scratch Project has no locations to choose between, so the project control alone
+  // is the whole destination.
+  const noProject = isScratchProject(projectId)
 
   // The selected PR may not be in the (re)fetched list yet; keep it selectable
   // so the control never silently falls back to another option.
@@ -253,9 +274,8 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
     }
     const firstActive = nextLocations.filter(isActiveLocation).find((l) => !l.is_worktree)
       ?? nextLocations.filter(isActiveLocation)[0]
-    if (firstActive) {
-      setDestination(nextProjectId, firstActive.id)
-    }
+    // A project with no usable location can still host a scratch thread.
+    setDestination(nextProjectId, firstActive?.id ?? null)
   }
 
   function handleLocationChange(value: string): void {
@@ -265,6 +285,8 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
       if (pr) setDestination(projectId, pullRequestRef.parentLocationId, { pullRequest: { id: pr.id, title: pr.title } })
     } else if (value.startsWith(NEW_WORKTREE_PREFIX)) {
       setDestination(projectId, value.slice(NEW_WORKTREE_PREFIX.length), { newWorktree: true })
+    } else if (value === NO_LOCATION) {
+      setDestination(projectId, null)
     } else {
       setDestination(projectId, value)
     }
@@ -274,7 +296,23 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
     ? `New thread in a new worktree with PR #${draftPullRequest.id} checked out`
     : draftNewWorktree
       ? 'New thread in a new worktree'
-      : 'New thread destination'
+      : noProject
+        ? NO_PROJECT_TITLE
+        : noLocation
+          ? NO_LOCATION_TITLE
+          : 'New thread destination'
+
+  if (noProject) {
+    return (
+      <div
+        className="flex h-9 flex-shrink-0 items-center gap-1 text-[11px]"
+        style={{ color: 'var(--color-text-muted)' }}
+        title={title}
+      >
+        <ProjectMenu projectId={projectId} onSelect={(next) => void handleProjectChange(next)} />
+      </div>
+    )
+  }
 
   return (
     <div
@@ -286,7 +324,9 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
         ? <GitPullRequest size={13} className="mr-0.5 flex-shrink-0 opacity-60" />
         : draftNewWorktree
           ? <GitBranchPlus size={13} className="mr-0.5 flex-shrink-0 opacity-60" />
-          : <MapPin size={13} className="mr-0.5 flex-shrink-0 opacity-60" />}
+          : noLocation
+            ? <MapPinOff size={13} className="mr-0.5 flex-shrink-0 opacity-60" />
+            : <MapPin size={13} className="mr-0.5 flex-shrink-0 opacity-60" />}
       <ProjectMenu projectId={projectId} onSelect={(next) => void handleProjectChange(next)} />
       <select
         value={locationValue}
@@ -321,9 +361,7 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
         {draftPullRequest && !selectedPullRequestListed && (
           <option value={locationValue}>#{draftPullRequest.id} {draftPullRequest.title}</option>
         )}
-        {locations.length === 0 && (
-          <option value="" disabled>No locations available</option>
-        )}
+        <option value={NO_LOCATION}>{NO_LOCATION_LABEL}</option>
       </select>
     </div>
   )
@@ -332,9 +370,10 @@ function SingleSourceDestinationPicker({ draftThread }: { draftThread: Thread })
 /** One selectable destination in the unified picker. */
 interface UnifiedDestination {
   member: UnifiedProjectMember
-  locationId: string
+  /** Null only for `no-location`. */
+  locationId: string | null
   label: string
-  kind: 'location' | 'new-worktree' | 'pull-request'
+  kind: 'location' | 'new-worktree' | 'pull-request' | 'no-location'
   pullRequest?: { id: number; title: string }
 }
 
@@ -358,10 +397,12 @@ function UnifiedProjectMenu({
   const activeSourceId = useUnifiedStore((s) => s.activeSourceId)
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
-  const options = useMemo(
-    () => projects.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })),
-    [projects],
-  )
+  // As in the single-source menu, "No location" leads the list.
+  const options = useMemo(() => {
+    const sorted = projects.slice().sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }))
+    return [...sorted.filter(isScratchUnifiedProject), ...sorted.filter((p) => !isScratchUnifiedProject(p))]
+  }, [projects])
+  const currentIsScratch = isScratchUnifiedProject(current)
 
   useEffect(() => {
     if (!open) return
@@ -390,8 +431,10 @@ function UnifiedProjectMenu({
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <ProjectFavicon projectId={activeMember.project.id} className="h-3.5 w-3.5" />
-        <span className="truncate">{current.name}</span>
+        {currentIsScratch
+          ? <MapPinOff size={13} className="flex-shrink-0 opacity-70" />
+          : <ProjectFavicon projectId={activeMember.project.id} className="h-3.5 w-3.5" />}
+        <span className="truncate">{currentIsScratch ? NO_PROJECT_LABEL : current.name}</span>
         <ChevronDown size={12} className="flex-shrink-0 opacity-60" aria-hidden />
       </button>
       {open && (
@@ -419,13 +462,19 @@ function UnifiedProjectMenu({
                 onMouseEnter={(event) => { if (!selected) event.currentTarget.style.background = HOVER_BG }}
                 onMouseLeave={(event) => { if (!selected) event.currentTarget.style.background = '' }}
               >
-                <SourceProjectFavicon
-                  sourceId={lead.sourceId}
-                  projectId={lead.project.id}
-                  active={lead.sourceId === activeSourceId}
-                  className="h-4 w-4"
-                />
-                <span className="min-w-0 flex-1 truncate">{project.name}</span>
+                {isScratchUnifiedProject(project)
+                  ? <MapPinOff size={14} className="flex-shrink-0 opacity-70" />
+                  : (
+                    <SourceProjectFavicon
+                      sourceId={lead.sourceId}
+                      projectId={lead.project.id}
+                      active={lead.sourceId === activeSourceId}
+                      className="h-4 w-4"
+                    />
+                  )}
+                <span className="min-w-0 flex-1 truncate">
+                  {isScratchUnifiedProject(project) ? NO_PROJECT_LABEL : project.name}
+                </span>
                 <span className="flex flex-shrink-0 items-center gap-0.5">
                   {[...new Map(project.members.map((m) => [m.sourceId, m.sourceLabel]))].map(([id, label]) => (
                     <span
@@ -507,6 +556,7 @@ function UnifiedDestinationPicker({
     for (const location of locations.filter(canForkWorktree)) {
       entries.push({ member, locationId: location.id, kind: 'new-worktree', label: `+ New worktree of ${location.label}` })
     }
+    entries.push({ member, locationId: null, kind: 'no-location', label: NO_LOCATION_LABEL })
     return { member, label: memberLabel(member, project), entries }
   })
     // `start` is each group's first index in the flat option list below.
@@ -527,7 +577,12 @@ function UnifiedDestinationPicker({
 
   // Flat list; an option's value is its index here.
   const all = useMemo(() => [...groups.flatMap((g) => g.entries), ...pullRequestEntries], [groups, pullRequestEntries])
-  const currentKind: UnifiedDestination['kind'] = draftPullRequest ? 'pull-request' : draftNewWorktree ? 'new-worktree' : 'location'
+  const currentKind: UnifiedDestination['kind'] = draftPullRequest
+    ? 'pull-request'
+    : draftNewWorktree
+      ? 'new-worktree'
+      : draftThread.location_id ? 'location' : 'no-location'
+  const noLocation = currentKind === 'no-location'
   const currentIndex = all.findIndex((entry) =>
     entry.member === activeMember
     && entry.locationId === draftThread.location_id
@@ -555,13 +610,17 @@ function UnifiedDestinationPicker({
         return
       }
     }
+    // No source has a usable location for it: a scratch thread is still possible.
+    if (members[0]) void setDraftDestination(members[0].sourceId, members[0].project.id, null)
   }
 
   const title = draftPullRequest
     ? `New thread in a new worktree with PR #${draftPullRequest.id} checked out`
     : draftNewWorktree
       ? 'New thread in a new worktree'
-      : 'New thread destination'
+      : noLocation
+        ? NO_LOCATION_TITLE
+        : 'New thread destination'
   const pullRequestStart = groups.reduce((n, g) => n + g.entries.length, 0)
 
   return (
@@ -574,7 +633,9 @@ function UnifiedDestinationPicker({
         ? <GitPullRequest size={13} className="mr-0.5 flex-shrink-0 opacity-60" />
         : draftNewWorktree
           ? <GitBranchPlus size={13} className="mr-0.5 flex-shrink-0 opacity-60" />
-          : <MapPin size={13} className="mr-0.5 flex-shrink-0 opacity-60" />}
+          : noLocation
+            ? <MapPinOff size={13} className="mr-0.5 flex-shrink-0 opacity-60" />
+            : <MapPin size={13} className="mr-0.5 flex-shrink-0 opacity-60" />}
       {activeSource && <SourceBadge source={activeSource} size="sm" />}
       <UnifiedProjectMenu current={project} activeMember={activeMember} onSelect={handleProjectChange} />
       <select
@@ -595,7 +656,6 @@ function UnifiedDestinationPicker({
             {group.entries.map((entry, index) => (
               <option key={group.start + index} value={String(group.start + index)}>{entry.label}</option>
             ))}
-            {group.entries.length === 0 && <option value="" disabled>No locations available</option>}
           </optgroup>
         ))}
         {pullRequestEntries.length > 0 && (

@@ -51,6 +51,18 @@ export interface Project {
   last_activity_at?: string
 }
 
+/**
+ * The built-in Scratch Project: the home of Threads that belong to no Project. Every
+ * host has exactly one, under this fixed id, so clients can recognise it without a flag
+ * on the row. It has no Locations, and cannot be edited, archived or deleted.
+ */
+export const SCRATCH_PROJECT_ID = 'scratch'
+export const SCRATCH_PROJECT_NAME = 'Scratch'
+
+export function isScratchProject(projectId: string | null | undefined): boolean {
+  return projectId === SCRATCH_PROJECT_ID
+}
+
 export type ProjectSortMode = 'alphabetical' | 'lastMessage'
 
 /**
@@ -381,6 +393,11 @@ export interface Thread {
   id: string
   project_id: string
   location_id: string | null
+  /**
+   * The thread's Scratch Directory on its host — set exactly when it has no location,
+   * absent on the renderer's not-yet-created draft.
+   */
+  scratch_path?: string | null
   name: string
   /** Renderer-only flag for a temporary thread placeholder during optimistic creation. */
   is_pending?: boolean

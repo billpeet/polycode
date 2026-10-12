@@ -6,6 +6,7 @@ import ProjectTreeBody from './ProjectTreeBody'
 import { SidebarResizeHandle, ViewModeSwitch } from './shared'
 import ProjectFavicon from '../ProjectFavicon'
 import { client } from '../../lib/client'
+import { isScratchProject } from '@polycode/shared'
 
 const EMPTY_LOCATIONS: RepoLocation[] = []
 const EMPTY_POOLS: LocationPool[] = []
@@ -54,7 +55,8 @@ interface ExpandedSidebarProps {
   onToggleLocationCollapsed: (locationId: string) => void
   onCheckoutLocation: (locationId: string, projectId: string) => void | Promise<void>
   onReturnLocationToPool: (locationId: string, projectId: string) => void | Promise<void>
-  onNewThread: (projectId: string, locationId: string) => void | Promise<void>
+  /** A null location starts a scratch thread. */
+  onNewThread: (projectId: string, locationId: string | null) => void | Promise<void>
   onNewWorktreeThread: (projectId: string, parentLocationId: string) => void | Promise<void>
   onRemoveWorktree: (location: RepoLocation, projectId: string) => void | Promise<void>
   onSelectThread: (threadId: string) => void
@@ -309,6 +311,17 @@ export default function ExpandedSidebar({
                   className="absolute right-1 top-1/2 flex -translate-y-1/2 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
                   style={{ background: isExpanded ? 'var(--color-surface-2)' : 'var(--color-surface)' }}
                 >
+                  {/* The built-in Scratch Project cannot be edited, archived or deleted. */}
+                  {isScratchProject(project.id) ? (
+                    <button
+                      onClick={() => void onNewThread(project.id, null)}
+                      className="rounded p-1 transition-colors hover:bg-white/10"
+                      style={{ color: 'var(--color-text-muted)' }}
+                      title="New scratch thread (no project, no location)"
+                    >
+                      <Plus size={11} />
+                    </button>
+                  ) : (<>
                   <button
                     onClick={() => onEditProject(project)}
                     className="rounded p-1 transition-colors hover:bg-white/10"
@@ -333,6 +346,7 @@ export default function ExpandedSidebar({
                   >
                     <X size={11} />
                   </button>
+                  </>)}
                 </div>
               </div>
 

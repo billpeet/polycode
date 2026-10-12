@@ -106,6 +106,22 @@ describe('database migrations', () => {
     expect(columns).toContain('total_cost_usd')
   })
 
+  it('adds the built-in Scratch Project to a new database and to one that predates it', () => {
+    const scratch = (database: Database.Database) =>
+      database.prepare("SELECT name, archived_at FROM projects WHERE id = 'scratch'").get()
+
+    const fresh = createDatabase()
+    runMigrations(fresh)
+    expect(scratch(fresh)).toEqual({ name: 'Scratch', archived_at: null })
+
+    const existing = createDatabase()
+    runMigrations(existing)
+    existing.prepare("DELETE FROM projects WHERE id = 'scratch'").run()
+    existing.pragma('user_version = 6')
+    runMigrations(existing)
+    expect(scratch(existing)).toEqual({ name: 'Scratch', archived_at: null })
+  })
+
   it('rejects databases created by a newer application version', () => {
     const database = createDatabase()
     database.pragma(`user_version = ${LATEST_SCHEMA_VERSION + 1}`)

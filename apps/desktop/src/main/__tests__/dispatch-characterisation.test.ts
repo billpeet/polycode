@@ -346,6 +346,8 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   threadExists: H.stub('db.threadExists', () => H.state.threadExists),
   threadHasMessages: H.stub('db.threadHasMessages', () => H.state.threadHasMessages),
   getThreadById: H.stub('db.getThreadById', () => H.state.thread),
+  listLocationlessThreadIds: H.stub('db.listLocationlessThreadIds', ['t-scratch']),
+  createThreadWithoutLocation: H.stub('db.createThreadWithoutLocation', { id: 't-scratch-new', name: 'Analysis' }),
   worktreeCleanupCandidate: H.stub('db.worktreeCleanupCandidate', () => H.state.worktreeCandidate),
   listLocations: H.stub('db.listLocations', () => (H.state.location ? [H.state.location] : [])),
   listThreads: H.stub('db.listThreads', [{ id: 't1', name: 'Thread one' }]),
@@ -505,6 +507,11 @@ vi.mock('../cursor-models', () => H.autoModule('cursorModels', {
 }))
 vi.mock('../grok-models', () => H.autoModule('grokModels', {
   listGrokAvailableModels: H.settlesLate('models.listGrokAvailableModels', [{ id: 'grok-build' }]),
+}))
+
+vi.mock('../scratch', () => H.autoModule('scratch', {
+  scratchDirForThread: H.stub('scratch.scratchDirForThread', (id: string) => `SCRATCH/${id}`),
+  ensureScratchDir: H.stub('scratch.ensureScratchDir', (id: string) => `SCRATCH/${id}`),
 }))
 
 vi.mock('../project-admin', () => H.autoModule('projectAdmin', {
@@ -1041,6 +1048,24 @@ describe('both transports produce identical behaviour', () => {
 })
 
 describe('projects:* — folded into the typed handler map', () => {
+  it('the built-in Scratch Project cannot be reshaped, and nothing is touched in the attempt', async () => {
+    // It is what lets a Thread belong to no Project, so it cannot go away or gain
+    // locations. The refusal comes first: `projects:delete` stops every session.
+    const cases: Array<[channel: string, args: unknown[], message: string]> = [
+      ['projects:delete', ['scratch'], 'cannot be deleted'],
+      ['projects:archive', ['scratch'], 'cannot be archived'],
+      ['projects:update', ['scratch', 'Renamed', null, true], 'cannot be edited'],
+      ['locations:create', ['scratch', 'L', 'local', 'C:/repo'], 'cannot have locations'],
+      ['locations:clone', ['scratch', 'L', 'https://example.com/r.git', 'C:/r'], 'cannot have locations'],
+    ]
+    for (const [channel, args, message] of cases) {
+      await expect(viaIpc(channel, args), channel).rejects.toThrow(message)
+      expect(H.log, channel).toEqual([])
+      await expect(viaControlRpc(channel, args), channel).rejects.toThrow(message)
+      expect(H.log, channel).toEqual([])
+    }
+  })
+
   it('projects:delete stops sessions and commands before the row is removed', async () => {
     const ipc = await viaIpc('projects:delete', ['p1'])
     const rpc = await viaControlRpc('projects:delete', ['p1'])
@@ -1049,7 +1074,10 @@ describe('projects:* — folded into the typed handler map', () => {
     expect(ipc).toEqual([
       'sessionManager.stopAll([])',
       'commandManager.stopAll([])',
+      // Read before the delete: the cascade takes the rows that name the directories.
+      'db.listLocationlessThreadIds(["p1"])',
       'db.deleteProject(["p1"])',
+      'scratch.removeScratchDir(["t-scratch"])',
     ])
   })
 
@@ -1911,6 +1939,19 @@ describe('threads:* CRUD and settings — both transports agree', () => {
     })
   })
 
+  it('threads:create with no location creates a scratch thread and its directory', async () => {
+    const args = ['p1', 'Analysis', null]
+    const ipc = await viaIpc('threads:create', args)
+    const rpc = await viaControlRpc('threads:create', args)
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'db.createThreadWithoutLocation(["p1","Analysis"])',
+      'scratch.ensureScratchDir(["t-scratch-new"])',
+    ])
+    expect(await resultViaIpc('threads:create', args)).toEqual({ id: 't-scratch-new', name: 'Analysis' })
+  })
+
   it('threads:archivedCount', async () => {
     const ipc = await viaIpc('threads:archivedCount', ['p1'])
     const rpc = await viaControlRpc('threads:archivedCount', ['p1'])
@@ -1976,18 +2017,18 @@ describe('threads:* CRUD and settings — both transports agree', () => {
     expect(await resultViaControlRpc('threads:getModifiedFiles', ['t1'])).toEqual(['src/a.ts'])
   })
 
-  it('threads:getModifiedFiles passes an empty working dir when the thread has no location', async () => {
+  it('threads:getModifiedFiles passes the scratch directory when the thread has no location', async () => {
     H.state.location = null
 
     const ipc = await viaIpc('threads:getModifiedFiles', ['t1'])
     const rpc = await viaControlRpc('threads:getModifiedFiles', ['t1'])
 
     expect(rpc).toEqual(ipc)
-    // `getWorkingDirForThread(...) ?? ''` — the coalesce is load-bearing: the callee's
-    // parameter is `workingDir: string`, so a null would reach a `path` API as null.
+    // The read-only lookup: it names the directory without creating it.
     expect(ipc).toEqual([
       'db.getLocationForThread(["t1"])',
-      'db.getThreadModifiedFiles(["t1",""])',
+      'scratch.scratchDirForThread(["t1"])',
+      'db.getThreadModifiedFiles(["t1","SCRATCH/t1"])',
     ])
   })
 
@@ -2040,7 +2081,6 @@ describe('threads:* CRUD and settings — both transports agree', () => {
  */
 describe('threads:* — sessionManager.remove runs before the write', () => {
   const cases: Array<[channel: string, args: unknown[], write: string]> = [
-    ['threads:delete', ['t1'], 'db.deleteThread(["t1"])'],
     ['threads:updateModel', ['t1', 'sonnet'], 'db.updateThreadModel(["t1","sonnet"])'],
     [
       'threads:updateProviderAndModel', ['t1', 'codex', 'gpt-5'],
@@ -2083,6 +2123,20 @@ describe('threads:* — sessionManager.remove runs before the write', () => {
       expect(ipc).toEqual(expected)
     })
   }
+
+  it('threads:delete removes the session, deletes the row, then its scratch directory', async () => {
+    // Unconditional: for a thread that has a location there is no such directory and the
+    // removal is a no-op, which spares a lookup of a row that is already gone.
+    const ipc = await viaIpc('threads:delete', ['t1'])
+    const rpc = await viaControlRpc('threads:delete', ['t1'])
+
+    expect(rpc).toEqual(ipc)
+    expect(ipc).toEqual([
+      'sessionManager.remove(["t1"])',
+      'db.deleteThread(["t1"])',
+      'scratch.removeScratchDir(["t1"])',
+    ])
+  })
 
   it('threads:setUnread deliberately does NOT drop the session', async () => {
     // The odd one out among the setters: marking a thread read/unread cannot change how
@@ -2171,6 +2225,7 @@ describe('threads:* — sessionManager.remove runs before the write', () => {
       'db.getThreadById(["t1"])',
       'db.threadHasMessages(["t1"])',
       'db.deleteThread(["t1"])',
+      'scratch.removeScratchDir(["t1"])',
       'db.worktreeCleanupCandidate([null])',
     ])
     expect(await resultViaIpc('threads:archive', ['t1'])).toEqual({ outcome: 'deleted', worktree: null })
@@ -3518,10 +3573,10 @@ describe('models:* — both transports agree', () => {
       expect(await resultViaControlRpc(channel, ['t1'])).toEqual(result)
     })
 
-    it(`${channel} falls through to getWorkingDirForThread on an empty effective cwd`, async () => {
-      // The `||` (not `??`) in `getEffectiveWorkingDir(id) || getWorkingDirForThread(id)`.
-      // A thread whose location row has gone away has an effective cwd of `''`, which is
-      // not nullish — under `??` the second lookup would never run and `cwd` would be `''`.
+    it(`${channel} queries in the scratch directory when the thread has no location`, async () => {
+      // A thread with no location — created that way, or orphaned by a deleted location —
+      // is conducted in its Scratch Directory, which is created on demand because the
+      // model query spawns a CLI there.
       H.state.location = null
 
       const ipc = await viaIpc(channel, ['t1'])
@@ -3530,11 +3585,11 @@ describe('models:* — both transports agree', () => {
       expect(rpc).toEqual(ipc)
       expect(ipc).toEqual([
         'db.threadExists(["t1"])',
-        'db.getLocationForThread(["t1"])', // getEffectiveWorkingDir → ''
-        'db.getLocationForThread(["t1"])', // getWorkingDirForThread → null (the || fired)
+        'db.getLocationForThread(["t1"])', // getEffectiveWorkingDir
+        'scratch.ensureScratchDir(["t1"])',
         'db.getLocationForThread(["t1"])', // getSshConfigForThread
         'db.getLocationForThread(["t1"])', // getWslConfigForThread
-        `${fn}([{"cwd":null,"ssh":null,"wsl":null}])`,
+        `${fn}([{"cwd":"SCRATCH/t1","ssh":null,"wsl":null}])`,
         `${fn}:settled`,
       ])
     })

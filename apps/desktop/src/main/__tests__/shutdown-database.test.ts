@@ -109,7 +109,8 @@ it('drains SQL and command probes, then rejects renderer refreshes without touch
   await vi.advanceTimersByTimeAsync(1)
   expect(close).not.toHaveBeenCalled()
   releaseSql()
-  expect(await operation).toHaveLength(1)
+  // The project created above, plus the built-in Scratch Project.
+  expect(await operation).toHaveLength(2)
   proc.exitCode = 0
   proc.emit('close', 0)
   await vi.advanceTimersByTimeAsync(1)

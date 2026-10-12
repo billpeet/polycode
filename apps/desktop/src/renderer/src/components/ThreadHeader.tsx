@@ -186,7 +186,10 @@ export default function ThreadHeader({ threadId }: Props) {
     const locations = s.byProject[threadProjectId]
     return locations?.find((l) => l.id === locationId) ?? null
   })
-  const locationPath = location?.path ?? null
+  // A thread with no location is conducted in its Scratch Directory. The path is only
+  // known once the thread exists on its host, so the draft shows the chip without it.
+  const isScratchThread = !!thread && !thread.location_id
+  const locationPath = location?.path ?? thread?.scratch_path ?? null
 
   // Ensure locations are fetched for the current project
   const fetchLocations = useLocationStore((s) => s.fetch)
@@ -367,6 +370,23 @@ export default function ThreadHeader({ threadId }: Props) {
             title={`Location: ${location.label} (${location.path})`}
           >
             {location.label}
+          </span>
+        )}
+
+        {isScratchThread && (
+          <span
+            className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px]"
+            style={{
+              background: 'var(--color-surface-2)',
+              color: 'var(--color-text-muted)',
+              border: '1px solid var(--color-border)',
+              fontFamily: 'monospace',
+            }}
+            title={locationPath
+              ? `No location — scratch directory: ${locationPath}`
+              : 'No location — a scratch directory is created when the first message is sent'}
+          >
+            scratch
           </span>
         )}
 

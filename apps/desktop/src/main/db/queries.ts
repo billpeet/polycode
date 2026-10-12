@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
 import { foldMessages } from '@polycode/shared'
+import { scratchDirForThread } from '../scratch'
 import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState, WorktreeCleanupCandidate } from '../../shared/types'
 
 // ── Projects ──────────────────────────────────────────────────────────────────
@@ -420,6 +421,7 @@ function rowToThread(r: ThreadRow): Thread {
     id: r.id,
     project_id: r.project_id,
     location_id: r.location_id ?? null,
+    scratch_path: r.location_id ? null : scratchDirForThread(r.id),
     name: r.name,
     provider,
     model: r.model,
@@ -805,6 +807,30 @@ export function createThreadForLocation(
     const { provider, model } = getLastUsedProviderAndModel(projectId)
     return createThread(projectId, name, locationId, provider, model)
   })()
+}
+
+/**
+ * Creates a user thread with no Project Location; it is conducted in its Scratch
+ * Directory. Mirrors `createThreadForLocation`: the project is validated in the same
+ * transaction as the insert.
+ */
+export function createThreadWithoutLocation(projectId: string, name: string): Thread {
+  const db = getDb('createThreadWithoutLocation')
+  return db.transaction(() => {
+    const project = db.prepare('SELECT 1 AS found FROM projects WHERE id = ?').get(projectId)
+    if (!project) throw new StaleThreadSelectionError()
+
+    const { provider, model } = getLastUsedProviderAndModel(projectId)
+    return createThread(projectId, name, null, provider, model)
+  })()
+}
+
+/** Ids of every thread in a project that has no location, archived ones included. */
+export function listLocationlessThreadIds(projectId: string): string[] {
+  return getDb('listLocationlessThreadIds')
+    .prepare('SELECT id FROM threads WHERE project_id = ? AND location_id IS NULL')
+    .pluck()
+    .all(projectId) as string[]
 }
 
 export function createThread(projectId: string, name: string, locationId: string | null, provider = 'claude-code', model = getDefaultModelForProvider('claude-code'), gitBranch: string | null = null, opts: CreateThreadOptions = {}): Thread {

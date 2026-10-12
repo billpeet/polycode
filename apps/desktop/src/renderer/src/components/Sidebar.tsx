@@ -7,6 +7,7 @@ import { useToastStore } from '../stores/toast'
 import { useUiStore } from '../stores/ui'
 import { useYouTrackStore } from '../stores/youtrack'
 import { Project, QueueThread, RepoLocation, Thread, ThreadStatus, WorktreeCleanupCandidate, WorkingTreeFacts } from '../types/ipc'
+import { SCRATCH_PROJECT_ID, isScratchProject } from '@polycode/shared'
 import { formatErrorDetails } from '../lib/errorDetails'
 import { subscribeToSidebarBranches } from '../lib/sidebarBranchRefresh'
 import {
@@ -325,7 +326,7 @@ function Sidebar() {
    * Opens the create-on-send composer prefilled with this destination. The
    * Thread only materializes when the first message is sent.
    */
-  function handleNewThread(projectId: string, locationId: string): void {
+  function handleNewThread(projectId: string, locationId: string | null): void {
     openDraftThread(projectId, locationId)
     selectProject(projectId)
     window.dispatchEvent(new Event('focus-input'))
@@ -384,6 +385,11 @@ function Sidebar() {
     const threadState = useThreadStore.getState()
     const selectedThread = Object.values(threadState.byProject).flat()
       .find((t) => t.id === threadState.selectedThreadId)
+    // A scratch thread is a destination too: from one, the next thread is another.
+    if (selectedThread && !selectedThread.location_id && !selectedThread.is_pending) {
+      handleNewThread(selectedThread.project_id, null)
+      return
+    }
     const seed = selectedThread?.location_id
       ? selectedThread
       : threadState.queueThreads.find((t) => t.location_id)
@@ -392,9 +398,13 @@ function Sidebar() {
       return
     }
 
-    const project = sortedProjects[0]
+    const hasScratchProject = projects.some((p) => isScratchProject(p.id))
+    const project = sortedProjects.find((p) => !isScratchProject(p.id))
     if (!project) {
-      setProjectDialog({ mode: 'create' })
+      // Nothing to work in yet: a scratch thread needs no project. Hosts that predate
+      // the Scratch Project fall back to creating one.
+      if (hasScratchProject) handleNewThread(SCRATCH_PROJECT_ID, null)
+      else setProjectDialog({ mode: 'create' })
       return
     }
     const locations = locationsByProject[project.id]
@@ -402,6 +412,8 @@ function Sidebar() {
     const activeLocation = locations.find((location) => !location.pool_id || location.checked_out)
     if (activeLocation) {
       handleNewThread(project.id, activeLocation.id)
+    } else if (hasScratchProject) {
+      handleNewThread(SCRATCH_PROJECT_ID, null)
     }
   }
 

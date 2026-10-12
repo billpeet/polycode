@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { Project, NewProjectSpec, ProjectSortMode } from '../types/ipc'
+import { isScratchProject } from '@polycode/shared'
 import { getPref, setPref } from '../lib/prefs'
 import { client } from '../lib/client'
 
@@ -38,7 +39,9 @@ export function sortProjects(
       a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
     )
   }
-  return sorted
+  // The built-in Scratch Project is not one of the user's projects: it sits below them
+  // in either mode rather than being sorted among them.
+  return [...sorted.filter((p) => !isScratchProject(p.id)), ...sorted.filter((p) => isScratchProject(p.id))]
 }
 
 interface ProjectStore {

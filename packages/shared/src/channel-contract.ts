@@ -109,7 +109,8 @@ export interface ChannelContract {
   'threads:listQueue': [[], QueueThread[]]
   'threads:listQueueArchived': [[search: string | null, limit: number, offset: number], QueueThread[]]
   'threads:listQueueSnoozed': [[search: string | null, limit: number, offset: number], QueueThread[]]
-  'threads:create': [[projectId: string, name: string, locationId: string], Thread]
+  /** A null `locationId` creates a scratch thread, conducted in its own Scratch Directory. */
+  'threads:create': [[projectId: string, name: string, locationId: string | null], Thread]
   'threads:delete': [[id: string], void]
   'threads:start': [[threadId: string], void]
   'threads:stop': [[threadId: string, cleanBackgroundTerminals?: boolean], void]

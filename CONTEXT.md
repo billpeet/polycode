@@ -44,8 +44,33 @@ not a separate kind of thing.
 
 ## Thread
 
-A single conversation with a Provider about a Project, conducted at a Project
-Location. A Thread is either created by the user or spawned as a Run.
+A single conversation with a Provider, conducted at a Project Location — or,
+when it has none, in its own Scratch Directory. A Thread is about a Project
+unless it is a scratch Thread, and is either created by the user or spawned as
+a Run.
+
+## Scratch Thread
+
+A Thread that belongs to no Project and has no Project Location, for one-off
+work such as analysis. It is conducted in a Scratch Directory. Picking "No
+location" as a new Thread's project creates one.
+
+Scratch Threads are stored under the built-in Scratch Project (fixed id
+`scratch`), which exists on every host so that every Thread still has a
+project row. That is a storage detail: the Scratch Project has no Project
+Locations, takes no Routines, and cannot be edited, archived or deleted.
+
+## Scratch Directory
+
+Where a Thread with no Project Location is conducted: a directory of its own
+under `~/.polycode/scratch` on the machine hosting it, for one-off work that
+belongs to no checkout. It is not a Project Location — it has no row, no
+connection type, and is always local to the host. It is created with the
+Thread and deleted with it; archiving keeps it. A Thread whose Project Location
+is deleted is conducted in a Scratch Directory from then on.
+
+A Thread in an ordinary Project may also be created with no Project Location;
+it is conducted in a Scratch Directory while still belonging to that Project.
 
 ## Turn
 

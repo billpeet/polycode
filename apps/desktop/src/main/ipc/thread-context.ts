@@ -11,6 +11,7 @@ import { existsSync } from 'fs'
 import { getLocationForThread, getLocationByPath, getProjectById, getThreadWsl } from '../db/queries'
 import { getCachedGitStatus, invalidateGitCache } from '../git'
 import { windowsPathToWsl } from '../path-utils'
+import { ensureScratchDir, scratchDirForThread } from '../scratch'
 import type { SshConfig, WslConfig } from '../../shared/types'
 
 export { windowsPathToWsl }
@@ -34,19 +35,28 @@ export function getWslConfigForThread(threadId: string): WslConfig | null {
   return location?.wsl ?? null
 }
 
-/** Get the working directory from the thread's linked repo location. */
+/**
+ * Get the working directory from the thread's linked repo location, or its Scratch
+ * Directory when it has none. Does not create the Scratch Directory — this is the lookup
+ * for callers that only read.
+ */
 export function getWorkingDirForThread(threadId: string): string | null {
   const location = getLocationForThread(threadId)
-  return location?.path ?? null
+  return location?.path ?? scratchDirForThread(threadId)
 }
 
 /**
  * Return the effective working directory for a thread.
  * For WSL locations with a Windows-style path, convert to /mnt/... format.
+ *
+ * A thread with no location — created that way, or orphaned when its location was
+ * deleted — is conducted in its Scratch Directory, which is created here on demand:
+ * every caller is about to spawn a process in the result. Callers check `threadExists`
+ * first, so this does not leave directories behind for ids that name no thread.
  */
 export function getEffectiveWorkingDir(threadId: string): string {
   const location = getLocationForThread(threadId)
-  if (!location) return ''
+  if (!location) return ensureScratchDir(threadId) ?? ''
   if (location.connection_type === 'wsl' && /^[A-Za-z]:[/\\]/.test(location.path)) {
     return windowsPathToWsl(location.path)
   }

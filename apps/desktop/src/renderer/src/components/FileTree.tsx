@@ -290,11 +290,12 @@ export default function FileTree({ threadId }: { threadId: string }) {
   const threadProjectId = thread?.project_id ?? null
   const locationsLoaded = threadProjectId ? allLocations[threadProjectId] !== undefined : false
   const threadLocations = threadProjectId ? (allLocations[threadProjectId] ?? EMPTY_LOCATIONS) : EMPTY_LOCATIONS
-  // Use thread's location_id, or fallback to first location for the project
+  // A thread with no location is conducted in its Scratch Directory; it has no claim
+  // on any of the project's locations.
   const location = thread?.location_id
     ? threadLocations.find((l) => l.id === thread.location_id)
-    : threadLocations[0] ?? null
-  const projectPath = location?.path ?? null
+    : null
+  const projectPath = location?.path ?? thread?.scratch_path ?? null
 
   // Fetch locations if not loaded
   useEffect(() => {

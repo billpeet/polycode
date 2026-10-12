@@ -14,7 +14,7 @@ import {
   Settings,
   X,
 } from 'lucide-react'
-import { LOCAL_SOURCE_ID, type UnifiedProject, type UnifiedProjectMember } from '@polycode/shared'
+import { LOCAL_SOURCE_ID, isScratchProject, type UnifiedProject, type UnifiedProjectMember } from '@polycode/shared'
 import { loadUnifiedCollapsed, sectionKey, sourceKey, useUnifiedStore, type UnifiedQueueThread } from '../../stores/unified'
 import { useThreadStore } from '../../stores/threads'
 import { useProjectStore } from '../../stores/projects'
@@ -42,7 +42,8 @@ export interface ActiveSourceActions {
   unarchiveProject: (projectId: string) => Promise<void>
   checkoutLocation: (locationId: string, projectId: string) => Promise<void>
   returnLocationToPool: (locationId: string, projectId: string) => Promise<void>
-  newThread: (projectId: string, locationId: string) => void
+  /** A null location starts a scratch thread. */
+  newThread: (projectId: string, locationId: string | null) => void
   newWorktreeThread: (projectId: string, parentLocationId: string) => void
   removeWorktree: (location: RepoLocation, projectId: string) => Promise<void>
   editProject: (project: Project) => void
@@ -373,6 +374,17 @@ export default function UnifiedSidebar({
 
   function memberActions(member: UnifiedProjectMember) {
     const { sourceId, project } = member
+    // The built-in Scratch Project takes no locations and cannot be edited, archived or deleted.
+    if (isScratchProject(project.id)) {
+      return (
+        <HoverButton
+          title={`New scratch thread on ${member.sourceLabel} (no project, no location)`}
+          onClick={() => void onSource(sourceId, project.id, 'Could not start a thread', (a) => a.newThread(project.id, null))}
+        >
+          <Plus size={11} />
+        </HoverButton>
+      )
+    }
     return (
       <>
         <HoverButton title={`Add location on ${member.sourceLabel}`} onClick={() => void onSource(sourceId, project.id, 'Could not add location', (a) => a.openLocationDialog(project.id))}>

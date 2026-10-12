@@ -91,11 +91,13 @@ interface ThreadStore {
   draftPullRequest: DraftPullRequest | null
   /**
    * Opens the new-thread draft (or re-homes the existing one — one slot only).
-   * Nothing materializes until the first message is sent.
+   * Nothing materializes until the first message is sent. A null `locationId`
+   * drafts a scratch thread: one with no location, conducted in its own
+   * Scratch Directory on the host.
    */
-  openDraftThread: (projectId: string, locationId: string, opts?: DraftDestinationOptions) => void
+  openDraftThread: (projectId: string, locationId: string | null, opts?: DraftDestinationOptions) => void
   /** Re-points the draft at a different project/location (keeps typed text). */
-  setDraftThreadDestination: (projectId: string, locationId: string, opts?: DraftDestinationOptions) => void
+  setDraftThreadDestination: (projectId: string, locationId: string | null, opts?: DraftDestinationOptions) => void
   discardDraftThread: () => void
   /** Creates the real Thread (and worktree, if requested) for the draft. Returns the real thread id. */
   materializeDraftThread: (draftId: string) => Promise<string>
@@ -305,7 +307,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     const state = get()
     if (state.draftNewThreadId !== draftId) return draftId
     const draft = Object.values(state.byProject).flat().find((t) => t.id === draftId)
-    if (!draft || !draft.location_id) {
+    // No location is a destination in its own right (a scratch thread); only a
+    // worktree fork needs a parent location to fork from.
+    if (!draft || (state.draftNewWorktree && !draft.location_id)) {
       throw new Error('New thread draft is missing a destination')
     }
     const projectId = draft.project_id
@@ -314,7 +318,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
       let locationId = draft.location_id
       let threadName = draft.name
       const pullRequest = state.draftPullRequest
-      if (state.draftNewWorktree) {
+      if (state.draftNewWorktree && locationId) {
         // The worktree is part of the same create-on-send commitment: nothing
         // exists on disk until the first message is sent.
         const { useLocationStore } = await import('./locations')

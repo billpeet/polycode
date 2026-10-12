@@ -19,6 +19,10 @@ function insert(database: Database.Database, table: string, row: Record<string, 
 function rows(database: Database.Database, table: string): Record<string, unknown>[] {
   return database.prepare(`SELECT * FROM ${table}`).all() as Record<string, unknown>[]
 }
+/** Every project but the built-in Scratch Project, which each migrated database has. */
+function userProjects(database: Database.Database): Record<string, unknown>[] {
+  return rows(database, 'projects').filter((row) => row.id !== 'scratch')
+}
 function importSelected(projectIds: string[] = [], threadIds: string[] = []) {
   return importSeedDatabase(destination, { sourcePath, projectIds, threadIds })
 }
@@ -56,7 +60,7 @@ afterEach(() => {
 describe('selective production seeding', () => {
   it('imports project configuration without history, routines, secrets, or worktree ownership', () => {
     expect(importSelected(['p1'])).toMatchObject({ projectsCreated: 1, threadsCreated: 0, messagesCreated: 0 })
-    expect(rows(destination, 'projects').map((row) => row.id)).toEqual(['p1'])
+    expect(userProjects(destination).map((row) => row.id)).toEqual(['p1'])
     for (const table of ['threads', 'sessions', 'messages', 'routines', 'settings']) expect(rows(destination, table)).toEqual([])
     expect(rows(destination, 'repo_locations')[0]).toMatchObject({ id: 'l1', path: '/repo/p1', is_worktree: 0, parent_location_id: null, pool_id: null })
     expect(rows(destination, 'project_commands')[0].run_on_worktree_create).toBe(0)
@@ -84,14 +88,14 @@ describe('selective production seeding', () => {
     destination.prepare("UPDATE projects SET name = 'Dev name' WHERE id = 'p1'").run()
     destination.prepare("UPDATE threads SET status = 'running'").run()
     expect(importSelected([], ['t1'])).toMatchObject({ projectsCreated: 0, threadsCreated: 1 })
-    expect(rows(destination, 'projects')[0].name).toBe('Dev name')
+    expect(userProjects(destination)[0].name).toBe('Dev name')
     expect(rows(destination, 'threads').map((row) => row.status)).toEqual(['running', 'stopped'])
     expect(rows(destination, 'repo_locations')).toHaveLength(1)
   })
 
   it('rolls back the entire import if a selected project disappeared', () => {
     expect(() => importSelected(['p1', 'missing'])).toThrow('no longer exists')
-    expect(rows(destination, 'projects')).toEqual([])
+    expect(userProjects(destination)).toEqual([])
     expect(rows(destination, 'repo_locations')).toEqual([])
   })
 
@@ -100,7 +104,7 @@ describe('selective production seeding', () => {
     source.pragma(`user_version = ${LATEST_SCHEMA_VERSION + 1}`)
     expect(() => importSelected(['p1'])).toThrow('schema version')
     expect(source.pragma('user_version', { simple: true })).toBe(LATEST_SCHEMA_VERSION + 1)
-    expect(rows(destination, 'projects')).toEqual([])
+    expect(userProjects(destination)).toEqual([])
   })
 
   it('reads an older supported schema using destination column defaults', () => {

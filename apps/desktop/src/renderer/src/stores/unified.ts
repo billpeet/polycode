@@ -113,7 +113,7 @@ interface UnifiedStore {
    * Re-point the create-on-send draft at a Location on any source. Another source means
    * switching host, which resets the per-host stores, so the typed text is carried across.
    */
-  setDraftDestination: (sourceId: string, projectId: string, locationId: string, opts?: DraftDestinationOptions) => Promise<void>
+  setDraftDestination: (sourceId: string, projectId: string, locationId: string | null, opts?: DraftDestinationOptions) => Promise<void>
   toggleProject: (key: string, expanded: boolean) => void
   toggleLocation: (sourceId: string, locationId: string) => void
   togglePool: (sourceId: string, poolId: string) => void

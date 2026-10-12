@@ -85,6 +85,7 @@ import {
   createRoutine,
   createSlashCommand,
   createThreadForLocation,
+  createThreadWithoutLocation,
   createYouTrackServer,
   deleteCommand,
   deleteLocation,
@@ -111,6 +112,7 @@ import {
   listArchivedThreads,
   listCommands,
   listLocationPools,
+  listLocationlessThreadIds,
   listLocations,
   listMessages,
   listMessagesBySession,
@@ -287,6 +289,17 @@ import { listCursorAvailableModels } from '../cursor-models'
 import { listGrokAvailableModels } from '../grok-models'
 import { listKimiAvailableModels } from '../kimi-models'
 import { updateThreadKimiThinking } from '../db/queries'
+import { ensureScratchDir, removeScratchDir } from '../scratch'
+import { isScratchProject } from '@polycode/shared'
+
+/**
+ * Policy: the built-in Scratch Project is not the user's to reshape. It exists so that
+ * Threads can belong to no Project, so it cannot go away, and it has no Locations by
+ * definition. Clients hide these actions; this is the backstop for the remote surface.
+ */
+function assertNotScratchProject(projectId: string, action: string): void {
+  if (isScratchProject(projectId)) throw new Error(`The Scratch project cannot ${action}.`)
+}
 import {
   assertMainBranchCommitAllowed,
   getConfigForPath,
@@ -307,9 +320,10 @@ import {
  * surface of that family — a transposed ssh/wsl or a dropped fallback would still return a
  * plausible model list.
  *
- * `||`, not `??`: `getEffectiveWorkingDir` returns the empty string (not null) for a thread
- * whose location row has gone away, and an empty cwd must fall through to the location
- * lookup rather than be spawned in. Both pre-fold paths had the `||`.
+ * `||`, not `??`: `getEffectiveWorkingDir` returns the empty string (not null) when it has
+ * no directory to offer, and an empty cwd must fall through rather than be spawned in. A
+ * thread with no location no longer gets there — it resolves to its Scratch Directory — so
+ * the fallback now only fires for an id that cannot name one.
  *
  * The `threadId && threadExists(threadId)` test is truthiness on both pre-fold paths, so
  * `undefined`, `null` and `''` all skip the DB round-trip alike.
@@ -606,6 +620,7 @@ export const channelHandlers = {
   'projects:createFull': (_ctx, spec) => createFullProject(spec),
 
   'projects:update': (_ctx, id, name, gitUrl, allowMainBranchCommits, faviconPath) => {
+    assertNotScratchProject(id, 'be edited')
     const locationPaths = listLocations(id)
       .filter((item) => item.connection_type === 'local')
       .map((item) => item.path)
@@ -618,13 +633,22 @@ export const channelHandlers = {
     )
   },
 
+  // Threads go with the project by cascade, so their Scratch Directories are collected
+  // before the rows that name them disappear.
   'projects:delete': (_ctx, id) => {
+    assertNotScratchProject(id, 'be deleted')
     sessionManager.stopAll()
     commandManager.stopAll()
-    return deleteProject(id)
+    const scratchThreadIds = listLocationlessThreadIds(id)
+    const result = deleteProject(id)
+    for (const threadId of scratchThreadIds) void removeScratchDir(threadId)
+    return result
   },
 
-  'projects:archive': (_ctx, id) => archiveProject(id),
+  'projects:archive': (_ctx, id) => {
+    assertNotScratchProject(id, 'be archived')
+    return archiveProject(id)
+  },
 
   'projects:unarchive': (_ctx, id) => unarchiveProject(id),
 
@@ -636,8 +660,10 @@ export const channelHandlers = {
 
   // The optional pool/ssh/wsl arguments are passed through raw: db/queries.ts coalesces
   // every one of them before binding, so a `?? null` here would only be duplication.
-  'locations:create': (_ctx, projectId, label, connectionType, locationPath, poolId, ssh, wsl) =>
-    createLocation(projectId, label, connectionType, locationPath, poolId, ssh, wsl),
+  'locations:create': (_ctx, projectId, label, connectionType, locationPath, poolId, ssh, wsl) => {
+    assertNotScratchProject(projectId, 'have locations')
+    return createLocation(projectId, label, connectionType, locationPath, poolId, ssh, wsl)
+  },
 
   'locations:update': (_ctx, id, label, connectionType, locationPath, poolId, ssh, wsl) =>
     updateLocation(id, label, connectionType, locationPath, poolId, ssh, wsl),
@@ -649,8 +675,10 @@ export const channelHandlers = {
 
   'locations:removeWorktree': (_ctx, id) => removeWorktreeLocation(id),
 
-  'locations:clone': (_ctx, projectId, label, gitUrl, clonePath) =>
-    cloneLocation(projectId, label, gitUrl, clonePath),
+  'locations:clone': (_ctx, projectId, label, gitUrl, clonePath) => {
+    assertNotScratchProject(projectId, 'have locations')
+    return cloneLocation(projectId, label, gitUrl, clonePath)
+  },
 
   'locations:suggestPath': (_ctx, baseDir, repoName) => suggestUniquePath(baseDir, repoName),
 
@@ -898,12 +926,22 @@ export const channelHandlers = {
   'threads:listQueueSnoozed': (_ctx, search, limit, offset) =>
     listSnoozedQueueThreads(search, limit, offset),
 
-  'threads:create': (_ctx, projectId, name, locationId) =>
-    createThreadForLocation(projectId, name, locationId),
+  // No location means a scratch thread: it is conducted in its own Scratch Directory,
+  // created up front so the path the renderer is handed back already exists.
+  'threads:create': (_ctx, projectId, name, locationId) => {
+    if (locationId) return createThreadForLocation(projectId, name, locationId)
+    const thread = createThreadWithoutLocation(projectId, name)
+    ensureScratchDir(thread.id)
+    return thread
+  },
 
+  // The Scratch Directory goes with the thread. Not awaited: removal can be slow and
+  // never rejects, and for a thread that has a location it is a no-op.
   'threads:delete': (_ctx, id) => {
     sessionManager.remove(id)
-    return deleteThread(id)
+    const result = deleteThread(id)
+    void removeScratchDir(id)
+    return result
   },
 
   'threads:archivedCount': (_ctx, projectId) => archivedThreadCount(projectId),
@@ -930,7 +968,10 @@ export const channelHandlers = {
     const thread = getThreadById(id)
     const outcome = threadHasMessages(id) ? 'archived' as const : 'deleted' as const
     if (outcome === 'archived') archiveThread(id)
-    else deleteThread(id)
+    else {
+      deleteThread(id)
+      void removeScratchDir(id)
+    }
     return { outcome, worktree: worktreeCleanupCandidate(thread?.location_id ?? null) }
   },
 
@@ -1021,8 +1062,9 @@ export const channelHandlers = {
   },
 
   // `?? ''` is load-bearing, and is the reason the lookup is not inlined into a template:
-  // getThreadModifiedFiles declares `workingDir: string` and joins it as a path, so the
-  // null a thread without a location yields must be normalised before it gets there.
+  // getThreadModifiedFiles declares `workingDir: string` and joins it as a path, so a null
+  // must be normalised before it gets there. A thread without a location yields its
+  // Scratch Directory; null is left for an id that cannot name one.
   'threads:getModifiedFiles': (_ctx, threadId) =>
     getThreadModifiedFiles(threadId, getWorkingDirForThread(threadId) ?? ''),
 
