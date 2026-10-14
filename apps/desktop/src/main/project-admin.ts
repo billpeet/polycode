@@ -24,6 +24,7 @@ import { sessionManager } from './session/manager'
 import { commandManager } from './commands/manager'
 import { runSerialized } from './keyed-queue'
 import { withSpan } from './observability'
+import { TtlCache } from './ttl-cache'
 import { stopWatchesUnder } from './file-watch'
 import { discardDirectory } from './worktree-trash'
 import { NewProjectResult, NewProjectSpec, RepoLocation } from '../shared/types'
@@ -103,6 +104,36 @@ function comparablePath(path: string): string {
 }
 
 /**
+ * Live worktrees git reports for a parent checkout, or null when it is not a checkout.
+ * Cached per parent for 30s: a Remote Host's client polls `locations:list` every few
+ * seconds, and reading the registry fresh each time cost 13.9k `git worktree list`
+ * spawns (plus a stat per record) in 38 hours on one host. PolyCode's own worktree
+ * add/remove invalidate the entry; worktrees made outside PolyCode appear within 30s.
+ */
+const WORKTREE_REGISTRY_TTL_MS = 30_000
+const worktreeRegistry = new TtlCache<{ records: GitWorktreeRecord[] | null } | { error: unknown }>(WORKTREE_REGISTRY_TTL_MS)
+
+function readWorktreeRegistry(parentPath: string) {
+  return worktreeRegistry.get(comparablePath(parentPath), async () => {
+    try {
+      // A location that is not a git checkout (a notes folder, say) has no worktrees to
+      // reconcile; without this check every `locations:list` spawned a failing git for it.
+      if (!existsSync(join(parentPath, '.git'))) return { records: null }
+      const records = parseGitWorktreeList(await runGit(['worktree', 'list', '--porcelain', '-z'], parentPath))
+      return { records: records.filter((record) => !record.prunable && existsSync(record.path)) }
+    } catch (error) {
+      // Logged once per TTL rather than on every poll.
+      console.warn(`[worktree] Could not reconcile worktrees for "${parentPath}":`, error)
+      return { error }
+    }
+  })
+}
+
+export function invalidateWorktreeRegistry(parentPath: string): void {
+  worktreeRegistry.delete(comparablePath(parentPath))
+}
+
+/**
  * Reconcile PolyCode's local worktree locations with Git's authoritative registry.
  * External worktrees are persisted; stale PolyCode rows remain visible and are marked invalid.
  */
@@ -118,31 +149,25 @@ export async function listSyncedLocations(projectId: string): Promise<RepoLocati
   for (const parent of locations.filter((location) =>
     location.connection_type === 'local' && !location.is_worktree
   )) {
-    // A location that is not a git checkout (a notes folder, say) has no worktrees to
-    // reconcile; without this check every `locations:list` spawned a failing git for it.
-    if (!existsSync(join(parent.path, '.git'))) continue
-    try {
-      const records = parseGitWorktreeList(await runGit(['worktree', 'list', '--porcelain', '-z'], parent.path))
-      const validPaths = new Set<string>()
-      validPathsByParent.set(parent.id, validPaths)
-      const registeredForParent = new Set(
-        locations
-          .filter((location) => location.is_worktree && location.parent_location_id === parent.id)
-          .map((location) => comparablePath(location.path))
-      )
+    const registry = await readWorktreeRegistry(parent.path)
+    if ('error' in registry || registry.records === null) continue
+    const validPaths = new Set<string>()
+    validPathsByParent.set(parent.id, validPaths)
+    const registeredForParent = new Set(
+      locations
+        .filter((location) => location.is_worktree && location.parent_location_id === parent.id)
+        .map((location) => comparablePath(location.path))
+    )
 
-      for (const record of records) {
-        const pathKey = comparablePath(record.path)
-        if (record.prunable || !existsSync(record.path) || pathKey === comparablePath(parent.path)) continue
-        validPaths.add(pathKey)
-        if (!registeredForParent.has(pathKey)) {
-          const imported = createWorktreeLocation(parent, basename(record.path), record.path)
-          locations.push(imported)
-          registeredForParent.add(pathKey)
-        }
+    for (const record of registry.records) {
+      const pathKey = comparablePath(record.path)
+      if (pathKey === comparablePath(parent.path)) continue
+      validPaths.add(pathKey)
+      if (!registeredForParent.has(pathKey)) {
+        const imported = createWorktreeLocation(parent, basename(record.path), record.path)
+        locations.push(imported)
+        registeredForParent.add(pathKey)
       }
-    } catch (error) {
-      console.warn(`[worktree] Could not reconcile worktrees for "${parent.path}":`, error)
     }
   }
 
@@ -266,6 +291,7 @@ async function createLocalWorktreeUnqueued(parent: RepoLocation, label?: string 
   const branchName = createWorktreeBranchName(worktreeId)
   const baseRef = baseRefOverride ?? await resolveWorktreeBaseRef(parent.path)
   await runGit(['worktree', 'add', '-b', branchName, worktreePath, baseRef], parent.path)
+  invalidateWorktreeRegistry(parent.path)
   // The stored label is only a fallback: the UI names a worktree after its current branch.
   const location = createWorktreeLocation(parent, label?.trim() || worktreeId, worktreePath)
 
@@ -341,5 +367,6 @@ export async function removeWorktreeLocation(id: string): Promise<void> {
       console.warn(`[worktree] Removal of "${location.path}" waited ${waitedMs.toFixed(0)}ms behind another worktree operation.`)
     }
   })
+  if (parent?.path) invalidateWorktreeRegistry(parent.path)
   await phase('delete-location', () => deleteLocation(id))
 }

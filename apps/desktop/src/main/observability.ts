@@ -11,13 +11,14 @@ import {
   type SpanContext,
 } from '@opentelemetry/api'
 import { createHash } from 'node:crypto'
+import { hostname } from 'node:os'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { OTLPLogExporter } from '@opentelemetry/exporter-logs-otlp-http'
 import { OTLPMetricExporter } from '@opentelemetry/exporter-metrics-otlp-http'
 import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http'
 import { resourceFromAttributes } from '@opentelemetry/resources'
 import { BatchLogRecordProcessor, LoggerProvider } from '@opentelemetry/sdk-logs'
-import { AggregationType, PeriodicExportingMetricReader, MeterProvider } from '@opentelemetry/sdk-metrics'
+import { AggregationType, InstrumentType, PeriodicExportingMetricReader, MeterProvider } from '@opentelemetry/sdk-metrics'
 import { BatchSpanProcessor, NodeTracerProvider } from '@opentelemetry/sdk-trace-node'
 import {
   ATTR_SERVICE_NAME,
@@ -35,6 +36,8 @@ export interface ObservabilityConfig {
   serviceInstanceId?: string
   /** Stable per installation (derived from the userData path), for grouping across launches. */
   installId?: string
+  /** Hash of the hostname: tells apart machines whose userData paths are identical. */
+  machineId?: string
   environment: string
   exportIntervalMs?: number
 }
@@ -89,11 +92,16 @@ export function observabilityConfigFromEnv(serviceVersion: string, userDataPath?
  * reported call rates a thousand times too high. The id is now per process; the
  * installation hash moves to its own attribute so launches can still be grouped.
  */
-function installIdentity(userDataPath: string): Pick<ObservabilityConfig, 'serviceInstanceId' | 'installId'> {
+function installIdentity(userDataPath: string): Pick<ObservabilityConfig, 'serviceInstanceId' | 'installId' | 'machineId'> {
   const installId = createHash('sha256').update(userDataPath).digest('hex')
+  // The userData path is the same on every machine with the same Windows user name, so
+  // the install hash alone merged a Remote Host and its client into one "install". The
+  // hostname is hashed, never exported as-is.
+  const machineId = createHash('sha256').update(hostname().toLowerCase()).digest('hex').slice(0, 8)
   return {
     installId,
-    serviceInstanceId: `${installId.slice(0, 16)}-${process.pid}-${Date.now().toString(36)}`,
+    machineId,
+    serviceInstanceId: `${installId.slice(0, 16)}-${machineId}-${process.pid}-${Date.now().toString(36)}`,
   }
 }
 
@@ -108,6 +116,7 @@ export function initializeObservability(config: ObservabilityConfig): boolean {
     'process.type': 'electron-main',
     ...(config.serviceInstanceId ? { 'service.instance.id': config.serviceInstanceId } : {}),
     ...(config.installId ? { 'polycode.install.id': config.installId } : {}),
+    ...(config.machineId ? { 'polycode.machine.id': config.machineId } : {}),
   })
   const exporterOptions = { headers: config.headers }
 
@@ -120,14 +129,16 @@ export function initializeObservability(config: ObservabilityConfig): boolean {
   })
   const meterProvider = new MeterProvider({
     resource,
-    // Histograms default to millisecond-shaped buckets topping out at 10,000. The first
-    // day of `response_bytes` showed every transcript in the +Inf bucket (avg 1.2MB), so a
-    // byte histogram gets byte boundaries: 1KB to 64MB, doubling.
+    // Histograms default to millisecond-shaped buckets topping out at 10,000, so a byte
+    // histogram gets byte boundaries: 1KB to 4GB, doubling. The selector must name the
+    // instrument type: matching on unit alone also caught the memory *gauges* (unit `By`)
+    // and turned them into histograms capped at 64MB, which hid heap size from 0.14.297.
     views: [{
+      instrumentType: InstrumentType.HISTOGRAM,
       instrumentUnit: 'By',
       aggregation: {
         type: AggregationType.EXPLICIT_BUCKET_HISTOGRAM,
-        options: { boundaries: Array.from({ length: 17 }, (_, i) => 1024 * 2 ** i) },
+        options: { boundaries: Array.from({ length: 23 }, (_, i) => 1024 * 2 ** i) },
       },
     }],
     readers: [new PeriodicExportingMetricReader({
