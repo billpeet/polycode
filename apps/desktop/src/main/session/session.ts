@@ -12,6 +12,7 @@ import { getThreadById } from '../db/queries'
 import { CLIDriver } from '../driver/types'
 import { BackgroundTerminal, OutputEvent, ThreadStatus, SendOptions, Question, QuestionAnswerValue, PermissionRequest, Session as SessionInfo, SshConfig, WslConfig, Provider, resolveEffectiveModel, SubscriptionUsageSnapshot } from '../../shared/types'
 import { logThreadEvent } from '../thread-logger'
+import { endTurn, noteThreadStatus } from '../turn-tracker'
 import { createRunner } from '../driver/runner'
 import { killWindowsProcessTree } from '../process-control'
 import {
@@ -375,6 +376,7 @@ export class Session {
   }
 
   forceReset(): void {
+    endTurn(this.threadId, 'abandoned')
     this.abandoned = true
     this.stopped = false
     // handleDone early-returns for abandoned sessions — resolve any waiter
@@ -1073,6 +1075,7 @@ export class Session {
   }
 
   private setStatus(status: ThreadStatus): void {
+    noteThreadStatus(this.threadId, status)
     updateThreadStatus(this.threadId, status)
     this.emit(`thread:status:${this.threadId}`, status)
   }

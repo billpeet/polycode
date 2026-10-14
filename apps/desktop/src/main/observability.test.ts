@@ -82,5 +82,7 @@ it('derives a stable installation identity and a per-process instance identity f
   expect(first.installId).toMatch(/^[a-f0-9]{64}$/)
   expect(observabilityConfigFromEnv('2', '/users/alice/polycode').installId).toBe(first.installId)
   expect(observabilityConfigFromEnv('1', '/users/bob/polycode').installId).not.toBe(first.installId)
-  expect(first.serviceInstanceId).toMatch(new RegExp(`^${first.installId!.slice(0, 16)}-${process.pid}-[0-9a-z]+$`))
+  expect(first.machineId).toMatch(/^[a-f0-9]{8}$/)
+  expect(observabilityConfigFromEnv('1', '/users/bob/polycode').machineId).toBe(first.machineId)
+  expect(first.serviceInstanceId).toMatch(new RegExp(`^${first.installId!.slice(0, 16)}-${first.machineId}-${process.pid}-[0-9a-z]+$`))
 })

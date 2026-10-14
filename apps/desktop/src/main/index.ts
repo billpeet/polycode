@@ -34,6 +34,7 @@ import { emitAppEvent, sendToRenderer } from './app-events'
 import { commandManager } from './commands/manager'
 import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
+import { startStallProfiler, stopStallProfiler } from './stall-profiler'
 import {
   initializeObservability,
   observabilityConfigFromEnv,
@@ -56,6 +57,7 @@ const beforeSendCrash = installCrashDiagnostics({
 
 installAppLogger()
 installMainThreadStallMonitor()
+startStallProfiler()
 
 ipcMain.on('log:write', (_event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return
@@ -408,6 +410,7 @@ registerAppShutdown(app, {
     stopAllFileWatches()
     ptyManager.killAll()
     stopMemoryTelemetry()
+    void stopStallProfiler()
   },
   awaitProducers: async () => {
     await Promise.allSettled([
