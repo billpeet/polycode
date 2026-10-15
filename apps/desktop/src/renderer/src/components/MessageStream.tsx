@@ -466,11 +466,14 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   const messages = sessionMessages ?? threadMessages ?? EMPTY
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const containerRef = useRef<HTMLDivElement>(null)
+  const virtualListRef = useRef<HTMLDivElement>(null)
+  const agentHeaderRef = useRef<HTMLDivElement>(null)
   const tailRef = useRef<HTMLDivElement>(null)
   const shouldFollowBottom = useRef(true)
   const lastScrollTopRef = useRef(0)
   const [showLatestButton, setShowLatestButton] = useState(false)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
+  const [scrollMargin, setScrollMargin] = useState(0)
 
   const allEntries = useMemo(() => groupByAgent(messages), [messages])
   const isolatedGroup = useMemo(
@@ -510,6 +513,28 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     () => entries.slice(virtualizedRowCount),
     [entries, virtualizedRowCount]
   )
+  const hasVirtualRows = virtualizedRowCount > 0
+  const hasIsolatedGroup = isolatedGroup !== null
+
+  // Virtual ranges use scroll-container coordinates. The isolated agent's prompt
+  // precedes the list and can be much taller than the viewport; without its
+  // offset, scrolling past it unmounts rows that are still on screen.
+  useLayoutEffect(() => {
+    const container = containerRef.current
+    const list = virtualListRef.current
+    if (!container || !list) {
+      setScrollMargin(0)
+      return
+    }
+    const updateOffset = () => {
+      setScrollMargin(list.getBoundingClientRect().top - container.getBoundingClientRect().top + container.scrollTop)
+    }
+    updateOffset()
+    const observer = new ResizeObserver(updateOffset)
+    observer.observe(container)
+    if (agentHeaderRef.current) observer.observe(agentHeaderRef.current)
+    return () => observer.disconnect()
+  }, [agentFilter, hasVirtualRows, hasIsolatedGroup])
 
   // Track container width for height estimation
   useEffect(() => {
@@ -538,6 +563,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
       return estimateEntryHeight(entry, containerWidth)
     },
     overscan: 5,
+    scrollMargin,
     // Mirror every ResizeObserver measurement into heightCache. estimateSize
     // reads heightCache, and for a mounted row whose real size happened to
     // equal its estimate TanStack never records a size of its own (resizeItem
@@ -711,7 +737,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
 
         {/* Isolated sub-agent header: label, description, and the full prompt it was given */}
         {isolatedGroup && (
-          <div className="mb-3 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
+          <div ref={agentHeaderRef} className="mb-3 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>SUBAGENT</span>
               <span className="font-mono" style={{ fontSize: '0.8rem', color: 'var(--color-claude)' }}>{isolatedGroup.label}</span>
@@ -734,7 +760,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
 
         {/* Virtualized rows (historical messages) */}
         {virtualizedRowCount > 0 && (
-          <div className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
+          <div ref={virtualListRef} className="relative" style={{ height: `${rowVirtualizer.getTotalSize()}px` }}>
             {virtualRows.map((virtualRow) => {
               const entry = entries[virtualRow.index]
               if (!entry) return null
@@ -745,7 +771,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
                   data-entry-key={entry.key}
                   ref={measureVirtualRow}
                   className="absolute left-0 top-0 w-full pb-2"
-                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  style={{ transform: `translateY(${virtualRow.start - scrollMargin}px)` }}
                 >
                   {renderEntry(entry, { onIsolateAgent })}
                 </div>
