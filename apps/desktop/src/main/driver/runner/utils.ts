@@ -1,6 +1,6 @@
 import { existsSync } from 'fs'
 import { homedir } from 'os'
-import { spawnSync } from 'child_process'
+import { execFile, spawnSync } from 'child_process'
 import path from 'path'
 import { SshConfig } from '../../../shared/types'
 
@@ -37,29 +37,127 @@ function uniqPaths(values: Array<string | null | undefined>): string[] {
   return result
 }
 
-function readRegistryPath(scope: 'user' | 'machine'): string {
-  if (process.platform !== 'win32') return ''
+const REGISTRY_KEYS = {
+  user: 'HKCU\\Environment',
+  machine: 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment',
+} as const
 
-  const key = scope === 'user'
-    ? 'HKCU\\Environment'
-    : 'HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'
+function parseRegistryPath(stdout: string | undefined): string {
+  const line = stdout?.split(/\r?\n/).find((entry) => /^\s*Path\s+REG_/.test(entry))
+  return line ? line.replace(/^\s*Path\s+REG_\w+\s+/, '').trim() : ''
+}
 
+function readRegistryPathSync(scope: keyof typeof REGISTRY_KEYS): string {
   try {
-    const result = spawnSync('reg', ['query', key, '/v', 'Path'], {
-      encoding: 'utf8',
-      windowsHide: true,
-    })
-    if (result.status !== 0 || !result.stdout) return ''
-
-    const line = result.stdout
-      .split(/\r?\n/)
-      .find((entry) => /^\s*Path\s+REG_/.test(entry))
-    if (!line) return ''
-
-    return line.replace(/^\s*Path\s+REG_\w+\s+/, '').trim()
+    const result = spawnSync('reg', ['query', REGISTRY_KEYS[scope], '/v', 'Path'], { encoding: 'utf8', windowsHide: true })
+    return result.status === 0 ? parseRegistryPath(result.stdout) : ''
   } catch {
     return ''
   }
+}
+
+function readRegistryPathAsync(scope: keyof typeof REGISTRY_KEYS): Promise<string> {
+  return new Promise((resolve) => {
+    try {
+      execFile('reg', ['query', REGISTRY_KEYS[scope], '/v', 'Path'], { encoding: 'utf8', windowsHide: true }, (error, stdout) => {
+        resolve(error ? '' : parseRegistryPath(stdout))
+      })
+    } catch {
+      resolve('')
+    }
+  })
+}
+
+/**
+ * The registry PATH (unexpanded) and which install directories exist, cached.
+ *
+ * `augmentWindowsPath` runs for every child process PolyCode starts on Windows. It used to
+ * read both registry PATHs with `spawnSync('reg')` and stat ten directories each time, on
+ * the main thread: 34ms idle and 156ms (p95 241ms) with the CPU busy. Stall profiles from
+ * a host running 7 concurrent Turns put 71% of all main-thread stall time in that
+ * `spawnSync`. The snapshot is read synchronously at most once per process (or not at all
+ * if `warmWindowsPathCache` finishes first) and refreshed asynchronously when stale, so a
+ * PATH change in the registry reaches new child processes within a few minutes.
+ */
+const WINDOWS_PATH_TTL_MS = 5 * 60_000
+interface WindowsPathSnapshot { registryPath: string; dirExists: Map<string, boolean>; at: number }
+let windowsPathSnapshot: WindowsPathSnapshot | null = null
+let windowsPathRefresh: Promise<void> | null = null
+let windowsPathClock: () => number = () => Date.now()
+
+function snapshotDirs(candidates: Array<string | null>): Map<string, boolean> {
+  return new Map(candidates.filter((dir): dir is string => !!dir).map((dir) => [dir.toLowerCase(), existsSync(dir)]))
+}
+
+/** Whether `dir` exists, per the snapshot; a directory it has not seen is stat'd once. */
+function snapshotHasDir(snapshot: WindowsPathSnapshot, dir: string): boolean {
+  const key = dir.toLowerCase()
+  let exists = snapshot.dirExists.get(key)
+  if (exists === undefined) {
+    exists = existsSync(dir)
+    snapshot.dirExists.set(key, exists)
+  }
+  return exists
+}
+
+function refreshWindowsPathSnapshot(candidates: Array<string | null>): Promise<void> {
+  windowsPathRefresh ??= Promise.all([readRegistryPathAsync('user'), readRegistryPathAsync('machine')])
+    .then(([user, machine]) => {
+      windowsPathSnapshot = {
+        registryPath: [user, machine].filter(Boolean).join(path.delimiter),
+        dirExists: snapshotDirs(candidates),
+        at: windowsPathClock(),
+      }
+    })
+    .finally(() => { windowsPathRefresh = null })
+  return windowsPathRefresh
+}
+
+function currentWindowsPathSnapshot(candidates: Array<string | null>): WindowsPathSnapshot {
+  if (!windowsPathSnapshot) {
+    windowsPathSnapshot = {
+      registryPath: [readRegistryPathSync('user'), readRegistryPathSync('machine')].filter(Boolean).join(path.delimiter),
+      dirExists: snapshotDirs(candidates),
+      at: windowsPathClock(),
+    }
+  } else if (windowsPathClock() - windowsPathSnapshot.at >= WINDOWS_PATH_TTL_MS) {
+    void refreshWindowsPathSnapshot(candidates)
+  }
+  return windowsPathSnapshot
+}
+
+/** Fill the cache in the background at startup so no spawn pays for the first read. */
+export function warmWindowsPathCache(): Promise<void> {
+  if (process.platform !== 'win32' || windowsPathSnapshot) return Promise.resolve()
+  return refreshWindowsPathSnapshot(windowsCandidateDirs(process.env))
+}
+
+/** Test seam. */
+export function resetWindowsPathCacheForTest(clock: () => number = () => Date.now()): void {
+  windowsPathSnapshot = null
+  windowsPathRefresh = null
+  windowsPathClock = clock
+}
+
+function windowsCandidateDirs(env: NodeJS.ProcessEnv): Array<string | null> {
+  const userProfile = env.USERPROFILE
+  const appData = env.APPDATA
+  const localAppData = env.LOCALAPPDATA
+  const programFiles = env.ProgramFiles
+  const programData = env.ProgramData
+  const chocolateyInstall = env.ChocolateyInstall
+  return [
+    userProfile ? path.join(userProfile, '.bun', 'bin') : null,
+    userProfile ? path.join(userProfile, '.local', 'bin') : null,
+    userProfile ? path.join(userProfile, '.cargo', 'bin') : null,
+    userProfile ? path.join(userProfile, 'scoop', 'shims') : null,
+    appData ? path.join(appData, 'npm') : null,
+    localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
+    chocolateyInstall ? path.join(chocolateyInstall, 'bin') : null,
+    programData ? path.join(programData, 'chocolatey', 'bin') : null,
+    programFiles ? path.join(programFiles, 'nodejs') : null,
+    programFiles ? path.join(programFiles, 'Git', 'usr', 'bin') : null,
+  ]
 }
 
 function expandWindowsEnvVars(value: string, env: NodeJS.ProcessEnv): string {
@@ -76,35 +174,18 @@ export function augmentWindowsPath(env: NodeJS.ProcessEnv = process.env): NodeJS
 
   const pathKey = getWindowsPathKey(env)
   const currentPath = env[pathKey] ?? env.PATH ?? env.Path ?? ''
-  const userProfile = env.USERPROFILE
-  const appData = env.APPDATA
-  const localAppData = env.LOCALAPPDATA
-  const programFiles = env.ProgramFiles
-  const programData = env.ProgramData
-  const chocolateyInstall = env.ChocolateyInstall
-
-  const registryPath = [readRegistryPath('user'), readRegistryPath('machine')]
+  const candidateDirs = windowsCandidateDirs(env)
+  const snapshot = currentWindowsPathSnapshot(candidateDirs)
+  const registryPath = snapshot.registryPath
+    .split(path.delimiter)
     .filter(Boolean)
     .map((value) => expandWindowsEnvVars(value, env))
     .join(path.delimiter)
 
-  const candidateDirs = [
-    userProfile ? path.join(userProfile, '.bun', 'bin') : null,
-    userProfile ? path.join(userProfile, '.local', 'bin') : null,
-    userProfile ? path.join(userProfile, '.cargo', 'bin') : null,
-    userProfile ? path.join(userProfile, 'scoop', 'shims') : null,
-    appData ? path.join(appData, 'npm') : null,
-    localAppData ? path.join(localAppData, 'Microsoft', 'WindowsApps') : null,
-    chocolateyInstall ? path.join(chocolateyInstall, 'bin') : null,
-    programData ? path.join(programData, 'chocolatey', 'bin') : null,
-    programFiles ? path.join(programFiles, 'nodejs') : null,
-    programFiles ? path.join(programFiles, 'Git', 'usr', 'bin') : null,
-  ]
-
   const seen = new Set<string>()
   const parts: string[] = []
   for (const dir of candidateDirs) {
-    if (!dir || !existsSync(dir)) continue
+    if (!dir || !snapshotHasDir(snapshot, dir)) continue
     const key = dir.toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)

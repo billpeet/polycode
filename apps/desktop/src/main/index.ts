@@ -35,6 +35,8 @@ import { commandManager } from './commands/manager'
 import { flushAppLogs, installAppLogger, writeFatalLog, writeRendererLog } from './app-logger'
 import { installIpcProfiling, installMainThreadStallMonitor } from './perf'
 import { startStallProfiler, stopStallProfiler } from './stall-profiler'
+// Exported from the runner seam: the first child process should not pay for the registry read.
+import { warmWindowsPathCache } from './driver/runner'
 import {
   initializeObservability,
   observabilityConfigFromEnv,
@@ -58,6 +60,7 @@ const beforeSendCrash = installCrashDiagnostics({
 installAppLogger()
 installMainThreadStallMonitor()
 startStallProfiler()
+void warmWindowsPathCache()
 
 ipcMain.on('log:write', (_event, payload: unknown) => {
   if (!payload || typeof payload !== 'object') return
