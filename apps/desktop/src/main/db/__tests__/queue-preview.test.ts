@@ -6,7 +6,7 @@ let database: Database.Database
 
 vi.mock('../index', () => ({ getDb: () => database }))
 
-const { createThread, listQueueThreads } = await import('../queries')
+const { createThread, listQueueThreads, listQueueSqlForTest } = await import('../queries')
 
 let threadId: string
 let tick = 0
@@ -85,5 +85,26 @@ describe('queue preview', () => {
     addMessage('user', 'hello')
     addMessage('assistant', 'x'.repeat(500))
     expect(preview().preview).toHaveLength(200)
+  })
+})
+
+describe('queue preview performance guards', () => {
+  it('keeps the first 200 characters when a turn streams more than 200 text rows', () => {
+    addMessage('user', 'go')
+    for (let i = 0; i < 300; i++) addMessage('assistant', i % 10 === 0 ? 'X' : 'y')
+    const expected = Array.from({ length: 200 }, (_, i) => (i % 10 === 0 ? 'X' : 'y')).join('')
+    expect(preview()).toEqual({ preview: expected, preview_is_error: false })
+  })
+
+  it('answers every preview lookup from the migration 8 partial indexes, never a thread scan', () => {
+    const plan = database
+      .prepare(`EXPLAIN QUERY PLAN ${listQueueSqlForTest()}`)
+      .all(new Date().toISOString()) as Array<{ detail: string }>
+    const details = plan.map((row) => row.detail).join('\n')
+    expect(details).toContain('idx_messages_thread_user_created')
+    expect(details).toContain('idx_messages_thread_system_created')
+    expect(details).toContain('idx_messages_thread_text_created')
+    // The only messages access left on the general index is the EXISTS probe.
+    expect(details.match(/idx_messages_thread_created/g)?.length ?? 0).toBeLessThanOrEqual(1)
   })
 })

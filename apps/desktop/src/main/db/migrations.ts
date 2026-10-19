@@ -14,6 +14,7 @@ const migrations: Migration[] = [
   { version: 5, up: addProjectFaviconOverride },
   { version: 6, up: addThreadCostUsage },
   { version: 7, up: addScratchProject },
+  { version: 8, up: addQueuePreviewIndexes },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -43,6 +44,36 @@ export function runMigrations(database: Database.Database): void {
       database.pragma(`user_version = ${migration.version}`)
     })()
   }
+}
+
+/**
+ * Version 8 — partial indexes for the Queue preview subqueries.
+ *
+ * Every streamed delta is its own `messages` row, so the Queue's per-thread previews
+ * ("the assistant text since the last user message", "an error after the last text")
+ * scanned the thread's rows filtering on `role` and `json_extract(metadata)`, neither of
+ * which `idx_messages_thread_created` covers. On a Remote Host running seven Turns with
+ * test suites loading its disk, single `threads:listQueue` calls blocked the main process
+ * for up to 26s. User and system messages are a sliver of the rows, so those two indexes
+ * are tiny; the plain-text index is larger but lets the preview read only text rows.
+ * On a 2.5M-row (3.2GB) database they build in 7.5s warm and 12s cold, once, at the first
+ * launch after the update.
+ */
+function addQueuePreviewIndexes(database: Database.Database): void {
+  // One-time, and long enough on a large database (about 12s cold on 2.5M rows) that a
+  // slow first launch after the update should be explainable from the log.
+  console.info('[db] Building Queue preview indexes (one-time)…')
+  const startedAt = Date.now()
+  database.exec(`
+    CREATE INDEX IF NOT EXISTS idx_messages_thread_user_created
+      ON messages(thread_id, created_at) WHERE role = 'user';
+    CREATE INDEX IF NOT EXISTS idx_messages_thread_system_created
+      ON messages(thread_id, created_at) WHERE role = 'system';
+    CREATE INDEX IF NOT EXISTS idx_messages_thread_text_created
+      ON messages(thread_id, created_at)
+      WHERE role = 'assistant' AND (metadata IS NULL OR json_extract(metadata, '$.type') IS NULL);
+  `)
+  console.info(`[db] Queue preview indexes built in ${Date.now() - startedAt}ms`)
 }
 
 /**

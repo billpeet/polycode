@@ -551,23 +551,29 @@ type QueueThreadRow = ThreadRow & {
  * and plan rows do, and are skipped. Only `role='system'` error rows count as
  * errors, and only when nothing from the assistant is newer.
  */
+// The predicates below must match the partial indexes from migration 8 term for term,
+// or SQLite cannot use them and these go back to scanning every row of the thread.
+const PLAIN_ASSISTANT_TEXT = "role = 'assistant' AND (metadata IS NULL OR json_extract(metadata, '$.type') IS NULL)"
+const QUEUE_LAST_USER_AT = `(SELECT created_at FROM messages WHERE thread_id = t.id AND role = 'user' ORDER BY created_at DESC LIMIT 1)`
+const QUEUE_LAST_TEXT_AT = `(SELECT created_at FROM messages WHERE thread_id = t.id AND ${PLAIN_ASSISTANT_TEXT} ORDER BY created_at DESC LIMIT 1)`
+// `LIMIT 200`: every row contributes at least one character, so the first 200 rows hold
+// the first 200 characters; concatenating the whole turn's text only to keep 200 of it was
+// the costliest part of the old query.
 const QUEUE_PREVIEW_ASSISTANT_TEXT = `(
   SELECT substr(group_concat(m.content, ''), 1, 200)
   FROM (
     SELECT content FROM messages
-    WHERE thread_id = t.id AND role = 'assistant'
-      AND (metadata IS NULL OR json_extract(metadata, '$.type') IS NULL)
-      AND created_at > COALESCE((SELECT MAX(created_at) FROM messages WHERE thread_id = t.id AND role = 'user'), '')
+    WHERE thread_id = t.id AND ${PLAIN_ASSISTANT_TEXT}
+      AND created_at > COALESCE(${QUEUE_LAST_USER_AT}, '')
     ORDER BY created_at ASC, rowid ASC
+    LIMIT 200
   ) m
 )`
 const QUEUE_PREVIEW_LAST_ERROR = `(
   SELECT substr(content, 1, 200) FROM messages
   WHERE thread_id = t.id AND role = 'system' AND json_extract(metadata, '$.type') = 'error'
-    AND created_at > COALESCE((SELECT MAX(created_at) FROM messages WHERE thread_id = t.id AND role = 'user'), '')
-    AND created_at >= COALESCE((SELECT MAX(created_at) FROM messages
-                                WHERE thread_id = t.id AND role = 'assistant'
-                                  AND (metadata IS NULL OR json_extract(metadata, '$.type') IS NULL)), '')
+    AND created_at > COALESCE(${QUEUE_LAST_USER_AT}, '')
+    AND created_at >= COALESCE(${QUEUE_LAST_TEXT_AT}, '')
   ORDER BY created_at DESC, rowid DESC LIMIT 1
 )`
 
@@ -599,16 +605,21 @@ function rowToQueueThread(r: QueueThreadRow): QueueThread {
  * Bucketing (needs-attention vs running) happens in the renderer, where live
  * push-driven status overrides the persisted snapshot.
  */
-export function listQueueThreads(): QueueThread[] {
-  const rows = getDb('listQueueThreads')
-    .prepare(
-      `SELECT ${QUEUE_THREAD_COLUMNS}
+const LIST_QUEUE_SQL = `SELECT ${QUEUE_THREAD_COLUMNS}
        FROM threads t
        JOIN projects p ON p.id = t.project_id
        LEFT JOIN repo_locations l ON l.id = t.location_id
        WHERE t.archived = 0 AND p.archived_at IS NULL AND ${THREAD_VISIBILITY_FILTER} AND ${THREAD_NOT_SNOOZED}
        ORDER BY ${THREAD_TURN_ACTIVITY} DESC`
-    )
+
+/** Test seam: the Queue's SQL, so a test can assert its query plan uses the preview indexes. */
+export function listQueueSqlForTest(): string {
+  return LIST_QUEUE_SQL
+}
+
+export function listQueueThreads(): QueueThread[] {
+  const rows = getDb('listQueueThreads')
+    .prepare(LIST_QUEUE_SQL)
     .all(nowIso()) as QueueThreadRow[]
   return rows.map(rowToQueueThread)
 }
