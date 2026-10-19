@@ -30,6 +30,9 @@ describe('database migrations', () => {
     expect(indexes).toEqual([
       'idx_messages_session_created',
       'idx_messages_thread_created',
+      'idx_messages_thread_system_created',
+      'idx_messages_thread_text_created',
+      'idx_messages_thread_user_created',
       'idx_repo_locations_project_created',
       'idx_routines_project',
       'idx_sessions_thread_active',
