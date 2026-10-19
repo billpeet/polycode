@@ -388,6 +388,9 @@ export default function App() {
         modifiedFilesByThread: {},
       })
       void fetchProjects()
+      // The Sidebar only fetches the Queue when the view mode changes, so the cleared
+      // list would otherwise stay empty until the user toggled to Tree and back.
+      if (useUiStore.getState().sidebarViewMode === 'queue') void useThreadStore.getState().fetchQueue()
     })
   }, [fetchProjects])
 
