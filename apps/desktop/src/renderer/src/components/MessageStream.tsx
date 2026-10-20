@@ -21,6 +21,8 @@ const EMPTY: Message[] = []
 const GROUP_THRESHOLD = 3
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8
 const AUTO_SCROLL_THRESHOLD_PX = 64
+/** Start loading the previous page this far from the top, so it usually lands before the user gets there. */
+const LOAD_OLDER_THRESHOLD_PX = 800
 
 // Persistent height cache — survives thread switches and re-renders.
 // Keyed by entry.key (message id or group id).
@@ -464,6 +466,9 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   const sessionMessages = useMessageStore((s) => sessionId ? s.messagesBySession[sessionId] : undefined)
   const threadMessages = useMessageStore((s) => s.messagesByThread[threadId])
   const messages = sessionMessages ?? threadMessages ?? EMPTY
+  const paging = useMessageStore((s) => sessionMessages ? s.pagingBySession[sessionId ?? ''] : s.pagingByThread[threadId])
+  const hasOlder = paging?.hasOlder ?? false
+  const loadingOlder = paging?.loadingOlder ?? false
   const status = useThreadStore((s) => s.statusMap[threadId] ?? 'idle')
   const containerRef = useRef<HTMLDivElement>(null)
   const virtualListRef = useRef<HTMLDivElement>(null)
@@ -474,6 +479,8 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
   const [showLatestButton, setShowLatestButton] = useState(false)
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
   const [scrollMargin, setScrollMargin] = useState(0)
+  // Scroll geometry from just before an older page was requested; restored once it is prepended.
+  const prependAnchorRef = useRef<{ scrollHeight: number; scrollTop: number; firstId: string | undefined } | null>(null)
 
   const allEntries = useMemo(() => groupByAgent(messages), [messages])
   const isolatedGroup = useMemo(
@@ -518,7 +525,8 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
 
   // Virtual ranges use scroll-container coordinates. The isolated agent's prompt
   // precedes the list and can be much taller than the viewport; without its
-  // offset, scrolling past it unmounts rows that are still on screen.
+  // offset, scrolling past it unmounts rows that are still on screen. The same goes
+  // for the "Load earlier messages" row, which comes and goes with `hasOlder`.
   useLayoutEffect(() => {
     const container = containerRef.current
     const list = virtualListRef.current
@@ -534,7 +542,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     observer.observe(container)
     if (agentHeaderRef.current) observer.observe(agentHeaderRef.current)
     return () => observer.disconnect()
-  }, [agentFilter, hasVirtualRows, hasIsolatedGroup])
+  }, [agentFilter, hasVirtualRows, hasIsolatedGroup, hasOlder])
 
   // Track container width for height estimation
   useEffect(() => {
@@ -609,6 +617,29 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
     lastScrollTopRef.current = 0
     setShowLatestButton(false)
   }, [threadId])
+
+  const loadOlder = useCallback(() => {
+    const el = containerRef.current
+    const state = useMessageStore.getState()
+    const current = sessionMessages ? state.pagingBySession[sessionId ?? ''] : state.pagingByThread[threadId]
+    if (!current?.hasOlder || current.loadingOlder) return
+    prependAnchorRef.current = el ? { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop, firstId: messages[0]?.id } : null
+    const load = sessionMessages && sessionId ? state.fetchOlderBySession(sessionId) : state.fetchOlder(threadId)
+    void load.catch(() => { prependAnchorRef.current = null })
+  }, [messages, sessionMessages, sessionId, threadId])
+
+  // Prepending an older page grows the content above the viewport. Scroll anchoring is
+  // off (see the container style), so move scrollTop by the growth to keep the rows the
+  // user was reading in place.
+  useLayoutEffect(() => {
+    const anchor = prependAnchorRef.current
+    const el = containerRef.current
+    if (!anchor || !el || messages[0]?.id === anchor.firstId) return
+    prependAnchorRef.current = null
+    if (shouldFollowBottom.current) return
+    el.scrollTop = anchor.scrollTop + (el.scrollHeight - anchor.scrollHeight)
+    lastScrollTopRef.current = el.scrollTop
+  }, [messages])
 
   // After every render, if following bottom, pin scroll there.
   // useLayoutEffect runs synchronously after DOM mutations, so even as the
@@ -704,6 +735,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
       shouldFollowBottom.current = false
     }
     setShowLatestButton(!atBottom && !shouldFollowBottom.current)
+    if (el.scrollTop < LOAD_OLDER_THRESHOLD_PX && !shouldFollowBottom.current) loadOlder()
   }
 
   const scrollToBottom = useCallback(() => {
@@ -729,6 +761,19 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
         // jumps, firing scroll events we didn't cause.
         style={{ overflowAnchor: 'none' }}
       >
+        {hasOlder && (
+          <div className="flex justify-center pb-3">
+            <button
+              onClick={loadOlder}
+              disabled={loadingOlder}
+              className="rounded px-2 py-1 text-xs hover:opacity-80 disabled:opacity-60"
+              style={{ color: 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+            >
+              {loadingOlder ? 'Loading earlier messages…' : 'Load earlier messages'}
+            </button>
+          </div>
+        )}
+
         {messages.length === 0 && (
           <p className="text-center text-xs pt-8" style={{ color: 'var(--color-text-muted)' }}>
             No messages yet. Send a message to get started.

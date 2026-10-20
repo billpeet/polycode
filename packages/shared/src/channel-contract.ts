@@ -4,6 +4,7 @@ import type {
   Thread,
   QueueThread,
   Message,
+  StorageInfo,
   GitStatus,
   ThreadArchiveResult,
   WorkingTreeFacts,
@@ -64,6 +65,7 @@ import type {
   SubscriptionUsageSnapshot,
 } from './types'
 import type { UnifiedSnapshot } from './unified'
+import type { MessagePage, MessagePageRequest, MessageScope } from './message-pages'
 import type { Channel } from './channels'
 import type { AppProfile, SeedBrowseRequest, SeedCatalog, SeedImportRequest, SeedImportResult } from './seed'
 
@@ -150,6 +152,8 @@ export interface ChannelContract {
   'threads:setWsl': [[threadId: string, useWsl: boolean, wslDistro: string | null], void]
   'messages:list': [[threadId: string], Message[]]
   'messages:listBySession': [[sessionId: string], Message[]]
+  'messages:page': [[scope: MessageScope, request: MessagePageRequest], MessagePage]
+  'messages:full': [[scope: MessageScope, messageId: string], Message | null]
   'sessions:list': [[threadId: string], Session[]]
   'sessions:getActive': [[threadId: string], Session | null]
   'sessions:switch': [[threadId: string, sessionId: string], void]
@@ -309,6 +313,8 @@ export interface ChannelContract {
   'settings:get': [[key: string], string | null]
   'settings:set': [[key: string, value: string], void]
   'webhook:getConfig': [[], { enabled: boolean; port: number; token: string }]
+  'storage:getInfo': [[], StorageInfo]
+  'storage:compact': [[], StorageInfo]
   'webhook:setConfig': [[config: { enabled: boolean; port: number; token: string }], void]
   'remote:getServerConfig': [[], RemoteServerConfig]
   'remote:setServerConfig': [[config: RemoteServerConfig], RemoteServerConfig]

@@ -33,9 +33,12 @@ export function updateTaskStatus(todos: Todo[], taskId: string, status: Todo['st
   return todos.map((todo, idx) => (idx === index ? { ...todo, status } : todo))
 }
 
-/** Extract the latest TodoWrite/todo_list/TaskCreate+TaskUpdate tasks from persisted messages. */
-export function extractTodosFromMessages(messages: Message[]): Todo[] | null {
-  let todos: Todo[] | null = null
+/**
+ * Extract the latest TodoWrite/todo_list/TaskCreate+TaskUpdate tasks from persisted messages.
+ * `initial` is the list as of just before `messages`, for extending an earlier extraction.
+ */
+export function extractTodosFromMessages(messages: Message[], initial: Todo[] | null = null): Todo[] | null {
+  let todos: Todo[] | null = initial
 
   for (const msg of messages) {
     if (!msg.metadata) continue

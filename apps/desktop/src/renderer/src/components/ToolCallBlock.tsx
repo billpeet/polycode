@@ -1,4 +1,5 @@
 import { canonicalToolName } from '@polycode/shared'
+import OmittedNotice from './OmittedNotice'
 import { Message } from '../types/ipc'
 import { useEffect, useState, useMemo, type CSSProperties } from 'react'
 import EditDiffView from './EditDiffView'
@@ -672,6 +673,9 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
                 : isUnifiedDiff ? <UnifiedDiffBody diff={resultBody} /> : <BodyContent text={resultBody} />}
             </div>
           )}
+
+          <OmittedNotice message={message} />
+          <OmittedNotice message={result} />
         </div>
       )}
     </div>

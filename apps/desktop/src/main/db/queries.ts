@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
-import { foldMessages } from '@polycode/shared'
+import { extractTodosFromMessages, foldMessages, readFullMessage, readMessagePage, type Todo, type MessagePage, type MessagePageRequest, type MessageRowSource, type MessageScope } from '@polycode/shared'
 import { scratchDirForThread } from '../scratch'
 import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState, WorktreeCleanupCandidate } from '../../shared/types'
 
@@ -1425,6 +1425,117 @@ export function listMessages(threadId: string): Message[] {
   return foldMessages(rows as Message[])
 }
 
+/**
+ * Rows whose metadata can set the todo list (see `extractTodosFromMessages`). A
+ * substring prefilter, so the scan never parses the JSON of the other rows.
+ */
+const TODO_METADATA_FILTER = `metadata IS NOT NULL AND (
+  instr(metadata, '"TodoWrite"') > 0 OR instr(metadata, '"TaskCreate"') > 0
+  OR instr(metadata, '"TaskUpdate"') > 0 OR instr(metadata, '"items"') > 0
+)`
+
+interface ScopeTodos {
+  /** Newest row already folded into `todos`. */
+  createdAt: string
+  seq: number
+  todos: Todo[] | null
+}
+
+/**
+ * Todo state per scope, extended by the rows added since. Messages are append-only, so
+ * after the first request a scope only scans its new rows instead of its whole history
+ * (about a second for a 159 MB Thread).
+ */
+const todoCache = new Map<string, ScopeTodos>()
+const TODO_CACHE_LIMIT = 200
+
+function scopeTodos(column: 'thread_id' | 'session_id', key: string): Todo[] | null {
+  const db = getDb('scopeTodos')
+  const newest = db
+    .prepare(`SELECT rowid AS seq, created_at FROM messages WHERE ${column} = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+    .get(key) as { seq: number; created_at: string } | undefined
+  const cacheKey = `${column}:${key}`
+  if (!newest) {
+    todoCache.delete(cacheKey)
+    return null
+  }
+  const cached = todoCache.get(cacheKey)
+  if (cached && cached.createdAt === newest.created_at && cached.seq === newest.seq) return cached.todos
+
+  const rows = (cached
+    ? db
+      .prepare(
+        `SELECT * FROM messages WHERE ${column} = ? AND ${TODO_METADATA_FILTER}
+           AND created_at >= ? AND (created_at > ? OR rowid > ?)
+         ORDER BY created_at ASC, rowid ASC`
+      )
+      .all(key, cached.createdAt, cached.createdAt, cached.seq)
+    : db
+      .prepare(`SELECT * FROM messages WHERE ${column} = ? AND ${TODO_METADATA_FILTER} ORDER BY created_at ASC, rowid ASC`)
+      .all(key)) as MessageRow[]
+  const todos = extractTodosFromMessages(rows as Message[], cached?.todos ?? null)
+
+  todoCache.delete(cacheKey)
+  todoCache.set(cacheKey, { createdAt: newest.created_at, seq: newest.seq, todos })
+  if (todoCache.size > TODO_CACHE_LIMIT) todoCache.delete(todoCache.keys().next().value as string)
+  return todos
+}
+
+/**
+ * A Thread's or Session's raw rows for `readMessagePage`/`readFullMessage`. Ordered by
+ * `created_at, rowid` so rows sharing a timestamp still page in a stable order.
+ */
+function messageRowSource(scope: MessageScope): MessageRowSource {
+  const column = 'threadId' in scope ? 'thread_id' : 'session_id'
+  const key = 'threadId' in scope ? scope.threadId : scope.sessionId
+  const db = getDb('messageRowSource')
+  type PositionedRow = MessageRow & { seq: number }
+  const toRow = (row: PositionedRow) => {
+    const { seq, ...message } = row
+    return { message: message as Message, position: { createdAt: row.created_at, seq } }
+  }
+  return {
+    locate: (id) => {
+      const row = db
+        .prepare(`SELECT rowid AS seq, created_at FROM messages WHERE id = ? AND ${column} = ?`)
+        .get(id, key) as { seq: number; created_at: string } | undefined
+      return row ? { createdAt: row.created_at, seq: row.seq } : null
+    },
+    older: (before, count) => {
+      const rows = before
+        ? db
+          .prepare(
+            `SELECT rowid AS seq, * FROM messages WHERE ${column} = ?
+               AND created_at <= ? AND (created_at < ? OR rowid < ?)
+             ORDER BY created_at DESC, rowid DESC LIMIT ?`
+          )
+          .all(key, before.createdAt, before.createdAt, before.seq, count)
+        : db
+          .prepare(`SELECT rowid AS seq, * FROM messages WHERE ${column} = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`)
+          .all(key, count)
+      return (rows as PositionedRow[]).map(toRow)
+    },
+    newer: (from, count) => (db
+      .prepare(
+        `SELECT rowid AS seq, * FROM messages WHERE ${column} = ?
+           AND created_at >= ? AND (created_at > ? OR rowid >= ?)
+         ORDER BY created_at ASC, rowid ASC LIMIT ?`
+      )
+      .all(key, from.createdAt, from.createdAt, from.seq, count) as PositionedRow[]).map(toRow),
+    todos: () => scopeTodos(column, key),
+  }
+}
+
+/** One page of a Thread's or Session's transcript; see `readMessagePage`. */
+export function pageMessages(scope: MessageScope, request: MessagePageRequest): MessagePage {
+  return readMessagePage(messageRowSource(scope), request)
+}
+
+/** One message without the trimming pages apply; see `readFullMessage`. */
+export function fullMessage(scope: MessageScope, messageId: string): Message | null {
+  return readFullMessage(messageRowSource(scope), messageId)
+}
+
 export function insertMessage(
   threadId: string,
   role: string,
@@ -1459,48 +1570,34 @@ export function listMessagesBySession(sessionId: string): Message[] {
 }
 
 /**
- * Find tool_call messages in a session that have no matching tool_result, then
- * insert a synthetic tool_result with `cancelled: true` for each. Returns the
- * inserted messages so callers can push them to the renderer.
+ * Tool calls in a session that never got a result. Reads only the metadata of rows that
+ * mention a tool, never their content and without folding: a large session holds tens of
+ * MB of output. The Session tracks this itself during a run; this catches calls left
+ * pending by an earlier run that crashed or was killed mid-Turn.
  */
-export function cancelPendingToolCalls(threadId: string, sessionId: string): Message[] {
-  const messages = listMessagesBySession(sessionId)
-
-  // Collect tool_use_ids that already have a result
-  const resultedIds = new Set<string>()
-  for (const msg of messages) {
-    if (!msg.metadata) continue
-    let meta: Record<string, unknown>
-    try { meta = JSON.parse(msg.metadata as string) } catch { continue }
-    if (meta.type === 'tool_result' && typeof meta.tool_use_id === 'string') {
-      resultedIds.add(meta.tool_use_id)
-    }
+export function findUnansweredToolCalls(sessionId: string): string[] {
+  const rows = getDb('findUnansweredToolCalls')
+    .prepare(
+      `SELECT json_extract(metadata, '$.type') AS type, json_extract(metadata, '$.id') AS id,
+              json_extract(metadata, '$.tool_use_id') AS tool_use_id
+       FROM messages WHERE session_id = ? AND instr(metadata, '"tool_') > 0
+       ORDER BY created_at ASC, rowid ASC`
+    )
+    .all(sessionId) as { type: unknown; id: unknown; tool_use_id: unknown }[]
+  const answered = new Set<string>()
+  const calls: string[] = []
+  for (const row of rows) {
+    if (row.type === 'tool_result' && typeof row.tool_use_id === 'string') answered.add(row.tool_use_id)
+    else if ((row.type === 'tool_call' || row.type === 'tool_use') && typeof row.id === 'string') calls.push(row.id)
   }
+  return [...new Set(calls.filter((id) => !answered.has(id)))]
+}
 
-  // Insert a synthetic cancelled result for each orphaned tool_call
-  const inserted: Message[] = []
-  for (const msg of messages) {
-    if (!msg.metadata) continue
-    let meta: Record<string, unknown>
-    try { meta = JSON.parse(msg.metadata as string) } catch { continue }
-    if (
-      (meta.type === 'tool_call' || meta.type === 'tool_use') &&
-      typeof meta.id === 'string' &&
-      !resultedIds.has(meta.id)
-    ) {
-      inserted.push(
-        insertMessage(
-          threadId,
-          'assistant',
-          '',
-          { type: 'tool_result', tool_use_id: meta.id, cancelled: true },
-          sessionId
-        )
-      )
-    }
-  }
-
-  return inserted
+/** Record each tool call as cancelled; returns the inserted rows for pushing to clients. */
+export function insertCancelledToolResults(threadId: string, sessionId: string, toolUseIds: string[]): Message[] {
+  return toolUseIds.map((toolUseId) =>
+    insertMessage(threadId, 'assistant', '', { type: 'tool_result', tool_use_id: toolUseId, cancelled: true }, sessionId)
+  )
 }
 
 export interface ImportedMessage {

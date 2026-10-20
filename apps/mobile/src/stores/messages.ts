@@ -2,7 +2,14 @@ import { create } from 'zustand'
 import {
   eventRole,
   appendFoldedMessage,
+  applyMessagePage,
+  EMPTY_TRANSCRIPT_WINDOW,
+  isUnsupportedChannelError,
+  pageFromFullTranscript,
+  refreshRequest,
   type Message,
+  type MessagePage,
+  type MessagePageRequest,
   type OutputEvent,
   type RateLimitInfo,
   type TokenUsage,
@@ -13,7 +20,32 @@ import { requireConnection } from './hosts'
 let streamCounter = 0
 
 /**
- * Streamed frames and `messages:list` snapshots travel over independent
+ * One page from the host. A host older than `messages:page` answers with its whole
+ * transcript instead, which then never has older pages to load.
+ */
+async function requestPage(threadId: string, request: MessagePageRequest): Promise<MessagePage> {
+  const connection = requireConnection()
+  try {
+    return await rpc(connection, 'messages:page', { threadId }, request)
+  } catch (error) {
+    if (!isUnsupportedChannelError(error)) throw error
+    if (request.kind === 'older') return { messages: [], hasOlder: false, anchored: true }
+    return pageFromFullTranscript(await rpc(connection, 'messages:list', threadId))
+  }
+}
+
+/** What is known about the part of a transcript held in `messagesByThread`. */
+export interface TranscriptPaging {
+  /** More messages exist before the first one held. */
+  hasOlder: boolean
+  /** Anchor for the next `older` request. */
+  oldestId: string | null
+  /** Anchor for the next `since` request. */
+  newestPersistedId: string | null
+}
+
+/**
+ * Streamed frames and `messages:page` snapshots travel over independent
  * connections with no ordering between them, so the same event can arrive
  * twice: as a live frame and again inside a snapshot that was fetched while
  * that frame was still in flight. Persisted events carry their row id as
@@ -50,38 +82,99 @@ interface MessagesState {
   usageByThread: Record<string, TokenUsage>
   rateLimitByThread: Record<string, RateLimitInfo>
   loadingByThread: Record<string, boolean>
+  pagingByThread: Record<string, TranscriptPaging>
+  loadingOlderByThread: Record<string, boolean>
 
-  fetch: (threadId: string) => Promise<Message[]>
+  /**
+   * Bring the held transcript up to date: the newest page on first load, then only
+   * what changed since. Resolves with the page, whose `todos` cover the whole thread.
+   */
+  fetch: (threadId: string) => Promise<MessagePage>
+  /** Prepend the page before the oldest message held, if there is one. */
+  fetchOlder: (threadId: string) => Promise<void>
+  /** Replace a page's trimmed copy of `message` (`omitted_chars`) with the whole message. */
+  expandMessage: (message: Message) => Promise<void>
   appendEvent: (threadId: string, event: OutputEvent) => void
   appendUserMessage: (threadId: string, content: string, messageId?: string) => void
   clear: (threadId: string) => void
 }
 
-export const useMessagesStore = create<MessagesState>((set) => ({
+function applyPage(s: MessagesState, threadId: string, request: MessagePageRequest, page: MessagePage): Partial<MessagesState> {
+  const messages = s.messagesByThread[threadId]
+  const paging = s.pagingByThread[threadId]
+  const next = applyMessagePage(
+    messages || paging ? { ...EMPTY_TRANSCRIPT_WINDOW, ...paging, messages: messages ?? [] } : undefined,
+    request,
+    page,
+  )
+  return {
+    messagesByThread: { ...s.messagesByThread, [threadId]: next.messages },
+    pagingByThread: {
+      ...s.pagingByThread,
+      [threadId]: { hasOlder: next.hasOlder, oldestId: next.oldestId, newestPersistedId: next.newestPersistedId },
+    },
+  }
+}
+
+export const useMessagesStore = create<MessagesState>((set, get) => ({
   messagesByThread: {},
   usageByThread: {},
   rateLimitByThread: {},
   loadingByThread: {},
+  pagingByThread: {},
+  loadingOlderByThread: {},
 
   fetch: async (threadId) => {
     set((s) => ({ loadingByThread: { ...s.loadingByThread, [threadId]: true } }))
     try {
-      const messages = await rpc(requireConnection(), 'messages:list', threadId)
+      const state = get()
+      const paging = state.pagingByThread[threadId]
+      const request = refreshRequest(paging ? { messages: state.messagesByThread[threadId] ?? [], ...paging } : undefined)
+      const page = await requestPage(threadId, request)
       // Persisted row ids are the same ids the stream frames carry, so the
       // snapshot seeds the replay guard.
       rememberEventIds(
         threadId,
-        messages.map((message) => message.id),
+        page.messages.map((message) => message.id),
       )
       set((s) => ({
-        messagesByThread: { ...s.messagesByThread, [threadId]: messages },
+        ...applyPage(s, threadId, request, page),
         loadingByThread: { ...s.loadingByThread, [threadId]: false },
       }))
-      return messages
+      return page
     } catch (error) {
       set((s) => ({ loadingByThread: { ...s.loadingByThread, [threadId]: false } }))
       throw error
     }
+  },
+
+  fetchOlder: async (threadId) => {
+    const state = get()
+    const paging = state.pagingByThread[threadId]
+    if (!paging?.hasOlder || !paging.oldestId || state.loadingOlderByThread[threadId]) return
+    const request: MessagePageRequest = { kind: 'older', before: paging.oldestId }
+    set((s) => ({ loadingOlderByThread: { ...s.loadingOlderByThread, [threadId]: true } }))
+    try {
+      const page = await requestPage(threadId, request)
+      set((s) => applyPage(s, threadId, request, page))
+    } finally {
+      set((s) => ({ loadingOlderByThread: { ...s.loadingOlderByThread, [threadId]: false } }))
+    }
+  },
+
+  expandMessage: async (message) => {
+    const full = await rpc(requireConnection(), 'messages:full', { threadId: message.thread_id }, message.id)
+    if (!full) return
+    set((s) => {
+      const held = s.messagesByThread[message.thread_id]
+      if (!held?.some((candidate) => candidate.id === full.id)) return s
+      return {
+        messagesByThread: {
+          ...s.messagesByThread,
+          [message.thread_id]: held.map((candidate) => (candidate.id === full.id ? full : candidate)),
+        },
+      }
+    })
   },
 
   appendEvent: (threadId, event) => {
@@ -165,6 +258,8 @@ export const useMessagesStore = create<MessagesState>((set) => ({
       seenEventIdsByThread.delete(threadId)
       const updated = { ...s.messagesByThread }
       delete updated[threadId]
-      return { messagesByThread: updated }
+      const paging = { ...s.pagingByThread }
+      delete paging[threadId]
+      return { messagesByThread: updated, pagingByThread: paging }
     }),
 }))

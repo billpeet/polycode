@@ -38,6 +38,8 @@ export interface ClientCapabilities {
   remoteHosts: boolean
   /** Inbound webhook configuration (`webhook:*`). */
   webhook: boolean
+  /** This machine's database size, cleanup and compaction (`storage:*`). */
+  storage: boolean
 }
 
 export interface Client extends WindowApi {
@@ -58,6 +60,7 @@ const ELECTRON_CAPABILITIES: ClientCapabilities = Object.freeze({
   updates: true,
   remoteHosts: true,
   webhook: true,
+  storage: true,
 })
 
 function preloadApi(): WindowApi | undefined {

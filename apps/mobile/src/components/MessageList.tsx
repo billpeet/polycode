@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
+  ActivityIndicator,
   Animated,
   Easing,
   FlatList,
@@ -16,6 +17,7 @@ import { colors } from '@/theme/colors'
 import { AgentGroupBlock, type AgentGroupMeta, type AgentStatus } from './AgentGroupBlock'
 import { AttachmentView, extractAttachments } from './AttachmentImage'
 import { Markdown } from './Markdown'
+import { OmittedNotice } from './OmittedNotice'
 import { ThinkingBlock } from './ThinkingBlock'
 import {
   ToolCallBlock,
@@ -34,6 +36,8 @@ interface RenderItem {
   toolCall?: ToolCallProps
   group?: { calls: ToolCallProps[]; groupKey: string }
   agent?: { meta: AgentGroupMeta; entries: RenderItem[] }
+  /** The message behind a text or error bubble, for fetching the whole of it when a page trimmed it. */
+  source?: Message
 }
 
 interface ParsedMsg {
@@ -134,7 +138,7 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
   const pairedToolUseIds = new Set<string>()
   for (const { message, meta } of scope) {
     if (meta?.type === 'tool_result' && typeof meta.tool_use_id === 'string') {
-      resultsByToolUseId.set(meta.tool_use_id, { content: message.content, metadata: meta })
+      resultsByToolUseId.set(meta.tool_use_id, { content: message.content, metadata: meta, source: message })
     }
   }
   for (const { meta } of scope) {
@@ -155,6 +159,7 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
           content: message.content,
           metadata: meta,
           result: toolUseId ? (resultsByToolUseId.get(toolUseId) ?? null) : null,
+          source: message,
         },
       })
       continue
@@ -170,7 +175,7 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
         toolCall: {
           content: typeof meta.name === 'string' ? meta.name : 'result',
           metadata: { name: typeof meta.name === 'string' ? meta.name : 'result' },
-          result: { content: message.content, metadata: meta },
+          result: { content: message.content, metadata: meta, source: message },
         },
       })
       continue
@@ -192,12 +197,12 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
     }
 
     if (message.role === 'system' || meta?.type === 'error') {
-      items.push({ key: message.id, kind: 'error', content: message.content })
+      items.push({ key: message.id, kind: 'error', content: message.content, source: message })
       continue
     }
 
     if (message.content.trim()) {
-      items.push({ key: message.id, kind: 'text', content: message.content })
+      items.push({ key: message.id, kind: 'text', content: message.content, source: message })
     }
   }
   return items
@@ -258,9 +263,12 @@ function buildItems(messages: Message[]): RenderItem[] {
 
   const buckets = new Map<string, ParsedMsg[]>()
   const bucketOrder: string[] = []
+  const bucketFirstPosition = new Map<string, number>()
+  const messagePosition = new Map<string, number>()
   const mainMessages: ParsedMsg[] = []
 
-  for (const item of parsed) {
+  for (const [position, item] of parsed.entries()) {
+    messagePosition.set(item.message.id, position)
     const parentKey = messageParentKey(item.meta)
     if (parentKey) {
       let bucket = buckets.get(parentKey)
@@ -268,6 +276,7 @@ function buildItems(messages: Message[]): RenderItem[] {
         bucket = []
         buckets.set(parentKey, bucket)
         bucketOrder.push(parentKey)
+        bucketFirstPosition.set(parentKey, position)
       }
       bucket.push(item)
     } else {
@@ -352,9 +361,23 @@ function buildItems(messages: Message[]): RenderItem[] {
 
   const result = assemble(mainMessages)
 
-  // Append any groups whose anchor Task tool_call wasn't found (race / compat).
+  const itemPosition = (item: RenderItem): number => {
+    const position = item.kind === 'agent'
+      ? bucketFirstPosition.get(item.key.slice('agent-'.length))
+      : messagePosition.get(item.kind === 'tool_group' ? item.key.slice('group-'.length) : item.key)
+    return position ?? Number.MAX_SAFE_INTEGER
+  }
+
+  // A group whose anchor Task tool_call is absent (in an older page not loaded yet, a
+  // protocol race, or older data) stays at the position of its first child event
+  // instead of dropping below later main-agent output (mirrors desktop).
   for (const parentKey of bucketOrder) {
-    if (!groupCache.has(parentKey)) result.push(makeGroup(parentKey))
+    if (groupCache.has(parentKey)) continue
+    const group = makeGroup(parentKey)
+    const position = bucketFirstPosition.get(parentKey) ?? Number.MAX_SAFE_INTEGER
+    const insertionIndex = result.findIndex((item) => itemPosition(item) > position)
+    if (insertionIndex === -1) result.push(group)
+    else result.splice(insertionIndex, 0, group)
   }
 
   return result
@@ -438,6 +461,7 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
             <Text style={{ fontWeight: '700' }}>Error: </Text>
             {item.content}
           </Text>
+          <OmittedNotice message={item.source} />
         </View>
       )
     case 'plan':
@@ -457,6 +481,7 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
               <AttachmentView key={index} {...attachment} />
             ))}
             {text ? <Markdown>{text}</Markdown> : null}
+            <OmittedNotice message={item.source} />
           </Pressable>
         </View>
       )
@@ -469,7 +494,15 @@ const AUTO_SCROLL_THRESHOLD_PX = 64
 
 const WORKING_ITEM: RenderItem = { key: '__working', kind: 'working', content: '' }
 
-export function MessageList(props: { messages: Message[]; working?: boolean }) {
+export function MessageList(props: {
+  messages: Message[]
+  working?: boolean
+  /** Older messages exist on the host; `onLoadOlder` fetches the previous page. */
+  hasOlder?: boolean
+  loadingOlder?: boolean
+  onLoadOlder?: () => void
+}) {
+  const { hasOlder, loadingOlder, onLoadOlder } = props
   const items = useMemo(() => buildItems(props.messages), [props.messages])
   const reversed = useMemo(() => {
     const list = [...items].reverse()
@@ -539,6 +572,23 @@ export function MessageList(props: { messages: Message[]; working?: boolean }) {
         // streamed chunks resize items (anchor ≥1 skips the growing newest
         // item).
         maintainVisibleContentPosition={showLatest ? { minIndexForVisible: 1 } : undefined}
+        // Inverted: the list's end is the visual top, so this loads the previous page as
+        // the user scrolls up. New items land beyond the viewport, leaving the offset alone.
+        onEndReached={hasOlder && !loadingOlder ? onLoadOlder : undefined}
+        onEndReachedThreshold={1.5}
+        ListFooterComponent={
+          hasOlder ? (
+            <View style={styles.olderRow}>
+              {loadingOlder ? (
+                <ActivityIndicator color={colors.textMuted} />
+              ) : (
+                <Pressable onPress={onLoadOlder} style={({ pressed }) => [styles.olderButton, pressed && { opacity: 0.7 }]}>
+                  <Text style={styles.olderButtonText}>Load earlier messages</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : null
+        }
       />
       {showLatest ? (
         <Pressable onPress={scrollToBottom} style={({ pressed }) => [styles.latestButton, pressed && { opacity: 0.8 }]}>
@@ -551,6 +601,15 @@ export function MessageList(props: { messages: Message[]; working?: boolean }) {
 
 const styles = StyleSheet.create({
   content: { padding: 14, gap: 8 },
+  olderRow: { alignItems: 'center', paddingVertical: 10 },
+  olderButton: {
+    borderWidth: StyleSheet.hairlineWidth,
+    borderColor: colors.border,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  olderButtonText: { color: colors.textMuted, fontSize: 12 },
   userRow: { flexDirection: 'row', justifyContent: 'flex-end' },
   userBubble: {
     backgroundColor: colors.claude,

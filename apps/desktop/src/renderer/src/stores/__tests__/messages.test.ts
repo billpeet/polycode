@@ -189,7 +189,7 @@ describe('message store streaming merge', () => {
 describe('create-on-send optimistic messages', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    useMessageStore.setState({ messagesByThread: {}, messagesBySession: {} })
+    useMessageStore.setState({ messagesByThread: {}, messagesBySession: {}, pagingByThread: {}, pagingBySession: {} })
   })
 
   it('moves the optimistic user message from the draft to the materialized thread', () => {
@@ -204,7 +204,7 @@ describe('create-on-send optimistic messages', () => {
   })
 
   it('keeps an optimistic user message when the first server fetch is still empty', async () => {
-    vi.stubGlobal('window', { api: { invoke: vi.fn().mockResolvedValue([]) } })
+    vi.stubGlobal('window', { api: { invoke: vi.fn().mockResolvedValue({ messages: [], hasOlder: false, anchored: false, todos: null }) } })
     useMessageStore.getState().appendUserMessage('real-thread', 'Start this work', 'message-1')
 
     await useMessageStore.getState().fetch('real-thread')
@@ -212,5 +212,72 @@ describe('create-on-send optimistic messages', () => {
     expect(useMessageStore.getState().messagesByThread['real-thread']).toMatchObject([
       { id: 'message-1', role: 'user', content: 'Start this work' },
     ])
+  })
+})
+
+describe('transcript paging', () => {
+  const invoke = vi.fn()
+  const msg = (id: string, role: 'user' | 'assistant' = 'assistant') => ({
+    id, thread_id: THREAD, session_id: null, role, content: id, metadata: null, created_at: '2026-01-01T00:00:00.000Z',
+  })
+  const ids = () => useMessageStore.getState().messagesByThread[THREAD].map((message) => message.id)
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    vi.stubGlobal('window', { api: { invoke } })
+    useMessageStore.setState({ messagesByThread: {}, messagesBySession: {}, pagingByThread: {}, pagingBySession: {} })
+  })
+
+  it('loads the tail first, then older pages, then catches up with only what changed', async () => {
+    invoke.mockResolvedValueOnce({ messages: [msg('c', 'user'), msg('d')], hasOlder: true, anchored: false, todos: null })
+    await useMessageStore.getState().fetch(THREAD)
+    expect(invoke).toHaveBeenLastCalledWith('messages:page', { threadId: THREAD }, { kind: 'tail' })
+    expect(ids()).toEqual(['c', 'd'])
+    expect(useMessageStore.getState().pagingByThread[THREAD]).toMatchObject({ hasOlder: true, oldestId: 'c', newestPersistedId: 'd' })
+
+    invoke.mockResolvedValueOnce({ messages: [msg('a', 'user'), msg('b')], hasOlder: false, anchored: true })
+    await useMessageStore.getState().fetchOlder(THREAD)
+    expect(invoke).toHaveBeenLastCalledWith('messages:page', { threadId: THREAD }, { kind: 'older', before: 'c' })
+    expect(ids()).toEqual(['a', 'b', 'c', 'd'])
+    expect(useMessageStore.getState().pagingByThread[THREAD]).toMatchObject({ hasOlder: false, loadingOlder: false })
+
+    // Nothing older is left, so no request goes out.
+    invoke.mockClear()
+    await useMessageStore.getState().fetchOlder(THREAD)
+    expect(invoke).not.toHaveBeenCalled()
+
+    useMessageStore.getState().appendEvent(THREAD, { type: 'text', content: ' streamed', metadata: {} })
+    invoke.mockResolvedValueOnce({ messages: [msg('d'), msg('e', 'user')], hasOlder: true, anchored: true, todos: null })
+    await useMessageStore.getState().fetch(THREAD)
+    expect(invoke).toHaveBeenLastCalledWith('messages:page', { threadId: THREAD }, { kind: 'since', since: 'd' })
+    expect(ids()).toEqual(['a', 'b', 'c', 'd', 'e'])
+  })
+
+  it('swaps a trimmed message for the whole one, in the thread and its session', async () => {
+    const trimmed = { ...msg('big'), session_id: 's1', content: 'head … tail', omitted_chars: 90_000 }
+    useMessageStore.setState({
+      messagesByThread: { [THREAD]: [msg('a', 'user'), trimmed] },
+      messagesBySession: { s1: [trimmed] },
+    })
+    const full = { ...msg('big'), session_id: 's1', content: 'x'.repeat(100_000) }
+    invoke.mockResolvedValueOnce(full)
+
+    await useMessageStore.getState().expandMessage(trimmed)
+
+    expect(invoke).toHaveBeenLastCalledWith('messages:full', { threadId: THREAD }, 'big')
+    expect(useMessageStore.getState().messagesByThread[THREAD][1]).toBe(full)
+    expect(useMessageStore.getState().messagesBySession.s1[0]).toBe(full)
+  })
+
+  it('falls back to the whole transcript on a host without messages:page', async () => {
+    invoke.mockImplementation(async (channel: string) => {
+      if (channel === 'messages:page') throw new Error("Error invoking remote method 'messages:page': Error: [REMOTE_UNSUPPORTED_CHANNEL] Upgrade the Remote Host")
+      return [msg('a', 'user'), msg('b')]
+    })
+    const page = await useMessageStore.getState().fetch(THREAD)
+    expect(invoke).toHaveBeenLastCalledWith('messages:list', THREAD)
+    expect(ids()).toEqual(['a', 'b'])
+    expect(page?.todos).toBeNull()
+    expect(useMessageStore.getState().pagingByThread[THREAD].hasOlder).toBe(false)
   })
 })

@@ -27,7 +27,7 @@ vi.mock('../app-events', () => ({ emitAppEvent: (...args: unknown[]) => h.emit(.
 vi.mock('../db/queries', () => new Proxy({
   getOrCreateActiveSession: () => ({ id: 'session-1', claude_session_id: null }),
   getThreadProvider: () => 'kimi-code', getThreadModel: () => 'default',
-  getThreadById: () => ({ kimi_thinking: 'on' }), cancelPendingToolCalls: () => [],
+  getThreadById: () => ({ kimi_thinking: 'on' }), findUnansweredToolCalls: () => [], insertCancelledToolResults: () => [],
 }, {
   has: () => true,
   get: (target, key) => {

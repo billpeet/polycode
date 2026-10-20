@@ -70,12 +70,15 @@ export function ChatView(props: { threadId: string; projectId: string; onBack: (
   const usage = useMessagesStore((s) => s.usageByThread[threadId])
   const rateLimit = useMessagesStore((s) => s.rateLimitByThread[threadId])
   const fetchMessages = useMessagesStore((s) => s.fetch)
+  const fetchOlderMessages = useMessagesStore((s) => s.fetchOlder)
+  const hasOlderMessages = useMessagesStore((s) => s.pagingByThread[threadId]?.hasOlder ?? false)
+  const loadingOlderMessages = useMessagesStore((s) => s.loadingOlderByThread[threadId] ?? false)
   const appendEvent = useMessagesStore((s) => s.appendEvent)
   const appendUserMessage = useMessagesStore((s) => s.appendUserMessage)
 
   const todos = useTodosStore((s) => s.todosByThread[threadId] ?? null)
   const applyTodoEvent = useTodosStore((s) => s.applyEvent)
-  const syncTodos = useTodosStore((s) => s.syncFromMessages)
+  const applyTodoSnapshot = useTodosStore((s) => s.applySnapshot)
 
   const permissions = useInteractionsStore((s) => s.permissionsByThread[threadId] ?? null)
   const questions = useInteractionsStore((s) => s.questionsByThread[threadId] ?? null)
@@ -152,11 +155,17 @@ export function ChatView(props: { threadId: string; projectId: string; onBack: (
 
   const refetchAll = useCallback(() => {
     fetchMessages(threadId)
-      .then((loaded) => syncTodos(threadId, loaded))
+      .then((page) => {
+        if (page.todos !== undefined) applyTodoSnapshot(threadId, page.todos)
+      })
       .catch(() => {
         // Host unreachable — the SSE reconnect loop will trigger another refetch.
       })
-  }, [threadId, fetchMessages, syncTodos])
+  }, [threadId, fetchMessages, applyTodoSnapshot])
+
+  const loadOlder = useCallback(() => {
+    void fetchOlderMessages(threadId).catch(() => undefined)
+  }, [threadId, fetchOlderMessages])
 
   // Ensure the thread object exists (selection can be restored before lists load).
   useEffect(() => {
@@ -355,7 +364,13 @@ export function ChatView(props: { threadId: string; projectId: string; onBack: (
       {/* Messages */}
       <Animated.View style={[{ flex: 1, backgroundColor: colors.surface }, keyboardPadStyle]}>
         <View style={{ flex: 1, backgroundColor: colors.bg }}>
-          <MessageList messages={messages} working={status === 'running' || status === 'stopping'} />
+          <MessageList
+            messages={messages}
+            working={status === 'running' || status === 'stopping'}
+            hasOlder={hasOlderMessages}
+            loadingOlder={loadingOlderMessages}
+            onLoadOlder={loadOlder}
+          />
         </View>
 
         {rateLimit && (rateLimit.status === 'blocked' || rateLimit.status === 'allowed_warning') ? (

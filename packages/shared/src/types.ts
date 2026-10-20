@@ -524,6 +524,12 @@ export interface Message {
   content: string
   metadata: string | null
   created_at: string
+  /**
+   * Set on a page's copy of a very large message: how many characters were cut from
+   * its content and metadata strings (see `trimLargeMessage`). `messages:full` returns
+   * the whole message.
+   */
+  omitted_chars?: number
 }
 
 export interface Session {
@@ -640,6 +646,27 @@ export interface OutputEvent {
    * from hosts that predate the field.
    */
   eventId?: string
+  /**
+   * Streamed to clients but not saved: a piece of output whose item later ends in a
+   * saved event carrying all of it (Codex command output deltas, whose
+   * `item/completed` repeats the whole output). The session holds the pieces until
+   * then, and saves them itself if that event never comes.
+   */
+  transient?: boolean
+}
+
+/** The host database's size and the state of its one-time Codex output cleanup. */
+export interface StorageInfo {
+  /** Database file plus its write-ahead log. */
+  fileBytes: number
+  /** Space inside the file freed by deletions; compacting gives it back to the disk. */
+  freeBytes: number
+  cleanup: {
+    done: boolean
+    /** 0 to 1. */
+    progress: number
+    deletedRows: number
+  }
 }
 
 export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending' | 'permission_pending'

@@ -399,19 +399,36 @@ function summarizeMcpResult(item: Extract<ThreadItem, { type: 'mcp_tool_call' }>
   return ''
 }
 
+/**
+ * A piece of a command's or file change's output while it runs. Not saved: the item's
+ * completion carries the whole output (see `OutputEvent.transient`). Its metadata is
+ * only what clients fold and pair on; the raw notification repeated the delta.
+ */
+function outputDelta(delta: string, itemId: string | undefined): OutputEvent {
+  return {
+    type: 'tool_result',
+    content: delta,
+    metadata: { type: 'tool_result', ...(itemId ? { tool_use_id: itemId } : {}) },
+    transient: true,
+  }
+}
+
 function buildToolResult(item: CodexThreadItem): OutputEvent | null {
   switch (item.type) {
-    case 'command_execution':
+    case 'command_execution': {
+      // The output is the content; repeating it as metadata doubled every result's size.
+      const { aggregated_output: output, ...rest } = item
       return {
         type: 'tool_result',
-        content: item.aggregated_output ?? '',
+        content: output ?? '',
         metadata: {
-          ...item,
+          ...rest,
           type: 'tool_result',
           tool_use_id: item.id,
           ...(item.status === 'failed' ? { is_error: true } : {}),
         },
       }
+    }
     case 'mcp_tool_call':
       return {
         type: 'tool_result',
@@ -1090,17 +1107,7 @@ export function parseCodexAppServerNotification(
       const delta = params?.delta as string | undefined
       const itemId = (params?.itemId as string | undefined)
         ?? ((params?.item as Record<string, unknown> | undefined)?.id as string | undefined)
-      if (delta) {
-        events.push({
-          type: 'tool_result',
-          content: delta,
-          metadata: {
-            ...(params ?? {}),
-            type: 'tool_result',
-            ...(itemId ? { tool_use_id: itemId } : {}),
-          },
-        })
-      }
+      if (delta) events.push(outputDelta(delta, itemId))
       break
     }
     case 'item/fileChange/patchUpdated': {
@@ -1627,17 +1634,7 @@ class CodexCliDriver extends BaseDriver {
         const itemId = (data.item_id as string | undefined)
           ?? (data.itemId as string | undefined)
           ?? ((data.item as Record<string, unknown> | undefined)?.id as string | undefined)
-        if (delta) {
-          events.push({
-            type: 'tool_result',
-            content: delta,
-            metadata: {
-              ...(data as Record<string, unknown>),
-              type: 'tool_result',
-              ...(itemId ? { tool_use_id: itemId } : {}),
-            },
-          })
-        }
+        if (delta) events.push(outputDelta(delta, itemId))
         break
       }
 

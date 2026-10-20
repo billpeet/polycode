@@ -79,22 +79,14 @@ function ThreadViewContent({ threadId }: Props) {
     void settleBackgroundIpc(fetchThreads(threadProjectId))
   }, [fetchThreads, isPendingThread, threadProjectId, reconnectNonce])
 
-  // Fetch messages when active session changes, and sync todos from persisted messages
+  // Fetch messages when active session changes; the page carries the scope's todo list
   useEffect(() => {
     if (isPendingThread) return
     let disposed = false
     const doFetch = async () => {
-      if (activeSessionId) {
-        await fetchMessagesBySession(activeSessionId)
-        if (disposed) return
-        const msgs = useMessageStore.getState().messagesBySession[activeSessionId] ?? []
-        useTodoStore.getState().syncFromMessages(threadId, msgs)
-      } else {
-        await fetchMessages(threadId)
-        if (disposed) return
-        const msgs = useMessageStore.getState().messagesByThread[threadId] ?? []
-        useTodoStore.getState().syncFromMessages(threadId, msgs)
-      }
+      const page = activeSessionId ? await fetchMessagesBySession(activeSessionId) : await fetchMessages(threadId)
+      if (disposed || page?.todos === undefined) return
+      useTodoStore.getState().applySnapshot(threadId, page.todos)
     }
     void settleBackgroundIpc(doFetch())
     return () => { disposed = true }
@@ -234,20 +226,14 @@ function ThreadViewContent({ threadId }: Props) {
       setStatus(threadId, completionStatus)
 
       // Re-fetch messages after completion to replace optimistic entries with
-      // persisted ones, then rebuild todo state from that canonical history.
+      // persisted ones, and take the host's canonical todo state.
       void settleBackgroundIpc((async () => {
         const currentActiveSession = useSessionStore.getState().activeSessionByThread[threadId]
-        if (currentActiveSession) {
-          await useMessageStore.getState().fetchBySession(currentActiveSession)
-          if (disposed) return
-          const msgs = useMessageStore.getState().messagesBySession[currentActiveSession] ?? []
-          useTodoStore.getState().syncFromMessages(threadId, msgs)
-        } else {
-          await fetchMessages(threadId)
-          if (disposed) return
-          const msgs = useMessageStore.getState().messagesByThread[threadId] ?? []
-          useTodoStore.getState().syncFromMessages(threadId, msgs)
-        }
+        const page = currentActiveSession
+          ? await useMessageStore.getState().fetchBySession(currentActiveSession)
+          : await fetchMessages(threadId)
+        if (disposed || page?.todos === undefined) return
+        useTodoStore.getState().applySnapshot(threadId, page.todos)
       })())
 
       // Re-fetch sessions in case a new one was created

@@ -116,6 +116,8 @@ import {
   listLocations,
   listMessages,
   listMessagesBySession,
+  pageMessages,
+  fullMessage,
   listProjects,
   listRoutines,
   listRuns,
@@ -291,6 +293,7 @@ import { listKimiAvailableModels } from '../kimi-models'
 import { updateThreadKimiThinking } from '../db/queries'
 import { ensureScratchDir, removeScratchDir } from '../scratch'
 import { isScratchProject } from '@polycode/shared'
+import { compactDatabase, getStorageInfo } from '../output-cleanup-runner'
 
 /**
  * Policy: the built-in Scratch Project is not the user's to reshape. It exists so that
@@ -1882,6 +1885,10 @@ export const channelHandlers = {
 
   'messages:listBySession': (_ctx, sessionId) => listMessagesBySession(sessionId),
 
+  'messages:page': (_ctx, scope, request) => pageMessages(scope, request),
+
+  'messages:full': (_ctx, scope, messageId) => fullMessage(scope, messageId),
+
   // ── SSH / WSL connection tests ────────────────────────────────────────────
 
   'ssh:test': (_ctx, ssh, remotePath) => testSshConnection(ssh, remotePath),
@@ -2297,6 +2304,12 @@ export const channelHandlers = {
     const saved = saveWebhookConfig(config)
     restartWebhookServer(saved, ctx.window)
   },
+
+  // This machine's database only: `{ remote: false }`, so a paired client cannot stall
+  // the host with a VACUUM.
+  'storage:getInfo': () => getStorageInfo(),
+
+  'storage:compact': () => compactDatabase(),
 
   // ── Remote control ─────────────────────────────────────────────────────────
   //
