@@ -110,6 +110,8 @@ describe('channel handler map migration', () => {
       'settings:set',
       'webhook:getConfig',
       'webhook:setConfig',
+      'storage:getInfo',
+      'storage:compact',
       'remote:getServerConfig',
       'remote:setServerConfig',
       'remote:regenerateServerToken',

@@ -8,6 +8,7 @@ import * as Sentry from '@sentry/electron/main'
 import { initUpdater } from './updater'
 import { closeDb, getDatabasePath } from './db/index'
 import { startDatabase, type DatabaseRequiresNewerApp } from './db/startup'
+import { startOutputCleanupRunner, stopOutputCleanupRunner } from './output-cleanup-runner'
 import { resetRunningThreads, hasRunningThreads } from './db/queries'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
@@ -380,6 +381,7 @@ app.whenReady().then(async () => {
   startPlanWatcher(win)
 
   runLifecycle.start()
+  startOutputCleanupRunner()
   powerMonitor.on('resume', () => void runLifecycle?.tick())
   startWebhookServer(readWebhookConfig(), win)
   startRemoteControlServer(readRemoteServerConfig(), win, runLifecycle)
@@ -403,6 +405,7 @@ registerAppShutdown(app, {
   stopProducers: () => {
     isQuitting = true
     runLifecycle?.stop()
+    stopOutputCleanupRunner()
     sessionManager.stopAll()
     stopWebhookServer()
     stopRemoteControlClient()

@@ -37,6 +37,7 @@ export const WEB_CAPABILITIES: ClientCapabilities = Object.freeze({
   updates: false,
   remoteHosts: false,
   webhook: false,
+  storage: false,
 })
 
 /** The pseudo host id under which connection state is published. */

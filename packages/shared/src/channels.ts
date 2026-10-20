@@ -241,6 +241,8 @@ export const CHANNEL_REGISTRY = {
   'update:get-state': { local: true, remote: false },
   'update:release-notes': { local: true, remote: false },
   'webhook:getConfig': { local: true, remote: false },
+  'storage:getInfo': { local: true, remote: false },
+  'storage:compact': { local: true, remote: false },
   'webhook:setConfig': { local: true, remote: false },
   'remote:getServerConfig': { local: true, remote: false },
   'remote:setServerConfig': { local: true, remote: false },

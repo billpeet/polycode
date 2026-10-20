@@ -655,6 +655,20 @@ export interface OutputEvent {
   transient?: boolean
 }
 
+/** The host database's size and the state of its one-time Codex output cleanup. */
+export interface StorageInfo {
+  /** Database file plus its write-ahead log. */
+  fileBytes: number
+  /** Space inside the file freed by deletions; compacting gives it back to the disk. */
+  freeBytes: number
+  cleanup: {
+    done: boolean
+    /** 0 to 1. */
+    progress: number
+    deletedRows: number
+  }
+}
+
 export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending' | 'permission_pending'
 
 /** A tool action that Claude requested but needs permission to execute */

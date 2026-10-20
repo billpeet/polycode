@@ -4,6 +4,7 @@ import type {
   Thread,
   QueueThread,
   Message,
+  StorageInfo,
   GitStatus,
   ThreadArchiveResult,
   WorkingTreeFacts,
@@ -312,6 +313,8 @@ export interface ChannelContract {
   'settings:get': [[key: string], string | null]
   'settings:set': [[key: string, value: string], void]
   'webhook:getConfig': [[], { enabled: boolean; port: number; token: string }]
+  'storage:getInfo': [[], StorageInfo]
+  'storage:compact': [[], StorageInfo]
   'webhook:setConfig': [[config: { enabled: boolean; port: number; token: string }], void]
   'remote:getServerConfig': [[], RemoteServerConfig]
   'remote:setServerConfig': [[config: RemoteServerConfig], RemoteServerConfig]

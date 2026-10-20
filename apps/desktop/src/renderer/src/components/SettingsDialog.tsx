@@ -8,9 +8,10 @@ import { SlashCommandsPanel } from './SlashCommandsDialog'
 import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
 import { WebhookPanel } from './WebhookPanel'
 import { RemoteControlPanel } from './RemoteControlPanel'
+import { StoragePanel } from './StoragePanel'
 import { client, type ClientCapabilities } from '../lib/client'
 
-type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote' | 'seed'
+type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote' | 'storage' | 'seed'
 
 /** Tabs that configure the host process itself only exist where that process is attached. */
 const TABS: { id: Tab; label: string; requires?: keyof ClientCapabilities }[] = [
@@ -20,6 +21,7 @@ const TABS: { id: Tab; label: string; requires?: keyof ClientCapabilities }[] = 
   { id: 'youtrack', label: 'YouTrack' },
   { id: 'webhook', label: 'Webhook', requires: 'webhook' },
   { id: 'remote', label: 'Remote', requires: 'remoteHosts' },
+  { id: 'storage', label: 'Storage', requires: 'storage' },
 ]
 
 interface Props {
@@ -128,6 +130,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
             {activeTab === 'youtrack' && <YouTrackSettingsPanel hideHeader />}
             {activeTab === 'webhook' && <WebhookPanel hideHeader />}
             {activeTab === 'remote' && <RemoteControlPanel hideHeader />}
+            {activeTab === 'storage' && <StoragePanel />}
             {activeTab === 'seed' && profile?.isDevelopment && <SeedProductionPanel profile={profile} />}
           </div>
         </div>
