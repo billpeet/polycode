@@ -4,7 +4,7 @@
  * views, Bash command blocks, Read ranges, FileChange lists, result output
  * with stdout/stderr/exit-code extraction and result diff blocks.
  */
-import { canonicalToolName } from '@polycode/shared'
+import { canonicalToolName, type Message } from '@polycode/shared'
 import { memo, useEffect, useState, type ReactNode } from 'react'
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native'
 import { rpc } from '@/api/rpc'
@@ -13,6 +13,7 @@ import { useHostsStore } from '@/stores/hosts'
 import { colors } from '@/theme/colors'
 import { EditDiffView } from './EditDiffView'
 import { Markdown } from './Markdown'
+import { OmittedNotice } from './OmittedNotice'
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
@@ -516,6 +517,8 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
 export interface ToolResultData {
   content: string
   metadata: Record<string, unknown> | null
+  /** The result message, for fetching the whole of it when a page trimmed it. */
+  source?: Message
 }
 
 export interface ToolCallProps {
@@ -526,6 +529,8 @@ export interface ToolCallProps {
   /** Paired tool_result; null/undefined = still running. */
   result?: ToolResultData | null
   subagent?: boolean
+  /** The tool_call message, for fetching the whole of it when a page trimmed it. */
+  source?: Message
 }
 
 function hasMeaningfulInput(input: unknown): boolean {
@@ -627,6 +632,9 @@ export const ToolCallBlock = memo(function ToolCallBlock(props: ToolCallProps) {
               )}
             </Section>
           ) : null}
+
+          <OmittedNotice message={props.source} />
+          <OmittedNotice message={result?.source} />
 
           {status === 'pending' ? <Text style={blockStyles.pending}>Running…</Text> : null}
         </ScrollView>

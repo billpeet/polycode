@@ -92,6 +92,8 @@ interface MessagesState {
   fetch: (threadId: string) => Promise<MessagePage>
   /** Prepend the page before the oldest message held, if there is one. */
   fetchOlder: (threadId: string) => Promise<void>
+  /** Replace a page's trimmed copy of `message` (`omitted_chars`) with the whole message. */
+  expandMessage: (message: Message) => Promise<void>
   appendEvent: (threadId: string, event: OutputEvent) => void
   appendUserMessage: (threadId: string, content: string, messageId?: string) => void
   clear: (threadId: string) => void
@@ -158,6 +160,21 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
     } finally {
       set((s) => ({ loadingOlderByThread: { ...s.loadingOlderByThread, [threadId]: false } }))
     }
+  },
+
+  expandMessage: async (message) => {
+    const full = await rpc(requireConnection(), 'messages:full', { threadId: message.thread_id }, message.id)
+    if (!full) return
+    set((s) => {
+      const held = s.messagesByThread[message.thread_id]
+      if (!held?.some((candidate) => candidate.id === full.id)) return s
+      return {
+        messagesByThread: {
+          ...s.messagesByThread,
+          [message.thread_id]: held.map((candidate) => (candidate.id === full.id ? full : candidate)),
+        },
+      }
+    })
   },
 
   appendEvent: (threadId, event) => {

@@ -20,10 +20,16 @@ export const MESSAGE_PAGE_LIMIT = 150
 /** Upper bound on `limit` a client may ask for. */
 export const MESSAGE_PAGE_MAX_LIMIT = 1000
 /**
- * Raw content+metadata characters per page. A page stops at the first fold boundary
- * past this budget, so one huge message still comes back whole.
+ * Content+metadata characters per page, counting each message as trimmed. A page
+ * stops at the first fold boundary past this budget.
  */
 export const MESSAGE_PAGE_CHAR_BUDGET = 1_500_000
+/**
+ * Longest string a page carries in a message's content or metadata. One command can
+ * print tens of MB, and Codex repeats it in `aggregated_output`; pages keep the head
+ * and tail of such strings and `messages:full` returns the rest on request.
+ */
+export const MESSAGE_STRING_LIMIT = 40_000
 
 export type MessageScope = { threadId: string } | { sessionId: string }
 
@@ -75,6 +81,8 @@ export interface MessageRowSource {
   locate(id: string): MessageRowPosition | null
   /** Up to `count` rows strictly older than `before` (or the newest rows when null), newest first. */
   older(before: MessageRowPosition | null, count: number): MessageRow[]
+  /** Up to `count` rows at or after `from`, oldest first. */
+  newer(from: MessageRowPosition, count: number): MessageRow[]
   /** The scope's todo list, as `MessagePage.todos`. */
   todos(): Todo[] | null
 }
@@ -89,6 +97,9 @@ const READ_BATCH = 256
 function rowChars(message: Message): number {
   return message.content.length + (message.metadata?.length ?? 0)
 }
+
+/** Roughly the most a message can weigh after `trimLargeMessage`: content plus a metadata string or two. */
+const TRIMMED_MESSAGE_CHARS = 3 * MESSAGE_STRING_LIMIT
 
 function clampLimit(limit: number | undefined): number {
   if (typeof limit !== 'number' || !Number.isFinite(limit)) return MESSAGE_PAGE_LIMIT
@@ -128,7 +139,9 @@ interface Walk {
 function walk(source: MessageRowSource, before: MessageRowPosition | null, limit: number, stopAtId: string | null): Walk {
   const next = newestFirst(source, before)
   const collected: Message[] = []
+  // Characters of finished messages, and of the one being collected (its rows so far).
   let chars = 0
+  let messageChars = 0
   let starts = 0
   let current = next()
   let hasOlder = false
@@ -136,7 +149,7 @@ function walk(source: MessageRowSource, before: MessageRowPosition | null, limit
 
   while (current) {
     collected.push(current.message)
-    chars += rowChars(current.message)
+    messageChars += rowChars(current.message)
     if (stopAtId !== null && current.message.id === stopAtId) {
       reachedStop = true
       hasOlder = next() !== null
@@ -146,6 +159,9 @@ function walk(source: MessageRowSource, before: MessageRowPosition | null, limit
     if (!previous) break
     if (!continuesPrevious(previous.message, current.message)) {
       starts += 1
+      // Rows that fold together share a role; only non-user messages get trimmed.
+      chars += current.message.role === 'user' ? messageChars : Math.min(messageChars, TRIMMED_MESSAGE_CHARS)
+      messageChars = 0
       if (starts >= limit || chars >= MESSAGE_PAGE_CHAR_BUDGET) {
         hasOlder = true
         break
@@ -155,7 +171,7 @@ function walk(source: MessageRowSource, before: MessageRowPosition | null, limit
   }
 
   collected.reverse()
-  return { messages: foldMessages(collected), hasOlder, reachedStop }
+  return { messages: foldMessages(collected).map(trimLargeMessage), hasOlder, reachedStop }
 }
 
 /** Answer a page request against one scope. */
@@ -178,6 +194,94 @@ export function readMessagePage(source: MessageRowSource, request: MessagePageRe
   const { messages, hasOlder } = walk(source, null, limit, null)
   return { messages, hasOlder, anchored: false, todos: source.todos() }
 }
+
+/**
+ * The whole of one folded message: its first row and every row that folds into it.
+ * Null when the id is not a message in this scope.
+ */
+export function readFullMessage(source: MessageRowSource, id: string): Message | null {
+  const position = source.locate(id)
+  if (!position) return null
+  const rows: Message[] = []
+  let cursor: MessageRowPosition | null = position
+  while (cursor) {
+    const batch: MessageRow[] = source.newer(cursor, READ_BATCH)
+    // Every batch after the first starts with the row the previous one ended on.
+    const fresh = rows.length === 0 ? batch : batch.slice(1)
+    let ended = fresh.length === 0
+    for (const row of fresh) {
+      if (rows.length > 0 && !continuesPrevious(rows[rows.length - 1], row.message)) {
+        ended = true
+        break
+      }
+      rows.push(row.message)
+    }
+    cursor = ended || batch.length < READ_BATCH ? null : batch[batch.length - 1].position
+  }
+  return foldMessages(rows)[0] ?? null
+}
+
+// ── Trimming ──────────────────────────────────────────────────────────────────
+
+function sliceAt(text: string, index: number): number {
+  // Never split a surrogate pair.
+  const code = text.charCodeAt(index)
+  return code >= 0xdc00 && code <= 0xdfff ? index - 1 : index
+}
+
+/** Keep a quarter of the limit from the head and the rest from the tail, where command errors land. */
+function trimString(text: string): { text: string; omitted: number } {
+  if (text.length <= MESSAGE_STRING_LIMIT) return { text, omitted: 0 }
+  const headEnd = sliceAt(text, Math.floor(MESSAGE_STRING_LIMIT / 4))
+  const tailStart = sliceAt(text, text.length - (MESSAGE_STRING_LIMIT - headEnd))
+  const omitted = tailStart - headEnd
+  return {
+    text: `${text.slice(0, headEnd)}\n\n… ${omitted.toLocaleString('en-US')} characters omitted …\n\n${text.slice(tailStart)}`,
+    omitted,
+  }
+}
+
+function trimValue(value: unknown, omitted: { chars: number }): unknown {
+  if (typeof value === 'string') {
+    const trimmed = trimString(value)
+    omitted.chars += trimmed.omitted
+    return trimmed.text
+  }
+  if (Array.isArray(value)) return value.map((item) => trimValue(item, omitted))
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, trimValue(item, omitted)]))
+  }
+  return value
+}
+
+/**
+ * A page's copy of a message: every content or metadata string longer than
+ * `MESSAGE_STRING_LIMIT` keeps its head and tail around an "omitted" marker, and
+ * `omitted_chars` records the cut. User messages are left whole: their content
+ * carries attachments, and the user typed it.
+ */
+export function trimLargeMessage(message: Message): Message {
+  if (message.role === 'user') return message
+  const omitted = { chars: 0 }
+  const content = trimValue(message.content, omitted) as string
+  let metadata = message.metadata
+  if (metadata && metadata.length > MESSAGE_STRING_LIMIT) {
+    try {
+      metadata = JSON.stringify(trimValue(JSON.parse(metadata), omitted))
+    } catch {
+      // Corrupt metadata renders as none anyway (parseMetadata); don't ship megabytes of it.
+      omitted.chars += metadata.length
+      metadata = null
+    }
+  }
+  return omitted.chars === 0 ? message : { ...message, content, metadata, omitted_chars: omitted.chars }
+}
+
+/**
+ * Largest message, in characters, a client offers to show whole. Past this a client
+ * would freeze rendering it, so it only says how much was left out.
+ */
+export const FULL_MESSAGE_LIMIT = { desktop: 5_000_000, mobile: 1_000_000 } as const
 
 /** Answer a page request from an already-loaded full transcript (old hosts, tests). */
 export function pageFromFullTranscript(messages: Message[]): MessagePage {

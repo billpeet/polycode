@@ -253,6 +253,22 @@ describe('transcript paging', () => {
     expect(ids()).toEqual(['a', 'b', 'c', 'd', 'e'])
   })
 
+  it('swaps a trimmed message for the whole one, in the thread and its session', async () => {
+    const trimmed = { ...msg('big'), session_id: 's1', content: 'head … tail', omitted_chars: 90_000 }
+    useMessageStore.setState({
+      messagesByThread: { [THREAD]: [msg('a', 'user'), trimmed] },
+      messagesBySession: { s1: [trimmed] },
+    })
+    const full = { ...msg('big'), session_id: 's1', content: 'x'.repeat(100_000) }
+    invoke.mockResolvedValueOnce(full)
+
+    await useMessageStore.getState().expandMessage(trimmed)
+
+    expect(invoke).toHaveBeenLastCalledWith('messages:full', { threadId: THREAD }, 'big')
+    expect(useMessageStore.getState().messagesByThread[THREAD][1]).toBe(full)
+    expect(useMessageStore.getState().messagesBySession.s1[0]).toBe(full)
+  })
+
   it('falls back to the whole transcript on a host without messages:page', async () => {
     invoke.mockImplementation(async (channel: string) => {
       if (channel === 'messages:page') throw new Error("Error invoking remote method 'messages:page': Error: [REMOTE_UNSUPPORTED_CHANNEL] Upgrade the Remote Host")

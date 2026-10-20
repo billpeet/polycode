@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest'
 import {
   MESSAGE_PAGE_CHAR_BUDGET,
   applyMessagePage,
+  MESSAGE_STRING_LIMIT,
   continuesPrevious,
   extractTodosFromMessages,
+  readFullMessage,
+  trimLargeMessage,
   foldMessages,
   isUnsupportedChannelError,
   readMessagePage,
@@ -63,6 +66,7 @@ function sourceOf(rows: Message[]): MessageRowSource & { reads: number } {
       const end = before ? before.seq : positioned.length
       return positioned.slice(Math.max(end - count, 0), end).reverse()
     },
+    newer: (from: { seq: number }, count: number) => positioned.slice(from.seq, from.seq + count),
     todos: () => extractTodosFromMessages(rows),
   }
   return source
@@ -119,10 +123,18 @@ describe('readMessagePage', () => {
 
   it('stops at the character budget, but never returns less than one message', () => {
     const huge = 'x'.repeat(MESSAGE_PAGE_CHAR_BUDGET)
-    const rows = [row('user', 'a'), row('assistant', huge), row('user', 'b'), row('assistant', huge)]
+    const rows = [row('assistant', 'a'), row('user', huge), row('assistant', 'b'), row('user', huge)]
     const page = readMessagePage(sourceOf(rows), { kind: 'tail', limit: 100 })
     expect(page.messages.map((message) => message.id)).toEqual([rows[3].id])
     expect(page.hasOlder).toBe(true)
+  })
+
+  it('counts a trimmed message at its trimmed size against the budget', () => {
+    const rows = Array.from({ length: 10 }, (_, index) => [row('user', `q${index}`), row('assistant', 'x'.repeat(1_000_000))]).flat()
+    const page = readMessagePage(sourceOf(rows), { kind: 'tail', limit: 100 })
+    expect(page.messages).toHaveLength(20)
+    expect(page.hasOlder).toBe(false)
+    expect(page.messages[1].omitted_chars).toBe(1_000_000 - MESSAGE_STRING_LIMIT)
   })
 
   it('a since request returns the anchor and everything after it', () => {
@@ -222,5 +234,65 @@ describe('isUnsupportedChannelError', () => {
     expect(isUnsupportedChannelError(new Error("Error invoking remote method 'messages:page': Error: [REMOTE_UNSUPPORTED_CHANNEL] Upgrade the Remote Host"))).toBe(true)
     expect(isUnsupportedChannelError(Object.assign(new Error('x'), { code: 'REMOTE_UNSUPPORTED_CHANNEL' }))).toBe(true)
     expect(isUnsupportedChannelError(new Error('Remote host is busy'))).toBe(false)
+  })
+})
+
+describe('trimLargeMessage', () => {
+  it('keeps the head and the tail of long content and records the cut', () => {
+    const content = 'H'.repeat(30_000) + 'M'.repeat(100_000) + 'T'.repeat(30_000)
+    const trimmed = trimLargeMessage(row('assistant', content))
+    expect(trimmed.omitted_chars).toBe(content.length - MESSAGE_STRING_LIMIT)
+    expect(trimmed.content.startsWith('H'.repeat(MESSAGE_STRING_LIMIT / 4))).toBe(true)
+    expect(trimmed.content.endsWith('T'.repeat(30_000))).toBe(true)
+    expect(trimmed.content).toContain('120,000 characters omitted')
+  })
+
+  it('trims long strings anywhere in metadata and keeps it valid JSON', () => {
+    const big = 'o'.repeat(MESSAGE_STRING_LIMIT * 2)
+    const message = row('assistant', 'done', { type: 'tool_result', tool_use_id: 'tu-1', aggregated_output: big, changes: [{ path: 'a', diff: big }] })
+    const trimmed = trimLargeMessage(message)
+    const meta = JSON.parse(trimmed.metadata!) as { tool_use_id: string; aggregated_output: string; changes: { path: string; diff: string }[] }
+    expect(meta.tool_use_id).toBe('tu-1')
+    expect(meta.changes[0].path).toBe('a')
+    expect(meta.aggregated_output.length).toBeLessThan(MESSAGE_STRING_LIMIT + 100)
+    expect(meta.changes[0].diff.length).toBeLessThan(MESSAGE_STRING_LIMIT + 100)
+    expect(trimmed.omitted_chars).toBe(2 * MESSAGE_STRING_LIMIT)
+  })
+
+  it('leaves small messages and user messages untouched', () => {
+    const small = row('assistant', 'hello')
+    expect(trimLargeMessage(small)).toBe(small)
+    const user = row('user', 'x'.repeat(MESSAGE_STRING_LIMIT * 3))
+    expect(trimLargeMessage(user)).toBe(user)
+  })
+
+  it('never splits a surrogate pair', () => {
+    const trimmed = trimLargeMessage(row('assistant', '😀'.repeat(MESSAGE_STRING_LIMIT)))
+    expect(() => encodeURIComponent(trimmed.content)).not.toThrow()
+  })
+})
+
+describe('readFullMessage', () => {
+  it('returns the whole folded message, however many rows and batches it spans', () => {
+    const chunks = Array.from({ length: 600 }, (_, index) => row('assistant', `${index},`, { type: 'text' }))
+    const rows = [row('user', 'go'), ...chunks, row('user', 'next')]
+    const full = readFullMessage(sourceOf(rows), chunks[0].id)
+    expect(full?.id).toBe(chunks[0].id)
+    expect(full?.content).toBe(chunks.map((chunk) => chunk.content).join(''))
+    expect(full?.omitted_chars).toBeUndefined()
+  })
+
+  it('stops at the end of the scope and returns null for an unknown id', () => {
+    const rows = [row('user', 'go'), row('assistant', 'a', { type: 'text' }), row('assistant', 'b', { type: 'text' })]
+    expect(readFullMessage(sourceOf(rows), rows[1].id)?.content).toBe('ab')
+    expect(readFullMessage(sourceOf(rows), 'gone')).toBeNull()
+  })
+
+  it('matches the untrimmed message a page was cut from', () => {
+    const rows = [row('user', 'go'), ...Array.from({ length: 30 }, () => row('assistant', 'z'.repeat(5_000), { type: 'text' }))]
+    const page = readMessagePage(sourceOf(rows), { kind: 'tail' })
+    const trimmed = page.messages[page.messages.length - 1]
+    expect(trimmed.omitted_chars).toBeGreaterThan(0)
+    expect(readFullMessage(sourceOf(rows), trimmed.id)).toEqual(foldMessages(rows)[1])
   })
 })

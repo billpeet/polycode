@@ -152,6 +152,7 @@ export interface ChannelContract {
   'messages:list': [[threadId: string], Message[]]
   'messages:listBySession': [[sessionId: string], Message[]]
   'messages:page': [[scope: MessageScope, request: MessagePageRequest], MessagePage]
+  'messages:full': [[scope: MessageScope, messageId: string], Message | null]
   'sessions:list': [[threadId: string], Session[]]
   'sessions:getActive': [[threadId: string], Session | null]
   'sessions:switch': [[threadId: string, sessionId: string], void]

@@ -524,6 +524,12 @@ export interface Message {
   content: string
   metadata: string | null
   created_at: string
+  /**
+   * Set on a page's copy of a very large message: how many characters were cut from
+   * its content and metadata strings (see `trimLargeMessage`). `messages:full` returns
+   * the whole message.
+   */
+  omitted_chars?: number
 }
 
 export interface Session {

@@ -1,7 +1,7 @@
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from './index'
 import { ProjectRow, RepoLocationRow, ThreadRow, MessageRow, SessionRow, ProjectCommandRow, YouTrackServerRow, SlashCommandRow, LocationPoolRow, RoutineRow } from './models'
-import { extractTodosFromMessages, foldMessages, readMessagePage, type Todo, type MessagePage, type MessagePageRequest, type MessageRowSource, type MessageScope } from '@polycode/shared'
+import { extractTodosFromMessages, foldMessages, readFullMessage, readMessagePage, type Todo, type MessagePage, type MessagePageRequest, type MessageRowSource, type MessageScope } from '@polycode/shared'
 import { scratchDirForThread } from '../scratch'
 import { CodexPersonality, CodexReasoningSummary, Project, Thread, QueueThread, Message, Session, RepoLocation, SshConfig, WslConfig, ConnectionType, Provider, PermissionMode, ReasoningLevel, getDefaultModelForProvider, ProjectCommand, YouTrackServer, SlashCommand, LocationPool, Routine, RoutineTriggerType, RunState, WorktreeCleanupCandidate } from '../../shared/types'
 
@@ -1482,19 +1482,19 @@ function scopeTodos(column: 'thread_id' | 'session_id', key: string): Todo[] | n
 }
 
 /**
- * One page of a Thread's or Session's transcript; see `readMessagePage`. Ordered by
+ * A Thread's or Session's raw rows for `readMessagePage`/`readFullMessage`. Ordered by
  * `created_at, rowid` so rows sharing a timestamp still page in a stable order.
  */
-export function pageMessages(scope: MessageScope, request: MessagePageRequest): MessagePage {
+function messageRowSource(scope: MessageScope): MessageRowSource {
   const column = 'threadId' in scope ? 'thread_id' : 'session_id'
   const key = 'threadId' in scope ? scope.threadId : scope.sessionId
-  const db = getDb('pageMessages')
+  const db = getDb('messageRowSource')
   type PositionedRow = MessageRow & { seq: number }
   const toRow = (row: PositionedRow) => {
     const { seq, ...message } = row
     return { message: message as Message, position: { createdAt: row.created_at, seq } }
   }
-  const source: MessageRowSource = {
+  return {
     locate: (id) => {
       const row = db
         .prepare(`SELECT rowid AS seq, created_at FROM messages WHERE id = ? AND ${column} = ?`)
@@ -1515,9 +1515,25 @@ export function pageMessages(scope: MessageScope, request: MessagePageRequest): 
           .all(key, count)
       return (rows as PositionedRow[]).map(toRow)
     },
+    newer: (from, count) => (db
+      .prepare(
+        `SELECT rowid AS seq, * FROM messages WHERE ${column} = ?
+           AND created_at >= ? AND (created_at > ? OR rowid >= ?)
+         ORDER BY created_at ASC, rowid ASC LIMIT ?`
+      )
+      .all(key, from.createdAt, from.createdAt, from.seq, count) as PositionedRow[]).map(toRow),
     todos: () => scopeTodos(column, key),
   }
-  return readMessagePage(source, request)
+}
+
+/** One page of a Thread's or Session's transcript; see `readMessagePage`. */
+export function pageMessages(scope: MessageScope, request: MessagePageRequest): MessagePage {
+  return readMessagePage(messageRowSource(scope), request)
+}
+
+/** One message without the trimming pages apply; see `readFullMessage`. */
+export function fullMessage(scope: MessageScope, messageId: string): Message | null {
+  return readFullMessage(messageRowSource(scope), messageId)
 }
 
 export function insertMessage(

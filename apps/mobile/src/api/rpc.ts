@@ -65,6 +65,7 @@ export const MOBILE_RPC_CHANNELS = [
   'messages:list',
   'messages:listBySession',
   'messages:page',
+  'messages:full',
   'slash-commands:list',
   'attachments:save',
   'attachments:readDataUrl',

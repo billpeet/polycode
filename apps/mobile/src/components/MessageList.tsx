@@ -17,6 +17,7 @@ import { colors } from '@/theme/colors'
 import { AgentGroupBlock, type AgentGroupMeta, type AgentStatus } from './AgentGroupBlock'
 import { AttachmentView, extractAttachments } from './AttachmentImage'
 import { Markdown } from './Markdown'
+import { OmittedNotice } from './OmittedNotice'
 import { ThinkingBlock } from './ThinkingBlock'
 import {
   ToolCallBlock,
@@ -35,6 +36,8 @@ interface RenderItem {
   toolCall?: ToolCallProps
   group?: { calls: ToolCallProps[]; groupKey: string }
   agent?: { meta: AgentGroupMeta; entries: RenderItem[] }
+  /** The message behind a text or error bubble, for fetching the whole of it when a page trimmed it. */
+  source?: Message
 }
 
 interface ParsedMsg {
@@ -135,7 +138,7 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
   const pairedToolUseIds = new Set<string>()
   for (const { message, meta } of scope) {
     if (meta?.type === 'tool_result' && typeof meta.tool_use_id === 'string') {
-      resultsByToolUseId.set(meta.tool_use_id, { content: message.content, metadata: meta })
+      resultsByToolUseId.set(meta.tool_use_id, { content: message.content, metadata: meta, source: message })
     }
   }
   for (const { meta } of scope) {
@@ -156,6 +159,7 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
           content: message.content,
           metadata: meta,
           result: toolUseId ? (resultsByToolUseId.get(toolUseId) ?? null) : null,
+          source: message,
         },
       })
       continue
@@ -171,7 +175,7 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
         toolCall: {
           content: typeof meta.name === 'string' ? meta.name : 'result',
           metadata: { name: typeof meta.name === 'string' ? meta.name : 'result' },
-          result: { content: message.content, metadata: meta },
+          result: { content: message.content, metadata: meta, source: message },
         },
       })
       continue
@@ -193,12 +197,12 @@ function classifyScope(scope: ParsedMsg[]): RenderItem[] {
     }
 
     if (message.role === 'system' || meta?.type === 'error') {
-      items.push({ key: message.id, kind: 'error', content: message.content })
+      items.push({ key: message.id, kind: 'error', content: message.content, source: message })
       continue
     }
 
     if (message.content.trim()) {
-      items.push({ key: message.id, kind: 'text', content: message.content })
+      items.push({ key: message.id, kind: 'text', content: message.content, source: message })
     }
   }
   return items
@@ -457,6 +461,7 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
             <Text style={{ fontWeight: '700' }}>Error: </Text>
             {item.content}
           </Text>
+          <OmittedNotice message={item.source} />
         </View>
       )
     case 'plan':
@@ -476,6 +481,7 @@ const Row = memo(function Row({ item }: { item: RenderItem }) {
               <AttachmentView key={index} {...attachment} />
             ))}
             {text ? <Markdown>{text}</Markdown> : null}
+            <OmittedNotice message={item.source} />
           </Pressable>
         </View>
       )

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import MarkdownContent from './MarkdownContent'
 import ToolCallBlock from './ToolCallBlock'
 import ThinkingBlock from './ThinkingBlock'
+import OmittedNotice from './OmittedNotice'
 import { MessageEntry } from './MessageStream'
 import { parseFileMentions } from './FileMention'
 import { markdownToPlainText } from '../lib/markdownToPlainText'
@@ -58,6 +59,7 @@ export default function MessageBubble({ entry }: Props) {
         >
           <span className="mr-2 font-bold">Error:</span>
           <span className="whitespace-pre-wrap">{message.content}</span>
+          <OmittedNotice message={message} />
         </div>
       </div>
     )
@@ -86,6 +88,7 @@ export default function MessageBubble({ entry }: Props) {
         ) : (
           <MarkdownContent content={message.content} />
         )}
+        <OmittedNotice message={message} />
         <div className="absolute top-1 right-1 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <button
             onClick={() => handleCopy('text')}

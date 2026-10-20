@@ -40,6 +40,8 @@ interface MessageStore {
   /** Prepend the page before the oldest message held, if there is one. */
   fetchOlder: (threadId: string) => Promise<void>
   fetchOlderBySession: (sessionId: string) => Promise<void>
+  /** Replace a page's trimmed copy of `message` (`omitted_chars`) with the whole message. */
+  expandMessage: (message: Message) => Promise<void>
 
   appendEvent: (threadId: string, event: OutputEvent) => void
   appendEventToSession: (sessionId: string, threadId: string, event: OutputEvent) => void
@@ -94,6 +96,14 @@ const SESSIONS: Half = {
   messages: (s) => s.messagesBySession,
   paging: (s) => s.pagingBySession,
   write: (messagesBySession, pagingBySession) => ({ messagesBySession, pagingBySession }),
+}
+
+/** Put `full` in place of the message with its id, wherever a transcript holds it. */
+function replaceMessage(byKey: Record<string, Message[]>, key: string | null, full: Message): Record<string, Message[]> {
+  const messages = key ? byKey[key] : undefined
+  const index = messages?.findIndex((message) => message.id === full.id) ?? -1
+  if (!messages || index === -1) return byKey
+  return { ...byKey, [key!]: messages.map((message, at) => (at === index ? full : message)) }
 }
 
 /** The transient message a streamed frame becomes, or nothing for frames that are not messages. */
@@ -175,6 +185,15 @@ export const useMessageStore = create<MessageStore>((set) => ({
   fetchBySession: (sessionId) => refresh(SESSIONS, sessionId),
   fetchOlder: (threadId) => loadOlder(THREADS, threadId),
   fetchOlderBySession: (sessionId) => loadOlder(SESSIONS, sessionId),
+
+  expandMessage: async (message) => {
+    const full = await client.invoke('messages:full', { threadId: message.thread_id }, message.id)
+    if (!full) return
+    set((s) => ({
+      messagesByThread: replaceMessage(s.messagesByThread, message.thread_id, full),
+      messagesBySession: replaceMessage(s.messagesBySession, message.session_id, full),
+    }))
+  },
 
   appendEvent: (threadId, event) => {
     if (event.type === 'status' || event.type === 'rate_limit' || event.type === 'usage') return
