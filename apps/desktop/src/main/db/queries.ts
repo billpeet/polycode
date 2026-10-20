@@ -1570,48 +1570,34 @@ export function listMessagesBySession(sessionId: string): Message[] {
 }
 
 /**
- * Find tool_call messages in a session that have no matching tool_result, then
- * insert a synthetic tool_result with `cancelled: true` for each. Returns the
- * inserted messages so callers can push them to the renderer.
+ * Tool calls in a session that never got a result. Reads only the metadata of rows that
+ * mention a tool, never their content and without folding: a large session holds tens of
+ * MB of output. The Session tracks this itself during a run; this catches calls left
+ * pending by an earlier run that crashed or was killed mid-Turn.
  */
-export function cancelPendingToolCalls(threadId: string, sessionId: string): Message[] {
-  const messages = listMessagesBySession(sessionId)
-
-  // Collect tool_use_ids that already have a result
-  const resultedIds = new Set<string>()
-  for (const msg of messages) {
-    if (!msg.metadata) continue
-    let meta: Record<string, unknown>
-    try { meta = JSON.parse(msg.metadata as string) } catch { continue }
-    if (meta.type === 'tool_result' && typeof meta.tool_use_id === 'string') {
-      resultedIds.add(meta.tool_use_id)
-    }
+export function findUnansweredToolCalls(sessionId: string): string[] {
+  const rows = getDb('findUnansweredToolCalls')
+    .prepare(
+      `SELECT json_extract(metadata, '$.type') AS type, json_extract(metadata, '$.id') AS id,
+              json_extract(metadata, '$.tool_use_id') AS tool_use_id
+       FROM messages WHERE session_id = ? AND instr(metadata, '"tool_') > 0
+       ORDER BY created_at ASC, rowid ASC`
+    )
+    .all(sessionId) as { type: unknown; id: unknown; tool_use_id: unknown }[]
+  const answered = new Set<string>()
+  const calls: string[] = []
+  for (const row of rows) {
+    if (row.type === 'tool_result' && typeof row.tool_use_id === 'string') answered.add(row.tool_use_id)
+    else if ((row.type === 'tool_call' || row.type === 'tool_use') && typeof row.id === 'string') calls.push(row.id)
   }
+  return [...new Set(calls.filter((id) => !answered.has(id)))]
+}
 
-  // Insert a synthetic cancelled result for each orphaned tool_call
-  const inserted: Message[] = []
-  for (const msg of messages) {
-    if (!msg.metadata) continue
-    let meta: Record<string, unknown>
-    try { meta = JSON.parse(msg.metadata as string) } catch { continue }
-    if (
-      (meta.type === 'tool_call' || meta.type === 'tool_use') &&
-      typeof meta.id === 'string' &&
-      !resultedIds.has(meta.id)
-    ) {
-      inserted.push(
-        insertMessage(
-          threadId,
-          'assistant',
-          '',
-          { type: 'tool_result', tool_use_id: meta.id, cancelled: true },
-          sessionId
-        )
-      )
-    }
-  }
-
-  return inserted
+/** Record each tool call as cancelled; returns the inserted rows for pushing to clients. */
+export function insertCancelledToolResults(threadId: string, sessionId: string, toolUseIds: string[]): Message[] {
+  return toolUseIds.map((toolUseId) =>
+    insertMessage(threadId, 'assistant', '', { type: 'tool_result', tool_use_id: toolUseId, cancelled: true }, sessionId)
+  )
 }
 
 export interface ImportedMessage {

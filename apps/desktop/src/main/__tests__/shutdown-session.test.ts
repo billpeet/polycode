@@ -29,7 +29,7 @@ vi.mock('../db/queries', () => new Proxy({
   getOrCreateActiveSession: () => ({ id: 'session-1', claude_session_id: null }),
   getThreadProvider: () => 'claude',
   getThreadModel: () => 'sonnet',
-  cancelPendingToolCalls: () => [],
+  findUnansweredToolCalls: () => [], insertCancelledToolResults: () => [],
 }, {
   has: () => true,
   get: (target, key) => {

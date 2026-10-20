@@ -34,7 +34,8 @@ import {
   updateSessionClaudeId,
   getSessionClaudeId,
   updateThreadUsage,
-  cancelPendingToolCalls
+  findUnansweredToolCalls,
+  insertCancelledToolResults
 } from '../db/queries'
 import { generateTitle } from '../system-text'
 import { emitAppEvent } from '../app-events'
@@ -62,6 +63,10 @@ export class Session {
    * item's final result arrives or the Turn ends without one.
    */
   private transientOutput = new Map<string, string[]>()
+  /** Tool calls seen this run that have no result yet; cancelled when the Turn ends. */
+  private unansweredToolCalls = new Set<string>()
+  /** Sessions already checked for calls an earlier run left without a result. */
+  private sweptSessions = new Set<string>()
   private lastPlanFilePath: string | null = null
   private lastPlanFileName: string | null = null
   private lastMessageOptions: SendOptions | undefined
@@ -387,18 +392,7 @@ export class Session {
     // handleDone early-returns for abandoned sessions — resolve any waiter
     // here or it would hang forever.
     this.flushCompletionWaiters('stopped')
-    if (this.activeSessionId) {
-      this.saveTransientOutput()
-      const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
-      for (const msg of cancelled) {
-        this.emit(`thread:output:${this.threadId}`, {
-          type: 'tool_result',
-          content: '',
-          metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
-          sessionId: this.activeSessionId,
-        } satisfies OutputEvent)
-      }
-    }
+    this.closeOutTurn()
     for (const driver of this.drivers.values()) {
       driver?.forceStop?.()
       if (!driver?.forceStop) {
@@ -837,6 +831,7 @@ export class Session {
         }
         // Track tool calls by ID so we can match permission errors to them
         const toolId = event.metadata?.id as string | undefined
+        if (toolId && this.activeSessionId) this.unansweredToolCalls.add(toolId)
         if (toolId) {
           this.recentToolCalls.set(toolId, {
             name: event.content,
@@ -867,6 +862,7 @@ export class Session {
         const streamed = this.takeTransientOutput(toolUseId)
         if (streamed !== null && streamed.length > event.content.length) streamedContent = streamed
         if (this.activeSessionId) {
+          this.unansweredToolCalls.delete(toolUseId)
           streamEventId = randomUUID()
           insertMessage(this.threadId, 'assistant', streamedContent ?? event.content, event.metadata, this.activeSessionId, streamEventId)
         }
@@ -1023,6 +1019,40 @@ export class Session {
       const content = this.takeTransientOutput(toolUseId)
       if (!sessionId || !content) continue
       insertMessage(this.threadId, 'assistant', content, { type: 'tool_result', ...(toolUseId ? { tool_use_id: toolUseId } : {}) }, sessionId)
+      this.unansweredToolCalls.delete(toolUseId)
+    }
+  }
+
+  /**
+   * End-of-Turn bookkeeping: save output whose final result never came, then record
+   * every tool call still without a result as cancelled and push that to clients.
+   *
+   * Calls are tracked in memory as events arrive, so this reads nothing. It used to
+   * re-read and fold the whole session after every Turn, tens of MB on a large one. The
+   * first Turn of each session in a run also asks the database, to catch calls an
+   * earlier run left pending when it crashed.
+   */
+  private closeOutTurn(): void {
+    const sessionId = this.activeSessionId
+    if (!sessionId) {
+      this.unansweredToolCalls.clear()
+      return
+    }
+    this.saveTransientOutput()
+    const toolUseIds = new Set(this.unansweredToolCalls)
+    this.unansweredToolCalls.clear()
+    if (!this.sweptSessions.has(sessionId)) {
+      this.sweptSessions.add(sessionId)
+      for (const id of findUnansweredToolCalls(sessionId)) toolUseIds.add(id)
+    }
+    for (const msg of insertCancelledToolResults(this.threadId, sessionId, [...toolUseIds])) {
+      this.emit(`thread:output:${this.threadId}`, {
+        type: 'tool_result',
+        content: '',
+        metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
+        sessionId,
+        eventId: msg.id,
+      } satisfies OutputEvent)
     }
   }
 
@@ -1053,19 +1083,7 @@ export class Session {
     // regardless of how the process exited (non-zero exit from SIGTERM looks
     // like an error but shouldn't be treated as one).
     if (this.stopped) {
-      if (this.activeSessionId) {
-        this.saveTransientOutput()
-      const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
-        for (const msg of cancelled) {
-          this.emit(`thread:output:${this.threadId}`, {
-            type: 'tool_result',
-            content: '',
-            metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
-            sessionId: this.activeSessionId,
-            eventId: msg.id,
-          } satisfies OutputEvent)
-        }
-      }
+      this.closeOutTurn()
       this.setStatus('stopped')
       this.emit(`thread:complete:${this.threadId}`, 'stopped')
       this.flushCompletionWaiters('stopped')
@@ -1099,19 +1117,7 @@ export class Session {
     }
     // Cancel any tool calls that never received a result, and push synthetic
     // tool_result events to the renderer before the complete signal.
-    if (this.activeSessionId) {
-      this.saveTransientOutput()
-      const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
-      for (const msg of cancelled) {
-        this.emit(`thread:output:${this.threadId}`, {
-          type: 'tool_result',
-          content: '',
-          metadata: { type: 'tool_result', tool_use_id: (JSON.parse(msg.metadata!) as Record<string, unknown>).tool_use_id, cancelled: true },
-          sessionId: this.activeSessionId,
-          eventId: msg.id,
-        } satisfies OutputEvent)
-      }
-    }
+    this.closeOutTurn()
 
     this.setStatus(finalStatus)
     // Include final status in complete event so the renderer doesn't depend

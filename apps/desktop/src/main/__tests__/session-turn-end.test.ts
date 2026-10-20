@@ -4,13 +4,17 @@ import type { OutputEvent } from '../../shared/types'
 import { Session } from '../session/session'
 
 /**
- * Transient output (Codex command deltas) streams to clients but is not saved one row
- * per piece: the item's final result is the record. The driver is irrelevant to this,
- * so a stub stands in for it.
+ * What a Session saves when a Turn ends: output whose final result never came, and a
+ * cancelled result for every tool call left without one. Transient output (Codex
+ * command deltas) streams to clients but is not saved one row per piece; the item's
+ * final result is the record. The driver is irrelevant to this, so a stub stands in.
  */
 const h = vi.hoisted(() => ({
   write: vi.fn(),
   emit: vi.fn(),
+  findUnanswered: vi.fn((): string[] => []),
+  insertCancelled: vi.fn((_threadId: string, _sessionId: string, ids: string[]) =>
+    ids.map((id) => ({ id: `cancel-${id}`, metadata: JSON.stringify({ type: 'tool_result', tool_use_id: id, cancelled: true }) }))),
   event: null as null | ((event: OutputEvent) => void),
   done: null as null | ((error?: Error) => void),
 }))
@@ -36,7 +40,9 @@ vi.mock('../app-events', () => ({ emitAppEvent: (...args: unknown[]) => h.emit(.
 vi.mock('../db/queries', () => new Proxy({
   getOrCreateActiveSession: () => ({ id: 'session-1', claude_session_id: null }),
   getThreadProvider: () => 'kimi-code', getThreadModel: () => 'default',
-  getThreadById: () => ({}), cancelPendingToolCalls: () => [],
+  getThreadById: () => ({}),
+  findUnansweredToolCalls: (...args: unknown[]) => h.findUnanswered(...args),
+  insertCancelledToolResults: (...args: unknown[]) => h.insertCancelled(...args),
 }, {
   has: () => true,
   get: (target, key) => {
@@ -108,4 +114,43 @@ it('saves output streamed before the user stopped the Turn', () => {
   expect(savedRows()).toEqual([
     ['thread-1', 'assistant', 'half', { type: 'tool_result', tool_use_id: 'cmd-1' }, 'session-1'],
   ])
+})
+
+const toolCall = (id: string): OutputEvent => ({ type: 'tool_call', content: 'Bash', metadata: { type: 'tool_call', id, name: 'Bash', input: {} } })
+const result = (id: string): OutputEvent => ({ type: 'tool_result', content: 'ok', metadata: { type: 'tool_result', tool_use_id: id } })
+const cancelledIds = () => h.insertCancelled.mock.calls.map(([, , ids]) => ids)
+
+it('cancels only the tool calls left without a result when the Turn ends', () => {
+  const { frames } = startTurn()
+  h.event!(toolCall('a'))
+  h.event!(toolCall('b'))
+  h.event!(result('a'))
+  h.done!()
+  expect(cancelledIds()).toEqual([['b']])
+  expect(frames.at(-1)).toMatchObject({ type: 'tool_result', metadata: { tool_use_id: 'b', cancelled: true }, eventId: 'cancel-b' })
+})
+
+it('asks the database for calls an earlier run left pending only on the first Turn of a session', () => {
+  h.findUnanswered.mockReturnValueOnce(['from-a-crash'])
+  const { session } = startTurn()
+  h.event!(toolCall('a'))
+  h.done!()
+  expect(h.findUnanswered).toHaveBeenCalledTimes(1)
+  expect(cancelledIds()).toEqual([['a', 'from-a-crash']])
+
+  h.insertCancelled.mockClear()
+  session.sendMessage('Again')
+  h.event!(toolCall('c'))
+  h.event!(result('c'))
+  h.done!()
+  expect(h.findUnanswered).toHaveBeenCalledTimes(1)
+  expect(cancelledIds()).toEqual([[]])
+})
+
+it('does not cancel a call whose output was saved because its final result never came', () => {
+  startTurn()
+  h.event!(toolCall('cmd-1'))
+  h.event!(delta('half'))
+  h.done!()
+  expect(cancelledIds()).toEqual([[]])
 })
