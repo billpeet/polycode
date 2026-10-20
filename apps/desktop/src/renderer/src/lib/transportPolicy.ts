@@ -6,7 +6,7 @@ const REFRESH_CHANNELS = [
   'projects:list', 'projects:listArchived', 'locations:list', 'location-pools:list',
   'threads:list', 'threads:listQueue', 'threads:listArchived', 'threads:listSnoozed',
   'threads:archivedCount', 'threads:snoozedCount', 'sessions:list',
-  'messages:list', 'messages:listBySession', 'slash-commands:list', 'skills:list',
+  'messages:list', 'messages:listBySession', 'messages:page', 'slash-commands:list', 'skills:list',
   'youtrack:servers:list', 'commands:list', 'commands:getStatus', 'commands:getLogs',
   'commands:getPorts', 'commands:getPid', 'cli:health', 'subscription-usage:get',
   'threads:backgroundTerminals:list', 'routines:list', 'routines:listRuns',

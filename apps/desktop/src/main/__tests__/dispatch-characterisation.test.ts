@@ -435,6 +435,7 @@ vi.mock('../db/queries', () => H.autoModule('db', {
   listMessagesBySession: H.stub('db.listMessagesBySession', [
     { id: 'm2', role: 'assistant', content: 'by session' },
   ]),
+  pageMessages: H.stub('db.pageMessages', { messages: [], hasOlder: false, anchored: true }),
 }))
 
 vi.mock('../forge', () => ({ createForge: H.stub('forge.createForge', () => H.forge) }))
@@ -3739,6 +3740,15 @@ describe('sessions:* and messages:* — both transports agree', () => {
     expect(await resultViaControlRpc('messages:listBySession', ['s1'])).toEqual([
       { id: 'm2', role: 'assistant', content: 'by session' },
     ])
+  })
+
+  it('messages:page passes the scope and request through on both transports', async () => {
+    const args = [{ sessionId: 's1' }, { kind: 'older', before: 'm9' }]
+    expect(await viaControlRpc('messages:page', args)).toEqual(await viaIpc('messages:page', args))
+    expect(await viaIpc('messages:page', args)).toEqual([
+      'db.pageMessages([{"sessionId":"s1"},{"kind":"older","before":"m9"}])',
+    ])
+    expect(await resultViaControlRpc('messages:page', args)).toEqual(await resultViaIpc('messages:page', args))
   })
 })
 

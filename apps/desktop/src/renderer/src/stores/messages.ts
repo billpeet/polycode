@@ -1,14 +1,45 @@
 import { create } from 'zustand'
-import { appendFoldedMessage, eventRole } from '@polycode/shared'
+import {
+  appendFoldedMessage,
+  applyMessagePage,
+  eventRole,
+  isUnsupportedChannelError,
+  pageFromFullTranscript,
+  refreshRequest,
+  type MessagePage,
+  type MessagePageRequest,
+  type MessageScope,
+} from '@polycode/shared'
 import { Message, OutputEvent } from '../types/ipc'
 import { client } from '../lib/client'
+
+/** What is known about the part of a transcript held in `messagesByThread`/`messagesBySession`. */
+export interface TranscriptPaging {
+  /** More messages exist before the first one held. */
+  hasOlder: boolean
+  /** Anchor for the next `older` request. */
+  oldestId: string | null
+  /** Anchor for the next `since` request. */
+  newestPersistedId: string | null
+  loadingOlder: boolean
+}
 
 interface MessageStore {
   messagesByThread: Record<string, Message[]>
   messagesBySession: Record<string, Message[]>
+  pagingByThread: Record<string, TranscriptPaging>
+  pagingBySession: Record<string, TranscriptPaging>
 
-  fetch: (threadId: string) => Promise<void>
-  fetchBySession: (sessionId: string) => Promise<void>
+  /**
+   * Bring the held transcript up to date: the newest page on first load, then only
+   * what changed since. Resolves with the page, whose `todos` cover the whole scope,
+   * or undefined when the host could not be reached.
+   */
+  fetch: (threadId: string) => Promise<MessagePage | undefined>
+  fetchBySession: (sessionId: string) => Promise<MessagePage | undefined>
+  /** Prepend the page before the oldest message held, if there is one. */
+  fetchOlder: (threadId: string) => Promise<void>
+  fetchOlderBySession: (sessionId: string) => Promise<void>
 
   appendEvent: (threadId: string, event: OutputEvent) => void
   appendEventToSession: (sessionId: string, threadId: string, event: OutputEvent) => void
@@ -22,6 +53,47 @@ interface MessageStore {
 
   clear: (threadId: string) => void
   clearSession: (sessionId: string) => void
+}
+
+/**
+ * One page from the host. A host older than `messages:page` answers with its whole
+ * transcript instead, which then never has older pages to load.
+ */
+async function requestPage(scope: MessageScope, request: MessagePageRequest): Promise<MessagePage | undefined> {
+  try {
+    return await client.refresh('messages:page', scope, request)
+  } catch (error) {
+    if (!isUnsupportedChannelError(error)) throw error
+    if (request.kind === 'older') return { messages: [], hasOlder: false, anchored: true }
+    const messages = 'threadId' in scope
+      ? await client.refresh('messages:list', scope.threadId)
+      : await client.refresh('messages:listBySession', scope.sessionId)
+    return messages ? pageFromFullTranscript(messages) : undefined
+  }
+}
+
+const NO_PAGING: TranscriptPaging = { hasOlder: false, oldestId: null, newestPersistedId: null, loadingOlder: false }
+
+/** The thread-keyed and the session-keyed halves of the store, which page identically. */
+interface Half {
+  scope: (id: string) => MessageScope
+  messages: (s: MessageStore) => Record<string, Message[]>
+  paging: (s: MessageStore) => Record<string, TranscriptPaging>
+  write: (messages: Record<string, Message[]>, paging: Record<string, TranscriptPaging>) => Partial<MessageStore>
+}
+
+const THREADS: Half = {
+  scope: (threadId) => ({ threadId }),
+  messages: (s) => s.messagesByThread,
+  paging: (s) => s.pagingByThread,
+  write: (messagesByThread, pagingByThread) => ({ messagesByThread, pagingByThread }),
+}
+
+const SESSIONS: Half = {
+  scope: (sessionId) => ({ sessionId }),
+  messages: (s) => s.messagesBySession,
+  paging: (s) => s.pagingBySession,
+  write: (messagesBySession, pagingBySession) => ({ messagesBySession, pagingBySession }),
 }
 
 /** The transient message a streamed frame becomes, or nothing for frames that are not messages. */
@@ -38,31 +110,71 @@ function streamMessageFor(threadId: string, sessionId: string | null, event: Out
   }]
 }
 
+// Paging helpers shared by the thread- and session-keyed halves of the store.
+const windowOf = (half: Half, id: string) => {
+  const state = useMessageStore.getState()
+  const messages = half.messages(state)[id]
+  const paging = half.paging(state)[id]
+  if (!messages && !paging) return undefined
+  return { messages: messages ?? [], ...(paging ?? NO_PAGING) }
+}
+
+const setLoadingOlder = (half: Half, id: string, loadingOlder: boolean) =>
+  useMessageStore.setState((s) => half.write(half.messages(s), {
+    ...half.paging(s),
+    [id]: { ...(half.paging(s)[id] ?? NO_PAGING), loadingOlder },
+  }))
+
+const apply = (half: Half, id: string, request: MessagePageRequest, page: MessagePage) =>
+  useMessageStore.setState((s) => {
+    const held = half.paging(s)[id]
+    const messages = half.messages(s)[id]
+    const next = applyMessagePage(
+      messages || held ? { messages: messages ?? [], ...(held ?? NO_PAGING) } : undefined,
+      request,
+      page,
+    )
+    return half.write({ ...half.messages(s), [id]: next.messages }, {
+      ...half.paging(s),
+      [id]: {
+        hasOlder: next.hasOlder,
+        oldestId: next.oldestId,
+        newestPersistedId: next.newestPersistedId,
+        loadingOlder: held?.loadingOlder ?? false,
+      },
+    })
+  })
+
+const refresh = async (half: Half, id: string) => {
+  const request = refreshRequest(windowOf(half, id))
+  const page = await requestPage(half.scope(id), request)
+  if (page) apply(half, id, request, page)
+  return page
+}
+
+const loadOlder = async (half: Half, id: string) => {
+  const paging = half.paging(useMessageStore.getState())[id]
+  if (!paging?.hasOlder || !paging.oldestId || paging.loadingOlder) return
+  const request: MessagePageRequest = { kind: 'older', before: paging.oldestId }
+  setLoadingOlder(half, id, true)
+  try {
+    const page = await requestPage(half.scope(id), request)
+    if (page) apply(half, id, request, page)
+  } finally {
+    setLoadingOlder(half, id, false)
+  }
+}
+
 export const useMessageStore = create<MessageStore>((set) => ({
   messagesByThread: {},
   messagesBySession: {},
+  pagingByThread: {},
+  pagingBySession: {},
 
-  fetch: async (threadId) => {
-    const messages = await client.refresh('messages:list', threadId)
-    if (!messages) return
-    set((s) => {
-      const serverIds = new Set(messages.map((message: Message) => message.id))
-      const pendingUserMessages = (s.messagesByThread[threadId] ?? [])
-        .filter((message) => message.role === 'user' && !serverIds.has(message.id))
-      return {
-        messagesByThread: {
-          ...s.messagesByThread,
-          [threadId]: [...messages, ...pendingUserMessages],
-        },
-      }
-    })
-  },
-
-  fetchBySession: async (sessionId) => {
-    const messages = await client.refresh('messages:listBySession', sessionId)
-    if (!messages) return
-    set((s) => ({ messagesBySession: { ...s.messagesBySession, [sessionId]: messages } }))
-  },
+  fetch: (threadId) => refresh(THREADS, threadId),
+  fetchBySession: (sessionId) => refresh(SESSIONS, sessionId),
+  fetchOlder: (threadId) => loadOlder(THREADS, threadId),
+  fetchOlderBySession: (sessionId) => loadOlder(SESSIONS, sessionId),
 
   appendEvent: (threadId, event) => {
     if (event.type === 'status' || event.type === 'rate_limit' || event.type === 'usage') return
@@ -175,20 +287,27 @@ export const useMessageStore = create<MessageStore>((set) => ({
         ...(updated[toThreadId] ?? []),
         ...source.map((message) => ({ ...message, thread_id: toThreadId })),
       ]
-      return { messagesByThread: updated }
+      // A pending thread's messages are all optimistic, so there is no paging to carry.
+      const paging = { ...s.pagingByThread }
+      delete paging[fromThreadId]
+      return { messagesByThread: updated, pagingByThread: paging }
     }),
 
   clear: (threadId) =>
     set((s) => {
       const updated = { ...s.messagesByThread }
       delete updated[threadId]
-      return { messagesByThread: updated }
+      const paging = { ...s.pagingByThread }
+      delete paging[threadId]
+      return { messagesByThread: updated, pagingByThread: paging }
     }),
 
   clearSession: (sessionId) =>
     set((s) => {
       const updated = { ...s.messagesBySession }
       delete updated[sessionId]
-      return { messagesBySession: updated }
+      const paging = { ...s.pagingBySession }
+      delete paging[sessionId]
+      return { messagesBySession: updated, pagingBySession: paging }
     })
 }))

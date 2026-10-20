@@ -15,10 +15,12 @@ interface TodosState {
   applyEvent: (threadId: string, event: OutputEvent) => void
   /** Re-extract todos from persisted messages (initial load / catch-up). */
   syncFromMessages: (threadId: string, messages: Message[]) => void
+  /** Replace the list with the host's snapshot; null means the thread has none. */
+  applySnapshot: (threadId: string, todos: Todo[] | null) => void
   clear: (threadId: string) => void
 }
 
-export const useTodosStore = create<TodosState>((set) => ({
+export const useTodosStore = create<TodosState>((set, get) => ({
   todosByThread: {},
 
   applyEvent: (threadId, event) => {
@@ -81,8 +83,9 @@ export const useTodosStore = create<TodosState>((set) => ({
     })
   },
 
-  syncFromMessages: (threadId, messages) => {
-    const todos = extractTodosFromMessages(messages)
+  syncFromMessages: (threadId, messages) => get().applySnapshot(threadId, extractTodosFromMessages(messages)),
+
+  applySnapshot: (threadId, todos) => {
     set((s) => {
       if (todos) return { todosByThread: { ...s.todosByThread, [threadId]: todos } }
       const updated = { ...s.todosByThread }

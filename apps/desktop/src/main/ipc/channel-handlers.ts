@@ -116,6 +116,7 @@ import {
   listLocations,
   listMessages,
   listMessagesBySession,
+  pageMessages,
   listProjects,
   listRoutines,
   listRuns,
@@ -1881,6 +1882,8 @@ export const channelHandlers = {
   'messages:list': (_ctx, threadId) => listMessages(threadId),
 
   'messages:listBySession': (_ctx, sessionId) => listMessagesBySession(sessionId),
+
+  'messages:page': (_ctx, scope, request) => pageMessages(scope, request),
 
   // ── SSH / WSL connection tests ────────────────────────────────────────────
 

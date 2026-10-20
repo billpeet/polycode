@@ -12,10 +12,12 @@ interface TodoStore {
   addTask: (threadId: string, input: Record<string, unknown>) => void
   updateTask: (threadId: string, taskId: string, status: Todo['status']) => void
   syncFromMessages: (threadId: string, messages: Message[]) => void
+  /** Replace the list with the host's snapshot; null means the thread has none. */
+  applySnapshot: (threadId: string, todos: Todo[] | null) => void
   clearTodos: (threadId: string) => void
 }
 
-export const useTodoStore = create<TodoStore>((set) => ({
+export const useTodoStore = create<TodoStore>((set, get) => ({
   todosByThread: {},
 
   setTodos: (threadId, todos) =>
@@ -37,8 +39,9 @@ export const useTodoStore = create<TodoStore>((set) => ({
     })),
 
   /** Re-extract todos from persisted messages (recovery / catch-up). */
-  syncFromMessages: (threadId, messages) => {
-    const todos = extractTodosFromMessages(messages)
+  syncFromMessages: (threadId, messages) => get().applySnapshot(threadId, extractTodosFromMessages(messages)),
+
+  applySnapshot: (threadId, todos) => {
     set((s) => {
       if (todos) {
         return {

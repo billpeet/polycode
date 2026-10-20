@@ -2,7 +2,7 @@
 const REFRESH_CHANNELS = new Set([
   'projects:list', 'threads:list', 'threads:listQueue', 'threads:listArchived',
   'threads:listSnoozed', 'threads:archivedCount', 'threads:snoozedCount',
-  'sessions:list', 'messages:list', 'messages:listBySession',
+  'sessions:list', 'messages:list', 'messages:listBySession', 'messages:page',
 ])
 
 /**

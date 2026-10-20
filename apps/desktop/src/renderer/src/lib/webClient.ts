@@ -76,7 +76,7 @@ const PROXY_RETRY_CHANNELS = new Set([
   'projects:list', 'projects:listArchived', 'threads:list', 'threads:listQueue',
   'threads:listQueueArchived', 'threads:listQueueSnoozed', 'threads:listArchived',
   'threads:listSnoozed', 'threads:archivedCount', 'threads:snoozedCount',
-  'sessions:list', 'messages:list', 'messages:listBySession',
+  'sessions:list', 'messages:list', 'messages:listBySession', 'messages:page',
   'locations:list', 'commands:list', 'slash-commands:list', 'skills:list',
 ])
 const PROXY_RETRY_DELAYS_MS = [150, 400]

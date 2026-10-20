@@ -64,6 +64,7 @@ import type {
   SubscriptionUsageSnapshot,
 } from './types'
 import type { UnifiedSnapshot } from './unified'
+import type { MessagePage, MessagePageRequest, MessageScope } from './message-pages'
 import type { Channel } from './channels'
 import type { AppProfile, SeedBrowseRequest, SeedCatalog, SeedImportRequest, SeedImportResult } from './seed'
 
@@ -150,6 +151,7 @@ export interface ChannelContract {
   'threads:setWsl': [[threadId: string, useWsl: boolean, wslDistro: string | null], void]
   'messages:list': [[threadId: string], Message[]]
   'messages:listBySession': [[sessionId: string], Message[]]
+  'messages:page': [[scope: MessageScope, request: MessagePageRequest], MessagePage]
   'sessions:list': [[threadId: string], Session[]]
   'sessions:getActive': [[threadId: string], Session | null]
   'sessions:switch': [[threadId: string, sessionId: string], void]

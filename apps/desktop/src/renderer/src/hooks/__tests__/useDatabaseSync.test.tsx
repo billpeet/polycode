@@ -22,7 +22,7 @@ describe('useDatabaseSync', () => {
     invoke.mockImplementation(async (channel: string) => {
       if (channel === 'threads:list') return []
       if (channel === 'threads:archivedCount') return 0
-      if (channel === 'messages:listBySession') return []
+      if (channel === 'messages:page') return { messages: [], hasOlder: false, anchored: false, todos: null }
       if (channel === 'sessions:list') return []
       return undefined
     })
@@ -37,7 +37,7 @@ describe('useDatabaseSync', () => {
     await waitFor(() => {
       expect(invoke).toHaveBeenCalledWith('threads:list', 'project-1')
       expect(invoke).toHaveBeenCalledWith('threads:archivedCount', 'project-1')
-      expect(invoke).toHaveBeenCalledWith('messages:listBySession', 'session-1')
+      expect(invoke).toHaveBeenCalledWith('messages:page', { sessionId: 'session-1' }, { kind: 'tail' })
     })
   })
 
@@ -65,7 +65,7 @@ describe('useDatabaseSync', () => {
       expect(invoke).toHaveBeenCalledWith('threads:list', 'project-1')
     })
     expect(invoke).not.toHaveBeenCalledWith('sessions:list', 'thread-1')
-    expect(invoke).not.toHaveBeenCalledWith('messages:listBySession', 'session-1')
+    expect(invoke).not.toHaveBeenCalledWith('messages:page', { sessionId: 'session-1' }, expect.anything())
   })
 })
 // @vitest-environment happy-dom

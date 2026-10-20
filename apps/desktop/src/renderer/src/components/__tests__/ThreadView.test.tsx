@@ -30,9 +30,12 @@ vi.mock('../AgentTabs', () => ({ default: () => null }))
 vi.mock('../MessageStream', () => ({ default: () => null }))
 vi.mock('../InputBar', () => ({ default: () => null }))
 
+const EMPTY_PAGE = { messages: [], hasOlder: false, anchored: false, todos: null }
+const answer = (channel: string) => Promise.resolve(channel === 'messages:page' ? EMPTY_PAGE : [])
+
 beforeEach(() => {
   vi.stubGlobal('React', React)
-  invoke.mockReset().mockResolvedValue([])
+  invoke.mockReset().mockImplementation(answer)
   useThreadStore.setState({ byProject: {}, queuedMessageByThread: {}, selectedThreadId: 't' })
   useSessionStore.setState({ sessionsByThread: { t: [] }, activeSessionByThread: { t: 's' } })
   useMessageStore.setState({ messagesBySession: { s: [] }, messagesByThread: { t: [] } })
@@ -46,10 +49,10 @@ it.each(['mount', 'reconnect', 'complete', 'session-switch'].flatMap((trigger) =
   const sessions = useSessionStore.getState().sessionsByThread.t
   const pending: Array<() => void> = []
   const rejectRefreshes = () => invoke.mockImplementation((channel: string) => {
-    if (channel === 'sessions:list' || channel === 'messages:listBySession') {
+    if (channel === 'sessions:list' || channel === 'messages:page') {
       return new Promise((_, reject) => pending.push(() => reject(new Error(appShuttingDownMessage()))))
     }
-    return Promise.resolve([])
+    return answer(channel)
   })
   if (trigger === 'mount') rejectRefreshes()
   const view = render(<ThreadView threadId="t" />)
@@ -85,21 +88,21 @@ it('does not launch refreshes from a completion callback after cleanup', async (
 it('does not rebuild todos after an in-flight transcript refresh outlives the view', async () => {
   const view = render(<ThreadView threadId="t" />)
   await act(async () => {})
-  let resolveMessages!: (value: unknown[]) => void
-  invoke.mockImplementation((channel: string) => channel === 'messages:listBySession'
-    ? new Promise((resolve) => { resolveMessages = resolve }) : Promise.resolve([]))
-  const sync = vi.spyOn(useTodoStore.getState(), 'syncFromMessages')
+  let resolveMessages!: (value: unknown) => void
+  invoke.mockImplementation((channel: string) => channel === 'messages:page'
+    ? new Promise((resolve) => { resolveMessages = resolve }) : answer(channel))
+  const sync = vi.spyOn(useTodoStore.getState(), 'applySnapshot')
   act(() => listeners.get('thread:complete:t')!('idle'))
   view.unmount()
-  await act(async () => { resolveMessages([]) })
+  await act(async () => { resolveMessages(EMPTY_PAGE) })
   expect(sync).not.toHaveBeenCalled()
 })
 
-it.each(['sessions:list', 'messages:listBySession'])('preserves unexpected %s failures through the background boundary', async (channel) => {
+it.each(['sessions:list', 'messages:page'])('preserves unexpected %s failures through the background boundary', async (channel) => {
   const { settleBackgroundIpc } = await import('../../lib/backgroundIpc')
   const failure = new Error('SQLITE_CORRUPT: database disk image is malformed')
   invoke.mockRejectedValue(failure)
-  const operation = channel === 'sessions:list'
+  const operation: Promise<unknown> = channel === 'sessions:list'
     ? useSessionStore.getState().fetch('t')
     : useMessageStore.getState().fetchBySession('s')
   await expect(settleBackgroundIpc(operation)).rejects.toBe(failure)
