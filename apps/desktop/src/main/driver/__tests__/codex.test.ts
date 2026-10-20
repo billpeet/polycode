@@ -230,6 +230,33 @@ describe('parseCodexSdkEvent', () => {
     expect(completed[0].metadata?.tool_use_id).toBe('item_cmd')
   })
 
+  it('keeps command output out of the completed result metadata', () => {
+    const state = createCodexStreamState()
+    parseCodexSdkEvent({ type: 'item.started', item: { id: 'item_cmd', type: 'command_execution', command: 'ls', aggregated_output: '', status: 'in_progress' } }, state)
+    const [completed] = parseCodexSdkEvent(
+      { type: 'item.completed', item: { id: 'item_cmd', type: 'command_execution', command: 'ls', aggregated_output: 'file1', exit_code: 0, status: 'completed' } },
+      state
+    )
+    expect(completed.content).toBe('file1')
+    expect(completed.metadata).not.toHaveProperty('aggregated_output')
+    expect(completed.metadata).toMatchObject({ type: 'tool_result', tool_use_id: 'item_cmd', exit_code: 0, command: 'ls' })
+  })
+
+  it('streams command output deltas as transient pieces carrying only what clients pair on', () => {
+    const state = createCodexStreamState()
+    const appServer = parseCodexAppServerNotification(
+      'item/commandExecution/outputDelta',
+      { threadId: 't', turnId: 'u', itemId: 'item_cmd', delta: 'line\n' },
+      state,
+    )
+    expect(appServer).toEqual([{
+      type: 'tool_result',
+      content: 'line\n',
+      metadata: { type: 'tool_result', tool_use_id: 'item_cmd' },
+      transient: true,
+    }])
+  })
+
   it('maps todo_list items into tool events with items metadata', () => {
     const started = parseCodexSdkEvent(
       {

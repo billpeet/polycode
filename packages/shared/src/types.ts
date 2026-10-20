@@ -646,6 +646,13 @@ export interface OutputEvent {
    * from hosts that predate the field.
    */
   eventId?: string
+  /**
+   * Streamed to clients but not saved: a piece of output whose item later ends in a
+   * saved event carrying all of it (Codex command output deltas, whose
+   * `item/completed` repeats the whole output). The session holds the pieces until
+   * then, and saves them itself if that event never comes.
+   */
+  transient?: boolean
 }
 
 export type ThreadStatus = 'idle' | 'running' | 'stopping' | 'error' | 'stopped' | 'plan_pending' | 'question_pending' | 'permission_pending'

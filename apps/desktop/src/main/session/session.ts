@@ -57,6 +57,11 @@ export class Session {
   private pendingPermissionOrder: string[] = []
   private pendingPermissions = new Map<string, PermissionRequest>()
   private recentToolCalls = new Map<string, { name: string; input: Record<string, unknown> }>()
+  /**
+   * Unsaved output pieces by tool_use_id (`OutputEvent.transient`), held until the
+   * item's final result arrives or the Turn ends without one.
+   */
+  private transientOutput = new Map<string, string[]>()
   private lastPlanFilePath: string | null = null
   private lastPlanFileName: string | null = null
   private lastMessageOptions: SendOptions | undefined
@@ -383,6 +388,7 @@ export class Session {
     // here or it would hang forever.
     this.flushCompletionWaiters('stopped')
     if (this.activeSessionId) {
+      this.saveTransientOutput()
       const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
       for (const msg of cancelled) {
         this.emit(`thread:output:${this.threadId}`, {
@@ -807,6 +813,8 @@ export class Session {
     // SSE stream and a `messages:list` snapshot travel over independent
     // connections and can deliver the same event twice.
     let streamEventId: string | undefined
+    // The content the frame carries, when it differs from what the driver sent.
+    let streamedContent: string | undefined
 
     // Persist all relevant event types to DB with session ID
     switch (event.type) {
@@ -847,9 +855,20 @@ export class Session {
         break
       }
       case 'tool_result': {
+        const toolUseId = typeof event.metadata?.tool_use_id === 'string' ? event.metadata.tool_use_id : ''
+        if (event.transient) {
+          const pieces = this.transientOutput.get(toolUseId)
+          if (pieces) pieces.push(event.content)
+          else this.transientOutput.set(toolUseId, [event.content])
+          break
+        }
+        // The final result normally repeats everything streamed; Codex occasionally
+        // reports less (or nothing), and the streamed pieces are then the better record.
+        const streamed = this.takeTransientOutput(toolUseId)
+        if (streamed !== null && streamed.length > event.content.length) streamedContent = streamed
         if (this.activeSessionId) {
           streamEventId = randomUUID()
-          insertMessage(this.threadId, 'assistant', event.content, event.metadata, this.activeSessionId, streamEventId)
+          insertMessage(this.threadId, 'assistant', streamedContent ?? event.content, event.metadata, this.activeSessionId, streamEventId)
         }
         // Fallback: detect permission errors from error tool_results (non-stream-json mode or
         // older Claude CLI versions that don't emit control_request events).
@@ -978,7 +997,32 @@ export class Session {
     // message stream — they're handled via UI state (status + banner), not as
     // message bubbles.
     if (event.type !== 'question' && event.type !== 'permission_request' && !shouldSuppressAssistantText) {
-      this.emit(`thread:output:${this.threadId}`, { ...eventWithSession, eventId: streamEventId })
+      this.emit(`thread:output:${this.threadId}`, {
+        ...eventWithSession,
+        ...(streamedContent !== undefined ? { content: streamedContent } : {}),
+        eventId: streamEventId,
+      })
+    }
+  }
+
+  /** The joined unsaved output for one tool_use_id, forgetting it; null when there is none. */
+  private takeTransientOutput(toolUseId: string): string | null {
+    const pieces = this.transientOutput.get(toolUseId)
+    if (!pieces) return null
+    this.transientOutput.delete(toolUseId)
+    return pieces.join('')
+  }
+
+  /**
+   * Save output whose final result never came (the Turn was stopped, failed, or the
+   * process died), as one row per tool. Clients already showed it streamed in.
+   */
+  private saveTransientOutput(): void {
+    const sessionId = this.activeSessionId
+    for (const toolUseId of [...this.transientOutput.keys()]) {
+      const content = this.takeTransientOutput(toolUseId)
+      if (!sessionId || !content) continue
+      insertMessage(this.threadId, 'assistant', content, { type: 'tool_result', ...(toolUseId ? { tool_use_id: toolUseId } : {}) }, sessionId)
     }
   }
 
@@ -1010,7 +1054,8 @@ export class Session {
     // like an error but shouldn't be treated as one).
     if (this.stopped) {
       if (this.activeSessionId) {
-        const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
+        this.saveTransientOutput()
+      const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
         for (const msg of cancelled) {
           this.emit(`thread:output:${this.threadId}`, {
             type: 'tool_result',
@@ -1055,6 +1100,7 @@ export class Session {
     // Cancel any tool calls that never received a result, and push synthetic
     // tool_result events to the renderer before the complete signal.
     if (this.activeSessionId) {
+      this.saveTransientOutput()
       const cancelled = cancelPendingToolCalls(this.threadId, this.activeSessionId)
       for (const msg of cancelled) {
         this.emit(`thread:output:${this.threadId}`, {
