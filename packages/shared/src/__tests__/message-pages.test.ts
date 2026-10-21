@@ -11,6 +11,7 @@ import {
   isUnsupportedChannelError,
   readMessagePage,
   refreshRequest,
+  sendsToConfirm,
   type Message,
   type MessagePage,
   type MessageRowSource,
@@ -225,6 +226,69 @@ describe('applyMessagePage', () => {
     expect(ids(window)).toEqual(['y', 'z', 'optimistic-1'])
     expect(window.hasOlder).toBe(true)
     expect(window.oldestId).toBe('y')
+  })
+
+  it('drops sends the host confirms it holds outside the page', () => {
+    const held: TranscriptWindow = {
+      messages: [persisted('b'), persisted('sent', 'user'), persisted('optimistic-1', 'user')],
+      hasOlder: false,
+      oldestId: 'b',
+      newestPersistedId: 'b',
+    }
+    const request = { kind: 'since', since: 'b' } as const
+    const page: MessagePage = { messages: [persisted('y'), persisted('z')], hasOlder: true, anchored: false }
+    expect(sendsToConfirm(held, request, page).map((message) => message.id)).toEqual(['sent', 'optimistic-1'])
+    expect(ids(applyMessagePage(held, request, page, new Set(['sent'])))).toEqual(['y', 'z', 'optimistic-1'])
+  })
+
+  it('confirms nothing when the page fits what is held or reaches the start', () => {
+    const held: TranscriptWindow = {
+      messages: [persisted('b'), persisted('optimistic-1', 'user')],
+      hasOlder: false,
+      oldestId: 'b',
+      newestPersistedId: 'b',
+    }
+    const request = { kind: 'since', since: 'b' } as const
+    expect(sendsToConfirm(held, request, { messages: [persisted('b'), persisted('c')], hasOlder: false, anchored: true })).toEqual([])
+    expect(sendsToConfirm(held, request, { messages: [persisted('y')], hasOlder: false, anchored: false })).toEqual([])
+    expect(sendsToConfirm(undefined, { kind: 'tail' }, { messages: [persisted('y')], hasOlder: true, anchored: false })).toEqual([])
+  })
+
+  it('never carries over streamed user frames, which the host persisted under another id', () => {
+    const held: TranscriptWindow = {
+      messages: [persisted('b'), persisted('stream-1', 'user')],
+      hasOlder: false,
+      oldestId: 'b',
+      newestPersistedId: 'b',
+    }
+    const window = applyMessagePage(held, { kind: 'since', since: 'b' }, {
+      messages: [persisted('b'), persisted('answer', 'user')],
+      hasOlder: false,
+      anchored: true,
+    })
+    expect(ids(window)).toEqual(['b', 'answer'])
+  })
+
+  it('keeps a send in place after a Turn longer than one page', () => {
+    const before = [row('user', 'first'), row('assistant', 'reply')]
+    const send = row('user', 'second')
+    // A long Turn: tool calls and results never fold into each other.
+    const turn = Array.from({ length: 20 }, (_, index) =>
+      row('assistant', `call ${index}`, { type: index % 2 ? 'tool_result' : 'tool_call', tool_use_id: `t${index >> 1}` }))
+    const source = sourceOf([...before, send, ...turn])
+
+    // The client held the transcript up to `reply` and sent `second` optimistically.
+    const held: TranscriptWindow = { messages: [...before, send], hasOlder: false, oldestId: before[0].id, newestPersistedId: before[1].id }
+    const request = refreshRequest(held)
+    const page = readMessagePage(source, { ...request, limit: 5 })
+    expect(page.anchored).toBe(false)
+
+    const toConfirm = sendsToConfirm(held, request, page)
+    expect(toConfirm.map((message) => message.id)).toEqual([send.id])
+    const hostHolds = new Set(toConfirm.filter((message) => readFullMessage(source, message.id)).map((message) => message.id))
+    const window = applyMessagePage(held, request, page, hostHolds)
+    expect(window.messages.map((message) => message.content)).toEqual(turn.slice(-5).map((message) => message.content))
+    expect(window.messages.some((message) => message.id === send.id)).toBe(false)
   })
 })
 

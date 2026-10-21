@@ -7,12 +7,14 @@ import {
   isUnsupportedChannelError,
   pageFromFullTranscript,
   refreshRequest,
+  sendsToConfirm,
   type Message,
   type MessagePage,
   type MessagePageRequest,
   type OutputEvent,
   type RateLimitInfo,
   type TokenUsage,
+  type TranscriptWindow,
 } from '@polycode/shared'
 import { rpc } from '../api/rpc'
 import { requireConnection } from './hosts'
@@ -99,14 +101,32 @@ interface MessagesState {
   clear: (threadId: string) => void
 }
 
-function applyPage(s: MessagesState, threadId: string, request: MessagePageRequest, page: MessagePage): Partial<MessagesState> {
+function heldWindow(s: MessagesState, threadId: string): TranscriptWindow | undefined {
   const messages = s.messagesByThread[threadId]
   const paging = s.pagingByThread[threadId]
-  const next = applyMessagePage(
-    messages || paging ? { ...EMPTY_TRANSCRIPT_WINDOW, ...paging, messages: messages ?? [] } : undefined,
-    request,
-    page,
-  )
+  return messages || paging ? { ...EMPTY_TRANSCRIPT_WINDOW, ...paging, messages: messages ?? [] } : undefined
+}
+
+/** The ids among `sends` the host holds. A send the host can't vouch for stays held. */
+async function persistedSends(threadId: string, sends: Message[]): Promise<Set<string>> {
+  const found = await Promise.all(sends.map(async (message) => {
+    try {
+      return (await rpc(requireConnection(), 'messages:full', { threadId }, message.id)) ? message.id : null
+    } catch {
+      return null
+    }
+  }))
+  return new Set(found.filter((messageId): messageId is string => messageId !== null))
+}
+
+function applyPage(
+  s: MessagesState,
+  threadId: string,
+  request: MessagePageRequest,
+  page: MessagePage,
+  persisted?: ReadonlySet<string>,
+): Partial<MessagesState> {
+  const next = applyMessagePage(heldWindow(s, threadId), request, page, persisted)
   return {
     messagesByThread: { ...s.messagesByThread, [threadId]: next.messages },
     pagingByThread: {
@@ -137,8 +157,10 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
         threadId,
         page.messages.map((message) => message.id),
       )
+      const toConfirm = sendsToConfirm(heldWindow(get(), threadId), request, page)
+      const persisted = toConfirm.length > 0 ? await persistedSends(threadId, toConfirm) : undefined
       set((s) => ({
-        ...applyPage(s, threadId, request, page),
+        ...applyPage(s, threadId, request, page, persisted),
         loadingByThread: { ...s.loadingByThread, [threadId]: false },
       }))
       return page

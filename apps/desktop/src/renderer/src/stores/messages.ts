@@ -6,6 +6,7 @@ import {
   isUnsupportedChannelError,
   pageFromFullTranscript,
   refreshRequest,
+  sendsToConfirm,
   type MessagePage,
   type MessagePageRequest,
   type MessageScope,
@@ -135,7 +136,19 @@ const setLoadingOlder = (half: Half, id: string, loadingOlder: boolean) =>
     [id]: { ...(half.paging(s)[id] ?? NO_PAGING), loadingOlder },
   }))
 
-const apply = (half: Half, id: string, request: MessagePageRequest, page: MessagePage) =>
+/** The ids among `sends` the host holds. A send the host can't vouch for stays held. */
+async function persistedSends(sends: Message[]): Promise<Set<string>> {
+  const found = await Promise.all(sends.map(async (message) => {
+    try {
+      return (await client.invoke('messages:full', { threadId: message.thread_id }, message.id)) ? message.id : null
+    } catch {
+      return null
+    }
+  }))
+  return new Set(found.filter((messageId): messageId is string => messageId !== null))
+}
+
+const apply = (half: Half, id: string, request: MessagePageRequest, page: MessagePage, persisted?: ReadonlySet<string>) =>
   useMessageStore.setState((s) => {
     const held = half.paging(s)[id]
     const messages = half.messages(s)[id]
@@ -143,6 +156,7 @@ const apply = (half: Half, id: string, request: MessagePageRequest, page: Messag
       messages || held ? { messages: messages ?? [], ...(held ?? NO_PAGING) } : undefined,
       request,
       page,
+      persisted,
     )
     return half.write({ ...half.messages(s), [id]: next.messages }, {
       ...half.paging(s),
@@ -158,7 +172,9 @@ const apply = (half: Half, id: string, request: MessagePageRequest, page: Messag
 const refresh = async (half: Half, id: string) => {
   const request = refreshRequest(windowOf(half, id))
   const page = await requestPage(half.scope(id), request)
-  if (page) apply(half, id, request, page)
+  if (!page) return page
+  const toConfirm = sendsToConfirm(windowOf(half, id), request, page)
+  apply(half, id, request, page, toConfirm.length > 0 ? await persistedSends(toConfirm) : undefined)
   return page
 }
 
