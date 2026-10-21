@@ -314,12 +314,28 @@ export function refreshRequest(window: TranscriptWindow | undefined): MessagePag
 }
 
 /**
- * User messages the server has not persisted yet (optimistic sends), which must
- * survive replacing everything after `fromIndex`.
+ * A user message the client added itself (an optimistic send) rather than one the
+ * host streamed. Streamed user frames (question answers, remote-client sends) are
+ * persisted before they are emitted, under a different id than their `stream-` one,
+ * so they are never unsent and must not survive a page.
  */
-function pendingUserMessages(held: Message[], fromIndex: number, page: Message[]): Message[] {
-  const persisted = new Set(page.map((message) => message.id))
-  return held.slice(fromIndex).filter((message) => message.role === 'user' && !persisted.has(message.id))
+function isClientSend(message: Message): boolean {
+  return message.role === 'user' && !message.id.startsWith('stream-')
+}
+
+/**
+ * Sends the server has not persisted yet, which must survive replacing everything
+ * after `fromIndex`. `persisted` names sends the host has confirmed it holds outside
+ * the page (see `sendsToConfirm`).
+ */
+function pendingUserMessages(
+  held: Message[],
+  fromIndex: number,
+  page: Message[],
+  persisted: ReadonlySet<string> = new Set(),
+): Message[] {
+  const inPage = new Set(page.map((message) => message.id))
+  return held.slice(fromIndex).filter((message) => isClientSend(message) && !inPage.has(message.id) && !persisted.has(message.id))
 }
 
 function indexAfterPersisted(window: TranscriptWindow): number {
@@ -328,14 +344,41 @@ function indexAfterPersisted(window: TranscriptWindow): number {
   return index === -1 ? window.messages.length : index + 1
 }
 
+/** True when `applyMessagePage` will treat `page` as a fresh tail that replaces `held`. */
+function replacesHeld(held: TranscriptWindow, request: MessagePageRequest, page: MessagePage): boolean {
+  if (!page.anchored) return true
+  if (request.kind === 'older') return false
+  if (request.kind === 'since') return !held.messages.some((message) => message.id === request.since)
+  return true
+}
+
+/**
+ * Sends held after the newest persisted message that a fresh tail does not contain,
+ * when the tail does not reach the start of the transcript. Each is either unsent or
+ * persisted before the tail's first message: a Turn longer than one page pushes the
+ * send it answered out of the newest page. Only the host can tell which, so ask it
+ * (`messages:full`) and pass the ids it holds to `applyMessagePage`, or the send is
+ * appended after the Turn that answered it.
+ */
+export function sendsToConfirm(
+  window: TranscriptWindow | undefined,
+  request: MessagePageRequest,
+  page: MessagePage,
+): Message[] {
+  if (!window || !page.hasOlder || !replacesHeld(window, request, page)) return []
+  return pendingUserMessages(window.messages, indexAfterPersisted(window), page.messages)
+}
+
 /**
  * Merge a page into what the client holds. Returns `window` unchanged when the page
  * no longer fits it: an `older` page whose anchor has since been replaced.
+ * `persisted` names held sends the host confirmed it holds outside the page.
  */
 export function applyMessagePage(
   window: TranscriptWindow | undefined,
   request: MessagePageRequest,
   page: MessagePage,
+  persisted?: ReadonlySet<string>,
 ): TranscriptWindow {
   const held = window ?? EMPTY_TRANSCRIPT_WINDOW
   const first = page.messages[0]?.id ?? null
@@ -351,25 +394,23 @@ export function applyMessagePage(
     }
   }
 
-  if (request.kind === 'since' && page.anchored) {
+  if (!replacesHeld(held, request, page) && request.kind === 'since') {
     const anchorIndex = held.messages.findIndex((message) => message.id === request.since)
-    if (anchorIndex !== -1) {
-      return {
-        messages: [
-          ...held.messages.slice(0, anchorIndex),
-          ...page.messages,
-          ...pendingUserMessages(held.messages, anchorIndex, page.messages),
-        ],
-        hasOlder: held.hasOlder,
-        oldestId: held.oldestId ?? first,
-        newestPersistedId: last ?? held.newestPersistedId,
-      }
+    return {
+      messages: [
+        ...held.messages.slice(0, anchorIndex),
+        ...page.messages,
+        ...pendingUserMessages(held.messages, anchorIndex, page.messages, persisted),
+      ],
+      hasOlder: held.hasOlder,
+      oldestId: held.oldestId ?? first,
+      newestPersistedId: last ?? held.newestPersistedId,
     }
   }
 
   // A fresh tail replaces everything; only unsent user messages carry over.
   return {
-    messages: [...page.messages, ...pendingUserMessages(held.messages, indexAfterPersisted(held), page.messages)],
+    messages: [...page.messages, ...pendingUserMessages(held.messages, indexAfterPersisted(held), page.messages, persisted)],
     hasOlder: page.hasOlder,
     oldestId: first,
     newestPersistedId: last,
