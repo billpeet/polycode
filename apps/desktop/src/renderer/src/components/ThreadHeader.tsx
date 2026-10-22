@@ -8,7 +8,7 @@ import { useGitErrorReporter } from '../lib/gitErrorToast'
 import { subscribeToGitRefresh } from '../lib/gitRefreshCoordinator'
 import { useTerminalStore } from '../stores/terminal'
 import { useBrowserStore } from '../stores/browser'
-import { resolveDisplayedContextLimit } from '../lib/contextWindowLimit'
+import { resolveContextLimit } from '../../../shared/types'
 import { usePlanStore } from '../stores/plans'
 import ImportHistoryDialog from './ImportHistoryDialog'
 import ThreadLogsModal from './ThreadLogsModal'
@@ -108,7 +108,7 @@ function ContextWindowMeter({ usedTokens, maxTokens, inputTokens, outputTokens }
     <Tooltip
       content={formatContextUsageTooltip(usedTokens, maxTokens, inputTokens, outputTokens)}
       contentClassName="max-w-xs whitespace-normal"
-      side="top"
+      side="bottom"
     >
       <span className="relative inline-flex h-6 w-6 items-center justify-center" aria-label="Context window usage">
         <svg
@@ -506,11 +506,11 @@ export default function ThreadHeader({ threadId }: Props) {
 
         {/* Token usage + context window */}
         {usage && (() => {
-          const contextLimit = resolveDisplayedContextLimit(
+          const contextLimit = resolveContextLimit(
             thread?.provider ?? 'claude-code',
             thread?.model ?? getDefaultModelForProvider('claude-code'),
             thread?.cursor_context,
-            usage.max_context_window,
+            usage.max_context_window ?? thread?.max_context_window,
           )
           return (
             <span
@@ -519,7 +519,7 @@ export default function ThreadHeader({ threadId }: Props) {
             >
               <Tooltip
                 content={`Total: ${usage.total_tokens.toLocaleString()} tokens · Input: ${usage.input_tokens.toLocaleString()} · Output: ${usage.output_tokens.toLocaleString()}${usage.total_cost_usd == null ? '' : ` · Actual cost: $${usage.total_cost_usd.toFixed(4)}`}`}
-                side="top"
+                side="bottom"
               >
                 <span>
                   ↓{formatTokenCount(usage.input_tokens)} ↑{formatTokenCount(usage.output_tokens)}
@@ -545,7 +545,7 @@ export default function ThreadHeader({ threadId }: Props) {
                       usage.output_tokens,
                     )}
                     contentClassName="max-w-xs whitespace-normal"
-                    side="top"
+                    side="bottom"
                   >
                     <span>
                       {formatTokenCount(usage.context_window)}/{formatTokenCount(contextLimit)} ctx

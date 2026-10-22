@@ -2,7 +2,7 @@
  * Project and location provisioning logic shared by the local IPC handlers
  * and the remote-control RPC surface (extracted from ipc/handlers.ts).
  */
-import { existsSync, mkdirSync } from 'fs'
+import { existsSync, mkdirSync, statSync } from 'fs'
 import { homedir } from 'os'
 import { basename, dirname, join, resolve } from 'path'
 import {
@@ -111,16 +111,21 @@ function comparablePath(path: string): string {
  * add/remove invalidate the entry; worktrees made outside PolyCode appear within 30s.
  */
 const WORKTREE_REGISTRY_TTL_MS = 30_000
-const worktreeRegistry = new TtlCache<{ records: GitWorktreeRecord[] | null } | { error: unknown }>(WORKTREE_REGISTRY_TTL_MS)
+type WorktreeRegistry = { records: GitWorktreeRecord[] | null; linked?: boolean } | { error: unknown }
+const worktreeRegistry = new TtlCache<WorktreeRegistry>(WORKTREE_REGISTRY_TTL_MS)
 
 function readWorktreeRegistry(parentPath: string) {
   return worktreeRegistry.get(comparablePath(parentPath), async () => {
     try {
       // A location that is not a git checkout (a notes folder, say) has no worktrees to
       // reconcile; without this check every `locations:list` spawned a failing git for it.
-      if (!existsSync(join(parentPath, '.git'))) return { records: null }
+      const gitPath = join(parentPath, '.git')
+      if (!existsSync(gitPath)) return { records: null }
+      // A linked worktree has a `.git` file rather than a directory. Git lists the whole
+      // repository's worktrees from inside it, main checkout and siblings included.
+      const linked = statSync(gitPath).isFile()
       const records = parseGitWorktreeList(await runGit(['worktree', 'list', '--porcelain', '-z'], parentPath))
-      return { records: records.filter((record) => !record.prunable && existsSync(record.path)) }
+      return { records: records.filter((record) => !record.prunable && existsSync(record.path)), linked }
     } catch (error) {
       // Logged once per TTL rather than on every poll.
       console.warn(`[worktree] Could not reconcile worktrees for "${parentPath}":`, error)
@@ -137,8 +142,20 @@ export function invalidateWorktreeRegistry(parentPath: string): void {
  * Reconcile PolyCode's local worktree locations with Git's authoritative registry.
  * External worktrees are persisted; stale PolyCode rows remain visible and are marked invalid.
  */
-export async function listSyncedLocations(projectId: string): Promise<RepoLocation[]> {
+export function listSyncedLocations(projectId: string): Promise<RepoLocation[]> {
+  // Overlapping calls (sidebar, composer, remote clients) each read the rows before
+  // awaiting git, so unserialised they all imported the same worktree. One dev database
+  // grew 9k duplicate locations in six seconds that way.
+  return runSerialized(`locations:sync:${projectId}`, () => syncLocations(projectId))
+}
+
+async function syncLocations(projectId: string): Promise<RepoLocation[]> {
   const locations = listLocations(projectId)
+  // Every path the project already knows, under any parent: a worktree is imported once
+  // per project, not once per checkout that can see it.
+  const knownPaths = new Set(
+    locations.filter((location) => location.connection_type === 'local').map((location) => comparablePath(location.path))
+  )
   const validPathsByParent = new Map<string, Set<string>>()
   const localParentIds = new Set(
     locations
@@ -153,21 +170,17 @@ export async function listSyncedLocations(projectId: string): Promise<RepoLocati
     if ('error' in registry || registry.records === null) continue
     const validPaths = new Set<string>()
     validPathsByParent.set(parent.id, validPaths)
-    const registeredForParent = new Set(
-      locations
-        .filter((location) => location.is_worktree && location.parent_location_id === parent.id)
-        .map((location) => comparablePath(location.path))
-    )
 
     for (const record of registry.records) {
       const pathKey = comparablePath(record.path)
       if (pathKey === comparablePath(parent.path)) continue
       validPaths.add(pathKey)
-      if (!registeredForParent.has(pathKey)) {
-        const imported = createWorktreeLocation(parent, basename(record.path), record.path)
-        locations.push(imported)
-        registeredForParent.add(pathKey)
-      }
+      // Only the main checkout adopts worktrees; a location that is itself a linked
+      // worktree would otherwise adopt the main checkout and every sibling.
+      if (registry.linked || knownPaths.has(pathKey)) continue
+      const imported = createWorktreeLocation(parent, basename(record.path), record.path)
+      locations.push(imported)
+      knownPaths.add(pathKey)
     }
   }
 

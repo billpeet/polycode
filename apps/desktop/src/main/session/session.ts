@@ -961,7 +961,9 @@ export class Session {
         const totalTokens = (event.metadata?.total_tokens as number | undefined) ?? (inputTokens + outputTokens)
         const costUsd = (event.metadata?.cost_usd as number | undefined) ?? null
         const contextWindow = (event.metadata?.context_window as number | undefined) ?? null
-        updateThreadUsage(this.threadId, inputTokens, outputTokens, totalTokens, costUsd, contextWindow)
+        const reportedMax = event.metadata?.max_context_window
+        const maxContextWindow = typeof reportedMax === 'number' && reportedMax > 0 ? reportedMax : null
+        updateThreadUsage(this.threadId, inputTokens, outputTokens, totalTokens, costUsd, contextWindow, maxContextWindow)
         break
       }
       case 'status': {

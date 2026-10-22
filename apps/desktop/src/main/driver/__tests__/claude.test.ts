@@ -91,6 +91,33 @@ describe('ClaudeDriver context usage', () => {
     }])
   })
 
+  it('measures the window from the last main-thread call, not the whole turn', () => {
+    const driver = makeDriver()
+    const assistant = (usage: Record<string, number>, parent: string | null = null) => ({
+      type: 'assistant',
+      parent_tool_use_id: parent,
+      message: { model: 'claude-opus-5-5', content: [], usage },
+    })
+    ;(driver as any).parseMessage(assistant({ input_tokens: 5, cache_read_input_tokens: 90_000, output_tokens: 500 }))
+    ;(driver as any).parseMessage(assistant({ input_tokens: 10, cache_read_input_tokens: 120_000, cache_creation_input_tokens: 2_000, output_tokens: 800 }))
+    ;(driver as any).parseMessage(assistant({ input_tokens: 400_000, output_tokens: 1 }, 'subagent-tool'))
+    const events = (driver as any).parseMessage({
+      type: 'result',
+      subtype: 'success',
+      usage: { input_tokens: 15, output_tokens: 1_300, cache_creation_input_tokens: 2_000, cache_read_input_tokens: 210_000 },
+      modelUsage: {
+        'claude-opus-5-5': { contextWindow: 1_000_000 },
+        'claude-haiku-4-5': { contextWindow: 200_000 },
+      },
+    })
+
+    expect(events[0].metadata).toMatchObject({
+      total_tokens: 213_315,
+      context_window: 122_810,
+      max_context_window: 1_000_000,
+    })
+  })
+
   it('clears the live context snapshot when compaction starts', () => {
     const driver = makeDriver()
     expect((driver as any).parseMessage({

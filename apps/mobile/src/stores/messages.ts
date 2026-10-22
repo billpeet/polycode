@@ -220,6 +220,9 @@ export const useMessagesStore = create<MessagesState>((set, get) => ({
           total_tokens: (previous?.total_tokens ?? 0) + total,
           total_cost_usd: cost == null ? (previous?.total_cost_usd ?? null) : (previous?.total_cost_usd ?? 0) + cost,
           context_window: typeof meta.context_window === 'number' ? meta.context_window : (previous?.context_window ?? 0),
+          max_context_window: typeof meta.max_context_window === 'number' && meta.max_context_window > 0
+            ? meta.max_context_window
+            : previous?.max_context_window,
         }
         return { usageByThread: { ...s.usageByThread, [threadId]: usage } }
       })

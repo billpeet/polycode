@@ -22,6 +22,13 @@ function replaceThreadInList(threads: Thread[], threadId: string, nextThread: Th
   return threads.map((thread) => (thread.id === threadId ? nextThread : thread))
 }
 
+// A model or context switch makes the last provider-reported limit stale.
+function withoutReportedContextLimit(usageByThread: Record<string, TokenUsage>, threadId: string): Record<string, TokenUsage> {
+  const usage = usageByThread[threadId]
+  if (!usage || usage.max_context_window == null) return usageByThread
+  return { ...usageByThread, [threadId]: { ...usage, max_context_window: undefined } }
+}
+
 function removeThreadFromList(threads: Thread[], threadId: string): Thread[] {
   return threads.filter((thread) => thread.id !== threadId)
 }
@@ -499,7 +506,7 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
         ...Object.fromEntries(
           threads
             .filter((t: Thread) => t.total_tokens > 0 || t.total_cost_usd != null)
-            .map((t: Thread) => [t.id, { input_tokens: t.input_tokens, output_tokens: t.output_tokens, total_tokens: t.total_tokens, total_cost_usd: t.total_cost_usd, context_window: t.context_window }])
+            .map((t: Thread) => [t.id, { input_tokens: t.input_tokens, output_tokens: t.output_tokens, total_tokens: t.total_tokens, total_cost_usd: t.total_cost_usd, context_window: t.context_window, max_context_window: t.max_context_window ?? undefined }])
         )
       }
       }
@@ -1079,9 +1086,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
-        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, model } : t))
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, model, max_context_window: null } : t))
       }
-      return { byProject: updated }
+      return { byProject: updated, usageByThread: withoutReportedContextLimit(s.usageByThread, threadId) }
     })
   },
 
@@ -1100,9 +1107,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
-        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, provider, model, permission_mode: nextPermissionMode, yolo_mode: nextPermissionMode === 'yolo' } : t))
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, provider, model, permission_mode: nextPermissionMode, yolo_mode: nextPermissionMode === 'yolo', max_context_window: null } : t))
       }
-      return { byProject: updated }
+      return { byProject: updated, usageByThread: withoutReportedContextLimit(s.usageByThread, threadId) }
     })
   },
 
@@ -1155,9 +1162,9 @@ export const useThreadStore = create<ThreadStore>((set, get) => ({
     set((s) => {
       const updated = { ...s.byProject }
       for (const pid of Object.keys(updated)) {
-        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, cursor_context: context } : t))
+        updated[pid] = updated[pid].map((t) => (t.id === threadId ? { ...t, cursor_context: context, max_context_window: null } : t))
       }
-      return { byProject: updated }
+      return { byProject: updated, usageByThread: withoutReportedContextLimit(s.usageByThread, threadId) }
     })
   },
 

@@ -43,6 +43,31 @@ describe('database migrations', () => {
     ])
   })
 
+  it('collapses duplicate repo locations onto the earliest row', () => {
+    const database = createDatabase()
+    runMigrations(database)
+    database.pragma('user_version = 9')
+    const now = '2026-10-15T00:00:00.000Z'
+    database.prepare("INSERT INTO projects (id, name, path, created_at, updated_at) VALUES ('p', 'ProgSys', '', ?, ?)").run(now, now)
+    const insertLocation = database.prepare(
+      "INSERT INTO repo_locations (id, project_id, parent_location_id, is_worktree, label, connection_type, path, created_at, updated_at) VALUES (?, 'p', ?, ?, ?, 'local', ?, ?, ?)"
+    )
+    insertLocation.run('root', null, 0, 'ProgSys', 'C:\\src\\ProgSys', '2026-01-01', now)
+    insertLocation.run('wt', 'root', 1, 'wt', 'C:/src/wt', '2026-01-02', now)
+    insertLocation.run('wt-copy', 'root', 1, 'wt', 'c:/src/wt/', '2026-01-03', now)
+    insertLocation.run('root-copy', 'wt-copy', 1, 'ProgSys', 'C:/src/ProgSys', '2026-01-04', now)
+    insertLocation.run('child-of-copy', 'wt-copy', 1, 'other', 'C:/src/other', '2026-01-05', now)
+    database.prepare("INSERT INTO threads (id, project_id, name, location_id, created_at, updated_at) VALUES ('t', 'p', 'T', 'wt-copy', ?, ?)").run(now, now)
+    database.prepare("INSERT INTO routines (id, project_id, location_id, name, prompt, created_at, updated_at) VALUES ('r', 'p', 'root-copy', 'R', 'go', ?, ?)").run(now, now)
+
+    runMigrations(database)
+
+    expect(database.prepare('SELECT id FROM repo_locations ORDER BY created_at').pluck().all()).toEqual(['root', 'wt', 'child-of-copy'])
+    expect(database.prepare("SELECT location_id FROM threads WHERE id = 't'").pluck().get()).toBe('wt')
+    expect(database.prepare("SELECT location_id FROM routines WHERE id = 'r'").pluck().get()).toBe('root')
+    expect(database.prepare("SELECT parent_location_id FROM repo_locations WHERE id = 'child-of-copy'").pluck().get()).toBe('wt')
+  })
+
   it('adopts an unversioned legacy database and preserves its data', () => {
     const database = createDatabase()
     database.exec(`

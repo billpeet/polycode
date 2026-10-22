@@ -128,6 +128,11 @@ export class ClaudeDriver implements CLIDriver {
   private heldEvents: OutputEvent[] = []
   private stopped = false
   private specialToolIds = new Set<string>()
+  // The result message's usage sums every API call in the turn, so it
+  // overstates what is in the window once a turn makes several tool calls.
+  // The last main-thread assistant call's prompt + output is the real size.
+  private lastMainContextTokens: number | null = null
+  private lastMainModel: string | null = null
   private pendingPermissionDecisions = new Map<string, PendingPermissionDecision>()
   private pendingQuestionDecisions = new Map<string, PendingQuestionDecision>()
   private currentMessageOptions: MessageOptions = {}
@@ -579,6 +584,8 @@ export class ClaudeDriver implements CLIDriver {
       description: message.task_description,
     })
 
+    if (parentToolUseId === null) this.recordMainContextUsage(message)
+
     for (const block of message.message.content) {
       if (block.type === 'thinking') {
         if (block.thinking) {
@@ -704,17 +711,36 @@ export class ClaudeDriver implements CLIDriver {
     }
   }
 
+  private recordMainContextUsage(message: SDKAssistantMessage): void {
+    const usage = message.message.usage
+    if (usage) {
+      const tokens = (usage.input_tokens ?? 0)
+        + (usage.cache_creation_input_tokens ?? 0)
+        + (usage.cache_read_input_tokens ?? 0)
+        + (usage.output_tokens ?? 0)
+      if (tokens > 0) this.lastMainContextTokens = tokens
+    }
+    if (message.message.model) this.lastMainModel = message.message.model
+  }
+
   private collectResultMessage(message: SDKResultMessage, events: OutputEvent[]): void {
+    const lastMainContextTokens = this.lastMainContextTokens
+    const lastMainModel = this.lastMainModel
+    this.lastMainContextTokens = null
+
     if (message.usage) {
       const inputTokens = message.usage.input_tokens ?? 0
       const outputTokens = message.usage.output_tokens ?? 0
       const cacheCreationInputTokens = message.usage.cache_creation_input_tokens ?? 0
       const cacheReadInputTokens = message.usage.cache_read_input_tokens ?? 0
-      const usedContextWindow = inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens
-      const maxContextWindow = Math.max(
-        0,
-        ...Object.values(message.modelUsage ?? {}).map((usage) => usage?.contextWindow ?? 0)
-      )
+      const turnTokens = inputTokens + outputTokens + cacheCreationInputTokens + cacheReadInputTokens
+      const modelUsage = message.modelUsage ?? {}
+      // Prefer the main model's window; subagents (e.g. Haiku) report their own.
+      const mainModelWindow = lastMainModel ? modelUsage[lastMainModel]?.contextWindow ?? 0 : 0
+      const maxContextWindow = mainModelWindow > 0
+        ? mainModelWindow
+        : Math.max(0, ...Object.values(modelUsage).map((usage) => usage?.contextWindow ?? 0))
+      const usedContextWindow = lastMainContextTokens ?? turnTokens
       const contextWindow =
         maxContextWindow > 0 ? Math.min(usedContextWindow, maxContextWindow) : usedContextWindow
 
@@ -725,7 +751,7 @@ export class ClaudeDriver implements CLIDriver {
           metadata: {
             input_tokens: inputTokens,
             output_tokens: outputTokens,
-            total_tokens: usedContextWindow,
+            total_tokens: turnTokens,
             ...(Number.isFinite(message.total_cost_usd) ? { cost_usd: message.total_cost_usd } : {}),
             context_window: contextWindow,
             ...(maxContextWindow > 0 ? { max_context_window: maxContextWindow } : {}),

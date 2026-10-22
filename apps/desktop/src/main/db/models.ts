@@ -65,6 +65,7 @@ export interface ThreadRow {
   total_tokens: number
   total_cost_usd: number | null
   context_window: number
+  max_context_window?: number | null
   unread: number
   /** Set by queries that include an EXISTS subquery; undefined when row built locally */
   has_messages?: number

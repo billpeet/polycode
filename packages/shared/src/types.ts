@@ -421,6 +421,8 @@ export interface Thread {
   /** Actual provider-reported charge in USD; null when the provider does not expose one. */
   total_cost_usd: number | null
   context_window: number
+  /** Latest provider-reported context limit for the thread's model, when known. */
+  max_context_window?: number | null
   unread: boolean
   /** True if at least one message has been sent in this thread */
   has_messages: boolean
@@ -617,6 +619,58 @@ export function resolveEffectiveModel(
     if (withSuffix in MODEL_CONTEXT_LIMITS) return withSuffix
   }
   return model
+}
+
+// Claude models whose window is 200k unless the `[1m]` slug opts in: Haiku,
+// Claude 3.x, and Opus/Sonnet before 4.7. Every newer Claude Code model, and
+// the `default` / `opus` / `sonnet` / `fable` aliases, run at 1M by default.
+const CLAUDE_200K_MODEL = /haiku|claude-3|(?:opus|sonnet)-4(?:[-.][0-6])?$/i
+
+function claudeCodeContextLimit(model: string): number {
+  if (model.includes('[1m]')) return 1_000_000
+  const base = model.replace(/-\d{8}$/, '')
+  return CLAUDE_200K_MODEL.test(base) ? 200_000 : 1_000_000
+}
+
+// Cursor's context selection values look like `300k` / `1m`.
+function parseContextSelection(value: string | null | undefined): number | undefined {
+  const match = value?.trim().toLowerCase().match(/^(\d+(?:\.\d+)?)([km])$/)
+  if (!match) return undefined
+  return Math.round(Number(match[1]) * (match[2] === 'm' ? 1_000_000 : 1_000))
+}
+
+/** The context limit PolyCode believes a model has, before the provider reports one. */
+export function knownContextLimit(
+  provider: string,
+  model: string,
+  contextSelection: string | null | undefined,
+): number {
+  const effectiveModel = resolveEffectiveModel(provider, model, contextSelection)
+  if (provider === 'claude-code') return claudeCodeContextLimit(effectiveModel)
+  if (provider === 'cursor') {
+    const selected = parseContextSelection(contextSelection)
+    if (selected) return selected
+  }
+  const catalogued = (getModelsForProvider(provider as Provider) as readonly ModelOption[])
+    .find((option) => option.id === effectiveModel)?.contextWindow
+  return catalogued ?? MODEL_CONTEXT_LIMITS[effectiveModel] ?? DEFAULT_CONTEXT_LIMIT
+}
+
+/**
+ * The context limit to show for a thread. A provider-reported limit wins,
+ * except for Claude: its SDK can report the base model's 200k window while
+ * the CLI runs a 1M variant, so Claude takes the larger of the two.
+ */
+export function resolveContextLimit(
+  provider: string,
+  model: string,
+  contextSelection: string | null | undefined,
+  reportedLimit: number | null | undefined,
+): number {
+  const known = knownContextLimit(provider, model, contextSelection)
+  const reported = reportedLimit && reportedLimit > 0 ? reportedLimit : 0
+  if (provider === 'claude-code') return Math.max(known, reported)
+  return reported || known
 }
 
 export interface RateLimitInfo {

@@ -438,6 +438,7 @@ function rowToThread(r: ThreadRow): Thread {
     total_tokens: r.total_tokens ?? ((r.input_tokens ?? 0) + (r.output_tokens ?? 0)),
     total_cost_usd: r.total_cost_usd ?? null,
     context_window: r.context_window ?? 0,
+    max_context_window: r.max_context_window ?? null,
     unread: (r.unread ?? 0) === 1,
     has_messages: (r.has_messages ?? 0) === 1,
     permission_mode: permissionMode,
@@ -1083,14 +1084,14 @@ export function setRunState(threadId: string, state: RunState, detail: string | 
 export function updateThreadModel(id: string, model: string): void {
   const now = new Date().toISOString()
   getDb('updateThreadModel')
-    .prepare('UPDATE threads SET model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
+    .prepare('UPDATE threads SET model = ?, max_context_window = NULL, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
     .run(model, now, now, id)
 }
 
 export function updateThreadProviderAndModel(id: string, provider: string, model: string): void {
   const now = new Date().toISOString()
   getDb('updateThreadProviderAndModel')
-    .prepare('UPDATE threads SET provider = ?, model = ?, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
+    .prepare('UPDATE threads SET provider = ?, model = ?, max_context_window = NULL, updated_at = ?, provider_model_updated_at = ? WHERE id = ?')
     .run(provider, model, now, now, id)
 }
 
@@ -1128,7 +1129,7 @@ export function updateThreadKimiThinking(id: string, value: string | null): void
 export function updateThreadCursorContext(id: string, context: string | null): void {
   const value = context && context.trim() ? context.trim() : null
   getDb('updateThreadCursorContext')
-    .prepare('UPDATE threads SET cursor_context = ?, updated_at = ? WHERE id = ?')
+    .prepare('UPDATE threads SET cursor_context = ?, max_context_window = NULL, updated_at = ? WHERE id = ?')
     .run(value, new Date().toISOString(), id)
 }
 
@@ -1339,13 +1340,13 @@ export function updateThreadSessionId(threadId: string, sessionId: string): void
     .run(sessionId, threadId)
 }
 
-/** Accumulate provider usage totals and optionally set context_window to the latest snapshot. */
-export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, totalTokens: number, costUsd: number | null, contextWindow: number | null): void {
+/** Accumulate provider usage totals and optionally set the latest context window snapshot and limit. */
+export function updateThreadUsage(id: string, inputTokens: number, outputTokens: number, totalTokens: number, costUsd: number | null, contextWindow: number | null, maxContextWindow: number | null = null): void {
   getDb('updateThreadUsage')
     .prepare(
-      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, total_tokens = total_tokens + ?, total_cost_usd = CASE WHEN ? IS NULL THEN total_cost_usd ELSE COALESCE(total_cost_usd, 0) + ? END, context_window = COALESCE(?, context_window), updated_at = ? WHERE id = ?'
+      'UPDATE threads SET input_tokens = input_tokens + ?, output_tokens = output_tokens + ?, total_tokens = total_tokens + ?, total_cost_usd = CASE WHEN ? IS NULL THEN total_cost_usd ELSE COALESCE(total_cost_usd, 0) + ? END, context_window = COALESCE(?, context_window), max_context_window = COALESCE(?, max_context_window), updated_at = ? WHERE id = ?'
     )
-    .run(inputTokens, outputTokens, totalTokens, costUsd, costUsd, contextWindow, new Date().toISOString(), id)
+    .run(inputTokens, outputTokens, totalTokens, costUsd, costUsd, contextWindow, maxContextWindow, new Date().toISOString(), id)
 }
 
 // ── Sessions ──────────────────────────────────────────────────────────────────

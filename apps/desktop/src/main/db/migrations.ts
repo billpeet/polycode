@@ -15,6 +15,8 @@ const migrations: Migration[] = [
   { version: 6, up: addThreadCostUsage },
   { version: 7, up: addScratchProject },
   { version: 8, up: addQueuePreviewIndexes },
+  { version: 9, up: addThreadMaxContextWindow },
+  { version: 10, up: dedupeRepoLocations },
 ]
 
 export const LATEST_SCHEMA_VERSION = migrations.at(-1)?.version ?? 0
@@ -90,6 +92,58 @@ function addScratchProject(database: Database.Database): void {
 
 function addProjectFaviconOverride(database: Database.Database): void {
   database.exec('ALTER TABLE projects ADD COLUMN favicon_path TEXT')
+}
+
+/**
+ * Version 10 — collapse duplicate Repo Locations.
+ *
+ * Worktree import used to de-duplicate per parent checkout and without serialising
+ * overlapping syncs, so a project whose locations were themselves linked worktrees
+ * re-imported every sibling under each of them (one dev database reached 9k rows for
+ * 57 paths). For each project path the earliest row survives; threads, routines and
+ * child locations are moved onto it before the copies go, since routines cascade.
+ */
+function dedupeRepoLocations(database: Database.Database): void {
+  const rows = database.prepare(
+    `SELECT id, project_id, connection_type, path, ssh_host, ssh_port, wsl_distro
+       FROM repo_locations ORDER BY created_at ASC, rowid ASC`
+  ).all() as Array<{
+    id: string; project_id: string; connection_type: string; path: string
+    ssh_host: string | null; ssh_port: number | null; wsl_distro: string | null
+  }>
+
+  const keeperByKey = new Map<string, string>()
+  const duplicates: Array<{ id: string; keeper: string }> = []
+  for (const row of rows) {
+    let path = row.path.replace(/\\/g, '/').replace(/\/+$/, '')
+    if (row.connection_type === 'local' && /^[a-z]:/i.test(path)) path = path.toLowerCase()
+    const key = [row.project_id, row.connection_type, row.ssh_host ?? '', row.ssh_port ?? '', row.wsl_distro ?? '', path].join('\u0000')
+    const keeper = keeperByKey.get(key)
+    if (keeper) duplicates.push({ id: row.id, keeper })
+    else keeperByKey.set(key, row.id)
+  }
+  if (duplicates.length === 0) return
+
+  const moveThreads = database.prepare('UPDATE threads SET location_id = ? WHERE location_id = ?')
+  const moveRoutines = database.prepare('UPDATE routines SET location_id = ? WHERE location_id = ?')
+  const moveChildren = database.prepare('UPDATE repo_locations SET parent_location_id = ? WHERE parent_location_id = ?')
+  const remove = database.prepare('DELETE FROM repo_locations WHERE id = ?')
+  for (const { id, keeper } of duplicates) {
+    moveThreads.run(keeper, id)
+    moveRoutines.run(keeper, id)
+    moveChildren.run(keeper, id)
+    remove.run(id)
+  }
+  // A survivor may now name itself as parent (it was imported under a copy of itself).
+  database.exec('UPDATE repo_locations SET parent_location_id = NULL WHERE parent_location_id = id')
+}
+
+/** Version 9 — the provider-reported context limit, so it survives a reload. */
+function addThreadMaxContextWindow(database: Database.Database): void {
+  const columns = database.pragma('table_info(threads)') as Array<{ name: string }>
+  if (!columns.some((column) => column.name === 'max_context_window')) {
+    database.exec('ALTER TABLE threads ADD COLUMN max_context_window INTEGER')
+  }
 }
 
 /** Version 6 — Provider-reported lifetime token totals and actual USD cost. */

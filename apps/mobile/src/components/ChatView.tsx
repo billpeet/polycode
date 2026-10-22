@@ -4,7 +4,7 @@ import Animated, { useAnimatedKeyboard, useAnimatedStyle } from 'react-native-re
 import { useSafeAreaInsets } from 'react-native-safe-area-context'
 import {
   DEFAULT_CONTEXT_LIMIT,
-  MODEL_CONTEXT_LIMITS,
+  resolveContextLimit,
   type Message,
   type OutputEvent,
   type PermissionMode,
@@ -233,12 +233,13 @@ export function ChatView(props: { threadId: string; projectId: string; onBack: (
     if (thread?.unread) void setUnread(projectId, threadId, false)
   }, [thread?.unread, projectId, threadId, setUnread])
 
-  // Unknown models fall back to the default limit — never to the thread's own
+  // Unknown models fall back to a default limit — never to the thread's own
   // current usage, which would always read as 100%.
+  const reportedContextLimit = usage?.max_context_window ?? thread?.max_context_window
   const contextLimit = useMemo(() => {
     if (!thread) return DEFAULT_CONTEXT_LIMIT
-    return MODEL_CONTEXT_LIMITS[thread.model] ?? DEFAULT_CONTEXT_LIMIT
-  }, [thread])
+    return resolveContextLimit(thread.provider, thread.model, thread.cursor_context, reportedContextLimit)
+  }, [thread, reportedContextLimit])
 
   // context_window on usage/thread = tokens currently in the context window.
   const contextTokens = usage?.context_window ?? thread?.context_window ?? 0
