@@ -740,9 +740,13 @@ export class ClaudeDriver implements CLIDriver {
       const maxContextWindow = mainModelWindow > 0
         ? mainModelWindow
         : Math.max(0, ...Object.values(modelUsage).map((usage) => usage?.contextWindow ?? 0))
-      const usedContextWindow = lastMainContextTokens ?? turnTokens
-      const contextWindow =
-        maxContextWindow > 0 ? Math.min(usedContextWindow, maxContextWindow) : usedContextWindow
+      // Only a main-thread call measures the window. Turns without one (manual
+      // /compact, local commands, interrupted turns) leave the previous
+      // snapshot alone: the turn sum includes e.g. the compaction call's full
+      // pre-compaction prompt and would pin the meter at the limit.
+      const contextWindow = lastMainContextTokens === null
+        ? undefined
+        : maxContextWindow > 0 ? Math.min(lastMainContextTokens, maxContextWindow) : lastMainContextTokens
 
       if (inputTokens || outputTokens || contextWindow) {
         events.push({
@@ -753,7 +757,7 @@ export class ClaudeDriver implements CLIDriver {
             output_tokens: outputTokens,
             total_tokens: turnTokens,
             ...(Number.isFinite(message.total_cost_usd) ? { cost_usd: message.total_cost_usd } : {}),
-            context_window: contextWindow,
+            ...(contextWindow !== undefined ? { context_window: contextWindow } : {}),
             ...(maxContextWindow > 0 ? { max_context_window: maxContextWindow } : {}),
           },
         })
@@ -873,6 +877,8 @@ export class ClaudeDriver implements CLIDriver {
 
       case 'status':
         if (message.status === 'compacting') {
+          // Calls made before compaction no longer describe the window.
+          this.lastMainContextTokens = null
           events.push({
             type: 'usage',
             content: '',

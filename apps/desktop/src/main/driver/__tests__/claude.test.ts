@@ -64,6 +64,11 @@ describe('ClaudeDriver permission mode', () => {
 describe('ClaudeDriver context usage', () => {
   it('emits the provider-reported context limit with result usage', () => {
     const driver = makeDriver()
+    ;(driver as any).parseMessage({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { model: 'claude-test', content: [], usage: { input_tokens: 100, cache_creation_input_tokens: 10, cache_read_input_tokens: 70, output_tokens: 20 } },
+    })
     const events = (driver as any).parseMessage({
       type: 'result',
       subtype: 'success',
@@ -116,6 +121,39 @@ describe('ClaudeDriver context usage', () => {
       context_window: 122_810,
       max_context_window: 1_000_000,
     })
+  })
+
+  it('leaves the context snapshot alone when a turn has no main-thread call', () => {
+    // A manual /compact: the turn sum carries the summarisation call's full
+    // pre-compaction prompt, which must not be reported as the window.
+    const driver = makeDriver()
+    const events = (driver as any).parseMessage({
+      type: 'result',
+      subtype: 'success',
+      usage: { input_tokens: 3, output_tokens: 8_000, cache_read_input_tokens: 2_400_000 },
+      modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 } },
+    })
+
+    expect(events[0].metadata).not.toHaveProperty('context_window')
+    expect(events[0].metadata).toMatchObject({ max_context_window: 1_000_000 })
+  })
+
+  it('ignores pre-compaction calls when measuring the window', () => {
+    const driver = makeDriver()
+    ;(driver as any).parseMessage({
+      type: 'assistant',
+      parent_tool_use_id: null,
+      message: { model: 'claude-opus-5-5', content: [], usage: { input_tokens: 5, cache_read_input_tokens: 950_000, output_tokens: 100 } },
+    })
+    ;(driver as any).parseMessage({ type: 'system', subtype: 'status', status: 'compacting' })
+    const events = (driver as any).parseMessage({
+      type: 'result',
+      subtype: 'success',
+      usage: { input_tokens: 5, output_tokens: 100, cache_read_input_tokens: 950_000 },
+      modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 } },
+    })
+
+    expect(events[0].metadata).not.toHaveProperty('context_window')
   })
 
   it('clears the live context snapshot when compaction starts', () => {
