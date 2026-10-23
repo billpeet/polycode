@@ -238,7 +238,8 @@ function createWindow(): BrowserWindow {
     show: false,
     autoHideMenuBar: true,
     frame: false,
-    icon: join(__dirname, '../../resources/icon.ico'),
+    // Linux windows take a PNG; .ico is the Windows format.
+    icon: join(__dirname, '../../resources', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       additionalArguments: [`--polycode-system-locale=${app.getSystemLocale()}`],

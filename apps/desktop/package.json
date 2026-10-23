@@ -16,7 +16,8 @@
     "test:crash-smoke": "node scripts/run-crash-smoke.cjs",
     "test": "vitest run",
     "dist": "pnpm run build && pnpm run electron-abi && pnpm run verify:electron-abi && electron-builder --win",
-    "dist:publish": "pnpm run build && pnpm run electron-abi && pnpm run verify:electron-abi && electron-builder --win --publish always"
+    "dist:publish": "pnpm run build && pnpm run electron-abi && pnpm run verify:electron-abi && electron-builder --win --publish always",
+    "dist:linux": "pnpm run build && pnpm run electron-abi && pnpm run verify:electron-abi && electron-builder --linux"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.281",
@@ -120,6 +121,20 @@
       ],
       "icon": "resources/icon.ico"
     },
+    "linux": {
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "category": "Development",
+      "artifactName": "${productName}-${version}-${arch}.${ext}",
+      "syncDesktopName": true
+    },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -132,5 +147,6 @@
       "repo": "polycode",
       "releaseType": "release"
     }
-  }
+  },
+  "desktopName": "polycode-electron.desktop"
 }

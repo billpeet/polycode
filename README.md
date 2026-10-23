@@ -94,7 +94,7 @@ Node.js.
 - **CLI health checks and updates** — checks installed agent CLIs locally, over SSH, or in WSL.
 - **Integrations** — YouTrack UI support plus main-process GitHub/Azure DevOps helpers.
 - **Notifications and logging** — toast notifications, thread logs, command logs, and Sentry integration.
-- **Auto-update packaging** — Windows NSIS installer and GitHub release publishing via `electron-builder`.
+- **Auto-update packaging** — Windows NSIS installer and Linux AppImage, with GitHub release publishing via `electron-builder`.
 
 ## Supported agent CLIs
 
@@ -164,6 +164,7 @@ pnpm run start:prod   # Build + run an isolated production-like instance
 pnpm run test         # Run Vitest tests for the main process and drivers
 pnpm run dist         # Build a Windows NSIS installer
 pnpm run dist:publish # Build and publish a Windows release via electron-builder
+pnpm run dist:linux   # Build a Linux x64 AppImage (apps/desktop/release/)
 ```
 
 `pnpm run start:prod` sets `NODE_ENV=production` and uses a separate Windows user data directory, `%APPDATA%/polycode-electron-prod`, so it does not share state with a development instance.
