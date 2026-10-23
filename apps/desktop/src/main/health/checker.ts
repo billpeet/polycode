@@ -44,10 +44,12 @@ function merged(result: RunResult): SpawnResult {
 /**
  * Claude Code ships a native installer that frequently lands outside PATH, so
  * it is the one provider worth resolving to an absolute path before probing.
+ * That holds on Linux too: a desktop-launched app inherits a session PATH
+ * without ~/.local/bin, and a bare `claude` probe then reports it missing.
  */
 function resolveLocalBinary(cmd: string): string {
-  if (process.platform === 'win32' && cmd === 'claude') {
-    return resolveClaudeCodeExecutable(augmentWindowsPath())
+  if (cmd === 'claude') {
+    return resolveClaudeCodeExecutable(process.platform === 'win32' ? augmentWindowsPath() : process.env)
   }
   return cmd
 }
