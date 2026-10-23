@@ -400,6 +400,19 @@ async function commandExists(cmd: string): Promise<boolean> {
   }
 }
 
+/**
+ * Opens a terminal in `dirPath` with the first candidate that is installed. A missing
+ * binary is not thrown by `spawn`: Node reports ENOENT as an async `error` event on the
+ * child, so the next candidate has to be tried from that event.
+ */
+function openLinuxTerminal(dirPath: string, candidates: readonly string[]): void {
+  const [term, ...rest] = candidates
+  if (!term) return
+  const child = spawn(term, [], { cwd: dirPath, detached: true, stdio: 'ignore' })
+  child.once('error', () => openLinuxTerminal(dirPath, rest))
+  child.unref()
+}
+
 function encodeUriPath(path: string): string {
   return path
     .split('/')
@@ -2158,13 +2171,7 @@ export const channelHandlers = {
     } else if (process.platform === 'darwin') {
       spawn('open', ['-a', 'Terminal', dirPath], { detached: true, stdio: 'ignore' }).unref()
     } else {
-      const terms = ['gnome-terminal', 'konsole', 'xterm']
-      for (const term of terms) {
-        try {
-          spawn(term, [], { cwd: dirPath, detached: true, stdio: 'ignore' }).unref()
-          break
-        } catch { /* try next */ }
-      }
+      openLinuxTerminal(dirPath, ['gnome-terminal', 'konsole', 'xterm'])
     }
   },
 

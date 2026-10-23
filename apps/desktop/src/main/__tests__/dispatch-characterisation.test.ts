@@ -11,6 +11,7 @@
  * typed handler map. They should stay green through the fold — that is the point.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { CHANNEL_REGISTRY, LOCAL_CHANNELS, isLocalChannel, isRemoteChannel } from '@polycode/shared'
@@ -131,6 +132,8 @@ const H = vi.hoisted(() => {
      * so this is the only way to reach `shell:openInVsCode`'s openExternal fallback.
      */
     execFileFails: false,
+    /** Commands whose spawn fails asynchronously with ENOENT, as an uninstalled binary does. */
+    missingBinaries: [] as string[],
     /**
      * The third argument `git:watchStart` hands `startRepoGitWatch`. Historically this was
      * the `invalidateRepoGitCache` callback; it is now asserted *absent* — the watcher
@@ -805,9 +808,18 @@ vi.mock('../remote/lan', () => H.autoModule('remoteLan', {
 // spawned terminal that is never unref'd keeps the Electron process alive.
 vi.mock('child_process', async (importOriginal) => {
   const actual = await importOriginal<typeof import('child_process')>()
+  const { EventEmitter } = await import('node:events')
   return {
     ...actual,
-    spawn: H.stub('proc.spawn', () => ({ unref: H.stub('proc.unref') })),
+    spawn: H.stub('proc.spawn', (cmd: unknown) => {
+      const child = new EventEmitter() as EventEmitter & { unref: () => void }
+      child.unref = H.stub('proc.unref') as () => void
+      // As in Node, a missing binary is an async 'error' event on the child, not a throw.
+      if (H.state.missingBinaries.includes(cmd as string)) {
+        process.nextTick(() => child.emit('error', Object.assign(new Error(`spawn ${cmd} ENOENT`), { code: 'ENOENT' })))
+      }
+      return child
+    }),
   }
 })
 
@@ -871,7 +883,9 @@ vi.mock('electron', () => ({
   // nothing, so an implementation that called `openPath` where it should have called
   // `showItemInFolder` would satisfy every assertion about its return value.
   app: {
-    getPath: () => 'C:/tmp',
+    // A real directory, not a Windows-style literal: the favicon cache is written under
+    // userData, and a relative 'C:/tmp' would land in the repo on Linux and macOS.
+    getPath: () => join(tmpdir(), 'polycode-dispatch-test'),
     getVersion: H.stub('app.getVersion', '0.0.0'),
     isPackaged: false,
   },
@@ -972,6 +986,7 @@ beforeEach(() => {
   H.state.isMaximized = false
   H.state.dialogResult = { canceled: false, filePaths: ['C:/picked'] }
   H.state.execFileFails = false
+  H.state.missingBinaries = []
   H.state.repoWatchCallback = null
 })
 
@@ -4543,10 +4558,32 @@ describe('shell:* — local-only, and defined entirely by the side effect', () =
       : process.platform === 'darwin'
         ? spawnEntry('open', ['-a', 'Terminal', 'C:/repo'], { detached: true, stdio: 'ignore' })
         // Linux tries gnome-terminal, konsole, xterm in that order and stops at the first
-        // that spawns; the stub never throws, so only the first is reached.
+        // that spawns; with every binary installed only the first is reached.
         : spawnEntry('gnome-terminal', [], { cwd: 'C:/repo', detached: true, stdio: 'ignore' })
 
     expect(await viaIpc('shell:openInTerminal', ['C:/repo'])).toEqual([expected, 'proc.unref([])'])
+  })
+
+  it.runIf(process.platform === 'linux')('shell:openInTerminal moves to the next Linux terminal when one is not installed', async () => {
+    // Node reports a missing binary as an async 'error' event, so a try/catch around
+    // spawn never sees it. The next candidate must be tried from that event instead.
+    H.state.missingBinaries = ['gnome-terminal', 'konsole']
+    try {
+      H.log.length = 0
+      await ipcHandlers.get('shell:openInTerminal')!({}, 'C:/repo')
+      // The ENOENT error is emitted on a later tick, so the fallback follows the handler.
+      await new Promise((resolve) => setImmediate(resolve))
+      expect([...H.log]).toEqual([
+        spawnEntry('gnome-terminal', [], { cwd: 'C:/repo', detached: true, stdio: 'ignore' }),
+        'proc.unref([])',
+        spawnEntry('konsole', [], { cwd: 'C:/repo', detached: true, stdio: 'ignore' }),
+        'proc.unref([])',
+        spawnEntry('xterm', [], { cwd: 'C:/repo', detached: true, stdio: 'ignore' }),
+        'proc.unref([])',
+      ])
+    } finally {
+      H.state.missingBinaries = []
+    }
   })
 
   it.runIf(IS_WIN)('shell:openInTerminal doubles single quotes for the PowerShell literal', async () => {

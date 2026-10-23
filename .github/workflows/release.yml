@@ -115,55 +115,148 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
 
+      # Release assets are uploaded by the publish job, once every platform has built.
+      - name: Upload Windows updater assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/latest.yml
+            apps/desktop/release/PolyCode-Setup-*.exe
+            apps/desktop/release/PolyCode-Setup-*.exe.blockmap
+
+  build-linux:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.23.1
+          cache: pnpm
+
+      # Same version scheme as Windows so both platforms publish one release tag.
+      - name: Determine version
+        id: version
+        run: |
+          BASE=$(node -p "require('./apps/desktop/package.json').version.split('.').slice(0,2).join('.')")
+          VERSION="${BASE}.${{ github.run_number }}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version $VERSION"
+
+      - name: Set package.json version
+        working-directory: apps/desktop
+        run: |
+          node -e "
+            const fs = require('fs');
+            const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+            pkg.version = '${{ steps.version.outputs.version }}';
+            fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
+          "
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build app
+        run: pnpm run build
+        env:
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
+          POLYCODE_OTLP_ENDPOINT: https://otlp.biap.cc
+          POLYCODE_OTLP_HEADERS: ${{ secrets.POLYCODE_OTLP_HEADERS }}
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+
+      - name: Verify packaged native module ABI
+        working-directory: apps/desktop
+        run: pnpm run verify:electron-abi
+
+      - name: Build AppImage
+        working-directory: apps/desktop
+        run: pnpm exec electron-builder --linux --publish never
+
+      - name: Upload Linux updater assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-release
+          if-no-files-found: error
+          path: |
+            apps/desktop/release/latest-linux.yml
+            apps/desktop/release/PolyCode-*-x86_64.AppImage
+
+  publish:
+    # Creates the draft only after every platform has built, so a failed build
+    # never leaves a half-populated release visible to clients.
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine version
+        id: version
+        run: |
+          BASE=$(node -p "require('./apps/desktop/package.json').version.split('.').slice(0,2).join('.')")
+          echo "version=${BASE}.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+
+      - name: Download Windows assets
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release
+          path: release-assets
+
+      - name: Download Linux assets
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-release
+          path: release-assets
+
       # electron-builder 26 can race its per-artifact GitHub publishers while
       # creating a release. Create one draft ourselves and upload the complete,
       # explicit updater asset set before making it visible to clients.
       - name: Create draft release
-        shell: pwsh
-        run: gh release create "v$env:VERSION" --draft --title "v$env:VERSION" --target "$env:GITHUB_SHA"
+        run: gh release create "v$VERSION" --draft --title "v$VERSION" --target "$GITHUB_SHA"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
 
       - name: Upload updater assets
-        shell: pwsh
         run: |
-          $releaseDir = Join-Path $env:GITHUB_WORKSPACE "apps/desktop/release"
-          $assets = @(
-            (Join-Path $releaseDir "latest.yml"),
-            (Join-Path $releaseDir "PolyCode-Setup-$env:VERSION.exe"),
-            (Join-Path $releaseDir "PolyCode-Setup-$env:VERSION.exe.blockmap")
-          )
-          foreach ($asset in $assets) {
-            if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
-              throw "Missing required updater asset: $asset"
-            }
-          }
-          gh release upload "v$env:VERSION" $assets
+          shopt -s nullglob
+          assets=(release-assets/*)
+          if [ ${#assets[@]} -eq 0 ]; then echo "No release assets downloaded" >&2; exit 1; fi
+          gh release upload "v$VERSION" "${assets[@]}"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
 
+      # Each platform's updater reads its own feed file, so both must be present
+      # before the release is visible: latest.yml (Windows) and latest-linux.yml.
       - name: Verify updater assets
-        shell: pwsh
         run: |
-          $expected = @(
-            "latest.yml",
-            "PolyCode-Setup-$env:VERSION.exe",
-            "PolyCode-Setup-$env:VERSION.exe.blockmap"
+          expected=(
+            "latest.yml"
+            "PolyCode-Setup-$VERSION.exe"
+            "PolyCode-Setup-$VERSION.exe.blockmap"
+            "latest-linux.yml"
+            "PolyCode-$VERSION-x86_64.AppImage"
           )
-          $actual = @(gh release view "v$env:VERSION" --json assets --jq '.assets[].name')
-          $missing = @($expected | Where-Object { $_ -notin $actual })
-          if ($missing.Count -ne 0) {
-            throw "Draft release is missing updater assets: $($missing -join ', ')"
-          }
+          actual=$(gh release view "v$VERSION" --json assets --jq '.assets[].name')
+          missing=()
+          for name in "${expected[@]}"; do
+            grep -qxF "$name" <<< "$actual" || missing+=("$name")
+          done
+          if [ ${#missing[@]} -ne 0 ]; then
+            echo "Draft release is missing updater assets: ${missing[*]}" >&2
+            exit 1
+          fi
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
 
       - name: Publish complete release
-        shell: pwsh
-        run: gh release edit "v$env:VERSION" --draft=false --latest
+        run: gh release edit "v$VERSION" --draft=false --latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
