@@ -8,6 +8,9 @@
  * CLI, just not the user's.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { FakeRunner } from '../driver/runner/fake'
 import type { RunResult } from '../driver/runner'
 
@@ -47,6 +50,30 @@ beforeEach(() => {
 })
 
 describe('checkCliHealth — transport selection', () => {
+  it.runIf(process.platform !== 'win32')('probes Claude Code at its install path when PATH omits ~/.local/bin', async () => {
+    // A desktop-launched app inherits a session PATH without ~/.local/bin, so the
+    // native installer's binary is only found by resolving its absolute path.
+    const home = mkdtempSync(join(tmpdir(), 'polycode-claude-home-'))
+    const bin = join(home, '.local', 'bin')
+    mkdirSync(bin, { recursive: true })
+    const claude = join(bin, 'claude')
+    writeFileSync(claude, '#!/bin/sh\necho 2.0.0\n')
+    chmodSync(claude, 0o755)
+    const saved = { HOME: process.env.HOME, PATH: process.env.PATH }
+    process.env.HOME = home
+    process.env.PATH = '/usr/bin:/bin'
+    try {
+      const runner = fakeFor('local', { stdout: '2.0.0\n' })
+      const { checkCliHealth } = await loadChecker()
+      expect(await checkCliHealth('claude-code', 'local')).toMatchObject({ installed: true, currentVersion: '2.0.0' })
+      expect(runner.runCommands[0]).toMatchObject({ binary: claude, args: ['--version'] })
+    } finally {
+      process.env.HOME = saved.HOME
+      process.env.PATH = saved.PATH
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it('verifies Kimi Code identity and reads the correct package version', async () => {
     fakeFor('local', { stdout: '2.0.0\n' })
     const { checkCliHealth } = await loadChecker()
