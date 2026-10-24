@@ -65,7 +65,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
       onPointerDown={backdropClose.onPointerDown}
     >
       <div
-        className={`flex rounded-xl shadow-2xl overflow-hidden max-w-[calc(100vw-32px)] max-h-[calc(100vh-32px)] ${activeTab === 'seed' ? 'w-[840px] h-[680px]' : 'w-[640px] h-[520px]'}`}
+        className={`flex rounded-xl shadow-2xl overflow-hidden max-w-[calc(100vw-32px)] max-h-[calc(100vh-32px)] ${activeTab === 'seed' || activeTab === 'appearance' ? 'w-[840px] h-[680px]' : 'w-[640px] h-[520px]'}`}
         style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}
         onClick={(e) => e.stopPropagation()}
       >

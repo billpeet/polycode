@@ -239,6 +239,11 @@ body,
   color: color-mix(in srgb, var(--color-accent) 80%, white);
 }
 
+/* User messages sit on an accent fill; .prose-content's body colour would otherwise win. */
+.user-bubble .prose-content {
+  color: var(--color-on-accent);
+}
+
 .user-bubble .prose-content a {
   color: var(--color-on-accent);
   opacity: 0.85;

@@ -94,8 +94,25 @@ export interface Theme {
   diffTheme: string
 }
 
-export const SYNTAX_THEMES = ['github-dark', 'catppuccin-mocha', 'catppuccin-macchiato', 'catppuccin-frappe'] as const
+/** The built-in themes' syntax palettes, loaded with the highlighter so switching between them is instant. */
+export const PRELOADED_SYNTAX_THEMES = ['github-dark', 'catppuccin-mocha', 'catppuccin-macchiato', 'catppuccin-frappe'] as const
+
+/**
+ * Every syntax palette a custom theme may pick: shiki bundled dark themes, which
+ * `@pierre/diffs` also accepts. Those not preloaded are loaded on first use.
+ */
+export const SYNTAX_THEMES = [
+  ...PRELOADED_SYNTAX_THEMES,
+  'github-dark-dimmed', 'github-dark-default', 'one-dark-pro', 'dracula', 'nord', 'tokyo-night',
+  'gruvbox-dark-medium', 'rose-pine', 'rose-pine-moon', 'kanagawa-wave', 'everforest-dark',
+  'solarized-dark', 'monokai', 'night-owl', 'vitesse-dark', 'material-theme-darker', 'ayu-dark',
+  'poimandres', 'houston', 'synthwave-84',
+] as const
 export type SyntaxTheme = typeof SYNTAX_THEMES[number]
+
+export function isSyntaxTheme(value: unknown): value is SyntaxTheme {
+  return typeof value === 'string' && (SYNTAX_THEMES as readonly string[]).includes(value)
+}
 
 // ── PolyCode Dark ───────────────────────────────────────────────────────────
 
@@ -280,46 +297,217 @@ function catppuccin(flavour: CatppuccinFlavour, accent: CatppuccinAccent): Theme
 
 // ── Registry ────────────────────────────────────────────────────────────────
 
-export const THEME_IDS = ['polycode-dark', 'catppuccin-mocha', 'catppuccin-macchiato', 'catppuccin-frappe'] as const
-export type ThemeId = typeof THEME_IDS[number]
-export const DEFAULT_THEME_ID: ThemeId = 'polycode-dark'
+export const BUILTIN_THEME_IDS = ['polycode-dark', 'catppuccin-mocha', 'catppuccin-macchiato', 'catppuccin-frappe'] as const
+export type BuiltinThemeId = typeof BUILTIN_THEME_IDS[number]
+export type CustomThemeId = `custom:${string}`
+export type ThemeId = BuiltinThemeId | CustomThemeId
+export const DEFAULT_THEME_ID: BuiltinThemeId = 'polycode-dark'
 
-export const THEME_NAMES: Record<ThemeId, string> = {
+export const THEME_NAMES: Record<BuiltinThemeId, string> = {
   'polycode-dark': polycodeDark.name,
   'catppuccin-mocha': FLAVOUR_NAMES.mocha,
   'catppuccin-macchiato': FLAVOUR_NAMES.macchiato,
   'catppuccin-frappe': FLAVOUR_NAMES.frappe,
 }
 
+export function isBuiltinThemeId(value: unknown): value is BuiltinThemeId {
+  return typeof value === 'string' && (BUILTIN_THEME_IDS as readonly string[]).includes(value)
+}
+
+export function isCustomThemeId(value: unknown): value is CustomThemeId {
+  return typeof value === 'string' && /^custom:[\w-]{1,64}$/.test(value)
+}
+
+/** A well-formed id. A custom id may still name a theme that has since been deleted. */
 export function isThemeId(value: unknown): value is ThemeId {
-  return typeof value === 'string' && (THEME_IDS as readonly string[]).includes(value)
+  return isBuiltinThemeId(value) || isCustomThemeId(value)
 }
 
 export function isCatppuccinAccent(value: unknown): value is CatppuccinAccent {
   return typeof value === 'string' && (CATPPUCCIN_ACCENTS as readonly string[]).includes(value)
 }
 
-/** True for themes that take a `CatppuccinAccent`. */
-export function themeHasAccent(id: ThemeId): boolean {
+/** True for built-in themes that take a `CatppuccinAccent`. */
+export function themeHasAccent(id: BuiltinThemeId): boolean {
   return id.startsWith('catppuccin-')
 }
 
-/** Resolve a stored theme id (and accent, for Catppuccin) to a theme. Unknown ids fall back to the default. */
-export function resolveTheme(id: unknown, accent?: unknown): Theme {
-  const themeId = isThemeId(id) ? id : DEFAULT_THEME_ID
-  const catAccent = isCatppuccinAccent(accent) ? accent : DEFAULT_CATPPUCCIN_ACCENT
-  switch (themeId) {
-    case 'catppuccin-mocha': return catppuccin('mocha', catAccent)
-    case 'catppuccin-macchiato': return catppuccin('macchiato', catAccent)
-    case 'catppuccin-frappe': return catppuccin('frappe', catAccent)
+function resolveBuiltinTheme(id: BuiltinThemeId, accent: CatppuccinAccent): Theme {
+  switch (id) {
+    case 'catppuccin-mocha': return catppuccin('mocha', accent)
+    case 'catppuccin-macchiato': return catppuccin('macchiato', accent)
+    case 'catppuccin-frappe': return catppuccin('frappe', accent)
     case 'polycode-dark': return polycodeDark
   }
 }
 
+/**
+ * Resolve a stored theme id to a theme. Built-in Catppuccin themes take `accent`; a
+ * custom theme is its base theme with its own overrides laid over it. Unknown or
+ * deleted ids fall back to the default.
+ */
+export function resolveTheme(id: unknown, accent?: unknown, customThemes: readonly CustomTheme[] = []): Theme {
+  const catAccent = isCatppuccinAccent(accent) ? accent : DEFAULT_CATPPUCCIN_ACCENT
+  if (isCustomThemeId(id)) {
+    const custom = customThemes.find((t) => t.id === id)
+    if (custom) return applyCustomTheme(custom)
+  }
+  return resolveBuiltinTheme(isBuiltinThemeId(id) ? id : DEFAULT_THEME_ID, catAccent)
+}
+
 /** A swatch for the accent picker. */
-export function catppuccinAccentColor(id: ThemeId, accent: CatppuccinAccent): string {
+export function catppuccinAccentColor(id: BuiltinThemeId, accent: CatppuccinAccent): string {
   const flavour = id.replace('catppuccin-', '') as CatppuccinFlavour
   return (CATPPUCCIN_FLAVOURS[flavour] ?? CATPPUCCIN_FLAVOURS.mocha)[accent]
+}
+
+// ── Custom themes ───────────────────────────────────────────────────────────
+//
+// A custom theme stores only what it changes. Everything else comes from its base
+// built-in theme, so a theme made today keeps working when a token is added later:
+// the new token simply takes the base theme's value.
+
+export interface CustomTheme {
+  id: CustomThemeId
+  name: string
+  base: BuiltinThemeId
+  /** The base theme's accent, for Catppuccin bases. */
+  accent?: CatppuccinAccent
+  colors: Partial<ThemeColors>
+  terminal: Partial<TerminalPalette>
+  /** Overrides the base theme's syntax palette, for code blocks and diffs alike. */
+  syntaxTheme?: SyntaxTheme
+}
+
+export const MAX_CUSTOM_THEMES = 50
+export const MAX_THEME_NAME_LENGTH = 60
+
+export const COLOR_TOKENS: readonly ColorToken[] = Object.keys(polycodeDark.colors) as ColorToken[]
+export const TERMINAL_KEYS: readonly (keyof TerminalPalette)[] = Object.keys(polycodeDark.terminal) as (keyof TerminalPalette)[]
+
+const HEX_COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i
+const FUNCTIONAL_COLOR = /^(?:rgba?|hsla?)\(\s*[\d.]+(?:deg|%)?(?:\s*[,\s/]\s*[\d.]+%?){2,3}\s*\)$/i
+
+/**
+ * A colour a user may put in a theme: hex, or numeric rgb()/hsl(). Values become CSS
+ * custom properties and inline styles, so anything else — `var()`, `url()`, keywords,
+ * a stray `;` — is refused rather than escaped.
+ */
+export function isThemeColor(value: unknown): value is string {
+  return typeof value === 'string' && (HEX_COLOR.test(value.trim()) || FUNCTIONAL_COLOR.test(value.trim()))
+}
+
+/** Electron's window background takes hex only, and reads 8-digit hex as #AARRGGBB. */
+export function isOpaqueHex(value: string): boolean {
+  return /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i.test(value)
+}
+
+export function applyCustomTheme(custom: CustomTheme): Theme {
+  const base = resolveBuiltinTheme(custom.base, custom.accent ?? DEFAULT_CATPPUCCIN_ACCENT)
+  const colors = { ...base.colors, ...custom.colors }
+  const terminal = { ...base.terminal, ...custom.terminal }
+  // A changed background carries into the terminals unless they were set explicitly.
+  if (custom.colors.bg && !custom.terminal.background) terminal.background = custom.colors.bg
+  return {
+    ...base,
+    id: custom.id,
+    name: custom.name,
+    colors,
+    terminal,
+    syntaxTheme: custom.syntaxTheme ?? base.syntaxTheme,
+    diffTheme: custom.syntaxTheme ?? base.diffTheme,
+  }
+}
+
+function pickColors<K extends string>(raw: unknown, keys: readonly K[]): Partial<Record<K, string>> {
+  const out: Partial<Record<K, string>> = {}
+  if (!raw || typeof raw !== 'object') return out
+  for (const key of keys) {
+    const value = (raw as Record<string, unknown>)[key]
+    if (isThemeColor(value)) out[key] = value.trim()
+  }
+  return out
+}
+
+function cleanName(raw: unknown): string {
+  const name = typeof raw === 'string' ? raw.replace(/\s+/g, ' ').trim().slice(0, MAX_THEME_NAME_LENGTH) : ''
+  return name || 'Untitled theme'
+}
+
+/**
+ * Validate one stored or imported theme. Unknown fields and invalid colours are
+ * dropped, so a hand-edited or newer theme still loads with whatever it got right.
+ * Returns null only when there is nothing usable (no object, or no valid base).
+ */
+export function parseCustomTheme(raw: unknown, id?: CustomThemeId): CustomTheme | null {
+  if (!raw || typeof raw !== 'object') return null
+  const r = raw as Record<string, unknown>
+  const themeId = id ?? (isCustomThemeId(r.id) ? r.id : null)
+  if (!themeId || !isBuiltinThemeId(r.base)) return null
+  return {
+    id: themeId,
+    name: cleanName(r.name),
+    base: r.base,
+    ...(isCatppuccinAccent(r.accent) ? { accent: r.accent } : {}),
+    colors: pickColors(r.colors, COLOR_TOKENS),
+    terminal: pickColors(r.terminal, TERMINAL_KEYS),
+    ...(isSyntaxTheme(r.syntaxTheme) ? { syntaxTheme: r.syntaxTheme } : {}),
+  }
+}
+
+/** Parse the persisted list, dropping invalid entries and duplicate ids. */
+export function parseCustomThemes(json: string | null | undefined): CustomTheme[] {
+  if (!json) return []
+  let raw: unknown
+  try { raw = JSON.parse(json) } catch { return [] }
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const themes: CustomTheme[] = []
+  for (const entry of raw.slice(0, MAX_CUSTOM_THEMES)) {
+    const theme = parseCustomTheme(entry)
+    if (theme && !seen.has(theme.id)) {
+      seen.add(theme.id)
+      themes.push(theme)
+    }
+  }
+  return themes
+}
+
+// The shareable form: no id (the importer assigns one), and a marker so arbitrary JSON
+// is not mistaken for a theme.
+export const THEME_FILE_VERSION = 1
+
+export function exportCustomTheme(theme: CustomTheme): string {
+  const { id: _id, ...rest } = theme
+  void _id
+  return JSON.stringify({ polycodeTheme: THEME_FILE_VERSION, ...rest }, null, 2)
+}
+
+export type ImportResult = { ok: true; theme: CustomTheme } | { ok: false; error: string }
+
+export function importCustomTheme(text: string, id: CustomThemeId): ImportResult {
+  let raw: unknown
+  try { raw = JSON.parse(text) } catch { return { ok: false, error: 'That is not valid JSON.' } }
+  if (!raw || typeof raw !== 'object' || (raw as Record<string, unknown>).polycodeTheme === undefined) {
+    return { ok: false, error: 'That JSON is not a PolyCode theme (it has no "polycodeTheme" field).' }
+  }
+  const version = (raw as Record<string, unknown>).polycodeTheme
+  if (typeof version !== 'number' || version > THEME_FILE_VERSION) {
+    return { ok: false, error: 'This theme was made by a newer version of PolyCode.' }
+  }
+  const theme = parseCustomTheme(raw, id)
+  if (!theme) {
+    return { ok: false, error: `The theme needs a "base" of ${BUILTIN_THEME_IDS.map((b) => `"${b}"`).join(', ')}.` }
+  }
+  return { ok: true, theme }
+}
+
+/** A fresh, unguessable-enough id for a new custom theme. */
+export function newCustomThemeId(): CustomThemeId {
+  const random = typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  return `custom:${random}`
 }
 
 // ── Fonts ───────────────────────────────────────────────────────────────────
@@ -351,3 +539,4 @@ export const THEME_SETTING_KEY = 'appearance:theme'
 export const ACCENT_SETTING_KEY = 'appearance:accent'
 export const SANS_FONT_SETTING_KEY = 'appearance:fontSans'
 export const MONO_FONT_SETTING_KEY = 'appearance:fontMono'
+export const CUSTOM_THEMES_SETTING_KEY = 'appearance:customThemes'

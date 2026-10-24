@@ -31,6 +31,8 @@ export type PrefKey =
   | 'appearance:accent'
   | 'appearance:fontSans'
   | 'appearance:fontMono'
+  /** JSON array of the user's custom themes. */
+  | 'appearance:customThemes'
 
 const STORAGE_PREFIX = 'polycode:pref:'
 

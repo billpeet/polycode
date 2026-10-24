@@ -1,34 +1,45 @@
 import { useState } from 'react'
 import {
-  CATPPUCCIN_ACCENTS,
+  BUILTIN_THEME_IDS,
   DEFAULT_MONO_FONT,
   DEFAULT_SANS_FONT,
-  THEME_IDS,
-  catppuccinAccentColor,
+  MAX_CUSTOM_THEMES,
+  isBuiltinThemeId,
   resolveTheme,
   themeHasAccent,
-  type ThemeId,
+  type Theme,
 } from '../../../shared/themes'
-import { useAppearance } from '../lib/theme'
+import { useActiveCustomTheme, useAppearance } from '../lib/theme'
+import { AccentPicker } from './AccentPicker'
+import { CustomThemeEditor } from './CustomThemeEditor'
 
 const PREVIEW_TOKENS = ['bg', 'surface-2', 'text', 'accent', 'success', 'warning', 'danger', 'info'] as const
 
-function ThemeCard({ id, selected, onSelect }: { id: ThemeId; selected: boolean; onSelect: () => void }) {
-  const accent = useAppearance((s) => s.accent)
-  const theme = resolveTheme(id, accent)
+const muted = { color: 'var(--color-text-muted)' }
+const buttonStyle = { background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }
+
+function ThemeCard({ theme, selected, onSelect, badge }: {
+  theme: Theme
+  selected: boolean
+  onSelect: () => void
+  badge?: string
+}) {
   return (
     <button
       type="button"
       onClick={onSelect}
       aria-pressed={selected}
-      className="flex flex-col gap-2 rounded-lg p-2.5 text-left transition-colors"
+      className="flex min-w-0 flex-col gap-2 rounded-lg p-2.5 text-left transition-colors"
       style={{
         background: theme.colors.surface,
         border: `1px solid ${selected ? 'var(--color-accent)' : theme.colors.border}`,
         boxShadow: selected ? '0 0 0 1px var(--color-accent)' : undefined,
       }}
     >
-      <span className="text-xs font-medium" style={{ color: theme.colors.text }}>{theme.name}</span>
+      <span className="flex items-center gap-1.5 text-xs font-medium" style={{ color: theme.colors.text }}>
+        <span className="truncate">{theme.name}</span>
+        {badge && <span className="flex-shrink-0 text-[10px] font-normal" style={{ color: theme.colors['text-muted'] }}>{badge}</span>}
+      </span>
       <span className="flex gap-1">
         {PREVIEW_TOKENS.map((token) => (
           <span
@@ -57,7 +68,7 @@ function FontInput({ label, value, placeholder, onCommit }: {
   const commit = () => { if (draft.trim() !== value) onCommit(draft.trim()) }
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{label}</span>
+      <span className="text-xs" style={muted}>{label}</span>
       <input
         type="text"
         value={draft}
@@ -73,18 +84,63 @@ function FontInput({ label, value, placeholder, onCommit }: {
   )
 }
 
-/** Theme, accent and fonts for this client. */
+/** Paste a shared theme's JSON. */
+function ImportTheme({ onDone }: { onDone: () => void }) {
+  const importCustomTheme = useAppearance((s) => s.importCustomTheme)
+  const [text, setText] = useState('')
+  const [error, setError] = useState<string | null>(null)
+  const submit = () => {
+    const result = importCustomTheme(text)
+    if (result.ok) onDone()
+    else setError(result.error)
+  }
+  return (
+    <div className="flex flex-col gap-2">
+      <textarea
+        value={text}
+        onChange={(e) => { setText(e.target.value); setError(null) }}
+        placeholder={'Paste a theme copied with "Copy JSON"'}
+        spellCheck={false}
+        rows={6}
+        autoFocus
+        className="rounded px-2 py-1.5 font-mono text-[11px] outline-none"
+        style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
+      />
+      {error && <div role="alert" className="text-xs text-danger">{error}</div>}
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!text.trim()}
+          className="rounded px-2.5 py-1 text-xs font-medium disabled:opacity-50"
+          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+        >
+          Import
+        </button>
+        <button type="button" onClick={onDone} className="rounded px-2.5 py-1 text-xs" style={buttonStyle}>
+          Cancel
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** Theme, accent, custom themes and fonts for this client. */
 export function AppearancePanel() {
   const themeId = useAppearance((s) => s.themeId)
   const accent = useAppearance((s) => s.accent)
+  const customThemes = useAppearance((s) => s.customThemes)
   const fontSans = useAppearance((s) => s.fontSans)
   const fontMono = useAppearance((s) => s.fontMono)
   const setThemeId = useAppearance((s) => s.setThemeId)
   const setAccent = useAppearance((s) => s.setAccent)
   const setFontSans = useAppearance((s) => s.setFontSans)
   const setFontMono = useAppearance((s) => s.setFontMono)
+  const createCustomTheme = useAppearance((s) => s.createCustomTheme)
+  const activeCustom = useActiveCustomTheme()
+  const [importing, setImporting] = useState(false)
+  const atLimit = customThemes.length >= MAX_CUSTOM_THEMES
 
-  const muted = { color: 'var(--color-text-muted)' }
   return (
     <div className="flex flex-col gap-5 text-sm" style={{ color: 'var(--color-text)' }}>
       <section className="flex flex-col gap-2">
@@ -93,39 +149,69 @@ export function AppearancePanel() {
           <div className="text-xs" style={muted}>Colours for the interface, terminals, code blocks and diffs.</div>
         </div>
         <div className="grid grid-cols-2 gap-2">
-          {THEME_IDS.map((id) => (
-            <ThemeCard key={id} id={id} selected={id === themeId} onSelect={() => setThemeId(id)} />
+          {BUILTIN_THEME_IDS.map((id) => (
+            <ThemeCard key={id} theme={resolveTheme(id, accent)} selected={id === themeId} onSelect={() => setThemeId(id)} />
           ))}
         </div>
       </section>
 
-      {themeHasAccent(themeId) && (
+      {isBuiltinThemeId(themeId) && themeHasAccent(themeId) && (
         <section className="flex flex-col gap-2">
           <div>
             <div className="font-medium">Accent</div>
             <div className="text-xs" style={muted}>Buttons, links, focus and the pending state. <span className="capitalize">{accent}</span>.</div>
           </div>
-          <div className="flex flex-wrap gap-1.5">
-            {CATPPUCCIN_ACCENTS.map((name) => (
-              <button
-                key={name}
-                type="button"
-                onClick={() => setAccent(name)}
-                aria-pressed={name === accent}
-                aria-label={name}
-                title={name}
-                className="h-6 w-6 rounded-full transition-transform hover:scale-110"
-                style={{
-                  background: catppuccinAccentColor(themeId, name),
-                  boxShadow: name === accent
-                    ? '0 0 0 2px var(--color-surface-2), 0 0 0 4px var(--color-text)'
-                    : undefined,
-                }}
+          <AccentPicker themeId={themeId} value={accent} onChange={setAccent} />
+        </section>
+      )}
+
+      <section className="flex flex-col gap-2">
+        <div className="flex items-end justify-between gap-2">
+          <div>
+            <div className="font-medium">Custom themes</div>
+            <div className="text-xs" style={muted}>
+              Start from the current theme and change any colour. Share one with Copy JSON and Import.
+            </div>
+          </div>
+          <div className="flex flex-shrink-0 gap-2">
+            <button
+              type="button"
+              onClick={() => setImporting((v) => !v)}
+              disabled={atLimit}
+              className="rounded px-2.5 py-1 text-xs hover:opacity-90 disabled:opacity-50"
+              style={buttonStyle}
+            >
+              Import
+            </button>
+            <button
+              type="button"
+              onClick={() => { createCustomTheme(); setImporting(false) }}
+              disabled={atLimit}
+              className="rounded px-2.5 py-1 text-xs font-medium hover:opacity-90 disabled:opacity-50"
+              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
+              title={atLimit ? `At most ${MAX_CUSTOM_THEMES} custom themes` : 'Copy the current theme into a new custom theme'}
+            >
+              New theme
+            </button>
+          </div>
+        </div>
+        {importing && <ImportTheme onDone={() => setImporting(false)} />}
+        {customThemes.length > 0 && (
+          <div className="grid grid-cols-2 gap-2">
+            {customThemes.map((custom) => (
+              <ThemeCard
+                key={custom.id}
+                theme={resolveTheme(custom.id, accent, customThemes)}
+                badge="custom"
+                selected={custom.id === themeId}
+                onSelect={() => setThemeId(custom.id)}
               />
             ))}
           </div>
-        </section>
-      )}
+        )}
+        {/* Keyed so local drafts (the name) reset when another theme is opened. */}
+        {activeCustom && <CustomThemeEditor key={activeCustom.id} theme={activeCustom} />}
+      </section>
 
       <section className="flex flex-col gap-2">
         <div>
