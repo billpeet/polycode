@@ -180,7 +180,7 @@ function SecondPanel({ threadId }: { threadId: string }) {
       className={`flex flex-col h-full ${isFull ? '' : 'border-l'}`}
       style={{
         position: 'relative',
-        background: currentTab === 'terminal' ? '#0f0f0f' : 'var(--color-surface)',
+        background: currentTab === 'terminal' ? 'var(--color-bg)' : 'var(--color-surface)',
         borderColor: 'var(--color-border)',
         // Full layout: the panel is the workspace, so it takes the room the
         // collapsed chat pane gave up — unless Chat itself is the active tab,
@@ -214,7 +214,7 @@ function SecondPanel({ threadId }: { threadId: string }) {
                 color: currentTab === tab ? 'var(--color-text)' : 'var(--color-text-muted)',
                 borderBottom:
                   currentTab === tab
-                    ? '2px solid var(--color-claude)'
+                    ? '2px solid var(--color-accent)'
                     : '2px solid transparent',
                 background: 'transparent',
               }}

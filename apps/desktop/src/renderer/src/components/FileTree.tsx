@@ -130,7 +130,7 @@ function FileTreeItem({
           style={{
             paddingLeft: `${8 + depth * 12}px`,
             paddingRight: !entry.isDirectory && isHovered ? '28px' : '8px',
-            background: isSelected ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
+            background: isSelected ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'transparent',
             color: 'var(--color-text)',
           }}
         >
@@ -176,9 +176,9 @@ function FileTreeItem({
               borderRadius: 4,
               fontSize: '0.65rem',
               fontWeight: 600,
-              background: 'rgba(232, 123, 95, 0.15)',
-              color: 'var(--color-accent, #e87b5f)',
-              border: '1px solid rgba(232, 123, 95, 0.3)',
+              background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+              color: 'var(--color-accent)',
+              border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)',
               cursor: 'pointer',
               flexShrink: 0,
             }}
@@ -242,7 +242,7 @@ function SearchResultItem({
         className="flex flex-1 flex-col py-1 px-2 text-left hover:bg-white/5 transition-colors min-w-0"
         style={{
           paddingRight: isHovered ? '28px' : '8px',
-          background: selectedFilePath === entry.path ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
+          background: selectedFilePath === entry.path ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'transparent',
           color: 'var(--color-text)',
         }}
       >
@@ -263,9 +263,9 @@ function SearchResultItem({
             borderRadius: 4,
             fontSize: '0.65rem',
             fontWeight: 600,
-            background: 'rgba(232, 123, 95, 0.15)',
-            color: 'var(--color-accent, #e87b5f)',
-            border: '1px solid rgba(232, 123, 95, 0.3)',
+            background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+            color: 'var(--color-accent)',
+            border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)',
             cursor: 'pointer',
             flexShrink: 0,
           }}

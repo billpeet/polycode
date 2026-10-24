@@ -54,14 +54,14 @@ export function FileMention({ path, variant = 'message-assistant' }: FileMention
 
   const styles: Record<string, React.CSSProperties> = {
     'message-user': {
-      background: 'rgba(255, 255, 255, 0.2)',
-      color: '#fff',
-      border: '1px solid rgba(255, 255, 255, 0.3)',
+      background: 'color-mix(in srgb, var(--color-on-accent) 20%, transparent)',
+      color: 'var(--color-on-accent)',
+      border: '1px solid color-mix(in srgb, var(--color-on-accent) 30%, transparent)',
     },
     'message-assistant': {
-      background: 'rgba(99, 179, 237, 0.15)',
-      color: '#63b3ed',
-      border: '1px solid rgba(99, 179, 237, 0.3)',
+      background: 'color-mix(in srgb, var(--color-info) 15%, transparent)',
+      color: 'var(--color-info)',
+      border: '1px solid color-mix(in srgb, var(--color-info) 30%, transparent)',
     },
   }
 
@@ -96,14 +96,14 @@ export function FolderMention({ path, variant = 'message-assistant' }: FileMenti
 
   const styles: Record<string, React.CSSProperties> = {
     'message-user': {
-      background: 'rgba(255, 255, 255, 0.2)',
-      color: '#fff',
-      border: '1px solid rgba(255, 255, 255, 0.3)',
+      background: 'color-mix(in srgb, var(--color-on-accent) 20%, transparent)',
+      color: 'var(--color-on-accent)',
+      border: '1px solid color-mix(in srgb, var(--color-on-accent) 30%, transparent)',
     },
     'message-assistant': {
-      background: 'rgba(232, 184, 109, 0.15)',
-      color: '#e8b86d',
-      border: '1px solid rgba(232, 184, 109, 0.3)',
+      background: 'color-mix(in srgb, var(--color-gold) 15%, transparent)',
+      color: 'var(--color-gold)',
+      border: '1px solid color-mix(in srgb, var(--color-gold) 30%, transparent)',
     },
   }
 
@@ -139,8 +139,8 @@ export function AttachmentMention({ path, variant = 'message-assistant' }: FileM
   }, [path, isImage])
 
   const badgeStyles: React.CSSProperties = {
-    background: variant === 'message-user' ? 'rgba(255, 255, 255, 0.15)' : 'rgba(168, 85, 247, 0.1)',
-    border: `1px solid ${variant === 'message-user' ? 'rgba(255, 255, 255, 0.25)' : 'rgba(168, 85, 247, 0.25)'}`,
+    background: variant === 'message-user' ? 'color-mix(in srgb, var(--color-on-accent) 15%, transparent)' : 'color-mix(in srgb, var(--color-purple) 10%, transparent)',
+    border: `1px solid ${variant === 'message-user' ? 'color-mix(in srgb, var(--color-on-accent) 25%, transparent)' : 'color-mix(in srgb, var(--color-purple) 25%, transparent)'}`,
   }
 
   // Image attachment with preview
@@ -148,7 +148,7 @@ export function AttachmentMention({ path, variant = 'message-assistant' }: FileM
     return (
       <span className="inline-block align-top">
         <span
-          className="group relative inline-block cursor-pointer overflow-hidden rounded-lg transition-all hover:ring-2 hover:ring-purple-400/50"
+          className="group relative inline-block cursor-pointer overflow-hidden rounded-lg transition-all hover:ring-2 hover:ring-purple/50"
           onClick={() => setIsExpanded(!isExpanded)}
           title="Click to expand/collapse"
         >
@@ -160,8 +160,8 @@ export function AttachmentMention({ path, variant = 'message-assistant' }: FileM
             }`}
             style={{
               border: variant === 'message-user'
-                ? '2px solid rgba(255, 255, 255, 0.3)'
-                : '2px solid rgba(168, 85, 247, 0.3)',
+                ? '2px solid color-mix(in srgb, var(--color-on-accent) 30%, transparent)'
+                : '2px solid color-mix(in srgb, var(--color-purple) 30%, transparent)',
             }}
             onError={() => setImageError(true)}
           />
@@ -186,7 +186,7 @@ export function AttachmentMention({ path, variant = 'message-assistant' }: FileM
         <ImageIcon variant={variant} />
         <span
           className="text-xs font-medium"
-          style={{ color: variant === 'message-user' ? '#fff' : 'var(--color-text)' }}
+          style={{ color: variant === 'message-user' ? 'var(--color-on-accent)' : 'var(--color-text)' }}
         >
           Image
         </span>
@@ -204,7 +204,7 @@ export function AttachmentMention({ path, variant = 'message-assistant' }: FileM
         <PdfIcon variant={variant} />
         <span
           className="text-xs font-medium"
-          style={{ color: variant === 'message-user' ? '#fff' : 'var(--color-text)' }}
+          style={{ color: variant === 'message-user' ? 'var(--color-on-accent)' : 'var(--color-text)' }}
         >
           PDF
         </span>
@@ -221,7 +221,7 @@ export function AttachmentMention({ path, variant = 'message-assistant' }: FileM
       <ImageIcon variant={variant} />
       <span
         className="text-xs font-medium"
-        style={{ color: variant === 'message-user' ? '#fff' : 'var(--color-text)' }}
+        style={{ color: variant === 'message-user' ? 'var(--color-on-accent)' : 'var(--color-text)' }}
       >
         Attachment
       </span>
@@ -253,7 +253,7 @@ function ImageIcon({ variant }: { variant: string }) {
       height="14"
       viewBox="0 0 24 24"
       fill="none"
-      stroke={variant === 'message-user' ? '#fff' : '#a855f7'}
+      stroke={variant === 'message-user' ? 'var(--color-on-accent)' : 'var(--color-purple)'}
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -272,7 +272,7 @@ function PdfIcon({ variant }: { variant: string }) {
       height="14"
       viewBox="0 0 24 24"
       fill="none"
-      stroke={variant === 'message-user' ? '#fff' : '#ef4444'}
+      stroke={variant === 'message-user' ? 'var(--color-on-accent)' : 'var(--color-danger-strong)'}
       strokeWidth="2"
       strokeLinecap="round"
       strokeLinejoin="round"
@@ -304,14 +304,14 @@ export function YouTrackMention({
 }) {
   const styles: Record<string, React.CSSProperties> = {
     'message-user': {
-      background: 'rgba(255, 255, 255, 0.15)',
-      color: '#fff',
-      border: '1px solid rgba(255, 255, 255, 0.25)',
+      background: 'color-mix(in srgb, var(--color-on-accent) 15%, transparent)',
+      color: 'var(--color-on-accent)',
+      border: '1px solid color-mix(in srgb, var(--color-on-accent) 25%, transparent)',
     },
     'message-assistant': {
-      background: 'rgba(99, 179, 237, 0.12)',
-      color: '#63b3ed',
-      border: '1px solid rgba(99, 179, 237, 0.3)',
+      background: 'color-mix(in srgb, var(--color-info) 12%, transparent)',
+      color: 'var(--color-info)',
+      border: '1px solid color-mix(in srgb, var(--color-info) 30%, transparent)',
     },
   }
 

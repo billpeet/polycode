@@ -45,7 +45,7 @@ type Tab = 'favourites' | Provider
 
 const FAVOURITES_TAB = 'favourites' as const
 const HOVER_BG = 'rgba(255,255,255,0.06)'
-const ACTIVE_BG = 'rgba(232, 123, 95, 0.14)'
+const ACTIVE_BG = 'color-mix(in srgb, var(--color-accent) 14%, transparent)'
 
 const selectClassName = 'min-w-0 cursor-pointer rounded border bg-transparent px-1.5 py-0.5 text-[11px] outline-none disabled:cursor-default disabled:opacity-40'
 const selectStyle: React.CSSProperties = {
@@ -132,13 +132,13 @@ function ModelRow({ provider, model, selected, disabled, disabledReason, favouri
         )}
         <span className="min-w-0 flex-1">
           <span className="flex items-center gap-1.5">
-            <span className="truncate text-[12px] font-medium" style={{ color: selected ? 'var(--color-claude)' : 'var(--color-text)' }}>
+            <span className="truncate text-[12px] font-medium" style={{ color: selected ? 'var(--color-accent)' : 'var(--color-text)' }}>
               {model.label}
             </span>
             {favourited && (
               <span
                 className="flex-shrink-0 rounded px-1 text-[9px] font-semibold leading-4"
-                style={{ background: 'rgba(232, 123, 95, 0.18)', color: 'var(--color-claude)' }}
+                style={{ background: 'color-mix(in srgb, var(--color-accent) 18%, transparent)', color: 'var(--color-accent)' }}
                 title={`Favourite ${favouriteSlot} — Ctrl+${favouriteSlot}`}
               >
                 Ctrl+{favouriteSlot}
@@ -160,7 +160,7 @@ function ModelRow({ provider, model, selected, disabled, disabledReason, favouri
         title={favourited ? `Remove from favourites (slot ${favouriteSlot})` : 'Add to favourites'}
         className="flex-shrink-0 rounded p-1 transition-opacity"
         style={{
-          color: favourited ? 'var(--color-claude)' : 'var(--color-text-muted)',
+          color: favourited ? 'var(--color-accent)' : 'var(--color-text-muted)',
           opacity: favourited ? 1 : 0.45,
         }}
       >
@@ -353,11 +353,11 @@ export default function ModelSelectorMenu({
         className="flex max-w-[280px] items-center gap-1.5 rounded-md px-2 py-0.5 text-xs transition-all duration-150"
         style={{
           color: 'var(--color-text-muted)',
-          border: `1px solid ${open ? 'rgba(232, 123, 95, 0.45)' : 'var(--color-border)'}`,
+          border: `1px solid ${open ? 'color-mix(in srgb, var(--color-accent) 45%, transparent)' : 'var(--color-border)'}`,
           background: 'var(--color-surface)',
         }}
       >
-        <span className="flex items-center" style={{ color: open ? 'var(--color-claude)' : undefined }}>
+        <span className="flex items-center" style={{ color: open ? 'var(--color-accent)' : undefined }}>
           <ProviderIcon provider={currentProvider} size={12} />
         </span>
         {/* In a narrow composer the logo alone identifies the provider. */}
@@ -429,7 +429,7 @@ export default function ModelSelectorMenu({
                     onClick={() => { setQuery(''); setTab(id); setHighlighted(0) }}
                     className="relative flex h-8 w-8 items-center justify-center rounded-md transition-colors"
                     style={{
-                      color: active ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                      color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
                       background: active ? ACTIVE_BG : 'transparent',
                       opacity: dimmed ? 0.4 : 1,
                     }}
@@ -438,7 +438,7 @@ export default function ModelSelectorMenu({
                     {isCurrent && (
                       <span
                         className="absolute right-0.5 top-0.5 h-1.5 w-1.5 rounded-full"
-                        style={{ background: 'var(--color-claude)' }}
+                        style={{ background: 'var(--color-accent)' }}
                         aria-hidden
                       />
                     )}
@@ -463,7 +463,7 @@ export default function ModelSelectorMenu({
                         type="button"
                         onClick={paneRetry}
                         className="flex-shrink-0 rounded px-1.5 py-0.5 text-[10px]"
-                        style={{ color: paneError ? 'var(--color-claude)' : 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
+                        style={{ color: paneError ? 'var(--color-accent)' : 'var(--color-text-muted)', border: '1px solid var(--color-border)' }}
                         title={paneError ?? `Refresh models from ${providerLabel(browsing)}`}
                       >
                         {paneError ? 'Retry' : 'Refresh'}
@@ -473,7 +473,7 @@ export default function ModelSelectorMenu({
                 )}
               </div>
 
-              {!searching && paneError && <div role="status" className="px-3 py-1 text-red-400">{paneError}</div>}
+              {!searching && paneError && <div role="status" className="px-3 py-1 text-danger">{paneError}</div>}
               <div id="model-browser-options" role="listbox" aria-label={paneTitle} className="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5">
                 {!searching && tab === FAVOURITES_TAB ? (
                   <FavouritesList
@@ -498,7 +498,7 @@ export default function ModelSelectorMenu({
                   visible.map(({ provider, model }, index) => {
                     const blocked = crossProviderBlocked(provider)
                     return (
-                      <div key={`${provider}:${model.id}`} style={{ outline: searching && index === highlighted ? `1px solid rgba(232,123,95,0.35)` : undefined, borderRadius: 6 }}>
+                      <div key={`${provider}:${model.id}`} style={{ outline: searching && index === highlighted ? `1px solid color-mix(in srgb, var(--color-accent) 35%, transparent)` : undefined, borderRadius: 6 }}>
                         <ModelRow
                           provider={provider}
                           model={model}
@@ -666,10 +666,10 @@ function FavouritesList({ bySlot, current, isProcessing, blocked, lockedReason, 
             >
               {fav ? (
                 <>
-                  <span className="flex-shrink-0" style={{ color: isCurrent ? 'var(--color-claude)' : 'var(--color-text-muted)' }}>
+                  <span className="flex-shrink-0" style={{ color: isCurrent ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
                     <ProviderIcon provider={fav.provider} size={14} />
                   </span>
-                  <span className="truncate text-[12px]" style={{ color: isCurrent ? 'var(--color-claude)' : 'var(--color-text)' }}>
+                  <span className="truncate text-[12px]" style={{ color: isCurrent ? 'var(--color-accent)' : 'var(--color-text)' }}>
                     {formatFavourite(fav)}
                   </span>
                 </>

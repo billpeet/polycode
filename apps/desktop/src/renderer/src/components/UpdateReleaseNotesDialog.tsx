@@ -73,7 +73,7 @@ export function UpdateReleaseNotesDialog({ version, onClose, onInstall }: Props)
         {/* Header */}
         <div className="border-b px-5 py-4" style={{ borderColor: 'var(--color-border)' }}>
           <h2 className="flex items-center gap-2 text-sm font-semibold" style={{ color: 'var(--color-text)' }}>
-            <Download className="h-4 w-4 text-emerald-400" />
+            <Download className="h-4 w-4 text-success" />
             What's new{version ? ` in v${version}` : ''}
           </h2>
           <p className="mt-0.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
@@ -100,7 +100,7 @@ export function UpdateReleaseNotesDialog({ version, onClose, onInstall }: Props)
                     href={releaseUrl}
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1 mt-2 text-blue-400 hover:text-blue-300"
+                    className="inline-flex items-center gap-1 mt-2 text-info hover:text-[color-mix(in_srgb,var(--color-info)_55%,var(--color-text))]"
                     onClick={(e) => e.stopPropagation()}
                   >
                     View the release on GitHub
@@ -128,7 +128,7 @@ export function UpdateReleaseNotesDialog({ version, onClose, onInstall }: Props)
                 </div>
               </div>
               <div className="flex-shrink-0 text-right">
-                <div className="font-mono text-[11px] text-blue-400">{commit.shortSha}</div>
+                <div className="font-mono text-[11px] text-info">{commit.shortSha}</div>
                 <div className="text-[10px]" style={{ color: 'var(--color-text-muted)', opacity: 0.6 }}>
                   {relativeTime(commit.authorDate)}
                 </div>
@@ -169,7 +169,7 @@ export function UpdateReleaseNotesDialog({ version, onClose, onInstall }: Props)
                 onInstall()
               }}
               disabled={installing}
-              className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-4 py-1.5 text-xs text-white transition-colors hover:bg-emerald-500 disabled:opacity-50"
+              className="flex items-center gap-1.5 rounded-md bg-success-strong px-4 py-1.5 text-xs text-on-accent transition-colors hover:brightness-110 disabled:opacity-50"
             >
               {installing ? (
                 <Loader2 className="h-3 w-3 animate-spin" />

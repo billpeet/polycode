@@ -40,7 +40,7 @@ export function PoolsSection({
           const inUseCount = locations.filter((l) => l.pool_id === pool.id).length
           const isEditing = editingPoolId === pool.id
           return (
-            <div key={pool.id} className="flex items-center gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: `1px solid ${isEditing ? 'var(--color-claude)' : 'var(--color-border)'}` }}>
+            <div key={pool.id} className="flex items-center gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: `1px solid ${isEditing ? 'var(--color-accent)' : 'var(--color-border)'}` }}>
               {isEditing ? (
                 <input type="text" value={editingPoolName} onChange={(e) => setEditingPoolName(e.target.value)} className="flex-1 rounded px-2 py-1 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} autoFocus />
               ) : (
@@ -51,7 +51,7 @@ export function PoolsSection({
               )}
               {isEditing ? (
                 <>
-                  <button type="button" onClick={() => void onSavePool(pool.id, editingPoolName).then(() => { setEditingPoolId(null); setEditingPoolName('') })} className="rounded px-2 py-1 text-[10px]" style={{ background: 'var(--color-claude)', color: '#fff' }}>
+                  <button type="button" onClick={() => void onSavePool(pool.id, editingPoolName).then(() => { setEditingPoolId(null); setEditingPoolName('') })} className="rounded px-2 py-1 text-[10px]" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
                     Save
                   </button>
                   <button type="button" onClick={() => { setEditingPoolId(null); setEditingPoolName('') }} className="rounded px-2 py-1 text-[10px]" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
@@ -112,18 +112,18 @@ export function LocationsSection({
           const isEditingThis = locationForm.mode === 'edit' && locationForm.location.id === loc.id
           return (
             <div key={loc.id}>
-              <div className="flex items-center gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-claude)' : 'var(--color-border)'}` }}>
+              <div className="flex items-center gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-accent)' : 'var(--color-border)'}` }}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center min-w-0">
                     <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text)' }}>{loc.label}</span>
-                    {loc.pool_id && <span className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold" style={{ background: 'rgba(74, 222, 128, 0.12)', color: '#4ade80' }}>{pools.find((p) => p.id === loc.pool_id)?.name ?? 'Pool'}</span>}
+                    {loc.pool_id && <span className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold" style={{ background: 'color-mix(in srgb, var(--color-success) 12%, transparent)', color: 'var(--color-success)' }}>{pools.find((p) => p.id === loc.pool_id)?.name ?? 'Pool'}</span>}
                     {connectionBadge(loc.connection_type)}
                   </div>
                   <span className="text-[10px] font-mono truncate block" style={{ color: 'var(--color-text-muted)' }}>
                     {loc.connection_type === 'ssh' ? `${loc.ssh?.user}@${loc.ssh?.host}:${loc.path}` : loc.path}
                   </span>
                 </div>
-                <button type="button" onClick={() => setLocationForm(isEditingThis ? { mode: 'none' } : { mode: 'edit', location: loc })} className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0" style={{ color: isEditingThis ? 'var(--color-claude)' : 'var(--color-text-muted)' }} title="Edit location">✎</button>
+                <button type="button" onClick={() => setLocationForm(isEditingThis ? { mode: 'none' } : { mode: 'edit', location: loc })} className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0" style={{ color: isEditingThis ? 'var(--color-accent)' : 'var(--color-text-muted)' }} title="Edit location">✎</button>
                 <button type="button" onClick={() => setDeleteConfirm(loc)} className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} title="Delete location">✕</button>
               </div>
               {isEditingThis && <LocationFormSection projectId={project.id} location={loc} pools={pools} onSaved={() => setLocationForm({ mode: 'none' })} onCancel={() => setLocationForm({ mode: 'none' })} />}
@@ -133,11 +133,11 @@ export function LocationsSection({
       </div>
       {locationForm.mode === 'create' && <div className={locations.length > 0 ? 'mt-1' : ''}><LocationFormSection projectId={project.id} pools={pools} gitUrl={gitUrl} onSaved={() => setLocationForm({ mode: 'none' })} onCancel={() => setLocationForm({ mode: 'none' })} /></div>}
       {deleteConfirm && (
-        <div className="mt-3 rounded-md p-3" style={{ background: 'rgba(220, 38, 38, 0.1)', border: '1px solid rgba(220, 38, 38, 0.3)' }}>
+        <div className="mt-3 rounded-md p-3" style={{ background: 'color-mix(in srgb, var(--color-danger-strong) 10%, transparent)', border: '1px solid color-mix(in srgb, var(--color-danger-strong) 30%, transparent)' }}>
           <p className="text-xs mb-2" style={{ color: 'var(--color-text)' }}>Delete location <strong>{deleteConfirm.label}</strong>?</p>
           <div className="flex gap-2">
             <button type="button" onClick={() => setDeleteConfirm(null)} className="rounded px-3 py-1 text-xs" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Cancel</button>
-            <button type="button" onClick={() => void onDeleteLocation(deleteConfirm)} className="rounded px-3 py-1 text-xs font-medium" style={{ background: '#dc2626', color: '#fff' }}>Delete</button>
+            <button type="button" onClick={() => void onDeleteLocation(deleteConfirm)} className="rounded px-3 py-1 text-xs font-medium" style={{ background: 'var(--color-danger-strong)', color: 'var(--color-on-accent)' }}>Delete</button>
           </div>
         </div>
       )}
@@ -175,11 +175,11 @@ export function CommandsSection({ project }: { project: Project }) {
           const isEditingThis = editingCmdId === cmd.id
           return (
             <div key={cmd.id}>
-              <div className="flex items-center gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-claude)' : 'var(--color-border)'}` }}>
+              <div className="flex items-center gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: `1px solid ${isEditingThis ? 'var(--color-accent)' : 'var(--color-border)'}` }}>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs font-medium truncate" style={{ color: 'var(--color-text)' }}>{cmd.name}</span>
-                    {cmd.shell === 'powershell' && <span className="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase" style={{ background: 'rgba(99, 179, 237, 0.15)', color: '#63b3ed' }}>PS</span>}
+                    {cmd.shell === 'powershell' && <span className="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase" style={{ background: 'color-mix(in srgb, var(--color-info) 15%, transparent)', color: 'var(--color-info)' }}>PS</span>}
                   </div>
                   <span className="text-[10px] font-mono truncate block" style={{ color: 'var(--color-text-muted)' }}>{cmd.command}</span>
                 </div>
@@ -197,7 +197,7 @@ export function CommandsSection({ project }: { project: Project }) {
                     }
                   }}
                   className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0"
-                  style={{ color: isEditingThis ? 'var(--color-claude)' : 'var(--color-text-muted)' }}
+                  style={{ color: isEditingThis ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
                   title="Edit command"
                 >
                   ✎
@@ -205,7 +205,7 @@ export function CommandsSection({ project }: { project: Project }) {
                 <button type="button" onClick={() => void removeCommand(cmd.id, project.id)} className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} title="Remove command">✕</button>
               </div>
               {isEditingThis && (
-                <div className="mt-1 rounded-md p-3 space-y-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-claude)' }}>
+                <div className="mt-1 rounded-md p-3 space-y-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-accent)' }}>
                   <div>
                     <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Name</label>
                     <input type="text" value={editCmdName} onChange={(e) => setEditCmdName(e.target.value)} className="w-full rounded px-3 py-1.5 text-sm outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} autoFocus />
@@ -222,13 +222,13 @@ export function CommandsSection({ project }: { project: Project }) {
                     <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Shell <span style={{ opacity: 0.5 }}>(local only)</span></label>
                     <div className="flex gap-1">
                       {[{ value: null, label: 'Default' }, { value: 'powershell', label: 'PowerShell' }].map((opt) => (
-                        <button key={String(opt.value)} type="button" onClick={() => setEditCmdShell(opt.value)} className="rounded px-2.5 py-1 text-xs font-medium transition-colors" style={{ background: editCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-surface-2)', color: editCmdShell === opt.value ? '#fff' : 'var(--color-text-muted)', border: `1px solid ${editCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-border)'}` }}>
+                        <button key={String(opt.value)} type="button" onClick={() => setEditCmdShell(opt.value)} className="rounded px-2.5 py-1 text-xs font-medium transition-colors" style={{ background: editCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-surface-2)', color: editCmdShell === opt.value ? 'var(--color-on-accent)' : 'var(--color-text-muted)', border: `1px solid ${editCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-border)'}` }}>
                           {opt.label}
                         </button>
                       ))}
                     </div>
                   </div>
-                  {editCmdError && <p className="text-xs" style={{ color: '#f87171' }}>{editCmdError}</p>}
+                  {editCmdError && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{editCmdError}</p>}
                   <div className="flex justify-end gap-2 pt-0.5">
                     <button type="button" onClick={() => setEditingCmdId(null)} className="rounded px-3 py-1.5 text-xs" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Cancel</button>
                     <button
@@ -245,7 +245,7 @@ export function CommandsSection({ project }: { project: Project }) {
                         }
                       }}
                       className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-                      style={{ background: 'var(--color-claude)', color: '#fff' }}
+                      style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
                     >
                       Save
                     </button>
@@ -274,13 +274,13 @@ export function CommandsSection({ project }: { project: Project }) {
           <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Shell <span style={{ opacity: 0.5 }}>(local only)</span></label>
           <div className="flex gap-1">
             {[{ value: null, label: 'Default' }, { value: 'powershell', label: 'PowerShell' }].map((opt) => (
-              <button key={String(opt.value)} type="button" onClick={() => setNewCmdShell(opt.value)} className="rounded px-2.5 py-1 text-xs font-medium transition-colors" style={{ background: newCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-surface-2)', color: newCmdShell === opt.value ? '#fff' : 'var(--color-text-muted)', border: `1px solid ${newCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-border)'}` }}>
+              <button key={String(opt.value)} type="button" onClick={() => setNewCmdShell(opt.value)} className="rounded px-2.5 py-1 text-xs font-medium transition-colors" style={{ background: newCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-surface-2)', color: newCmdShell === opt.value ? 'var(--color-on-accent)' : 'var(--color-text-muted)', border: `1px solid ${newCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-border)'}` }}>
                 {opt.label}
               </button>
             ))}
           </div>
         </div>
-        {cmdError && <p className="text-xs" style={{ color: '#f87171' }}>{cmdError}</p>}
+        {cmdError && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{cmdError}</p>}
         <div className="flex justify-end">
           <button
             type="button"
@@ -299,7 +299,7 @@ export function CommandsSection({ project }: { project: Project }) {
               }
             }}
             className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-            style={{ background: 'var(--color-claude)', color: '#fff' }}
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
             Add Command
           </button>

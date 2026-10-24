@@ -69,11 +69,11 @@ function Spinner({ size = 11 }: { size?: number }) {
 
 function statusColor(status: GitFileChange['status']): string {
   switch (status) {
-    case 'A': return '#4ade80'
-    case 'M': return '#e2c08d'
-    case 'D': return '#f87171'
-    case 'R': return '#a78bfa'
-    case 'U': return '#f87171'
+    case 'A': return 'var(--color-success)'
+    case 'M': return 'var(--color-gold)'
+    case 'D': return 'var(--color-danger)'
+    case 'R': return 'var(--color-purple)'
+    case 'U': return 'var(--color-danger)'
     default: return 'var(--color-text-muted)'
   }
 }
@@ -500,7 +500,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
               onClick={() => void handleGenerateAll()}
               disabled={busy || !target.trim()}
               className="flex items-center gap-1.5 rounded px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-40"
-              style={{ background: 'rgba(232,123,95,0.12)', border: '1px solid var(--color-claude)', color: 'var(--color-claude)' }}
+              style={{ background: 'color-mix(in srgb, var(--color-accent) 12%, transparent)', border: '1px solid var(--color-accent)', color: 'var(--color-accent)' }}
               title="Generate branch name, commit message, PR title and description with AI"
             >
               {anyGenerating ? <Spinner /> : <SparkleIcon />}
@@ -546,7 +546,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                       onClick={() => void handleGenerateBranchName()}
                       disabled={busy}
                       className="absolute right-1 top-1.5 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40"
-                      style={{ color: 'var(--color-claude)' }}
+                      style={{ color: 'var(--color-accent)' }}
                       title="Generate a branch name with AI"
                     >
                       {generatingBranch ? <Spinner /> : <SparkleIcon />}
@@ -587,7 +587,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                       onClick={() => void handleGenerateCommitMessage()}
                       disabled={busy}
                       className="absolute right-1 top-1.5 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40"
-                      style={{ color: 'var(--color-claude)' }}
+                      style={{ color: 'var(--color-accent)' }}
                       title="Generate commit message with AI"
                     >
                       {generatingCommit ? <Spinner /> : <SparkleIcon />}
@@ -611,7 +611,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                     onClick={() => void handleGenerate()}
                     disabled={busy || !target.trim()}
                     className="absolute right-1 top-1.5 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40"
-                    style={{ color: 'var(--color-claude)' }}
+                    style={{ color: 'var(--color-accent)' }}
                     title="Generate PR title and description with AI"
                   >
                     {generating ? <Spinner /> : <SparkleIcon />}
@@ -626,7 +626,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                     onClick={() => void handleGenerate()}
                     disabled={busy || !target.trim()}
                     className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40"
-                    style={{ color: 'var(--color-claude)' }}
+                    style={{ color: 'var(--color-accent)' }}
                     title="Generate PR title and description with AI"
                   >
                     {generating ? <Spinner size={10} /> : <SparkleIcon />}
@@ -660,7 +660,7 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                   onClick={() => void handleCreate()}
                   disabled={!canSubmit}
                   className="flex-1 rounded py-2 text-xs font-medium transition-opacity disabled:opacity-40"
-                  style={{ background: 'var(--color-claude)', color: '#fff' }}
+                  style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
                 >
                   {anyGenerating
                     ? 'Generating…'
@@ -735,8 +735,8 @@ export default function CreatePrModal({ projectPath, sourceBranch, defaultTarget
                         title={file.path}
                         className="flex w-full flex-col items-start px-3 py-1.5 text-left transition-colors hover:bg-white/5"
                         style={{
-                          background: active ? 'rgba(232,123,95,0.12)' : 'transparent',
-                          borderLeft: active ? '2px solid var(--color-claude)' : '2px solid transparent',
+                          background: active ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
+                          borderLeft: active ? '2px solid var(--color-accent)' : '2px solid transparent',
                         }}
                       >
                         <span className="w-full truncate text-[11px] font-mono" style={{ color: 'var(--color-text)' }}>{name}</span>

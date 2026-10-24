@@ -160,7 +160,7 @@ export default function YouTrackMentionPopup({ servers, query, onSelect, onClose
             >
               <span
                 className="mt-0.5 shrink-0 font-mono text-xs font-medium"
-                style={{ color: '#63b3ed' }}
+                style={{ color: 'var(--color-info)' }}
               >
                 {issue.idReadable}
               </span>

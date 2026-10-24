@@ -63,9 +63,9 @@ export function UpdateBanner(): React.JSX.Element | null {
 
   if (state.downloading) {
     return (
-      <div className="flex items-center gap-2 border-b border-blue-600/30 bg-blue-600/20 px-4 py-1.5">
-        <Loader2 className="h-3.5 w-3.5 animate-spin text-blue-400" />
-        <span className="text-xs text-blue-300">
+      <div className="flex items-center gap-2 border-b border-info-strong/30 bg-info-strong/20 px-4 py-1.5">
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-info" />
+        <span className="text-xs text-[color-mix(in_srgb,var(--color-info)_55%,var(--color-text))]">
           Downloading update{state.version ? ` v${state.version}` : ''}… {state.progress ?? 0}%
         </span>
       </div>
@@ -75,15 +75,15 @@ export function UpdateBanner(): React.JSX.Element | null {
   if (state.ready) {
     return (
       <>
-        <div className="flex items-center justify-between border-b border-emerald-600/30 bg-emerald-600/20 px-4 py-1.5">
+        <div className="flex items-center justify-between border-b border-success-strong/30 bg-success-strong/20 px-4 py-1.5">
           <div className="flex items-center gap-2">
-            <Download className="h-3.5 w-3.5 text-emerald-400" />
-            <span className="text-xs text-emerald-300">
+            <Download className="h-3.5 w-3.5 text-success" />
+            <span className="text-xs text-[color-mix(in_srgb,var(--color-success)_55%,var(--color-text))]">
               A new version is ready to install{state.version ? ` (v${state.version})` : ''}
             </span>
             <button
               onClick={() => setShowNotes(true)}
-              className="flex items-center gap-1 text-xs text-emerald-300 underline-offset-2 transition-colors hover:text-emerald-200 hover:underline"
+              className="flex items-center gap-1 text-xs text-[color-mix(in_srgb,var(--color-success)_55%,var(--color-text))] underline-offset-2 transition-colors hover:text-[color-mix(in_srgb,var(--color-success)_55%,var(--color-text))] hover:underline"
             >
               <GitCommitHorizontal className="h-3 w-3" />
               What's new
@@ -91,7 +91,7 @@ export function UpdateBanner(): React.JSX.Element | null {
           </div>
           <button
             onClick={() => setShowNotes(true)}
-            className="flex items-center gap-1.5 rounded-md bg-emerald-600 px-3 py-1 text-xs text-white transition-colors hover:bg-emerald-500"
+            className="flex items-center gap-1.5 rounded-md bg-success-strong px-3 py-1 text-xs text-on-accent transition-colors hover:brightness-110"
           >
             <RefreshCw className="h-3 w-3" />
             Restart to Update

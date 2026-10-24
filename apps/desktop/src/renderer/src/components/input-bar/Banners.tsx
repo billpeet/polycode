@@ -7,9 +7,9 @@ export function MissingLocationBanner({ location }: { location: RepoLocation }) 
     <div
       className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
       style={{
-        background: 'rgba(248, 113, 113, 0.1)',
-        border: '1px solid rgba(248, 113, 113, 0.3)',
-        color: '#f87171',
+        background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)',
+        color: 'var(--color-danger)',
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -40,9 +40,9 @@ export function CliUnavailableBanner({
     <div
       className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
       style={{
-        background: 'rgba(248, 113, 113, 0.1)',
-        border: '1px solid rgba(248, 113, 113, 0.3)',
-        color: '#f87171',
+        background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)',
+        color: 'var(--color-danger)',
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
@@ -75,9 +75,9 @@ export function ErrorBanner() {
     <div
       className="mb-3 flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
       style={{
-        background: 'rgba(248, 113, 113, 0.1)',
-        border: '1px solid rgba(248, 113, 113, 0.3)',
-        color: '#f87171',
+        background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)',
+        border: '1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)',
+        color: 'var(--color-danger)',
       }}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -105,13 +105,13 @@ export function PlanBanner({
     <div
       className="mb-3 flex items-center justify-between rounded-xl px-4 py-3"
       style={{
-        background: 'linear-gradient(135deg, rgba(232, 123, 95, 0.15) 0%, rgba(232, 123, 95, 0.08) 100%)',
-        border: '1px solid rgba(232, 123, 95, 0.3)',
+        background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-accent) 15%, transparent) 0%, color-mix(in srgb, var(--color-accent) 8%, transparent) 100%)',
+        border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)',
       }}
     >
       <div className="flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'rgba(232, 123, 95, 0.2)' }}>
-          <PlanIcon className="text-[var(--color-claude)]" />
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-accent) 20%, transparent)' }}>
+          <PlanIcon className="text-[var(--color-accent)]" />
         </div>
         <div>
           <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
@@ -133,7 +133,7 @@ export function PlanBanner({
         <button
           onClick={() => onNewContext(threadId)}
           className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:scale-105"
-          style={{ background: 'transparent', border: '1px solid var(--color-claude)', color: 'var(--color-claude)' }}
+          style={{ background: 'transparent', border: '1px solid var(--color-accent)', color: 'var(--color-accent)' }}
           title="Execute in a fresh Claude session, keeping this planning session as a tab"
         >
           New Context
@@ -142,9 +142,9 @@ export function PlanBanner({
           onClick={() => onApprove(threadId)}
           className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
           style={{
-            background: 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)',
-            color: '#fff',
-            boxShadow: '0 2px 8px rgba(232, 123, 95, 0.3)',
+            background: 'linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-strong) 100%)',
+            color: 'var(--color-on-accent)',
+            boxShadow: '0 2px 8px color-mix(in srgb, var(--color-accent) 30%, transparent)',
           }}
         >
           Approve & Execute
@@ -177,13 +177,13 @@ export function QuestionBanner({
     <div
       className="mb-3 max-h-[min(60vh,32rem)] overflow-y-auto rounded-xl px-4 py-3"
       style={{
-        background: 'linear-gradient(135deg, rgba(99, 179, 237, 0.15) 0%, rgba(99, 179, 237, 0.08) 100%)',
-        border: '1px solid rgba(99, 179, 237, 0.3)',
+        background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-info) 15%, transparent) 0%, color-mix(in srgb, var(--color-info) 8%, transparent) 100%)',
+        border: '1px solid color-mix(in srgb, var(--color-info) 30%, transparent)',
       }}
     >
       <div className="mb-3 flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'rgba(99, 179, 237, 0.2)' }}>
-          <QuestionIcon className="text-blue-400" />
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-info) 20%, transparent)' }}>
+          <QuestionIcon className="text-info" />
         </div>
         <div className="min-w-0">
           <div className="text-sm font-medium" style={{ color: 'var(--color-text)' }}>
@@ -202,7 +202,7 @@ export function QuestionBanner({
             return (
               <>
           <div className="mb-2 flex items-start gap-2">
-            <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: 'rgba(99, 179, 237, 0.2)', color: '#63b3ed' }}>
+            <span className="rounded px-1.5 py-0.5 text-xs font-medium" style={{ background: 'color-mix(in srgb, var(--color-info) 20%, transparent)', color: 'var(--color-info)' }}>
               {q.header}
             </span>
             <span className="min-w-0 break-words text-sm" style={{ color: 'var(--color-text)' }}>
@@ -231,8 +231,8 @@ export function QuestionBanner({
                   }
                   className="min-w-0 rounded-lg px-3 py-2 text-left transition-all"
                   style={{
-                    background: isSelected ? 'rgba(99, 179, 237, 0.2)' : 'var(--color-surface)',
-                    border: `1px solid ${isSelected ? 'rgba(99, 179, 237, 0.5)' : 'var(--color-border)'}`,
+                    background: isSelected ? 'color-mix(in srgb, var(--color-info) 20%, transparent)' : 'var(--color-surface)',
+                    border: `1px solid ${isSelected ? 'color-mix(in srgb, var(--color-info) 50%, transparent)' : 'var(--color-border)'}`,
                   }}
                 >
                   <div className="break-words text-sm font-medium" style={{ color: 'var(--color-text)' }}>
@@ -276,9 +276,9 @@ export function QuestionBanner({
           disabled={questions.some((question) => question.allowComments === false && !(selectedAnswers[question.id ?? question.question]?.length))}
           className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
           style={{
-            background: 'linear-gradient(135deg, #63b3ed 0%, #4299e1 100%)',
-            color: '#fff',
-            boxShadow: '0 2px 8px rgba(99, 179, 237, 0.3)',
+            background: 'linear-gradient(135deg, var(--color-info) 0%, var(--color-info-strong) 100%)',
+            color: 'var(--color-on-accent)',
+            boxShadow: '0 2px 8px color-mix(in srgb, var(--color-info) 30%, transparent)',
           }}
         >
           Submit Answer{questions.length > 1 ? 's' : ''}
@@ -305,13 +305,13 @@ export function PermissionBanner({
     <div
       className="mb-3 rounded-xl px-4 py-3"
       style={{
-        background: 'linear-gradient(135deg, rgba(251, 191, 36, 0.15) 0%, rgba(251, 191, 36, 0.08) 100%)',
-        border: '1px solid rgba(251, 191, 36, 0.3)',
+        background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-warning) 15%, transparent) 0%, color-mix(in srgb, var(--color-warning) 8%, transparent) 100%)',
+        border: '1px solid color-mix(in srgb, var(--color-warning) 30%, transparent)',
       }}
     >
       <div className="mb-3 flex items-center gap-3">
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'rgba(251, 191, 36, 0.2)' }}>
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <div className="flex h-8 w-8 items-center justify-center rounded-lg" style={{ background: 'color-mix(in srgb, var(--color-warning) 20%, transparent)' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-warning)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
             <path d="M7 11V7a5 5 0 0 1 10 0v4" />
           </svg>
@@ -331,7 +331,7 @@ export function PermissionBanner({
           <div
             key={i}
             className="rounded-lg px-3 py-2 text-xs font-mono"
-            style={{ background: 'rgba(251, 191, 36, 0.1)', color: 'var(--color-text)', border: '1px solid rgba(251, 191, 36, 0.2)' }}
+            style={{ background: 'color-mix(in srgb, var(--color-warning) 10%, transparent)', color: 'var(--color-text)', border: '1px solid color-mix(in srgb, var(--color-warning) 20%, transparent)' }}
           >
             {p.description}
           </div>
@@ -350,9 +350,9 @@ export function PermissionBanner({
           onClick={() => onApprove(threadId, activePermission?.requestId)}
           className="rounded-lg px-4 py-1.5 text-xs font-medium transition-all hover:scale-105"
           style={{
-            background: 'linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%)',
-            color: '#1a1a1a',
-            boxShadow: '0 2px 8px rgba(251, 191, 36, 0.3)',
+            background: 'linear-gradient(135deg, var(--color-warning) 0%, var(--color-warning-strong) 100%)',
+            color: 'var(--color-bg)',
+            boxShadow: '0 2px 8px color-mix(in srgb, var(--color-warning) 30%, transparent)',
           }}
         >
           Approve & Continue

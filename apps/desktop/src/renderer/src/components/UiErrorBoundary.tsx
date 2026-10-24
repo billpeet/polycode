@@ -58,8 +58,8 @@ export default class UiErrorBoundary extends Component<UiErrorBoundaryProps, UiE
           role="alert"
           className="flex items-center justify-between gap-3 rounded border px-3 py-2 text-xs"
           style={{
-            background: 'rgba(248, 113, 113, 0.06)',
-            borderColor: 'rgba(248, 113, 113, 0.35)',
+            background: 'color-mix(in srgb, var(--color-danger) 6%, transparent)',
+            borderColor: 'color-mix(in srgb, var(--color-danger) 35%, transparent)',
             color: 'var(--color-text-muted)',
           }}
         >

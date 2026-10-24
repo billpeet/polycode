@@ -11,9 +11,9 @@ import { runCommandAction } from '../../lib/commandActions'
 
 function StatusDot({ status }: { status: CommandStatus }) {
   const color =
-    status === 'running' ? '#4ade80'
-    : status === 'stopping' ? '#fb923c'
-    : status === 'error' ? '#f87171'
+    status === 'running' ? 'var(--color-success)'
+    : status === 'stopping' ? 'var(--color-orange)'
+    : status === 'error' ? 'var(--color-danger)'
     : 'var(--color-text-muted)'
 
   return (
@@ -151,7 +151,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                     {cmd.command}
                   </p>
                   {ports.length > 0 && (
-                    <p className="text-[10px] font-mono mb-2" style={{ color: '#4ade80' }}>
+                    <p className="text-[10px] font-mono mb-2" style={{ color: 'var(--color-success)' }}>
                       ports:{' '}
                       {ports.map((port) => client.capabilities.browserPanel ? (
                         <button
@@ -184,7 +184,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                         }}
                         disabled={!locationId}
                         className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-40"
-                        style={{ background: 'rgba(74, 222, 128, 0.15)', color: '#4ade80', border: '1px solid rgba(74, 222, 128, 0.3)' }}
+                        style={{ background: 'color-mix(in srgb, var(--color-success) 15%, transparent)', color: 'var(--color-success)', border: '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)' }}
                       >
                         Start
                       </button>
@@ -201,7 +201,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                           }}
                           disabled={isStopping}
                           className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-50"
-                          style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)', border: '1px solid rgba(232, 123, 95, 0.3)' }}
+                          style={{ background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)', color: 'var(--color-accent)', border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)' }}
                         >
                           Restart
                         </button>
@@ -209,7 +209,7 @@ export default function CommandsSection({ threadId }: { threadId: string }) {
                           onClick={() => { if (locationId) void runCommandAction(() => stop(cmd.id, locationId)) }}
                           disabled={isStopping}
                           className="flex-1 rounded py-1 text-xs font-medium transition-colors disabled:opacity-50"
-                          style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}
+                          style={{ background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)', color: 'var(--color-danger)', border: '1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)' }}
                         >
                           {isStopping ? 'Stopping…' : 'Stop'}
                         </button>

@@ -145,9 +145,9 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
   }
 
   const toggleStyle = (active: boolean) => ({
-    background: active ? 'var(--color-claude)' : 'var(--color-surface)',
-    color: active ? '#fff' : 'var(--color-text-muted)',
-    border: `1px solid ${active ? 'var(--color-claude)' : 'var(--color-border)'}`,
+    background: active ? 'var(--color-accent)' : 'var(--color-surface)',
+    color: active ? 'var(--color-on-accent)' : 'var(--color-text-muted)',
+    border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-border)'}`,
   })
 
   const inputStyle = { background: 'var(--color-surface)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }
@@ -268,7 +268,7 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
           type="checkbox"
           checked={allowMainBranchCommits}
           onChange={(e) => setAllowMainBranchCommits(e.target.checked)}
-          style={{ accentColor: 'var(--color-claude)', marginTop: 2, flexShrink: 0 }}
+          style={{ accentColor: 'var(--color-accent)', marginTop: 2, flexShrink: 0 }}
         />
         <span>
           <span className="block">Allow commits on main/master</span>
@@ -276,14 +276,14 @@ export default function NewProjectForm({ onClose, onCreated }: NewProjectFormPro
         </span>
       </label>
 
-      {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+      {error && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
       <div className="flex justify-end gap-2">
         <button type="button" onClick={onClose} disabled={busy} className="rounded px-4 py-2 text-sm" style={inputStyle}>
           Cancel
         </button>
-        <button type="button" onClick={handleCreate} disabled={busy} className="rounded px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50" style={{ background: 'var(--color-claude)', color: '#fff' }}>
-          {busy ? <span className="flex items-center gap-1.5"><span className="streaming-dot" style={{ background: '#fff', width: 5, height: 5 }} />{busyLabel}</span> : createLabel}
+        <button type="button" onClick={handleCreate} disabled={busy} className="rounded px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
+          {busy ? <span className="flex items-center gap-1.5"><span className="streaming-dot" style={{ background: 'var(--color-on-accent)', width: 5, height: 5 }} />{busyLabel}</span> : createLabel}
         </button>
       </div>
     </div>

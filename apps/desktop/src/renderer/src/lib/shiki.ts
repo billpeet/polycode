@@ -1,10 +1,12 @@
 import { createHighlighter, type Highlighter } from 'shiki'
+import { SYNTAX_THEMES } from '../../../shared/themes'
 
 let highlighter: Highlighter | null = null
 const listeners: Array<() => void> = []
 
 createHighlighter({
-  themes: ['github-dark'],
+  // Every theme's syntax palette is loaded up front so switching themes is instant.
+  themes: [...SYNTAX_THEMES],
   langs: [
     'typescript', 'javascript', 'tsx', 'jsx',
     'json', 'html', 'css', 'scss', 'less',

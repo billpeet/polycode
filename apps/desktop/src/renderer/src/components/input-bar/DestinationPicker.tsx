@@ -76,7 +76,7 @@ const controlStyle = {
 } as const
 
 const HOVER_BG = 'rgba(255,255,255,0.06)'
-const ACTIVE_BG = 'rgba(232, 123, 95, 0.14)'
+const ACTIVE_BG = 'color-mix(in srgb, var(--color-accent) 14%, transparent)'
 
 /**
  * Project dropdown with favicons, alphabetical. A native `<select>` cannot
@@ -148,7 +148,7 @@ function ProjectMenu({ projectId, onSelect }: { projectId: string; onSelect: (pr
                   if (!selected) onSelect(project.id)
                 }}
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px]"
-                style={{ background: selected ? ACTIVE_BG : undefined, color: selected ? 'var(--color-claude)' : 'var(--color-text)' }}
+                style={{ background: selected ? ACTIVE_BG : undefined, color: selected ? 'var(--color-accent)' : 'var(--color-text)' }}
                 onMouseEnter={(event) => { if (!selected) event.currentTarget.style.background = HOVER_BG }}
                 onMouseLeave={(event) => { if (!selected) event.currentTarget.style.background = '' }}
               >
@@ -458,7 +458,7 @@ function UnifiedProjectMenu({
                   if (!selected) onSelect(project)
                 }}
                 className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[12px]"
-                style={{ background: selected ? ACTIVE_BG : undefined, color: selected ? 'var(--color-claude)' : 'var(--color-text)' }}
+                style={{ background: selected ? ACTIVE_BG : undefined, color: selected ? 'var(--color-accent)' : 'var(--color-text)' }}
                 onMouseEnter={(event) => { if (!selected) event.currentTarget.style.background = HOVER_BG }}
                 onMouseLeave={(event) => { if (!selected) event.currentTarget.style.background = '' }}
               >

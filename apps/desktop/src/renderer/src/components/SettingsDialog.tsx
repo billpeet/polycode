@@ -9,12 +9,14 @@ import { YouTrackSettingsPanel } from './YouTrackSettingsDialog'
 import { WebhookPanel } from './WebhookPanel'
 import { RemoteControlPanel } from './RemoteControlPanel'
 import { StoragePanel } from './StoragePanel'
+import { AppearancePanel } from './AppearancePanel'
 import { client, type ClientCapabilities } from '../lib/client'
 
-type Tab = 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote' | 'storage' | 'seed'
+type Tab = 'appearance' | 'azure' | 'health' | 'slash' | 'youtrack' | 'webhook' | 'remote' | 'storage' | 'seed'
 
 /** Tabs that configure the host process itself only exist where that process is attached. */
 const TABS: { id: Tab; label: string; requires?: keyof ClientCapabilities }[] = [
+  { id: 'appearance', label: 'Appearance' },
   { id: 'health', label: 'Health Checks' },
   { id: 'slash', label: 'Slash Commands' },
   { id: 'azure', label: 'Azure DevOps' },
@@ -32,7 +34,7 @@ interface Props {
 
 export default function SettingsDialog({ projectId, projectName, onClose }: Props) {
   const backdropClose = useBackdropClose(onClose)
-  const [activeTab, setActiveTab] = useState<Tab>('health')
+  const [activeTab, setActiveTab] = useState<Tab>('appearance')
   const [profile, setProfile] = useState<AppProfile | null>(null)
   useEffect(() => {
     if (!client.capabilities.nativeDialogs) return
@@ -86,7 +88,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
               style={{
                 background: activeTab === tab.id ? 'var(--color-surface-2)' : 'transparent',
                 color: activeTab === tab.id ? 'var(--color-text)' : 'var(--color-text-muted)',
-                borderLeft: activeTab === tab.id ? '2px solid var(--color-claude)' : '2px solid transparent',
+                borderLeft: activeTab === tab.id ? '2px solid var(--color-accent)' : '2px solid transparent',
               }}
             >
               {tab.label}
@@ -122,6 +124,7 @@ export default function SettingsDialog({ projectId, projectName, onClose }: Prop
           </div>
 
           <div className="flex-1 overflow-y-auto min-h-0">
+            {activeTab === 'appearance' && <AppearancePanel />}
             {activeTab === 'health' && <CliHealthPanel hideHeader />}
             {activeTab === 'slash' && (
               <SlashCommandsPanel projectId={projectId} projectName={projectName} hideHeader />

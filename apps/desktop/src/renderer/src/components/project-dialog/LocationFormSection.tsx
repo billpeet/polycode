@@ -195,9 +195,9 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
   }
 
   const toggleStyle = (active: boolean) => ({
-    background: active ? 'var(--color-claude)' : 'var(--color-surface)',
-    color: active ? '#fff' : 'var(--color-text-muted)',
-    border: `1px solid ${active ? 'var(--color-claude)' : 'var(--color-border)'}`,
+    background: active ? 'var(--color-accent)' : 'var(--color-surface)',
+    color: active ? 'var(--color-on-accent)' : 'var(--color-text-muted)',
+    border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-border)'}`,
   })
 
   const pathLabel = isSSH ? 'Remote Path' : isWSL ? 'WSL Path' : 'Directory'
@@ -238,7 +238,7 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
       {cloneMode && !location && (
         <>
           {!gitUrl ? (
-            <p className="text-xs py-1" style={{ color: '#f87171' }}>Set a Git URL on the project before cloning.</p>
+            <p className="text-xs py-1" style={{ color: 'var(--color-danger)' }}>Set a Git URL on the project before cloning.</p>
           ) : (
             <>
               <div>
@@ -264,13 +264,13 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
               )}
             </>
           )}
-          {cloneError && <p className="text-xs" style={{ color: '#f87171' }}>{cloneError}</p>}
+          {cloneError && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{cloneError}</p>}
           <div className="flex justify-end gap-2 pt-0.5">
             <button type="button" onClick={onCancel} disabled={cloning} className="rounded px-3 py-1.5 text-xs" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
               Cancel
             </button>
-            <button type="button" onClick={handleClone} disabled={!gitUrl || !suggestedPath || cloning} className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50" style={{ background: 'var(--color-claude)', color: '#fff' }}>
-              {cloning ? <span className="flex items-center gap-1.5"><span className="streaming-dot" style={{ background: '#fff', width: 5, height: 5 }} />Cloning...</span> : 'Clone'}
+            <button type="button" onClick={handleClone} disabled={!gitUrl || !suggestedPath || cloning} className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
+              {cloning ? <span className="flex items-center gap-1.5"><span className="streaming-dot" style={{ background: 'var(--color-on-accent)', width: 5, height: 5 }} />Cloning...</span> : 'Clone'}
             </button>
           </div>
         </>
@@ -335,15 +335,15 @@ export default function LocationFormSection({ projectId, location, pools, gitUrl
               <button type="button" onClick={handleTest} disabled={!canTest || testing} className="rounded px-3 py-1 text-xs font-medium transition-colors disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>
                 {testing ? 'Testing...' : 'Test Connection'}
               </button>
-              {testing && <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-text-muted)' }}><span className="streaming-dot" style={{ background: 'var(--color-claude)', width: 6, height: 6 }} />{isWSL ? 'Testing WSL...' : 'Connecting...'}</span>}
-              {!testing && testResult === 'success' && <span className="text-xs font-medium" style={{ color: '#4ade80' }}>{isWSL ? 'Path valid' : 'Connected'}</span>}
-              {!testing && testResult === 'fail' && <span className="text-xs font-medium" style={{ color: '#f87171' }}>Failed</span>}
+              {testing && <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-text-muted)' }}><span className="streaming-dot" style={{ background: 'var(--color-accent)', width: 6, height: 6 }} />{isWSL ? 'Testing WSL...' : 'Connecting...'}</span>}
+              {!testing && testResult === 'success' && <span className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>{isWSL ? 'Path valid' : 'Connected'}</span>}
+              {!testing && testResult === 'fail' && <span className="text-xs font-medium" style={{ color: 'var(--color-danger)' }}>Failed</span>}
             </div>
           )}
-          {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</p>}
           <div className="flex justify-end gap-2 pt-0.5">
             <button type="button" onClick={onCancel} disabled={testing} className="rounded px-3 py-1.5 text-xs" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Cancel</button>
-            <button type="button" onClick={handleSave} disabled={testing} className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50" style={{ background: 'var(--color-claude)', color: '#fff' }}>{testing ? 'Testing...' : location ? 'Save' : 'Add'}</button>
+            <button type="button" onClick={handleSave} disabled={testing} className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>{testing ? 'Testing...' : location ? 'Save' : 'Add'}</button>
           </div>
         </>
       )}

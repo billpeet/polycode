@@ -75,8 +75,8 @@ export default function Assassin({ threadId }: { threadId: string }) {
     border: 'none',
     cursor: 'pointer',
     transition: 'background 0.15s, color 0.15s',
-    background: active ? 'rgba(248,113,113,0.2)' : 'transparent',
-    color: active ? '#f87171' : 'var(--color-text-muted)',
+    background: active ? 'color-mix(in srgb, var(--color-danger) 20%, transparent)' : 'transparent',
+    color: active ? 'var(--color-danger)' : 'var(--color-text-muted)',
   })
 
   return (
@@ -92,7 +92,7 @@ export default function Assassin({ threadId }: { threadId: string }) {
       <button
         onClick={() => setExpanded((v) => !v)}
         className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
-        style={{ color: expanded ? '#f87171' : 'var(--color-text-muted)' }}
+        style={{ color: expanded ? 'var(--color-danger)' : 'var(--color-text-muted)' }}
         title="Kill process by PID or port"
       >
         <Crosshair size={14} />
@@ -140,8 +140,8 @@ export default function Assassin({ threadId }: { threadId: string }) {
             disabled={!value.trim() || loading}
             className="rounded px-2 py-0.5 text-xs font-medium transition-colors disabled:opacity-40"
             style={{
-              background: 'rgba(248,113,113,0.2)',
-              color: '#f87171',
+              background: 'color-mix(in srgb, var(--color-danger) 20%, transparent)',
+              color: 'var(--color-danger)',
               border: 'none',
               cursor: !value.trim() || loading ? 'not-allowed' : 'pointer',
             }}
@@ -154,7 +154,7 @@ export default function Assassin({ threadId }: { threadId: string }) {
             <span
               className="text-xs truncate"
               style={{
-                color: feedback.type === 'success' ? '#4ade80' : '#f87171',
+                color: feedback.type === 'success' ? 'var(--color-success)' : 'var(--color-danger)',
                 maxWidth: 200,
               }}
             >

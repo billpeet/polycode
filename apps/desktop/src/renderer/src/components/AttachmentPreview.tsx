@@ -89,7 +89,7 @@ export default function AttachmentPreview({ attachments, onRemove, disabled, inl
           className="h-5 w-5 rounded object-cover"
         />
       ) : att.type === 'pdf' ? (
-        <PdfIcon className="h-3.5 w-3.5 text-red-400 flex-shrink-0" />
+        <PdfIcon className="h-3.5 w-3.5 text-danger flex-shrink-0" />
       ) : (
         <FileIcon className="h-3.5 w-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }} />
       )}
@@ -106,7 +106,7 @@ export default function AttachmentPreview({ attachments, onRemove, disabled, inl
       {!disabled && (
         <button
           onClick={() => onRemove(att.id)}
-          className="flex h-4 w-4 items-center justify-center rounded-full transition-all hover:bg-red-500/20"
+          className="flex h-4 w-4 items-center justify-center rounded-full transition-all hover:brightness-110/20"
           style={{ color: 'var(--color-text-muted)' }}
           title="Remove attachment"
         >

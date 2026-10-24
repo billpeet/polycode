@@ -105,7 +105,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps): ReactNo
               try { await item.onSelect() } catch { /* handled upstream via toast */ }
             }}
             className="w-full flex items-center gap-2 px-2.5 py-1 text-left transition-colors disabled:opacity-40 disabled:cursor-not-allowed hover:bg-white/10"
-            style={{ color: item.destructive ? '#f87171' : 'inherit' }}
+            style={{ color: item.destructive ? 'var(--color-danger)' : 'inherit' }}
           >
             {item.icon && <span className="inline-flex items-center justify-center w-3.5 h-3.5 flex-shrink-0" style={{ color: 'var(--color-text-muted)' }}>{item.icon}</span>}
             <span className="flex-1 truncate">{item.label}</span>

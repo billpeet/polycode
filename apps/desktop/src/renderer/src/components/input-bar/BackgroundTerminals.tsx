@@ -58,11 +58,11 @@ export default function BackgroundTerminals({ threadId }: { threadId: string }) 
             <span className="text-xs font-semibold" style={{ color: 'var(--color-text)' }}>Background processes</span>
             <div className="flex gap-2 text-xs">
               <button onClick={() => void refresh()} disabled={loading} style={{ color: 'var(--color-text-muted)' }}>Refresh</button>
-              {terminals.length > 0 && <button onClick={() => void cleanAll()} style={{ color: '#f87171' }}>Stop all</button>}
+              {terminals.length > 0 && <button onClick={() => void cleanAll()} style={{ color: 'var(--color-danger)' }}>Stop all</button>}
             </div>
           </div>
           {terminals.length === 0 ? (
-            <div className="py-2 text-xs" style={{ color: error ? '#f87171' : 'var(--color-text-muted)' }}>{loading ? 'Loading…' : error ?? 'No running background processes.'}</div>
+            <div className="py-2 text-xs" style={{ color: error ? 'var(--color-danger)' : 'var(--color-text-muted)' }}>{loading ? 'Loading…' : error ?? 'No running background processes.'}</div>
           ) : (
             <div className="flex max-h-72 flex-col gap-1 overflow-y-auto">
               {terminals.map((terminal) => (
@@ -77,7 +77,7 @@ export default function BackgroundTerminals({ threadId }: { threadId: string }) 
                         {terminal.rssKb != null ? ` · ${(terminal.rssKb / 1024).toFixed(1)} MB` : ''}
                       </div>
                     </div>
-                    <button onClick={() => void terminate(terminal.processId)} className="text-xs" style={{ color: '#f87171' }}>Stop</button>
+                    <button onClick={() => void terminate(terminal.processId)} className="text-xs" style={{ color: 'var(--color-danger)' }}>Stop</button>
                   </div>
                 </div>
               ))}

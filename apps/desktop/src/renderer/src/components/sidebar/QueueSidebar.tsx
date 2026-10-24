@@ -140,7 +140,7 @@ function QueueRow({
           ) : (
             <span
               className={`mr-2 h-1.5 w-1.5 flex-shrink-0 rounded-full${(unreadByThread[thread.id] ?? !!thread.unread) ? ' status-unread' : ''}`}
-              style={{ background: isEscalated ? '#f87171' : getThreadStatusColor(thread, statusMap, unreadByThread) }}
+              style={{ background: isEscalated ? 'var(--color-danger)' : getThreadStatusColor(thread, statusMap, unreadByThread) }}
             />
           )}
           <span className="truncate min-w-0" style={{ color: 'var(--color-text)' }}>{thread.name}</span>
@@ -156,7 +156,7 @@ function QueueRow({
           {locationHint && <span className="truncate min-w-0">{locationHint}</span>}
           {badge}
           {isEscalated && (
-            <span className="flex-shrink-0 rounded px-1 font-semibold" style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}>
+            <span className="flex-shrink-0 rounded px-1 font-semibold" style={{ background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)', color: 'var(--color-danger)' }}>
               escalated
             </span>
           )}
@@ -177,7 +177,7 @@ function QueueRow({
       {isWokenRow && (
         <span
           className="pointer-events-none absolute left-0 top-0 bottom-0 w-0.5"
-          style={{ background: 'var(--color-claude)' }}
+          style={{ background: 'var(--color-accent)' }}
         />
       )}
 
@@ -447,7 +447,7 @@ export default function QueueSidebar({
           >
             <PanelLeft size={16} />
           </button>
-          <span className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: 'var(--color-claude)' }}>
+          <span className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: 'var(--color-accent)' }}>
             {title}
           </span>
         </div>

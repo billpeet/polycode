@@ -170,7 +170,7 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
               type="checkbox"
               checked={allowMainBranchCommits}
               onChange={(e) => setAllowMainBranchCommits(e.target.checked)}
-              style={{ accentColor: 'var(--color-claude)', marginTop: 2, flexShrink: 0 }}
+              style={{ accentColor: 'var(--color-accent)', marginTop: 2, flexShrink: 0 }}
             />
             <span>
               <span className="block">Allow commits on main/master</span>
@@ -178,10 +178,10 @@ export default function ProjectDialog({ mode, project, onClose, onCreated }: Pro
             </span>
           </label>
 
-          {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
           <div className="flex justify-end gap-2">
-            <button type="submit" className="rounded px-4 py-2 text-sm font-medium transition-colors" style={{ background: projectSaved ? '#16a34a' : 'var(--color-claude)', color: '#fff' }}>
+            <button type="submit" className="rounded px-4 py-2 text-sm font-medium transition-colors" style={{ background: projectSaved ? 'var(--color-success-strong)' : 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
               {projectSaved ? 'Saved!' : 'Save Changes'}
             </button>
           </div>

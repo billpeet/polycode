@@ -6,20 +6,20 @@ import { formatTime } from '../lib/locale'
 import { client } from '../lib/client'
 
 const TYPE_COLORS: Record<string, string> = {
-  message_sent: '#63b3ed',
-  text: '#4ade80',
-  tool_call: '#f6ad55',
-  tool_result: '#fbbf24',
-  error: '#f87171',
-  done: '#a78bfa',
-  status: '#94a3b8',
-  thinking: '#c084fc',
-  usage: '#64748b',
-  rate_limit: '#fb923c',
+  message_sent: 'var(--color-info)',
+  text: 'var(--color-success)',
+  tool_call: 'var(--color-orange)',
+  tool_result: 'var(--color-warning)',
+  error: 'var(--color-danger)',
+  done: 'var(--color-purple)',
+  status: 'var(--color-text-muted)',
+  thinking: 'var(--color-purple)',
+  usage: 'var(--color-text-muted)',
+  rate_limit: 'var(--color-orange)',
 }
 
 function typeColor(type: string): string {
-  return TYPE_COLORS[type] ?? '#94a3b8'
+  return TYPE_COLORS[type] ?? 'var(--color-text-muted)'
 }
 
 function formatTs(ts: string): string {
@@ -60,9 +60,9 @@ function LogRow({ entry }: LogRowProps) {
             borderRadius: 3,
             fontSize: '0.65rem',
             fontWeight: 600,
-            background: `${typeColor(entry.type)}22`,
+            background: `color-mix(in srgb, ${typeColor(entry.type)} 13%, transparent)`,
             color: typeColor(entry.type),
-            border: `1px solid ${typeColor(entry.type)}44`,
+            border: `1px solid color-mix(in srgb, ${typeColor(entry.type)} 27%, transparent)`,
           }}
         >
           {entry.type}
@@ -201,9 +201,9 @@ export default function ThreadLogsModal({ threadId, onClose }: Props) {
               disabled={filtered.length === 0}
               className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
               style={{
-                color: copied ? '#4ade80' : 'var(--color-text-muted)',
+                color: copied ? 'var(--color-success)' : 'var(--color-text-muted)',
                 background: 'transparent',
-                border: `1px solid ${copied ? 'rgba(74,222,128,0.3)' : 'var(--color-border)'}`,
+                border: `1px solid ${copied ? 'color-mix(in srgb, var(--color-success) 30%, transparent)' : 'var(--color-border)'}`,
                 cursor: filtered.length === 0 ? 'default' : 'pointer',
                 opacity: filtered.length === 0 ? 0.4 : 1,
               }}

@@ -44,8 +44,8 @@ function describePace(used: number | null, elapsed: number | null): Pace | null 
   if (used == null || elapsed == null) return null
   const delta = Math.round(used - elapsed)
   if (Math.abs(delta) <= 3) return { label: 'On pace', color: 'var(--color-text-muted)', ahead: false }
-  if (delta > 0) return { label: `${delta} pts ahead of pace`, color: '#fbbf24', ahead: true }
-  return { label: `${-delta} pts under pace`, color: '#4ade80', ahead: false }
+  if (delta > 0) return { label: `${delta} pts ahead of pace`, color: 'var(--color-warning)', ahead: true }
+  return { label: `${-delta} pts under pace`, color: 'var(--color-success)', ahead: false }
 }
 
 function tightestWindow(windows: SubscriptionUsageWindow[]): SubscriptionUsageWindow | null {
@@ -108,9 +108,9 @@ export default function SubscriptionUsageIndicator({ threadId, provider, model }
 
   const percent = tightest ? windowPercent(tightest) : null
   const accent = percent != null && percent >= 90
-    ? '#f87171'
+    ? 'var(--color-danger)'
     : percent != null && percent >= 70
-      ? '#fbbf24'
+      ? 'var(--color-warning)'
       : 'var(--color-text-muted)'
   const providerLabel = usageProvider === 'codex' ? 'OpenAI' : usageProvider === 'glm' ? 'Z.ai' : 'Anthropic'
 
@@ -162,15 +162,15 @@ export default function SubscriptionUsageIndicator({ threadId, provider, model }
               const elapsed = windowElapsedPercent(window, now)
               const pace = describePace(used, elapsed)
               const fill = used != null && used >= 90
-                ? '#f87171'
+                ? 'var(--color-danger)'
                 : pace?.ahead || (used != null && used >= 70)
-                  ? '#fbbf24'
-                  : usageProvider === 'codex' ? '#60a5fa' : usageProvider === 'glm' ? '#34d399' : 'var(--color-claude)'
+                  ? 'var(--color-warning)'
+                  : usageProvider === 'codex' ? 'var(--color-info)' : usageProvider === 'glm' ? 'var(--color-success)' : 'var(--color-accent)'
               return (
                 <div key={window.id}>
                   <div className="mb-1.5 flex items-baseline justify-between">
                     <span className="text-xs font-medium" style={{ color: 'var(--color-text)' }}>{window.label}</span>
-                    <span className="font-mono text-xs tabular-nums" style={{ color: used != null && used >= 90 ? '#f87171' : 'var(--color-text-muted)' }}>
+                    <span className="font-mono text-xs tabular-nums" style={{ color: used != null && used >= 90 ? 'var(--color-danger)' : 'var(--color-text-muted)' }}>
                       {used == null ? '—' : `${Math.round(used)}% used`}
                     </span>
                   </div>
@@ -202,7 +202,7 @@ export default function SubscriptionUsageIndicator({ threadId, provider, model }
                 No subscription quota was returned. Check that this provider is signed in with a subscription account.
               </div>
             )}
-            {error && <div className="text-xs leading-5" style={{ color: '#f87171' }}>{error}</div>}
+            {error && <div className="text-xs leading-5" style={{ color: 'var(--color-danger)' }}>{error}</div>}
             {loading && !currentSnapshot && <div className="text-xs" style={{ color: 'var(--color-text-muted)' }}>Reading provider quota…</div>}
           </div>
         </div>

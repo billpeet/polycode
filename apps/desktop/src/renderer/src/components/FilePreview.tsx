@@ -4,6 +4,7 @@ import { useThreadStore } from '../stores/threads'
 import { marked } from 'marked'
 import { sanitizeMarkdownHtml } from '../lib/sanitizeMarkdown'
 import { getHighlighter, onReady } from '../lib/shiki'
+import { useDiffTheme, useSyntaxTheme } from '../lib/theme'
 import type { BundledLanguage, SpecialLanguage, ThemedToken } from 'shiki'
 import { PatchDiff, WorkerPoolContextProvider } from '@pierre/diffs/react'
 import type { WorkerInitializationRenderOptions, WorkerPoolOptions } from '@pierre/diffs/react'
@@ -85,6 +86,7 @@ function CodePreview({
   targetLine: number | null
 }) {
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
+  const syntaxTheme = useSyntaxTheme()
   const scrollContainerRef = useRef<HTMLDivElement>(null)
   useEffect(() => onReady(() => setShikiReady(true)), [])
 
@@ -95,9 +97,9 @@ function CodePreview({
     const lang: BundledLanguage | SpecialLanguage = loaded.includes(language as BundledLanguage)
       ? language as BundledLanguage
       : 'text'
-    const { tokens } = hl.codeToTokens(content, { lang, theme: 'github-dark' })
+    const { tokens } = hl.codeToTokens(content, { lang, theme: syntaxTheme })
     return tokens
-  }, [content, language, shikiReady])
+  }, [content, language, shikiReady, syntaxTheme])
 
   const plainLines = useMemo(() => content.split('\n'), [content])
   const lineCount = tokenLines ? tokenLines.length : plainLines.length
@@ -155,12 +157,12 @@ function LineRow({
   return (
     <tr
       data-line-number={lineNumber}
-      style={{ background: isTarget ? 'rgba(232, 123, 95, 0.16)' : 'transparent' }}
+      style={{ background: isTarget ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent' }}
     >
       <td
         className="select-none text-right pr-3 pl-3"
         style={{
-          color: isTarget ? 'var(--color-accent, #e87b5f)' : 'var(--color-text-muted)',
+          color: isTarget ? 'var(--color-accent)' : 'var(--color-text-muted)',
           opacity: isTarget ? 1 : 0.5,
           verticalAlign: 'top',
           width: `${lineNumberWidth + 2}ch`,
@@ -335,6 +337,8 @@ function MarkdownPreview({ content }: { content: string }) {
   const ref = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const tocEntries = useMemo(() => extractToc(content), [content])
+  // marked's code renderer reads the theme itself; this re-renders when it changes.
+  const syntaxTheme = useSyntaxTheme()
 
   useEffect(() => {
     if (!ref.current) return
@@ -358,7 +362,7 @@ function MarkdownPreview({ content }: { content: string }) {
       },
       { thresholdMs: 12, minIntervalMs: 1000, logDetails: { contentChars: content.length, tocEntries: tocEntries.length } }
     )
-  }, [content, tocEntries.length])
+  }, [content, tocEntries.length, syntaxTheme])
 
   const handleNavigate = useCallback((id: string) => {
     if (!ref.current) return
@@ -410,16 +414,15 @@ const DIFF_WORKER_POOL_OPTIONS: WorkerPoolOptions = {
   workerFactory: () => new Worker(new URL('@pierre/diffs/worker/worker.js', import.meta.url), { type: 'module' }),
   poolSize: 2,
 }
-const DIFF_WORKER_HIGHLIGHTER_OPTIONS: WorkerInitializationRenderOptions = {
-  theme: 'pierre-dark',
-  tokenizeMaxLineLength: 500,
+function diffWorkerHighlighterOptions(theme: string): WorkerInitializationRenderOptions {
+  return { theme, tokenizeMaxLineLength: 500 }
 }
 
 function getDiffLineClass(line: string): string {
   if (line.startsWith('+++') || line.startsWith('---')) return ''
-  if (line.startsWith('+')) return 'bg-emerald-500/10 text-emerald-200'
-  if (line.startsWith('-')) return 'bg-red-500/10 text-red-200'
-  if (line.startsWith('@@')) return 'bg-sky-500/10 text-sky-200'
+  if (line.startsWith('+')) return 'bg-success/10 text-[color-mix(in_srgb,var(--color-success)_55%,var(--color-text))]'
+  if (line.startsWith('-')) return 'bg-danger/10 text-[color-mix(in_srgb,var(--color-danger)_55%,var(--color-text))]'
+  if (line.startsWith('@@')) return 'bg-info/10 text-[color-mix(in_srgb,var(--color-info)_55%,var(--color-text))]'
   return ''
 }
 
@@ -491,6 +494,8 @@ function DiffPreviewContent({ diff, filePath }: { diff: string; filePath?: strin
   const [renderFullDiff, setRenderFullDiff] = useState(false)
   const lineCount = useMemo(() => diff.split('\n').length, [diff])
   const isLargeDiff = lineCount > LARGE_DIFF_LINE_THRESHOLD || diff.length > LARGE_DIFF_CHAR_THRESHOLD
+  const diffTheme = useDiffTheme()
+  const highlighterOptions = useMemo(() => diffWorkerHighlighterOptions(diffTheme), [diffTheme])
 
   useEffect(() => {
     reportPerf(
@@ -518,14 +523,16 @@ function DiffPreviewContent({ diff, filePath }: { diff: string; filePath?: strin
 
   return (
     <div style={{ height: '100%', overflow: 'auto', fontSize: '0.72rem' }}>
+      {/* Keyed so a theme change starts workers initialised with the new theme. */}
       <WorkerPoolContextProvider
+        key={diffTheme}
         poolOptions={DIFF_WORKER_POOL_OPTIONS}
-        highlighterOptions={DIFF_WORKER_HIGHLIGHTER_OPTIONS}
+        highlighterOptions={highlighterOptions}
       >
         <PatchDiff
           patch={diff}
           options={{
-            theme: 'pierre-dark',
+            theme: diffTheme,
             diffStyle: 'unified',
             disableFileHeader: true,
             overflow: 'wrap',
@@ -617,7 +624,7 @@ export function DiffPane() {
         </span>
         <span
           className="text-[10px] px-1.5 py-0.5 rounded uppercase font-mono"
-          style={{ background: 'rgba(232, 123, 95, 0.15)', color: 'var(--color-claude)' }}
+          style={{ background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)', color: 'var(--color-accent)' }}
           title={diffView?.commitSha ? `Diff at commit ${diffView.commitSha}` : undefined}
         >
           {diffView?.commitShortSha ? `@ ${diffView.commitShortSha}` : 'Diff'}
@@ -741,7 +748,7 @@ export function FilePane() {
         {fileContent?.truncated && (
           <span
             className="text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: 'rgba(251, 191, 36, 0.2)', color: '#fbbf24' }}
+            style={{ background: 'color-mix(in srgb, var(--color-warning) 20%, transparent)', color: 'var(--color-warning)' }}
           >
             Truncated
           </span>

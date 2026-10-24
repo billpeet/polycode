@@ -39,8 +39,8 @@ function ToolbarButton({
       title={title}
       className="flex h-6 min-w-6 items-center justify-center rounded px-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-30"
       style={{
-        color: active ? 'var(--color-claude)' : 'var(--color-text-muted)',
-        background: active ? 'rgba(232, 123, 95, 0.12)' : 'transparent',
+        color: active ? 'var(--color-accent)' : 'var(--color-text-muted)',
+        background: active ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
       }}
       onMouseEnter={(e) => {
         if (!active) e.currentTarget.style.background = 'var(--color-surface-2)'

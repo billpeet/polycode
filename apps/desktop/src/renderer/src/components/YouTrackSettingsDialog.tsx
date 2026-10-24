@@ -160,7 +160,7 @@ export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
                     <button
                       onClick={() => setConfirmDeleteId(server.id)}
                       className="rounded px-2 py-1 text-xs opacity-60 hover:opacity-100 transition-opacity"
-                      style={{ color: '#f87171' }}
+                      style={{ color: 'var(--color-danger)' }}
                     >
                       Delete
                     </button>
@@ -243,13 +243,13 @@ export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
               </div>
 
               {error && (
-                <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>
+                <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</p>
               )}
 
               {testResult && (
                 <p
                   className="text-xs"
-                  style={{ color: testResult.ok ? '#4ade80' : '#f87171' }}
+                  style={{ color: testResult.ok ? 'var(--color-success)' : 'var(--color-danger)' }}
                 >
                   {testResult.ok ? 'Connection successful' : `Connection failed: ${testResult.error}`}
                 </p>
@@ -281,8 +281,8 @@ export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
                     disabled={saving}
                     className="rounded px-3 py-1.5 text-xs font-medium transition-all hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
                     style={{
-                      background: 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)',
-                      color: '#fff',
+                      background: 'linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-strong) 100%)',
+                      color: 'var(--color-on-accent)',
                     }}
                   >
                     {saving ? 'Saving...' : 'Save'}
@@ -334,7 +334,7 @@ export function YouTrackSettingsPanel({ hideHeader }: PanelProps) {
               <button
                 onClick={() => handleDelete(confirmDeleteId)}
                 className="rounded px-3 py-1.5 text-xs font-medium"
-                style={{ background: '#dc2626', color: '#fff' }}
+                style={{ background: 'var(--color-danger-strong)', color: 'var(--color-on-accent)' }}
               >
                 Delete
               </button>
@@ -368,7 +368,7 @@ export default function YouTrackSettingsDialog({ onClose }: Props) {
 
 function YouTrackIcon() {
   return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-claude)" strokeWidth="2">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--color-accent)" strokeWidth="2">
       <circle cx="12" cy="12" r="10" />
       <path d="M8 12l3 3 5-5" />
     </svg>

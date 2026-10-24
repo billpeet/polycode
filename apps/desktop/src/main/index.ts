@@ -9,7 +9,8 @@ import { initUpdater } from './updater'
 import { closeDb, getDatabasePath } from './db/index'
 import { startDatabase, type DatabaseRequiresNewerApp } from './db/startup'
 import { startOutputCleanupRunner, stopOutputCleanupRunner } from './output-cleanup-runner'
-import { resetRunningThreads, hasRunningThreads } from './db/queries'
+import { resetRunningThreads, hasRunningThreads, getSetting } from './db/queries'
+import { ACCENT_SETTING_KEY, THEME_SETTING_KEY, resolveTheme } from '../shared/themes'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
@@ -228,13 +229,22 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
+/** The saved theme's background, so the window does not flash a different colour before the renderer paints. */
+function themeBackgroundColor(): string {
+  try {
+    return resolveTheme(getSetting(THEME_SETTING_KEY), getSetting(ACCENT_SETTING_KEY)).colors.bg
+  } catch {
+    return resolveTheme(null).colors.bg
+  }
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#0f0f0f',
+    backgroundColor: themeBackgroundColor(),
     show: false,
     autoHideMenuBar: true,
     frame: false,

@@ -26,14 +26,14 @@ export function RemoteConnectionBanner(): React.JSX.Element | null {
   return (
     <div
       className={`flex items-center justify-between border-b px-4 py-1.5 ${
-        offline ? 'border-red-600/30 bg-red-600/15' : 'border-amber-600/30 bg-amber-600/15'
+        offline ? 'border-danger-strong/30 bg-danger-strong/15' : 'border-warning-strong/30 bg-warning-strong/15'
       }`}
     >
       <div className="flex items-center gap-2">
         {offline
-          ? <WifiOff className="h-3.5 w-3.5 text-red-400" />
-          : <Loader2 className="h-3.5 w-3.5 animate-spin text-amber-400" />}
-        <span className={`text-xs ${offline ? 'text-red-300' : 'text-amber-300'}`}>
+          ? <WifiOff className="h-3.5 w-3.5 text-danger" />
+          : <Loader2 className="h-3.5 w-3.5 animate-spin text-warning" />}
+        <span className={`text-xs ${offline ? 'text-[color-mix(in_srgb,var(--color-danger)_55%,var(--color-text))]' : 'text-[color-mix(in_srgb,var(--color-warning)_55%,var(--color-text))]'}`}>
           {slow
             ? 'Remote host is slow. Showing last synced data; refresh will retry shortly.'
             : offline
@@ -45,8 +45,8 @@ export function RemoteConnectionBanner(): React.JSX.Element | null {
       <button
         onClick={() => void retry()}
         disabled={retrying}
-        className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs text-white transition-colors ${
-          offline ? 'bg-red-600 hover:bg-red-500' : 'bg-amber-600 hover:bg-amber-500'
+        className={`flex items-center gap-1.5 rounded-md px-3 py-1 text-xs text-on-accent transition-colors ${
+          offline ? 'bg-danger-strong hover:brightness-110' : 'bg-warning-strong hover:brightness-110'
         } disabled:opacity-60`}
       >
         {retrying

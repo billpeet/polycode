@@ -318,7 +318,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
             <span style={{ color: 'var(--color-text)' }}>Enabled</span>
           </label>
 
-          {error && <p style={{ color: 'var(--color-danger, #dc2626)' }}>{error}</p>}
+          {error && <p style={{ color: 'var(--color-danger-strong)' }}>{error}</p>}
         </div>
 
         <div className="flex justify-end gap-2 border-t px-5 py-3" style={{ borderColor: 'var(--color-border)' }}>
@@ -335,7 +335,7 @@ export default function RoutineEditModal({ projectId, routine, onClose, onSaved 
             onClick={() => void save()}
             disabled={saving}
             className="rounded-md px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-            style={{ background: 'var(--color-accent, #2563eb)', color: '#fff' }}
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
             {routine ? 'Save' : 'Create'}
           </button>

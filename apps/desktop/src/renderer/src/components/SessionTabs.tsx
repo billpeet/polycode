@@ -34,9 +34,9 @@ export default function SessionTabs({ threadId }: Props) {
             }}
             className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap"
             style={{
-              background: isActive ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
-              color: isActive ? 'var(--color-claude)' : 'var(--color-text-muted)',
-              border: `1px solid ${isActive ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)'}`
+              background: isActive ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'transparent',
+              color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)',
+              border: `1px solid ${isActive ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)'}`
             }}
           >
             {session.name}

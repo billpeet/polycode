@@ -21,7 +21,7 @@ export default function PlanPane({ threadId }: { threadId: string }) {
         style={{ borderColor: 'var(--color-border)' }}
       >
         <div className="flex items-center gap-2 min-w-0">
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--color-claude)', flexShrink: 0 }}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--color-accent)', flexShrink: 0 }}>
             <rect x="3" y="1" width="10" height="14" rx="1" />
             <path d="M6 4h4M6 7h4M6 10h2" />
           </svg>

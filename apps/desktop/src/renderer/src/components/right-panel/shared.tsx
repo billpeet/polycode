@@ -58,9 +58,9 @@ export function SectionHeader({
               padding: '1px 5px',
               borderRadius: 999,
               background: badgeActive
-                ? 'rgba(232, 123, 95, 0.2)'
+                ? 'color-mix(in srgb, var(--color-accent) 20%, transparent)'
                 : 'rgba(255,255,255,0.08)',
-              color: badgeActive ? 'var(--color-claude)' : 'var(--color-text-muted)',
+              color: badgeActive ? 'var(--color-accent)' : 'var(--color-text-muted)',
             }}
           >
             {badge}
@@ -87,7 +87,7 @@ export function TabButton({
       className="px-3 py-2 text-[10px] font-semibold uppercase tracking-wider transition-colors"
       style={{
         color: active ? 'var(--color-text)' : 'var(--color-text-muted)',
-        borderBottom: active ? '2px solid var(--color-claude)' : '2px solid transparent',
+        borderBottom: active ? '2px solid var(--color-accent)' : '2px solid transparent',
         marginBottom: -1,
       }}
     >

@@ -55,7 +55,7 @@ export default function MessageBubble({ entry }: Props) {
       <div className="flex justify-start">
         <div
           className="max-w-2xl rounded-lg px-4 py-2 text-sm font-mono"
-          style={{ background: '#3b0000', color: '#f87171', border: '1px solid #7f1d1d' }}
+          style={{ background: 'color-mix(in srgb, var(--color-danger) 12%, var(--color-bg))', color: 'var(--color-danger)', border: '1px solid color-mix(in srgb, var(--color-danger) 40%, var(--color-bg))' }}
         >
           <span className="mr-2 font-bold">Error:</span>
           <span className="whitespace-pre-wrap">{message.content}</span>
@@ -70,8 +70,8 @@ export default function MessageBubble({ entry }: Props) {
       <div
         className={`group relative max-w-2xl rounded-lg px-4 py-2 text-sm${isUser ? ' user-bubble' : ''}`}
         style={{
-          background: isUser ? 'var(--color-claude)' : 'var(--color-surface)',
-          color: isUser ? '#fff' : 'var(--color-text)',
+          background: isUser ? 'var(--color-accent)' : 'var(--color-surface)',
+          color: isUser ? 'var(--color-on-accent)' : 'var(--color-text)',
           border: isUser ? 'none' : '1px solid var(--color-border)'
         }}
       >
@@ -95,7 +95,7 @@ export default function MessageBubble({ entry }: Props) {
             className="flex h-5 w-5 items-center justify-center rounded p-0"
             style={{
               background: isUser ? 'rgba(0,0,0,0.25)' : 'var(--color-border)',
-              color: copied === 'text' ? '#4ade80' : (isUser ? '#fff' : 'var(--color-text-muted, var(--color-text))')
+              color: copied === 'text' ? 'var(--color-success)' : (isUser ? 'var(--color-on-accent)' : 'var(--color-text-muted, var(--color-text))')
             }}
             title={copied === 'text' ? 'Copied text' : 'Copy text'}
             aria-label={copied === 'text' ? 'Copied text' : 'Copy text'}
@@ -118,7 +118,7 @@ export default function MessageBubble({ entry }: Props) {
             className="flex h-5 w-5 items-center justify-center rounded p-0"
             style={{
               background: isUser ? 'rgba(0,0,0,0.25)' : 'var(--color-border)',
-              color: copied === 'markdown' ? '#4ade80' : (isUser ? '#fff' : 'var(--color-text-muted, var(--color-text))')
+              color: copied === 'markdown' ? 'var(--color-success)' : (isUser ? 'var(--color-on-accent)' : 'var(--color-text-muted, var(--color-text))')
             }}
             title={copied === 'markdown' ? 'Copied Markdown' : 'Copy Markdown'}
             aria-label={copied === 'markdown' ? 'Copied Markdown' : 'Copy Markdown'}

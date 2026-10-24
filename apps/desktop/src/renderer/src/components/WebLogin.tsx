@@ -45,8 +45,8 @@ export default function WebLogin({ state, onSubmit, onRetry }: Props) {
       >
         <div className="flex items-center gap-2">
           {state === 'unreachable'
-            ? <WifiOff className="h-4 w-4" style={{ color: '#f87171' }} />
-            : <LockKeyhole className="h-4 w-4" style={{ color: 'var(--color-claude)' }} />}
+            ? <WifiOff className="h-4 w-4" style={{ color: 'var(--color-danger)' }} />
+            : <LockKeyhole className="h-4 w-4" style={{ color: 'var(--color-accent)' }} />}
           <h1 className="text-sm font-semibold">PolyCode</h1>
         </div>
 
@@ -59,7 +59,7 @@ export default function WebLogin({ state, onSubmit, onRetry }: Props) {
               type="button"
               onClick={onRetry}
               className="w-fit rounded px-3 py-1.5 text-xs font-medium"
-              style={{ background: 'var(--color-claude)', color: '#fff' }}
+              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             >
               Try again
             </button>
@@ -81,7 +81,7 @@ export default function WebLogin({ state, onSubmit, onRetry }: Props) {
               style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}
             />
             {error && (
-              <p role="alert" className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>
+              <p role="alert" className="text-xs" style={{ color: 'var(--color-danger)' }}>
                 {error}
               </p>
             )}
@@ -89,7 +89,7 @@ export default function WebLogin({ state, onSubmit, onRetry }: Props) {
               type="submit"
               disabled={busy || !token.trim()}
               className="flex w-fit items-center gap-1.5 rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50"
-              style={{ background: 'var(--color-claude)', color: '#fff' }}
+              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             >
               {busy && <Loader2 className="h-3 w-3 animate-spin" />}
               Sign in

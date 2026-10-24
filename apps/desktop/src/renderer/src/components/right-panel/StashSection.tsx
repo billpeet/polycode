@@ -148,7 +148,7 @@ export function StashSection({ projectPath }: { projectPath: string }) {
                   type="checkbox"
                   checked={includeUntracked}
                   onChange={(e) => setIncludeUntracked(e.target.checked)}
-                  style={{ accentColor: 'var(--color-claude)' }}
+                  style={{ accentColor: 'var(--color-accent)' }}
                 />
                 Include untracked files
               </label>
@@ -157,7 +157,7 @@ export function StashSection({ projectPath }: { projectPath: string }) {
                   onClick={() => void handleCreate()}
                   disabled={isBusy}
                   className="flex-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
-                  style={{ background: 'var(--color-claude)', color: '#fff' }}
+                  style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
                 >
                   {isBusy ? 'Stashing…' : 'Stash'}
                 </button>
@@ -212,7 +212,7 @@ export function StashSection({ projectPath }: { projectPath: string }) {
                       disabled={isBusy}
                       className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 disabled:opacity-40"
                       title="Pop (apply and drop)"
-                      style={{ color: 'var(--color-claude)' }}
+                      style={{ color: 'var(--color-accent)' }}
                     >
                       Pop
                     </button>
@@ -221,7 +221,7 @@ export function StashSection({ projectPath }: { projectPath: string }) {
                       disabled={isBusy}
                       className="rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 disabled:opacity-40"
                       title="Drop (delete stash)"
-                      style={{ color: '#f87171' }}
+                      style={{ color: 'var(--color-danger)' }}
                     >
                       Drop
                     </button>

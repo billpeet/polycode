@@ -179,9 +179,9 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
   }
 
   const toggleStyle = (active: boolean) => ({
-    background: active ? 'var(--color-claude)' : 'var(--color-surface)',
-    color: active ? '#fff' : 'var(--color-text-muted)',
-    border: `1px solid ${active ? 'var(--color-claude)' : 'var(--color-border)'}`,
+    background: active ? 'var(--color-accent)' : 'var(--color-surface)',
+    color: active ? 'var(--color-on-accent)' : 'var(--color-text-muted)',
+    border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-border)'}`,
   })
 
   const pathLabel = isSSH ? 'Remote Path' : isWSL ? 'WSL Path' : 'Directory'
@@ -369,22 +369,22 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
               </button>
               {testing && (
                 <span className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--color-text-muted)' }}>
-                  <span className="streaming-dot" style={{ background: 'var(--color-claude)', width: 6, height: 6 }} />
+                  <span className="streaming-dot" style={{ background: 'var(--color-accent)', width: 6, height: 6 }} />
                   {isWSL ? 'Testing WSL...' : 'Connecting...'}
                 </span>
               )}
               {!testing && testResult === 'success' && (
-                <span className="text-xs font-medium" style={{ color: '#4ade80' }}>
+                <span className="text-xs font-medium" style={{ color: 'var(--color-success)' }}>
                   {isWSL ? 'Path valid' : 'Connected'}
                 </span>
               )}
               {!testing && testResult === 'fail' && (
-                <span className="text-xs font-medium" style={{ color: '#f87171' }}>Failed</span>
+                <span className="text-xs font-medium" style={{ color: 'var(--color-danger)' }}>Failed</span>
               )}
             </div>
           )}
 
-          {error && <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>}
+          {error && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</p>}
 
           <div className="flex justify-end gap-2 pt-2">
             <button
@@ -400,7 +400,7 @@ export default function LocationDialog({ mode, projectId, location, onClose }: P
               type="submit"
               disabled={testing}
               className="rounded px-4 py-2 text-sm font-medium disabled:opacity-50"
-              style={{ background: 'var(--color-claude)', color: '#fff' }}
+              style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             >
               {testing ? 'Testing...' : mode === 'edit' ? 'Save' : 'Add'}
             </button>

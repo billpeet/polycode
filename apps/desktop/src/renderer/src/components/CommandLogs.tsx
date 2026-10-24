@@ -14,6 +14,13 @@ import { settleBackgroundIpc } from '../lib/backgroundIpc'
 import { runCommandAction } from '../lib/commandActions'
 import { CommandLogLine, CommandStatus } from '../types/ipc'
 import { client } from '../lib/client'
+import { terminalAppearance, useAppearance } from '../lib/theme'
+
+/** Command output is read, not typed into: a quieter foreground and no cursor. */
+function commandLogAppearance(state: Parameters<typeof terminalAppearance>[0]): ReturnType<typeof terminalAppearance> {
+  const { theme, fontFamily } = terminalAppearance(state)
+  return { theme: { ...theme, foreground: state.theme.logForeground, cursor: 'transparent' }, fontFamily }
+}
 
 const EMPTY_PINNED: string[] = []
 const EMPTY_PORTS: number[] = []
@@ -30,9 +37,9 @@ function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
 
 function StatusDot({ status }: { status: CommandStatus }) {
   const color =
-    status === 'running' ? '#4ade80'
-    : status === 'stopping' ? '#fb923c'
-    : status === 'error' ? '#f87171'
+    status === 'running' ? 'var(--color-success)'
+    : status === 'stopping' ? 'var(--color-orange)'
+    : status === 'error' ? 'var(--color-danger)'
     : 'var(--color-text-muted)'
   return (
     <span
@@ -87,6 +94,8 @@ function CommandLogPanel({
   const start = useCommandStore((s) => s.start)
   const stop = useCommandStore((s) => s.stop)
   const restart = useCommandStore((s) => s.restart)
+  const appearanceTheme = useAppearance((s) => s.theme)
+  const fontMono = useAppearance((s) => s.fontMono)
 
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
@@ -201,29 +210,7 @@ function CommandLogPanel({
       fontSize: 12,
       lineHeight: 1.35,
       scrollback: 5000,
-      fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
-      theme: {
-        background: '#0f0f0f',
-        foreground: '#a1a1aa',
-        cursor: 'transparent',
-        selectionBackground: 'rgba(180, 203, 255, 0.25)',
-        black: '#1e1e1e',
-        red: '#f87171',
-        green: '#4ade80',
-        yellow: '#facc15',
-        blue: '#60a5fa',
-        magenta: '#c084fc',
-        cyan: '#22d3ee',
-        white: '#d4d4d4',
-        brightBlack: '#6b7280',
-        brightRed: '#fca5a5',
-        brightGreen: '#86efac',
-        brightYellow: '#fde68a',
-        brightBlue: '#93c5fd',
-        brightMagenta: '#d8b4fe',
-        brightCyan: '#67e8f9',
-        brightWhite: '#f9fafb',
-      },
+      ...commandLogAppearance(useAppearance.getState()),
     })
 
     const fitAddon = new FitAddon()
@@ -280,6 +267,16 @@ function CommandLogPanel({
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [instanceKey])
+
+  // Follow theme and font changes without remounting the log view.
+  useEffect(() => {
+    const term = xtermRef.current
+    if (!term) return
+    const { theme, fontFamily } = commandLogAppearance({ theme: appearanceTheme, fontMono })
+    term.options.theme = theme
+    term.options.fontFamily = fontFamily
+    fitAddonRef.current?.fit()
+  }, [appearanceTheme, fontMono])
 
   // Subscribe to streaming log events
   useEffect(() => {
@@ -387,7 +384,7 @@ function CommandLogPanel({
                 }
               }}
               className="text-[10px] font-mono px-1 rounded flex-shrink-0 hover:opacity-80 transition-opacity disabled:cursor-default disabled:hover:opacity-100"
-              style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.12)' }}
+              style={{ color: 'var(--color-success)', background: 'color-mix(in srgb, var(--color-success) 12%, transparent)' }}
               title={client.capabilities.browserPanel ? `Open localhost:${port} in the internal browser` : `Listening on port ${port}`}
             >
               :{port}
@@ -398,7 +395,7 @@ function CommandLogPanel({
             <button
               onClick={() => { void runCommandAction(() => start(commandId, locationId)) }}
               className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
-              style={{ color: '#4ade80' }}
+              style={{ color: 'var(--color-success)' }}
               title="Start"
             >
               <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
@@ -410,7 +407,7 @@ function CommandLogPanel({
               onClick={() => { if (!isStopping) void runCommandAction(() => stop(commandId, locationId)) }}
               disabled={isStopping}
               className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0 disabled:opacity-50"
-              style={{ color: '#f87171' }}
+              style={{ color: 'var(--color-danger)' }}
               title={isStopping ? 'Stopping' : 'Stop'}
             >
               <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor">
@@ -437,7 +434,7 @@ function CommandLogPanel({
           <button
             onClick={toggleSearch}
             className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
-            style={{ color: searchOpen ? 'var(--color-claude)' : 'var(--color-text-muted)' }}
+            style={{ color: searchOpen ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
             title="Search logs"
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
@@ -448,7 +445,7 @@ function CommandLogPanel({
           <button
             onClick={isPinned ? onUnpin : onPin}
             className="rounded p-1 hover:bg-white/10 transition-colors flex-shrink-0"
-            style={{ color: isPinned ? 'var(--color-claude)' : 'var(--color-text-muted)' }}
+            style={{ color: isPinned ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
             title={isPinned ? 'Unpin' : 'Pin'}
           >
             <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor">
@@ -516,7 +513,7 @@ function CommandLogPanel({
         {commandProject && (
           <div className="flex items-center gap-1.5 px-3 pb-2">
             {isContextMismatch ? (
-              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style={{ color: '#f59e0b', flexShrink: 0 }}>
+              <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style={{ color: 'var(--color-warning)', flexShrink: 0 }}>
                 <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zM7.002 11a1 1 0 1 1 2 0 1 1 0 0 1-2 0zm.938-3.411-.17 3.2a.75.75 0 0 1-1.5 0l-.17-3.2a.92.92 0 0 1 .92-.989h0a.92.92 0 0 1 .92.989z"/>
               </svg>
             ) : (
@@ -526,14 +523,14 @@ function CommandLogPanel({
             )}
             <span
               className="text-[10px] truncate"
-              style={{ color: isContextMismatch ? '#f59e0b' : 'var(--color-text-muted)' }}
+              style={{ color: isContextMismatch ? 'var(--color-warning)' : 'var(--color-text-muted)' }}
             >
               {commandProject.name}{commandLocationLabel ? ` / ${commandLocationLabel}` : ''}
             </span>
             {isDifferentProject && (
               <span
                 className="text-[10px] rounded px-1 py-0.5 flex-shrink-0"
-                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}
+                style={{ background: 'color-mix(in srgb, var(--color-warning) 15%, transparent)', color: 'var(--color-warning)' }}
               >
                 different project
               </span>
@@ -541,7 +538,7 @@ function CommandLogPanel({
             {isDifferentLocation && (
               <span
                 className="text-[10px] rounded px-1 py-0.5 flex-shrink-0"
-                style={{ background: 'rgba(245,158,11,0.15)', color: '#f59e0b' }}
+                style={{ background: 'color-mix(in srgb, var(--color-warning) 15%, transparent)', color: 'var(--color-warning)' }}
               >
                 different location
               </span>
@@ -554,7 +551,7 @@ function CommandLogPanel({
       <div
         ref={containerRef}
         className="flex-1"
-        style={{ overflow: 'hidden', padding: '4px 0 4px 4px', background: '#0f0f0f', minHeight: 0 }}
+        style={{ overflow: 'hidden', padding: '4px 0 4px 4px', background: 'var(--color-bg)', minHeight: 0 }}
       />
     </div>
   )

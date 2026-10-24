@@ -28,11 +28,11 @@ function Toggle({ on, onToggle }: { on: boolean; onToggle: () => void }) {
     <div
       onClick={onToggle}
       className="relative h-5 w-9 shrink-0 cursor-pointer rounded-full transition-colors"
-      style={{ background: on ? 'var(--color-claude)' : 'var(--color-border)' }}
+      style={{ background: on ? 'var(--color-accent)' : 'var(--color-border)' }}
     >
       <div
         className="absolute top-0.5 h-4 w-4 rounded-full transition-transform"
-        style={{ background: '#fff', transform: on ? 'translateX(18px)' : 'translateX(2px)' }}
+        style={{ background: 'var(--color-text)', transform: on ? 'translateX(18px)' : 'translateX(2px)' }}
       />
     </div>
   )
@@ -132,13 +132,13 @@ function PairingQrSection({
 
       {show && isLoopback && (
         <div className="flex flex-col gap-2">
-          <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>
+          <p className="text-xs" style={{ color: 'var(--color-danger)' }}>
             The server is bound to {server.host} and is unreachable from your phone. Bind it to all interfaces
             (0.0.0.0) and save to enable pairing.
           </p>
           <button
             className="w-fit rounded px-2 py-1 text-xs font-medium"
-            style={{ background: 'var(--color-claude)', color: '#fff' }}
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
             onClick={onBindToAllInterfaces}
           >
             Bind to 0.0.0.0 and save
@@ -156,7 +156,7 @@ function PairingQrSection({
                   className="rounded px-2 py-0.5 text-xs"
                   style={{
                     ...secondaryButtonStyle(),
-                    ...(address === pairingIp ? { borderColor: 'var(--color-claude)', color: 'var(--color-text)' } : {}),
+                    ...(address === pairingIp ? { borderColor: 'var(--color-accent)', color: 'var(--color-text)' } : {}),
                   }}
                   onClick={() => setSelectedIp(address)}
                 >
@@ -254,7 +254,7 @@ function TailscaleSection({
     }
   }
 
-  const primaryButton = { background: 'var(--color-claude)', color: '#fff', opacity: busy ? 0.6 : 1 }
+  const primaryButton = { background: 'var(--color-accent)', color: 'var(--color-on-accent)', opacity: busy ? 0.6 : 1 }
 
   return (
     <div className="flex flex-col gap-2 rounded px-3 py-2" style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}>
@@ -295,7 +295,7 @@ function TailscaleSection({
           {status.serve.funnel && (
             <p
               className="rounded px-3 py-2 text-xs"
-              style={{ color: 'var(--color-error, #f87171)', border: '1px solid var(--color-error, #f87171)' }}
+              style={{ color: 'var(--color-danger)', border: '1px solid var(--color-danger)' }}
             >
               Tailscale Funnel is enabled for this port: this URL is reachable from the public internet, not just
               your tailnet. Turn it off with{' '}
@@ -370,7 +370,7 @@ function TailscaleSection({
       )}
 
       {status?.error && (
-        <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>{status.error}</p>
+        <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{status.error}</p>
       )}
     </div>
   )
@@ -614,9 +614,9 @@ export function RemoteControlPanel({ hideHeader }: Props) {
           <p
             className="rounded px-3 py-2 text-xs"
             style={{
-              color: 'var(--color-error, #f87171)',
+              color: 'var(--color-danger)',
               background: 'var(--color-surface)',
-              border: '1px solid var(--color-error, #f87171)',
+              border: '1px solid var(--color-danger)',
             }}
           >
             Network access uses unencrypted HTTP, so the bearer token can be observed in transit.
@@ -649,7 +649,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
           onClick={() => void saveServer()}
           disabled={savingServer}
           className="w-fit rounded px-3 py-1.5 text-xs font-medium transition-opacity"
-          style={{ background: 'var(--color-claude)', color: '#fff', opacity: savingServer ? 0.6 : 1 }}
+          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)', opacity: savingServer ? 0.6 : 1 }}
         >
           {savingServer ? 'Saving...' : 'Save Host Server'}
         </button>
@@ -742,12 +742,12 @@ export function RemoteControlPanel({ hideHeader }: Props) {
             onClick={() => void addHost()}
             disabled={savingHost}
             className="rounded px-3 py-1 text-xs font-medium"
-            style={{ background: 'var(--color-claude)', color: '#fff', opacity: savingHost ? 0.6 : 1 }}
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)', opacity: savingHost ? 0.6 : 1 }}
           >
             {savingHost ? 'Saving...' : 'Add Host'}
           </button>
           {testResult && (
-            <span className="text-xs" style={{ color: testResult.ok ? 'var(--color-text-muted)' : 'var(--color-error, #f87171)' }}>
+            <span className="text-xs" style={{ color: testResult.ok ? 'var(--color-text-muted)' : 'var(--color-danger)' }}>
               {testResult.ok ? 'Connection OK' : testResult.error}
             </span>
           )}
@@ -755,7 +755,7 @@ export function RemoteControlPanel({ hideHeader }: Props) {
       </section>
 
       {error && (
-        <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>
+        <p className="text-xs" style={{ color: 'var(--color-danger)' }}>
           {error}
         </p>
       )}
