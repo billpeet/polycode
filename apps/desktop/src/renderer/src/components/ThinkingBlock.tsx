@@ -26,8 +26,8 @@ export default function ThinkingBlock({ message }: Props) {
   const isTruncated = collapsedText.length > TRUNCATE_LENGTH
   const preview = isTruncated ? collapsedText.slice(0, TRUNCATE_LENGTH).trimEnd() + '…' : collapsedText
 
-  const accentColor = 'rgba(139, 92, 246, 0.5)'
-  const tintColor = 'rgba(139, 92, 246, 0.04)'
+  const accentColor = 'color-mix(in srgb, var(--color-purple) 50%, transparent)'
+  const tintColor = 'color-mix(in srgb, var(--color-purple) 4%, transparent)'
 
   return (
     <div
@@ -46,13 +46,13 @@ export default function ThinkingBlock({ message }: Props) {
         }}
       >
         {/* Icon */}
-        <span style={{ fontSize: '0.72rem', flexShrink: 0, color: 'rgba(139, 92, 246, 0.8)' }}>
+        <span style={{ fontSize: '0.72rem', flexShrink: 0, color: 'color-mix(in srgb, var(--color-purple) 80%, transparent)' }}>
           ◌
         </span>
 
         {/* Label + truncated preview */}
         <span style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', minWidth: 0, flex: 1, overflow: 'hidden' }}>
-          <span style={{ fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'rgba(139, 92, 246, 0.7)', flexShrink: 0 }}>
+          <span style={{ fontSize: '0.65rem', fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'color-mix(in srgb, var(--color-purple) 70%, transparent)', flexShrink: 0 }}>
             Thinking
           </span>
           {!expanded && (

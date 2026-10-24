@@ -9,6 +9,7 @@ import { SENTRY_DSN, sentryRelease } from '../../shared/sentry.config'
 import { installRendererPerfObservers, reportReactCommit } from './lib/perf'
 import { initPostHog } from './lib/posthog'
 import { client } from './lib/client'
+import { applyCachedAppearance, useAppearance } from './lib/theme'
 
 type RendererLogLevel = 'log' | 'info' | 'warn' | 'error' | 'debug'
 
@@ -98,6 +99,10 @@ window.addEventListener('error', (event) => {
 window.addEventListener('unhandledrejection', (event) => {
   console.error('[renderer] Unhandled promise rejection', event.reason)
 })
+
+// Paint the last-used theme before the first frame, then reconcile with the stored prefs.
+applyCachedAppearance()
+void useAppearance.getState().load()
 
 ReactDOM.createRoot(document.getElementById('root') as HTMLElement).render(
   <React.StrictMode>

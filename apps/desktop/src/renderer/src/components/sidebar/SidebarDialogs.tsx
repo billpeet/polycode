@@ -119,7 +119,7 @@ export default function SidebarDialogs({
                     : onDeleteThread(confirmDelete.id, confirmDelete.projectId)
                 }
                 className="rounded px-3 py-1.5 text-xs font-medium"
-                style={{ background: '#dc2626', color: '#fff' }}
+                style={{ background: 'var(--color-danger-strong)', color: 'var(--color-on-accent)' }}
               >
                 Delete
               </button>

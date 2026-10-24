@@ -72,14 +72,14 @@ export function WebhookPanel({ hideHeader }: Props) {
           onClick={() => setConfig((c) => ({ ...c, enabled: !c.enabled }))}
           className="relative w-9 h-5 rounded-full transition-colors flex-shrink-0"
           style={{
-            background: config.enabled ? 'var(--color-claude)' : 'var(--color-border)',
+            background: config.enabled ? 'var(--color-accent)' : 'var(--color-border)',
             cursor: 'pointer',
           }}
         >
           <div
             className="absolute top-0.5 w-4 h-4 rounded-full transition-transform"
             style={{
-              background: '#fff',
+              background: 'var(--color-text)',
               transform: config.enabled ? 'translateX(18px)' : 'translateX(2px)',
             }}
           />
@@ -170,7 +170,7 @@ export function WebhookPanel({ hideHeader }: Props) {
       </div>
 
       {error && (
-        <p className="text-xs" style={{ color: 'var(--color-error, #f87171)' }}>
+        <p className="text-xs" style={{ color: 'var(--color-danger)' }}>
           {error}
         </p>
       )}
@@ -181,8 +181,8 @@ export function WebhookPanel({ hideHeader }: Props) {
           disabled={saving}
           className="rounded px-3 py-1.5 text-xs font-medium transition-opacity"
           style={{
-            background: 'var(--color-claude)',
-            color: '#fff',
+            background: 'var(--color-accent)',
+            color: 'var(--color-on-accent)',
             opacity: saving ? 0.6 : 1,
           }}
         >

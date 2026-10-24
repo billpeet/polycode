@@ -13,13 +13,13 @@ interface Props {
 function statusVisuals(status: AgentGroup['status']) {
   switch (status) {
     case 'completed':
-      return { icon: '✓', color: '#4ade80', badge: 'DONE', tint: 'var(--color-tool-result-tint)', accent: 'var(--color-tool-result-accent)', badgeBg: 'rgba(74, 222, 128, 0.12)' }
+      return { icon: '✓', color: 'var(--color-success)', badge: 'DONE', tint: 'var(--color-tool-result-tint)', accent: 'var(--color-tool-result-accent)', badgeBg: 'color-mix(in srgb, var(--color-success) 12%, transparent)' }
     case 'failed':
-      return { icon: '✗', color: '#f87171', badge: 'FAILED', tint: 'rgba(248, 113, 113, 0.05)', accent: 'rgba(248, 113, 113, 0.6)', badgeBg: 'rgba(248, 113, 113, 0.15)' }
+      return { icon: '✗', color: 'var(--color-danger)', badge: 'FAILED', tint: 'color-mix(in srgb, var(--color-danger) 5%, transparent)', accent: 'color-mix(in srgb, var(--color-danger) 60%, transparent)', badgeBg: 'color-mix(in srgb, var(--color-danger) 15%, transparent)' }
     case 'stopped':
-      return { icon: '—', color: '#6b7280', badge: 'STOPPED', tint: 'rgba(107, 114, 128, 0.05)', accent: 'rgba(107, 114, 128, 0.4)', badgeBg: 'rgba(107, 114, 128, 0.15)' }
+      return { icon: '—', color: 'var(--color-text-muted)', badge: 'STOPPED', tint: 'color-mix(in srgb, var(--color-text-muted) 5%, transparent)', accent: 'color-mix(in srgb, var(--color-text-muted) 40%, transparent)', badgeBg: 'color-mix(in srgb, var(--color-text-muted) 15%, transparent)' }
     default:
-      return { icon: null, color: 'var(--color-claude)', badge: 'RUNNING', tint: 'var(--color-tool-call-tint)', accent: 'var(--color-tool-call-accent)', badgeBg: 'rgba(232, 123, 95, 0.15)' }
+      return { icon: null, color: 'var(--color-accent)', badge: 'RUNNING', tint: 'var(--color-tool-call-tint)', accent: 'var(--color-tool-call-accent)', badgeBg: 'color-mix(in srgb, var(--color-accent) 15%, transparent)' }
   }
 }
 
@@ -40,7 +40,7 @@ export default function AgentGroupBlock({ group, onIsolate }: Props) {
         style={{ height: 32, color: 'var(--color-text-muted)', cursor: 'pointer', background: 'transparent', border: 'none' }}
       >
         {isRunning
-          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-claude)' }} />
+          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-accent)' }} />
           : <span style={{ fontSize: '0.8rem', flexShrink: 0, color: v.color }}>{v.icon}</span>
         }
 

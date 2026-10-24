@@ -79,7 +79,7 @@ export function StoragePanel() {
         </div>
       )}
 
-      {error && <div className="text-xs" style={{ color: '#f87171' }}>{error}</div>}
+      {error && <div className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</div>}
     </div>
   )
 }

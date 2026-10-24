@@ -65,15 +65,15 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
     <div
       className="mb-3 flex items-start gap-3 rounded-xl px-4 py-3"
       style={{
-        background: 'linear-gradient(135deg, rgba(168, 85, 247, 0.15) 0%, rgba(168, 85, 247, 0.08) 100%)',
-        border: '1px solid rgba(168, 85, 247, 0.3)',
+        background: 'linear-gradient(135deg, color-mix(in srgb, var(--color-purple) 15%, transparent) 0%, color-mix(in srgb, var(--color-purple) 8%, transparent) 100%)',
+        border: '1px solid color-mix(in srgb, var(--color-purple) 30%, transparent)',
       }}
     >
       <div
         className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg"
-        style={{ background: 'rgba(168, 85, 247, 0.2)' }}
+        style={{ background: 'color-mix(in srgb, var(--color-purple) 20%, transparent)' }}
       >
-        <QueueIcon className="text-purple-400" />
+        <QueueIcon className="text-purple" />
       </div>
 
       <div className="min-w-0 flex-1">
@@ -84,7 +84,7 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
           {queuedMessage.options.planMode && (
             <span
               className="rounded px-1.5 py-0.5 text-xs font-medium"
-              style={{ background: 'rgba(232, 123, 95, 0.2)', color: 'var(--color-claude)' }}
+              style={{ background: 'color-mix(in srgb, var(--color-accent) 20%, transparent)', color: 'var(--color-accent)' }}
             >
               Plan
             </span>
@@ -92,7 +92,7 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
           {queuedMessage.options.fastMode && (
             <span
               className="rounded px-1.5 py-0.5 text-xs font-medium"
-              style={{ background: 'rgba(255, 106, 0, 0.2)', color: '#ff6a00' }}
+              style={{ background: 'color-mix(in srgb, var(--color-orange) 20%, transparent)', color: 'var(--color-orange)' }}
             >
               Fast
             </span>
@@ -125,9 +125,9 @@ export default function QueuedMessageBanner({ threadId, queuedMessage }: Props) 
           onClick={handleInterrupt}
           className="rounded-lg px-3 py-1.5 text-xs font-medium transition-all hover:scale-105"
           style={{
-            background: 'linear-gradient(135deg, #a855f7 0%, #9333ea 100%)',
-            color: '#fff',
-            boxShadow: '0 2px 8px rgba(168, 85, 247, 0.3)',
+            background: 'linear-gradient(135deg, var(--color-purple) 0%, var(--color-purple-strong) 100%)',
+            color: 'var(--color-on-accent)',
+            boxShadow: '0 2px 8px color-mix(in srgb, var(--color-purple) 30%, transparent)',
           }}
         >
           Interrupt & Send

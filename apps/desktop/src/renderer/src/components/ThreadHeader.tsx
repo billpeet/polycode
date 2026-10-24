@@ -47,9 +47,9 @@ function formatRateLimitType(type: string): string {
 
 function RateLimitBanner({ limit, nowSeconds }: { limit: RateLimitEntry; nowSeconds: number }) {
   const isBlocked = limit.status === 'blocked'
-  const color = isBlocked ? '#f87171' : '#facc15'
-  const bgColor = isBlocked ? 'rgba(239, 68, 68, 0.08)' : 'rgba(250, 204, 21, 0.08)'
-  const borderColor = isBlocked ? 'rgba(239, 68, 68, 0.25)' : 'rgba(250, 204, 21, 0.25)'
+  const color = isBlocked ? 'var(--color-danger)' : 'var(--color-warning)'
+  const bgColor = isBlocked ? 'color-mix(in srgb, var(--color-danger-strong) 8%, transparent)' : 'color-mix(in srgb, var(--color-warning) 8%, transparent)'
+  const borderColor = isBlocked ? 'color-mix(in srgb, var(--color-danger-strong) 25%, transparent)' : 'color-mix(in srgb, var(--color-warning) 25%, transparent)'
   const pct = limit.utilization != null ? Math.round(limit.utilization * 100) : null
   const remaining = limit.resetsAt ? limit.resetsAt - nowSeconds : null
   const typeLabel = formatRateLimitType(limit.rateLimitType)
@@ -259,13 +259,13 @@ export default function ThreadHeader({ threadId }: Props) {
 
   const statusColor =
     status === 'running'
-      ? '#4ade80'
+      ? 'var(--color-success)'
       : status === 'stopping'
-        ? '#fb923c'
+        ? 'var(--color-orange)'
         : status === 'error'
-          ? '#f87171'
+          ? 'var(--color-danger)'
           : status === 'stopped'
-            ? '#facc15'
+            ? 'var(--color-warning)'
             : 'var(--color-text-muted)'
 
   function startEditing(): void {
@@ -336,7 +336,7 @@ export default function ThreadHeader({ threadId }: Props) {
             className="text-sm font-medium bg-transparent border-b outline-none min-w-0"
             style={{
               color: 'var(--color-text)',
-              borderColor: 'var(--color-claude)',
+              borderColor: 'var(--color-accent)',
               width: `${Math.max(editValue.length, 8)}ch`
             }}
           />
@@ -356,15 +356,15 @@ export default function ThreadHeader({ threadId }: Props) {
           <span
             className="text-xs px-1.5 py-0.5 rounded flex-shrink-0"
             style={{
-              background: location.connection_type === 'ssh' ? 'rgba(99, 179, 237, 0.1)'
-                : location.connection_type === 'wsl' ? 'rgba(251, 191, 36, 0.1)'
-                : 'rgba(74, 222, 128, 0.1)',
-              color: location.connection_type === 'ssh' ? '#63b3ed'
-                : location.connection_type === 'wsl' ? '#fbbf24'
-                : '#4ade80',
-              border: `1px solid ${location.connection_type === 'ssh' ? 'rgba(99, 179, 237, 0.3)'
-                : location.connection_type === 'wsl' ? 'rgba(251, 191, 36, 0.3)'
-                : 'rgba(74, 222, 128, 0.3)'}`,
+              background: location.connection_type === 'ssh' ? 'color-mix(in srgb, var(--color-info) 10%, transparent)'
+                : location.connection_type === 'wsl' ? 'color-mix(in srgb, var(--color-warning) 10%, transparent)'
+                : 'color-mix(in srgb, var(--color-success) 10%, transparent)',
+              color: location.connection_type === 'ssh' ? 'var(--color-info)'
+                : location.connection_type === 'wsl' ? 'var(--color-warning)'
+                : 'var(--color-success)',
+              border: `1px solid ${location.connection_type === 'ssh' ? 'color-mix(in srgb, var(--color-info) 30%, transparent)'
+                : location.connection_type === 'wsl' ? 'color-mix(in srgb, var(--color-warning) 30%, transparent)'
+                : 'color-mix(in srgb, var(--color-success) 30%, transparent)'}`,
               fontFamily: 'monospace',
             }}
             title={`Location: ${location.label} (${location.path})`}
@@ -466,7 +466,7 @@ export default function ThreadHeader({ threadId }: Props) {
               }}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{
-                color: isBrowserOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                color: isBrowserOpen ? 'var(--color-accent)' : 'var(--color-text-muted)',
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
@@ -487,7 +487,7 @@ export default function ThreadHeader({ threadId }: Props) {
               }}
               className="rounded p-0.5 hover:opacity-70 transition-opacity"
               style={{
-                color: isTerminalOpen ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                color: isTerminalOpen ? 'var(--color-accent)' : 'var(--color-text-muted)',
                 background: 'none',
                 border: 'none',
                 cursor: 'pointer',
@@ -590,7 +590,7 @@ export default function ThreadHeader({ threadId }: Props) {
                   }}
                   disabled={isPushing}
                   className="hover:opacity-70 transition-opacity disabled:opacity-40"
-                  style={{ color: '#4ade80', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
+                  style={{ color: 'var(--color-success)', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
                   title={`Push (${gitStatus.ahead} ahead, --force-with-lease)`}
                 >
                   {isPushing ? (
@@ -616,7 +616,7 @@ export default function ThreadHeader({ threadId }: Props) {
                   }}
                   disabled={isPulling}
                   className="hover:opacity-70 transition-opacity disabled:opacity-40"
-                  style={{ color: '#f87171', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
+                  style={{ color: 'var(--color-danger)', cursor: 'pointer', background: 'none', border: 'none', padding: 0, font: 'inherit', lineHeight: 1 }}
                   title={`Pull (${gitStatus.behind} behind)`}
                 >
                   {isPulling ? (
@@ -634,10 +634,10 @@ export default function ThreadHeader({ threadId }: Props) {
             {(gitStatus.additions > 0 || gitStatus.deletions > 0) && (
               <span className="flex items-center gap-1 text-xs" style={{ fontFamily: 'monospace' }}>
                 {gitStatus.additions > 0 && (
-                  <span style={{ color: '#4ade80' }}>+{gitStatus.additions}</span>
+                  <span style={{ color: 'var(--color-success)' }}>+{gitStatus.additions}</span>
                 )}
                 {gitStatus.deletions > 0 && (
-                  <span style={{ color: '#f87171' }}>-{gitStatus.deletions}</span>
+                  <span style={{ color: 'var(--color-danger)' }}>-{gitStatus.deletions}</span>
                 )}
               </span>
             )}
@@ -652,9 +652,9 @@ export default function ThreadHeader({ threadId }: Props) {
             onClick={() => usePlanStore.getState().toggleVisible(threadId)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
             style={{
-              color: planVisible ? 'var(--color-claude)' : 'var(--color-text-muted)',
-              background: planVisible ? 'rgba(232, 123, 95, 0.1)' : 'transparent',
-              border: `1px solid ${planVisible ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)'}`,
+              color: planVisible ? 'var(--color-accent)' : 'var(--color-text-muted)',
+              background: planVisible ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'transparent',
+              border: `1px solid ${planVisible ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)'}`,
             }}
             title="View plan file"
           >
@@ -707,9 +707,9 @@ export default function ThreadHeader({ threadId }: Props) {
             onClick={() => void resetThread(threadId)}
             className="flex items-center gap-1 rounded px-2 py-1 text-xs transition-colors"
             style={{
-              color: '#facc15',
-              background: 'rgba(250, 204, 21, 0.08)',
-              border: '1px solid rgba(250, 204, 21, 0.25)',
+              color: 'var(--color-warning)',
+              background: 'color-mix(in srgb, var(--color-warning) 8%, transparent)',
+              border: '1px solid color-mix(in srgb, var(--color-warning) 25%, transparent)',
             }}
             title="Force-reset this thread back to idle"
           >

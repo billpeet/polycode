@@ -7,10 +7,10 @@ import { SourceBadge, useActiveSource } from './SourceBadge'
 
 const PHASE_DOT: Record<RemoteConnectionPhase, { color: string; label: string; pulse?: boolean }> = {
   local: { color: 'var(--color-text-muted)', label: 'Local instance' },
-  connecting: { color: '#fbbf24', label: 'Connecting to remote host…', pulse: true },
-  connected: { color: '#4ade80', label: 'Connected to remote host' },
-  reconnecting: { color: '#fbbf24', label: 'Reconnecting to remote host…', pulse: true },
-  unavailable: { color: '#f87171', label: 'Remote host unreachable' },
+  connecting: { color: 'var(--color-warning)', label: 'Connecting to remote host…', pulse: true },
+  connected: { color: 'var(--color-success)', label: 'Connected to remote host' },
+  reconnecting: { color: 'var(--color-warning)', label: 'Reconnecting to remote host…', pulse: true },
+  unavailable: { color: 'var(--color-danger)', label: 'Remote host unreachable' },
 }
 
 export default function TitleBar() {
@@ -168,8 +168,8 @@ export default function TitleBar() {
               height: 22,
               maxWidth: 220,
               borderRadius: 4,
-              border: `1px solid ${activeHost ? 'var(--color-claude)' : 'var(--color-border)'}`,
-              background: activeHost ? 'color-mix(in srgb, var(--color-claude) 18%, var(--color-surface))' : 'var(--color-surface-2)',
+              border: `1px solid ${activeHost ? 'var(--color-accent)' : 'var(--color-border)'}`,
+              background: activeHost ? 'color-mix(in srgb, var(--color-accent) 18%, var(--color-surface))' : 'var(--color-surface-2)',
               color: 'var(--color-text)',
               fontSize: 11,
               padding: '0 6px',

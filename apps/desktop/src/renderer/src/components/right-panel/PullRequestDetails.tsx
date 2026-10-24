@@ -2,10 +2,10 @@ import type { ComponentType } from 'react'
 import { Ban, CircleCheck, CircleX, Clock, GitMerge, LoaderCircle, MessageSquare, TriangleAlert, UserCheck, UserX } from 'lucide-react'
 import type { PullRequest } from '../../types/ipc'
 
-const GREEN = '#4ade80'
-const RED = '#f87171'
-const AMBER = '#fbbf24'
-const BLUE = '#60a5fa'
+const GREEN = 'var(--color-success)'
+const RED = 'var(--color-danger)'
+const AMBER = 'var(--color-warning)'
+const BLUE = 'var(--color-info)'
 const MUTED = 'var(--color-text-muted)'
 
 type Chip = { key: string; icon: ComponentType<{ size?: number; className?: string }>; label: string; title: string; color: string; spin?: boolean }

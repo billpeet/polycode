@@ -88,8 +88,8 @@ function ErrorDetailsModal({ toast, onClose }: { toast: Toast; onClose: () => vo
             className="rounded px-3 py-1.5 text-xs font-medium"
             style={{
               background: 'var(--color-surface-2)',
-              border: `1px solid ${copied ? 'rgba(74,222,128,0.45)' : 'var(--color-border)'}`,
-              color: copied ? '#4ade80' : 'var(--color-text)',
+              border: `1px solid ${copied ? 'color-mix(in srgb, var(--color-success) 45%, transparent)' : 'var(--color-border)'}`,
+              color: copied ? 'var(--color-success)' : 'var(--color-text)',
             }}
           >
             {copied ? 'Copied' : 'Copy Details'}
@@ -98,7 +98,7 @@ function ErrorDetailsModal({ toast, onClose }: { toast: Toast; onClose: () => vo
             type="button"
             onClick={onClose}
             className="rounded px-3 py-1.5 text-xs font-medium"
-            style={{ background: 'var(--color-claude)', color: '#fff' }}
+            style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
           >
             Done
           </button>
@@ -115,14 +115,14 @@ function ToastItem({ toast }: { toast: Toast }) {
 
   const bg =
     toast.type === 'error'
-      ? '#dc2626'
+      ? 'var(--color-danger-strong)'
       : toast.type === 'success'
-        ? '#16a34a'
+        ? 'var(--color-success-strong)'
         : toast.type === 'warning'
-          ? '#d97706'
+          ? 'var(--color-warning-strong)'
           : 'var(--color-surface-2)'
 
-  const color = toast.type === 'info' ? 'var(--color-text)' : '#fff'
+  const color = toast.type === 'info' ? 'var(--color-text)' : 'var(--color-on-accent)'
 
   const icon = toast.type === 'error' ? '✕' : toast.type === 'success' ? '✓' : toast.type === 'warning' ? '⚠' : 'ℹ'
 

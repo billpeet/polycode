@@ -161,7 +161,7 @@ export default function ExpandedSidebar({
           >
             <PanelLeft size={16} />
           </button>
-          <span className="text-sm font-semibold" style={{ color: 'var(--color-claude)' }}>
+          <span className="text-sm font-semibold" style={{ color: 'var(--color-accent)' }}>
             PolyCode
           </span>
           {appVersion && (
@@ -251,9 +251,9 @@ export default function ExpandedSidebar({
                   className={`mr-2 h-1.5 w-1.5 flex-shrink-0 rounded-full${(unreadByThread[thread.id] ?? !!thread.unread) ? ' status-unread' : ''}`}
                   style={{
                     background:
-                      (unreadByThread[thread.id] ?? !!thread.unread) ? '#22c55e'
-                        : statusMap[thread.id] === 'running' ? '#4ade80'
-                          : statusMap[thread.id] === 'error' ? '#f87171'
+                      (unreadByThread[thread.id] ?? !!thread.unread) ? 'var(--color-success)'
+                        : statusMap[thread.id] === 'running' ? 'var(--color-success)'
+                          : statusMap[thread.id] === 'error' ? 'var(--color-danger)'
                             : 'var(--color-text-muted)',
                   }}
                 />
@@ -301,7 +301,7 @@ export default function ExpandedSidebar({
                   {unreadCount > 0 && (
                     <span
                       className="ml-1.5 flex-shrink-0 rounded-full px-1.5 py-0 text-[10px] font-semibold leading-[16px]"
-                      style={{ background: '#22c55e', color: '#000' }}
+                      style={{ background: 'var(--color-success)', color: 'var(--color-bg)' }}
                     >
                       {unreadCount}
                     </span>

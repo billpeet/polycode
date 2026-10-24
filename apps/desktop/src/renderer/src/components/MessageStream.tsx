@@ -785,7 +785,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
           <div ref={agentHeaderRef} className="mb-3 pb-3" style={{ borderBottom: '1px solid var(--color-border)' }}>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '0.4rem', flexWrap: 'wrap' }}>
               <span style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: 'var(--color-text-muted)' }}>SUBAGENT</span>
-              <span className="font-mono" style={{ fontSize: '0.8rem', color: 'var(--color-claude)' }}>{isolatedGroup.label}</span>
+              <span className="font-mono" style={{ fontSize: '0.8rem', color: 'var(--color-accent)' }}>{isolatedGroup.label}</span>
               {isolatedGroup.description && (
                 <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{isolatedGroup.description}</span>
               )}
@@ -851,7 +851,7 @@ export default function MessageStream({ threadId, sessionId, agentFilter, onIsol
         <button
           onClick={scrollToBottom}
           className="absolute bottom-4 right-4 rounded-full px-3 py-1.5 text-xs font-medium shadow-lg transition-opacity hover:opacity-90"
-          style={{ background: 'var(--color-claude)', color: '#fff' }}
+          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
         >
           ↓ Latest
         </button>

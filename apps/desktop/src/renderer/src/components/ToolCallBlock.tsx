@@ -300,11 +300,11 @@ function UnifiedDiffBody({ diff }: { diff: string }) {
     <pre style={{ margin: 0, maxHeight: 520, overflow: 'auto', fontFamily: 'var(--font-mono)', fontSize: '0.72rem', lineHeight: 1.55 }}>
       {diff.split('\n').map((line, index) => {
         const color = line.startsWith('+') && !line.startsWith('+++')
-          ? '#4ade80'
+          ? 'var(--color-success)'
           : line.startsWith('-') && !line.startsWith('---')
-            ? '#f87171'
+            ? 'var(--color-danger)'
             : line.startsWith('@@')
-              ? '#60a5fa'
+              ? 'var(--color-info)'
               : 'var(--color-text-muted)'
         return <div key={index} style={{ color, whiteSpace: 'pre' }}>{line || ' '}</div>
       })}
@@ -473,8 +473,8 @@ function InputBody({ toolName, input }: { toolName: string; input: unknown }) {
   if (toolName === 'FileChange' && inp && Array.isArray(inp.changes)) {
     const changes = inp.changes as Array<{ path: string; kind: string }>
     const kindColor = (kind: string): string => {
-      if (kind === 'create') return '#4ade80'
-      if (kind === 'delete') return '#f87171'
+      if (kind === 'create') return 'var(--color-success)'
+      if (kind === 'delete') return 'var(--color-danger)'
       return 'var(--color-text-muted)'  // update / rename / etc.
     }
     const kindLabel = (kind: string): string => {
@@ -530,22 +530,22 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
   const accentColor = isPending
     ? 'var(--color-tool-call-accent)'
     : isCancelled
-      ? 'rgba(107, 114, 128, 0.4)'
+      ? 'color-mix(in srgb, var(--color-text-muted) 40%, transparent)'
       : isError
-        ? 'rgba(248, 113, 113, 0.6)'
+        ? 'color-mix(in srgb, var(--color-danger) 60%, transparent)'
         : 'var(--color-tool-result-accent)'
 
   const tintColor = isPending
     ? 'var(--color-tool-call-tint)'
     : isCancelled
-      ? 'rgba(107, 114, 128, 0.05)'
+      ? 'color-mix(in srgb, var(--color-text-muted) 5%, transparent)'
       : isError
-        ? 'rgba(248, 113, 113, 0.05)'
+        ? 'color-mix(in srgb, var(--color-danger) 5%, transparent)'
         : 'var(--color-tool-result-tint)'
 
   // Status icon
   const icon = isPending ? null : isCancelled ? '—' : isError ? '✗' : '✓'
-  const iconColor = isPending ? 'var(--color-claude)' : isCancelled ? '#6b7280' : isError ? '#f87171' : '#4ade80'
+  const iconColor = isPending ? 'var(--color-accent)' : isCancelled ? 'var(--color-text-muted)' : isError ? 'var(--color-danger)' : 'var(--color-success)'
 
   const diffBlocks = extractDiffBlocks(resultMetadata)
   const rawOutputText = getRawOutputText(resultMetadata?.rawOutput)
@@ -583,7 +583,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
       >
         {/* Status icon */}
         {isPending
-          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-claude)' }} />
+          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-accent)' }} />
           : <span style={{ fontSize: '0.8rem', flexShrink: 0, color: iconColor }}>{icon}</span>
         }
 
@@ -610,7 +610,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
           padding: '1px 6px',
           borderRadius: 999,
           flexShrink: 0,
-          background: isPending ? 'rgba(232, 123, 95, 0.15)' : isCancelled ? 'rgba(107, 114, 128, 0.15)' : isError ? 'rgba(248, 113, 113, 0.15)' : 'rgba(74, 222, 128, 0.12)',
+          background: isPending ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : isCancelled ? 'color-mix(in srgb, var(--color-text-muted) 15%, transparent)' : isError ? 'color-mix(in srgb, var(--color-danger) 15%, transparent)' : 'color-mix(in srgb, var(--color-success) 12%, transparent)',
           color: iconColor,
         }}>
           {isPending ? 'RUNNING' : isCancelled ? 'CANCELLED' : isError ? 'FAILED' : 'DONE'}
@@ -646,7 +646,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
           {/* Result (once available) */}
           {diffBlocks.length > 0 && !isCancelled && (
             <div>
-              <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? 'var(--color-danger)' : 'var(--color-success)', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
                 {isError ? 'Error' : 'Changes'}
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
@@ -665,7 +665,7 @@ export default function ToolCallBlock({ message, metadata, result, resultMetadat
 
           {resultBody !== null && diffBlocks.length === 0 && !isCancelled && (
             <div>
-              <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? '#f87171' : '#4ade80', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+              <div style={{ fontSize: '0.6rem', fontWeight: 600, letterSpacing: '0.06em', color: isError ? 'var(--color-danger)' : 'var(--color-success)', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
                 {isError ? 'Error' : previewTarget ? 'Preview' : 'Output'}
               </div>
               {previewTarget

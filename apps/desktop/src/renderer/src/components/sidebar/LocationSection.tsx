@@ -82,7 +82,7 @@ export default function LocationSection({
           onClick={() => onToggleLocationCollapsed(location.id)}
           className="mt-1 flex w-full items-center pl-6 pr-2 py-0.5 text-left text-xs font-semibold transition-colors min-w-0 hover:bg-white/5"
           style={{
-            color: pathMissing || invalidWorktree ? '#f87171' : 'var(--color-text-muted)',
+            color: pathMissing || invalidWorktree ? 'var(--color-danger)' : 'var(--color-text-muted)',
             background: 'color-mix(in srgb, var(--color-border) 35%, transparent)',
           }}
           title={pathMissing
@@ -104,7 +104,7 @@ export default function LocationSection({
           {location.is_worktree && (
             <span
               className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
-              style={{ background: 'rgba(96, 165, 250, 0.15)', color: '#60a5fa' }}
+              style={{ background: 'color-mix(in srgb, var(--color-info) 15%, transparent)', color: 'var(--color-info)' }}
             >
               worktree
             </span>
@@ -118,9 +118,9 @@ export default function LocationSection({
             <span
               className="ml-1 inline-flex h-4 min-w-4 flex-shrink-0 items-center justify-center rounded-full px-1 text-[9px] font-semibold"
               style={{
-                background: 'rgba(74, 222, 128, 0.15)',
-                color: '#4ade80',
-                border: '1px solid rgba(74, 222, 128, 0.3)',
+                background: 'color-mix(in srgb, var(--color-success) 15%, transparent)',
+                color: 'var(--color-success)',
+                border: '1px solid color-mix(in srgb, var(--color-success) 30%, transparent)',
               }}
               title={`${activeCommandCount} command${activeCommandCount === 1 ? '' : 's'} running`}
             >
@@ -132,7 +132,7 @@ export default function LocationSection({
           {location.pool_id && !isCheckedOut && (
             <span
               className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold"
-              style={{ background: 'rgba(148, 163, 184, 0.15)', color: '#94a3b8' }}
+              style={{ background: 'color-mix(in srgb, var(--color-text-muted) 15%, transparent)', color: 'var(--color-text-muted)' }}
             >
               available
             </span>
@@ -140,7 +140,7 @@ export default function LocationSection({
           {pathMissing && (
             <span
               className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
-              style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
+              style={{ background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)', color: 'var(--color-danger)' }}
             >
               not found
             </span>
@@ -148,7 +148,7 @@ export default function LocationSection({
           {invalidWorktree && !pathMissing && (
             <span
               className="ml-1 inline-flex flex-shrink-0 items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
-              style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171' }}
+              style={{ background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)', color: 'var(--color-danger)' }}
             >
               <AlertTriangle size={9} /> invalid
             </span>

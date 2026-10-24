@@ -95,8 +95,8 @@ function SourceChips() {
             className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px]"
             style={{
               background: 'var(--color-surface-2)',
-              border: `1px solid ${isActive ? 'var(--color-claude)' : 'var(--color-border)'}`,
-              color: ok ? 'var(--color-text)' : '#f87171',
+              border: `1px solid ${isActive ? 'var(--color-accent)' : 'var(--color-border)'}`,
+              color: ok ? 'var(--color-text)' : 'var(--color-danger)',
             }}
             title={!ok
               ? `${source.label} is unreachable: ${source.error ?? 'unknown error'}`
@@ -104,7 +104,7 @@ function SourceChips() {
           >
             <span
               className={`h-1.5 w-1.5 rounded-full${stale ? ' animate-pulse' : ''}`}
-              style={{ background: !ok ? '#f87171' : stale ? '#fbbf24' : sourceColor(source.sourceId, sources) }}
+              style={{ background: !ok ? 'var(--color-danger)' : stale ? 'var(--color-warning)' : sourceColor(source.sourceId, sources) }}
             />
             {source.label}
             {ok && <span style={{ opacity: 0.6 }}>{threadCount}</span>}
@@ -543,7 +543,7 @@ export default function UnifiedSidebar({
           >
             <PanelLeft size={16} />
           </button>
-          <span className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: 'var(--color-claude)' }}>
+          <span className="flex items-center gap-1.5 text-sm font-semibold" style={{ color: 'var(--color-accent)' }}>
             <Layers size={13} />
             All sources
           </span>
@@ -678,7 +678,7 @@ export default function UnifiedSidebar({
                       {unreadCount > 0 && (
                         <span
                           className="ml-1.5 flex-shrink-0 rounded-full px-1.5 py-0 text-[10px] font-semibold leading-[16px]"
-                          style={{ background: '#22c55e', color: '#000' }}
+                          style={{ background: 'var(--color-success)', color: 'var(--color-bg)' }}
                         >
                           {unreadCount}
                         </span>

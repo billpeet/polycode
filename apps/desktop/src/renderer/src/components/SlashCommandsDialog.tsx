@@ -139,9 +139,9 @@ export function SlashCommandsPanel({ projectId, projectName, hideHeader }: Panel
                     onClick={() => setForm((f) => ({ ...f, scope: 'project' }))}
                     className="rounded px-2 py-0.5 text-xs transition-colors"
                     style={{
-                      background: form.scope === 'project' ? 'rgba(232,123,95,0.15)' : 'var(--color-surface-2)',
-                      border: `1px solid ${form.scope === 'project' ? 'rgba(232,123,95,0.4)' : 'var(--color-border)'}`,
-                      color: form.scope === 'project' ? 'var(--color-claude)' : 'var(--color-text-muted)',
+                      background: form.scope === 'project' ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'var(--color-surface-2)',
+                      border: `1px solid ${form.scope === 'project' ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-border)'}`,
+                      color: form.scope === 'project' ? 'var(--color-accent)' : 'var(--color-text-muted)',
                     }}
                   >
                     {projectName ?? 'Project'}
@@ -165,7 +165,7 @@ export function SlashCommandsPanel({ projectId, projectName, hideHeader }: Panel
                   Name
                 </label>
                 <div className="flex items-center gap-1">
-                  <span className="text-sm font-mono" style={{ color: 'var(--color-claude)' }}>/</span>
+                  <span className="text-sm font-mono" style={{ color: 'var(--color-accent)' }}>/</span>
                   <input
                     type="text"
                     value={form.name}
@@ -222,7 +222,7 @@ export function SlashCommandsPanel({ projectId, projectName, hideHeader }: Panel
               </div>
 
               {error && (
-                <p className="text-xs" style={{ color: '#f87171' }}>{error}</p>
+                <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{error}</p>
               )}
 
               <div className="flex justify-end gap-2 pt-1">
@@ -242,8 +242,8 @@ export function SlashCommandsPanel({ projectId, projectName, hideHeader }: Panel
                   disabled={saving}
                   className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-50"
                   style={{
-                    background: 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)',
-                    color: '#fff',
+                    background: 'linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-strong) 100%)',
+                    color: 'var(--color-on-accent)',
                   }}
                 >
                   {saving ? 'Saving…' : editingId ? 'Save' : 'Create'}
@@ -340,7 +340,7 @@ export function SlashCommandsPanel({ projectId, projectName, hideHeader }: Panel
               <button
                 onClick={() => handleDelete(confirmDeleteId)}
                 className="rounded px-3 py-1.5 text-xs font-medium"
-                style={{ background: '#dc2626', color: '#fff' }}
+                style={{ background: 'var(--color-danger-strong)', color: 'var(--color-on-accent)' }}
               >
                 Delete
               </button>
@@ -387,7 +387,7 @@ function CommandRow({
       style={{ background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
     >
       <div className="flex-1 min-w-0">
-        <span className="font-mono text-sm font-medium" style={{ color: 'var(--color-claude)' }}>
+        <span className="font-mono text-sm font-medium" style={{ color: 'var(--color-accent)' }}>
           /{cmd.name}
         </span>
         {cmd.description && (

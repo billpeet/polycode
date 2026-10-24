@@ -5,6 +5,7 @@ import '@xterm/xterm/css/xterm.css'
 import { useTerminalStore } from '../stores/terminal'
 import { writeClipboardText } from '../lib/clipboard'
 import { client } from '../lib/client'
+import { terminalAppearance, useAppearance } from '../lib/theme'
 
 function isTerminalCopyShortcut(event: KeyboardEvent): boolean {
   if (event.altKey) return false
@@ -22,6 +23,8 @@ interface Props {
 export default function TerminalContent({ threadId, locationId }: Props) {
   const ensure = useTerminalStore((s) => s.ensure)
   const kill = useTerminalStore((s) => s.kill)
+  const appearanceTheme = useAppearance((s) => s.theme)
+  const fontMono = useAppearance((s) => s.fontMono)
 
   const containerRef = useRef<HTMLDivElement>(null)
   const xtermRef = useRef<XTerm | null>(null)
@@ -39,29 +42,7 @@ export default function TerminalContent({ threadId, locationId }: Props) {
       fontSize: 13,
       lineHeight: 1.2,
       scrollback: 5000,
-      fontFamily: 'ui-monospace, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
-      theme: {
-        background: '#0f0f0f',
-        foreground: '#d4d4d4',
-        cursor: '#d4d4d4',
-        selectionBackground: 'rgba(180, 203, 255, 0.25)',
-        black: '#1e1e1e',
-        red: '#f87171',
-        green: '#4ade80',
-        yellow: '#facc15',
-        blue: '#60a5fa',
-        magenta: '#c084fc',
-        cyan: '#22d3ee',
-        white: '#d4d4d4',
-        brightBlack: '#6b7280',
-        brightRed: '#fca5a5',
-        brightGreen: '#86efac',
-        brightYellow: '#fde68a',
-        brightBlue: '#93c5fd',
-        brightMagenta: '#d8b4fe',
-        brightCyan: '#67e8f9',
-        brightWhite: '#f9fafb',
-      },
+      ...terminalAppearance(useAppearance.getState()),
     })
 
     const fitAddon = new FitAddon()
@@ -123,6 +104,16 @@ export default function TerminalContent({ threadId, locationId }: Props) {
       term.dispose()
     }
   }, [ensure, locationId, threadId])
+
+  // Follow theme and font changes without remounting the terminal.
+  useEffect(() => {
+    const term = xtermRef.current
+    if (!term) return
+    const { theme, fontFamily } = terminalAppearance({ theme: appearanceTheme, fontMono })
+    term.options.theme = theme
+    term.options.fontFamily = fontFamily
+    fitAddonRef.current?.fit()
+  }, [appearanceTheme, fontMono])
 
   useEffect(() => {
     if (!containerRef.current) return

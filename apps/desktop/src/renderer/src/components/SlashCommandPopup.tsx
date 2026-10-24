@@ -123,7 +123,7 @@ export default function SlashCommandPopup({ commands, query, onSelect, onClose, 
             <div className="flex items-center gap-2">
               <span
                 className="font-mono text-xs font-medium"
-                style={{ color: 'var(--color-claude)' }}
+                style={{ color: 'var(--color-accent)' }}
               >
                 {cmd.invocation ?? `/${cmd.name}`}
               </span>

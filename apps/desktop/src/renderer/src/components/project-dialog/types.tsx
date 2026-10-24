@@ -26,8 +26,8 @@ export function connectionBadge(connType: ConnectionType) {
     <span
       className="ml-1.5 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
       style={{
-        background: isSSH ? 'rgba(99, 179, 237, 0.15)' : 'rgba(251, 191, 36, 0.15)',
-        color: isSSH ? '#63b3ed' : '#fbbf24',
+        background: isSSH ? 'color-mix(in srgb, var(--color-info) 15%, transparent)' : 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
+        color: isSSH ? 'var(--color-info)' : 'var(--color-warning)',
       }}
     >
       {connType}

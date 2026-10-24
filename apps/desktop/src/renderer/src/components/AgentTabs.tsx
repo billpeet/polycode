@@ -68,13 +68,13 @@ export default function AgentTabs({ threadId, sessionId, isolatedAgentKey, onSel
             title={tab.title}
             className="px-3 py-1.5 text-xs font-medium rounded-md transition-colors whitespace-nowrap flex items-center gap-1.5"
             style={{
-              background: isActive ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
-              color: isActive ? 'var(--color-claude)' : 'var(--color-text-muted)',
-              border: `1px solid ${isActive ? 'rgba(232, 123, 95, 0.3)' : 'var(--color-border)'}`,
+              background: isActive ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'transparent',
+              color: isActive ? 'var(--color-accent)' : 'var(--color-text-muted)',
+              border: `1px solid ${isActive ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'var(--color-border)'}`,
             }}
           >
             {tab.spinner && (
-              <span className="status-spinner" style={{ width: '0.6rem', height: '0.6rem', flexShrink: 0, borderTopColor: 'var(--color-claude)' }} />
+              <span className="status-spinner" style={{ width: '0.6rem', height: '0.6rem', flexShrink: 0, borderTopColor: 'var(--color-accent)' }} />
             )}
             {tab.label}
           </button>

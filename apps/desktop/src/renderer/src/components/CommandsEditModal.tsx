@@ -199,7 +199,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                     className="flex items-center gap-2 rounded px-3 py-2"
                     style={{
                       background: 'var(--color-surface)',
-                      border: `1px solid ${isEditingThis ? 'var(--color-claude)' : 'var(--color-border)'}`,
+                      border: `1px solid ${isEditingThis ? 'var(--color-accent)' : 'var(--color-border)'}`,
                     }}
                   >
                     <div className="flex-1 min-w-0">
@@ -210,7 +210,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                         {cmd.shell === 'powershell' && (
                           <span
                             className="flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
-                            style={{ background: 'rgba(99, 179, 237, 0.15)', color: '#63b3ed' }}
+                            style={{ background: 'color-mix(in srgb, var(--color-info) 15%, transparent)', color: 'var(--color-info)' }}
                           >
                             PS
                           </span>
@@ -236,7 +236,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                         }
                       }}
                       className="rounded p-1 text-xs hover:bg-white/10 transition-colors flex-shrink-0"
-                      style={{ color: isEditingThis ? 'var(--color-claude)' : 'var(--color-text-muted)' }}
+                      style={{ color: isEditingThis ? 'var(--color-accent)' : 'var(--color-text-muted)' }}
                       title="Edit command"
                     >
                       ✎
@@ -255,7 +255,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                   {isEditingThis && (
                     <div
                       className="mt-1 rounded-md p-3 space-y-2"
-                      style={{ background: 'var(--color-surface)', border: '1px solid var(--color-claude)' }}
+                      style={{ background: 'var(--color-surface)', border: '1px solid var(--color-accent)' }}
                     >
                       <div>
                         <label className="mb-1 block text-xs" style={{ color: 'var(--color-text-muted)' }}>Name</label>
@@ -303,9 +303,9 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                               onClick={() => setEditCmdShell(opt.value)}
                               className="rounded px-2.5 py-1 text-xs font-medium transition-colors"
                               style={{
-                                background: editCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-surface-2)',
-                                color: editCmdShell === opt.value ? '#fff' : 'var(--color-text-muted)',
-                                border: `1px solid ${editCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-border)'}`,
+                                background: editCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-surface-2)',
+                                color: editCmdShell === opt.value ? 'var(--color-on-accent)' : 'var(--color-text-muted)',
+                                border: `1px solid ${editCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-border)'}`,
                               }}
                             >
                               {opt.label}
@@ -321,7 +321,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                         />
                         Run automatically on new worktrees
                       </label>
-                      {editCmdError && <p className="text-xs" style={{ color: '#f87171' }}>{editCmdError}</p>}
+                      {editCmdError && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{editCmdError}</p>}
                       <div className="flex justify-end gap-2 pt-0.5">
                         <button
                           type="button"
@@ -345,7 +345,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                             }
                           }}
                           className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-                          style={{ background: 'var(--color-claude)', color: '#fff' }}
+                          style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
                         >
                           Save
                         </button>
@@ -441,9 +441,9 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                     onClick={() => setNewCmdShell(opt.value)}
                     className="rounded px-2.5 py-1 text-xs font-medium transition-colors"
                     style={{
-                      background: newCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-surface-2)',
-                      color: newCmdShell === opt.value ? '#fff' : 'var(--color-text-muted)',
-                      border: `1px solid ${newCmdShell === opt.value ? 'var(--color-claude)' : 'var(--color-border)'}`,
+                      background: newCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-surface-2)',
+                      color: newCmdShell === opt.value ? 'var(--color-on-accent)' : 'var(--color-text-muted)',
+                      border: `1px solid ${newCmdShell === opt.value ? 'var(--color-accent)' : 'var(--color-border)'}`,
                     }}
                   >
                     {opt.label}
@@ -459,7 +459,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
               />
               Run automatically on new worktrees
             </label>
-            {cmdError && <p className="text-xs" style={{ color: '#f87171' }}>{cmdError}</p>}
+            {cmdError && <p className="text-xs" style={{ color: 'var(--color-danger)' }}>{cmdError}</p>}
             <div className="flex justify-end">
               <button
                 type="button"
@@ -479,7 +479,7 @@ export default function CommandsEditModal({ projectId, onClose }: Props) {
                   }
                 }}
                 className="rounded px-3 py-1.5 text-xs font-medium disabled:opacity-40"
-                style={{ background: 'var(--color-claude)', color: '#fff' }}
+                style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}
               >
                 Add Command
               </button>

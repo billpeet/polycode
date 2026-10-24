@@ -71,7 +71,7 @@ export default function CollapsedSidebar({
                 {hasRunning && (
                   <span
                     className="absolute right-2.5 top-1.5 h-1.5 w-1.5 rounded-full"
-                    style={{ background: '#4ade80' }}
+                    style={{ background: 'var(--color-success)' }}
                   />
                 )}
               </button>

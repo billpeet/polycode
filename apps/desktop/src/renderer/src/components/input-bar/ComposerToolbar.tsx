@@ -30,10 +30,10 @@ function catalogFor(provider: Provider, live: readonly ModelOption[]): readonly 
 // Per-mode highlight colors for the permission segmented control. Auto gets
 // violet to sit visually between Ask (green) and Yolo (orange).
 const PERMISSION_MODE_ACCENTS: Record<PermissionMode, { background: string; color: string }> = {
-  ask: { background: 'rgba(34, 197, 94, 0.12)', color: '#22c55e' },
-  auto: { background: 'rgba(167, 139, 250, 0.15)', color: '#a78bfa' },
-  workspace: { background: 'rgba(59, 130, 246, 0.14)', color: '#60a5fa' },
-  yolo: { background: 'rgba(249, 115, 22, 0.15)', color: '#f97316' },
+  ask: { background: 'color-mix(in srgb, var(--color-success) 12%, transparent)', color: 'var(--color-success)' },
+  auto: { background: 'color-mix(in srgb, var(--color-purple) 15%, transparent)', color: 'var(--color-purple)' },
+  workspace: { background: 'color-mix(in srgb, var(--color-info) 14%, transparent)', color: 'var(--color-info)' },
+  yolo: { background: 'color-mix(in srgb, var(--color-orange) 15%, transparent)', color: 'var(--color-orange)' },
 }
 
 interface ComposerToolbarProps {
@@ -200,9 +200,9 @@ export default function ComposerToolbar({
         title={planMode ? 'Plan mode: ON - create a plan before executing' : 'Plan mode: OFF - execute directly'}
         className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
         style={{
-          background: planMode ? 'rgba(232, 123, 95, 0.15)' : 'transparent',
-          color: planMode ? 'var(--color-claude)' : 'var(--color-text-muted)',
-          border: `1px solid ${planMode ? 'rgba(232, 123, 95, 0.3)' : 'transparent'}`,
+          background: planMode ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : 'transparent',
+          color: planMode ? 'var(--color-accent)' : 'var(--color-text-muted)',
+          border: `1px solid ${planMode ? 'color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'transparent'}`,
         }}
       >
         <PlanIcon />
@@ -219,9 +219,9 @@ export default function ComposerToolbar({
               : 'Fast mode: OFF - standard processing speed'}
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
             style={{
-              background: fastMode ? 'rgba(255, 106, 0, 0.15)' : 'transparent',
-              color: fastMode ? '#ff6a00' : 'var(--color-text-muted)',
-              border: `1px solid ${fastMode ? 'rgba(255, 106, 0, 0.3)' : 'transparent'}`,
+              background: fastMode ? 'color-mix(in srgb, var(--color-orange) 15%, transparent)' : 'transparent',
+              color: fastMode ? 'var(--color-orange)' : 'var(--color-text-muted)',
+              border: `1px solid ${fastMode ? 'color-mix(in srgb, var(--color-orange) 30%, transparent)' : 'transparent'}`,
             }}
           >
             <FastIcon />
@@ -240,9 +240,9 @@ export default function ComposerToolbar({
               : 'Thinking: OFF - use the model default'}
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium transition-all duration-150 disabled:opacity-30 mb-2"
             style={{
-              background: cursorThinking ? 'rgba(139, 92, 246, 0.15)' : 'transparent',
-              color: cursorThinking ? '#8b5cf6' : 'var(--color-text-muted)',
-              border: `1px solid ${cursorThinking ? 'rgba(139, 92, 246, 0.3)' : 'transparent'}`,
+              background: cursorThinking ? 'color-mix(in srgb, var(--color-purple) 15%, transparent)' : 'transparent',
+              color: cursorThinking ? 'var(--color-purple)' : 'var(--color-text-muted)',
+              border: `1px solid ${cursorThinking ? 'color-mix(in srgb, var(--color-purple) 30%, transparent)' : 'transparent'}`,
             }}
           >
             Thinking
@@ -289,7 +289,7 @@ export default function ComposerToolbar({
           <label
             className="flex items-center gap-1 text-xs cursor-pointer select-none"
             style={{
-              color: currentThread.use_wsl ? '#fbbf24' : 'var(--color-text-muted)',
+              color: currentThread.use_wsl ? 'var(--color-warning)' : 'var(--color-text-muted)',
               opacity: currentThread.has_messages ? 0.4 : 1,
             }}
             title={currentThread.has_messages ? 'WSL setting is locked after first message' : 'Run CLI via WSL'}
@@ -303,7 +303,7 @@ export default function ComposerToolbar({
                 const distro = checked ? (currentThread.wsl_distro ?? availableDistros[0] ?? null) : null
                 setWsl(threadId, checked, distro)
               }}
-              className="accent-yellow-400"
+              className="accent-warning"
               style={{ width: 12, height: 12 }}
             />
             WSL
@@ -315,8 +315,8 @@ export default function ComposerToolbar({
               disabled={currentThread.has_messages}
               className="text-xs bg-transparent border rounded px-1 py-0.5 outline-none cursor-pointer"
               style={{
-                color: '#fbbf24',
-                borderColor: 'rgba(251, 191, 36, 0.3)',
+                color: 'var(--color-warning)',
+                borderColor: 'color-mix(in srgb, var(--color-warning) 30%, transparent)',
                 background: 'var(--color-surface)',
                 opacity: currentThread.has_messages ? 0.4 : 1,
               }}
@@ -369,7 +369,7 @@ export default function ComposerToolbar({
       {isProcessing && (
         <>
           <span className="mb-2 text-xs" style={{ color: 'var(--color-text-muted)', opacity: 0.5 }}>|</span>
-          <span className="mb-2 font-mono text-xs tabular-nums" style={{ color: 'var(--color-claude)' }}>
+          <span className="mb-2 font-mono text-xs tabular-nums" style={{ color: 'var(--color-accent)' }}>
             {formatElapsed(elapsedSeconds)}
           </span>
         </>

@@ -17,9 +17,9 @@ function StatusIcon({ status }: { status: Todo['status'] }) {
           width: 16,
           height: 16,
           borderRadius: '50%',
-          background: 'rgba(74, 222, 128, 0.15)',
-          border: '1.5px solid #4ade80',
-          color: '#4ade80',
+          background: 'color-mix(in srgb, var(--color-success) 15%, transparent)',
+          border: '1.5px solid var(--color-success)',
+          color: 'var(--color-success)',
           fontSize: '0.55rem',
           fontWeight: 700,
           flexShrink: 0,
@@ -44,7 +44,7 @@ function StatusIcon({ status }: { status: Todo['status'] }) {
       >
         <span
           className="streaming-dot"
-          style={{ background: 'var(--color-claude)', width: 7, height: 7 }}
+          style={{ background: 'var(--color-accent)', width: 7, height: 7 }}
         />
       </span>
     )
@@ -102,7 +102,7 @@ export default function TodoPanel({ threadId }: Props) {
                 key={idx}
                 className="flex items-start gap-2.5 rounded px-2 py-2"
                 style={{
-                  background: todo.status === 'in_progress' ? 'rgba(232, 123, 95, 0.07)' : 'transparent',
+                  background: todo.status === 'in_progress' ? 'color-mix(in srgb, var(--color-accent) 7%, transparent)' : 'transparent',
                   opacity: todo.status === 'completed' ? 0.45 : 1,
                   transition: 'opacity 0.2s, background 0.2s',
                 }}

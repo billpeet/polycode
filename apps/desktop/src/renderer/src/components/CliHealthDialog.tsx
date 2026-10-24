@@ -184,26 +184,26 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
       return <span style={{ color: 'var(--color-text-muted)' }}>Checking…</span>
     }
     if (status.error) {
-      return <span style={{ color: '#f87171' }}>Error</span>
+      return <span style={{ color: 'var(--color-danger)' }}>Error</span>
     }
     if (!status.result) return null
     const { installed, currentVersion, latestVersion, upToDate } = status.result
     if (!installed) {
-      return <span style={{ color: '#f87171' }}>Not installed</span>
+      return <span style={{ color: 'var(--color-danger)' }}>Not installed</span>
     }
     if (!currentVersion) {
       return <span style={{ color: 'var(--color-text-muted)' }}>Available</span>
     }
     if (upToDate === true) {
       return (
-        <span style={{ color: '#4ade80' }}>
+        <span style={{ color: 'var(--color-success)' }}>
           v{currentVersion} — up to date
         </span>
       )
     }
     if (upToDate === false) {
       return (
-        <span style={{ color: '#fbbf24' }}>
+        <span style={{ color: 'var(--color-warning)' }}>
           v{currentVersion}
           {latestVersion ? ` — latest v${latestVersion}` : ''}
         </span>
@@ -220,9 +220,9 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
 
   function statusIcon(status: ProviderStatus) {
     if (status.loading) return <span style={{ opacity: 0.4 }}>●</span>
-    if (status.error || (status.result && !status.result.installed)) return <span style={{ color: '#f87171' }}>✗</span>
-    if (status.result?.upToDate === false) return <span style={{ color: '#fbbf24' }}>↑</span>
-    if (status.result?.installed) return <span style={{ color: '#4ade80' }}>✓</span>
+    if (status.error || (status.result && !status.result.installed)) return <span style={{ color: 'var(--color-danger)' }}>✗</span>
+    if (status.result?.upToDate === false) return <span style={{ color: 'var(--color-warning)' }}>↑</span>
+    if (status.result?.installed) return <span style={{ color: 'var(--color-success)' }}>✓</span>
     return null
   }
 
@@ -297,8 +297,8 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
                         onClick={() => handleUpdate(provider)}
                         className="rounded px-2 py-0.5 text-xs font-medium transition-colors"
                         style={{
-                          background: 'var(--color-claude)',
-                          color: '#fff',
+                          background: 'var(--color-accent)',
+                          color: 'var(--color-on-accent)',
                         }}
                       >
                         Update
@@ -323,12 +323,12 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
 
                 {/* Error detail */}
                 {status.error && (
-                  <p className="mt-1.5 text-xs" style={{ color: '#f87171' }}>{status.error}</p>
+                  <p className="mt-1.5 text-xs" style={{ color: 'var(--color-danger)' }}>{status.error}</p>
                 )}
 
                 {/* Capability advisory (e.g. Cursor model picker requirements) */}
                 {status.result?.advisory && (
-                  <p className="mt-1.5 text-xs" style={{ color: '#fbbf24' }}>{status.result.advisory}</p>
+                  <p className="mt-1.5 text-xs" style={{ color: 'var(--color-warning)' }}>{status.result.advisory}</p>
                 )}
 
                 {/* Update output */}
@@ -338,7 +338,7 @@ export function CliHealthPanel({ hideHeader }: PanelProps) {
                     style={{
                       background: 'var(--color-surface-2)',
                       border: '1px solid var(--color-border)',
-                      color: status.updateResult.success ? '#4ade80' : '#f87171',
+                      color: status.updateResult.success ? 'var(--color-success)' : 'var(--color-danger)',
                       fontFamily: 'monospace',
                       whiteSpace: 'pre-wrap',
                       wordBreak: 'break-all',

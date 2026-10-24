@@ -30,6 +30,7 @@ vi.mock('../../lib/client', async () => {
   },
 } } })
 vi.mock('@xterm/xterm', () => ({ Terminal: class {
+  options: Record<string, unknown> = {}
   write = write
   reset = reset
   loadAddon() {}

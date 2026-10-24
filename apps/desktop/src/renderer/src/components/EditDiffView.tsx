@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import { MultiFileDiff } from '@pierre/diffs/react'
 import type { FileContents } from '@pierre/diffs/react'
 import { diffLanguageFromPath } from '../lib/diffLanguage'
+import { useDiffTheme } from '../lib/theme'
 
 interface Props {
   /** For Edit: old_string to replace */
@@ -16,6 +17,7 @@ interface Props {
 
 export default function EditDiffView({ oldString, newString, filePath, toolName }: Props) {
   const lang = diffLanguageFromPath(filePath)
+  const diffTheme = useDiffTheme()
   const displayName = filePath ?? (toolName === 'Write' ? 'new file' : 'edit')
 
   const oldFile = useMemo<FileContents>(() => {
@@ -41,7 +43,7 @@ export default function EditDiffView({ oldString, newString, filePath, toolName 
         oldFile={oldFile}
         newFile={newFile}
         options={{
-          theme: 'pierre-dark',
+          theme: diffTheme,
           diffStyle: 'unified',
           disableFileHeader: false,
           overflow: 'wrap',

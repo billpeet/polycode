@@ -122,7 +122,7 @@ export function SeedProductionPanel({ profile }: { profile: AppProfile }) {
         <button disabled={busy || loading || !catalog || (!projectIds.length && !threadIds.length)} className="rounded px-3 py-1.5 disabled:opacity-40" style={controlStyle} onClick={() => void importSelection()}>{busy ? 'Importing…' : 'Import selected'}</button>
         <button disabled={busy} onClick={() => { setProjectIds([]); setThreadIds([]) }}>Clear selection</button>
       </div>
-      {error && <p role="alert" className="break-words" style={{ color: 'var(--color-error, #ef4444)' }}>{error}</p>}
+      {error && <p role="alert" className="break-words" style={{ color: 'var(--color-danger-strong)' }}>{error}</p>}
       {notice && <p role="status">{notice}</p>}
     </div>
   )

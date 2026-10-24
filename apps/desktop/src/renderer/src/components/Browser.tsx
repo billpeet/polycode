@@ -168,9 +168,9 @@ function BrowserTabView({ locationId, tab, session, active, onWebview }: TabView
             onClick={retry}
             className="text-xs rounded-md px-3 py-1.5 hover:opacity-80"
             style={{
-              background: 'rgba(232, 123, 95, 0.15)',
-              color: 'var(--color-claude)',
-              border: '1px solid rgba(232, 123, 95, 0.3)',
+              background: 'color-mix(in srgb, var(--color-accent) 15%, transparent)',
+              color: 'var(--color-accent)',
+              border: '1px solid color-mix(in srgb, var(--color-accent) 30%, transparent)',
             }}
           >
             Retry
@@ -275,7 +275,7 @@ export default function BrowserContent({ locationId }: Props) {
         {session.proxied && (
           <span
             className="text-[10px] font-mono rounded px-1.5 py-0.5"
-            style={{ color: '#4ade80', background: 'rgba(74, 222, 128, 0.12)' }}
+            style={{ color: 'var(--color-success)', background: 'color-mix(in srgb, var(--color-success) 12%, transparent)' }}
             title={`localhost traffic is tunneled to ${session.sshLabel}`}
           >
             via {session.sshLabel}
@@ -302,8 +302,8 @@ export default function BrowserContent({ locationId }: Props) {
               onClick={() => activateTab(locationId, tab.id)}
               className="group flex items-center gap-1.5 px-2.5 py-1.5 rounded-t-md cursor-pointer max-w-[180px] flex-shrink-0"
               style={{
-                background: isActive ? 'rgba(232, 123, 95, 0.12)' : 'transparent',
-                borderBottom: isActive ? '2px solid var(--color-claude)' : '2px solid transparent',
+                background: isActive ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
+                borderBottom: isActive ? '2px solid var(--color-accent)' : '2px solid transparent',
               }}
               title={tab.url ?? 'New Tab'}
             >

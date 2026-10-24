@@ -2,6 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react'
 import { marked } from 'marked'
 import { sanitizeMarkdownHtml } from '../lib/sanitizeMarkdown'
 import { getHighlighter, onReady } from '../lib/shiki'
+import { getSyntaxTheme, useSyntaxTheme } from '../lib/theme'
 import { reportPerf, sizeBucket } from '../lib/perf'
 import {
   filePathFromMarkdownCopyTarget,
@@ -37,7 +38,7 @@ renderer.code = function ({ text, lang }) {
   if (hl) {
     const loaded = hl.getLoadedLanguages()
     language = lang && loaded.includes(lang) ? lang : 'text'
-    codeHtml = hl.codeToHtml(text, { lang: language, theme: 'github-dark' })
+    codeHtml = hl.codeToHtml(text, { lang: language, theme: getSyntaxTheme() })
   } else {
     language = lang || 'plaintext'
     codeHtml = `<pre><code>${escapeHtml(text)}</code></pre>`
@@ -75,6 +76,8 @@ function MarkdownContent({ content, className = '' }: Props) {
   const [shikiReady, setShikiReady] = useState(!!getHighlighter())
   const selectFile = useFilesStore((state) => state.selectFile)
   const setRightPanelTab = useUiStore((state) => state.setRightPanelTab)
+  // The code renderer reads the theme itself; this re-renders when it changes.
+  const syntaxTheme = useSyntaxTheme()
 
   useEffect(() => onReady(() => setShikiReady(true)), [])
 
@@ -142,7 +145,7 @@ function MarkdownContent({ content, className = '' }: Props) {
       cancelImages()
       container.removeEventListener('click', handleClick)
     }
-  }, [content, selectFile, setRightPanelTab, shikiReady])
+  }, [content, selectFile, setRightPanelTab, shikiReady, syntaxTheme])
 
   return (
     <div

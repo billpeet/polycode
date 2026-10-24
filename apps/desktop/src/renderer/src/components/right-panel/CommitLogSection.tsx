@@ -27,11 +27,11 @@ function shortRelativeTime(iso: string): string {
 /** Colour-coded status badge, mirroring the palette used by FileGroup. */
 function statusColour(status: GitFileChange['status']): string {
   switch (status) {
-    case 'A': return '#4ade80'   // green — added
-    case 'M': return '#60a5fa'   // blue — modified
-    case 'D': return '#f87171'   // red — deleted
-    case 'R': return '#c084fc'   // purple — renamed
-    case 'U': return '#fbbf24'   // amber — unmerged
+    case 'A': return 'var(--color-success)'   // green — added
+    case 'M': return 'var(--color-info)'   // blue — modified
+    case 'D': return 'var(--color-danger)'   // red — deleted
+    case 'R': return 'var(--color-purple)'   // purple — renamed
+    case 'U': return 'var(--color-warning)'   // amber — unmerged
     case '?': return 'var(--color-text-muted)'
     default:  return 'var(--color-text-muted)'
   }
@@ -201,7 +201,7 @@ export function CommitLogSection({
                     <svg width="7" height="7" viewBox="0 0 8 8" fill="currentColor" style={{ transform: isExpanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.15s', flexShrink: 0, color: 'var(--color-text-muted)' }}>
                       <path d="M0 2l4 4 4-4z" />
                     </svg>
-                    <span className="text-[10px] font-mono flex-shrink-0" style={{ color: isMerge ? 'var(--color-claude)' : 'var(--color-text-muted)', width: 54 }}>
+                    <span className="text-[10px] font-mono flex-shrink-0" style={{ color: isMerge ? 'var(--color-accent)' : 'var(--color-text-muted)', width: 54 }}>
                       {commit.shortSha}
                     </span>
                     <span className="text-xs truncate min-w-0 flex-1" style={{ color: 'var(--color-text)' }}>
@@ -228,7 +228,7 @@ export function CommitLogSection({
                                 <button
                                   onClick={() => handleFileClick(commit, file)}
                                   className="w-full flex items-center gap-2 px-2 py-0.5 hover:bg-white/5 transition-colors text-left rounded"
-                                  style={{ background: isCurrent ? 'rgba(232, 123, 95, 0.08)' : undefined }}
+                                  style={{ background: isCurrent ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)' : undefined }}
                                   title={file.oldPath ? `${file.oldPath} → ${file.path}` : file.path}
                                 >
                                   <span className="text-[9px] font-mono flex-shrink-0 w-3" style={{ color: statusColour(file.status) }}>

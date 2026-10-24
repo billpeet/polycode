@@ -59,11 +59,11 @@ const EMPTY_LOCATIONS: RepoLocation[] = []
 function FileStatusBadge({ status, staged }: { status: GitFileChange['status']; staged: boolean }) {
   const label = status === 'M' ? 'M' : status === 'A' ? 'A' : status === 'D' ? 'D' : status === 'R' ? 'R' : status === 'U' ? 'U' : '?'
   const color =
-    status === 'M' ? '#e2c08d'
-    : status === 'A' ? '#4ade80'
-    : status === 'D' ? '#f87171'
-    : status === 'R' ? '#a78bfa'
-    : status === 'U' ? '#f87171'
+    status === 'M' ? 'var(--color-gold)'
+    : status === 'A' ? 'var(--color-success)'
+    : status === 'D' ? 'var(--color-danger)'
+    : status === 'R' ? 'var(--color-purple)'
+    : status === 'U' ? 'var(--color-danger)'
     : 'var(--color-text-muted)'
 
   return (
@@ -156,7 +156,7 @@ function FileGroup({
               onGroupDiscard()
             }}
             className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all"
-            style={{ color: '#f87171' }}
+            style={{ color: 'var(--color-danger)' }}
             title={`Discard All ${label}`}
           >
             <DiscardIcon />
@@ -205,7 +205,7 @@ function FileGroup({
                   <button
                     onClick={() => onFileDiscard(file)}
                     className="opacity-0 group-hover:opacity-100 rounded p-0.5 hover:bg-white/10 transition-all flex-shrink-0"
-                    style={{ color: '#f87171' }}
+                    style={{ color: 'var(--color-danger)' }}
                     title="Discard changes"
                   >
                     <DiscardIcon />
@@ -499,7 +499,7 @@ function BranchControls({
                   if (branchMode === 'clean' && !scanned && !scanning) void handleScan()
                 }}
                 className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wider transition-colors"
-                style={{ color: mode === branchMode ? 'var(--color-text)' : 'var(--color-text-muted)', borderBottom: mode === branchMode ? '2px solid var(--color-claude)' : '2px solid transparent', marginBottom: -1 }}
+                style={{ color: mode === branchMode ? 'var(--color-text)' : 'var(--color-text-muted)', borderBottom: mode === branchMode ? '2px solid var(--color-accent)' : '2px solid transparent', marginBottom: -1 }}
               >
                 {branchMode === 'switch' ? 'Switch' : branchMode === 'new' ? 'New' : branchMode === 'merge' ? 'Merge' : 'Clean'}
               </button>
@@ -527,16 +527,16 @@ function BranchControls({
                     {filteredLocal.length > 0 && <>
                       <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Local</div>
                       {filteredLocal.map((branch) => (
-                        <button key={branch} onClick={() => setSelectedBranch(branch === currentBranch ? null : branch)} disabled={branch === currentBranch} className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 disabled:opacity-40 transition-colors" style={{ background: selectedBranch === branch ? 'rgba(232,123,95,0.12)' : 'transparent', color: branch === currentBranch ? 'var(--color-claude)' : 'var(--color-text)' }}>
+                        <button key={branch} onClick={() => setSelectedBranch(branch === currentBranch ? null : branch)} disabled={branch === currentBranch} className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 disabled:opacity-40 transition-colors" style={{ background: selectedBranch === branch ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent', color: branch === currentBranch ? 'var(--color-accent)' : 'var(--color-text)' }}>
                           <span className="text-[10px] font-mono truncate flex-1">{branch}</span>
-                          {branch === currentBranch && <span style={{ fontSize: '0.55rem', color: 'var(--color-claude)' }}>current</span>}
+                          {branch === currentBranch && <span style={{ fontSize: '0.55rem', color: 'var(--color-accent)' }}>current</span>}
                         </button>
                       ))}
                     </>}
                     {filteredRemote.length > 0 && <>
                       <div className="px-2 pt-1.5 pb-0.5 text-[9px] font-semibold uppercase tracking-wider" style={{ color: 'var(--color-text-muted)' }}>Remote</div>
                       {filteredRemote.map((branch) => (
-                        <button key={branch} onClick={() => setSelectedBranch(selectedBranch === branch ? null : branch)} className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 transition-colors" style={{ background: selectedBranch === branch ? 'rgba(232,123,95,0.12)' : 'transparent', color: 'var(--color-text)' }}>
+                        <button key={branch} onClick={() => setSelectedBranch(selectedBranch === branch ? null : branch)} className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 transition-colors" style={{ background: selectedBranch === branch ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent', color: 'var(--color-text)' }}>
                           <span className="text-[10px] font-mono truncate flex-1">{branch}</span>
                         </button>
                       ))}
@@ -545,12 +545,12 @@ function BranchControls({
                   </div>
 
                   {selectedBranch && <div className="space-y-1.5">
-                    {hasPendingChanges && <p className="text-[10px] rounded px-2 py-1" style={{ background: 'rgba(248,113,113,0.1)', color: '#f87171', border: '1px solid rgba(248,113,113,0.2)' }}>Warning: uncommitted changes may be lost.</p>}
+                    {hasPendingChanges && <p className="text-[10px] rounded px-2 py-1" style={{ background: 'color-mix(in srgb, var(--color-danger) 10%, transparent)', color: 'var(--color-danger)', border: '1px solid color-mix(in srgb, var(--color-danger) 20%, transparent)' }}>Warning: uncommitted changes may be lost.</p>}
                     {isRemoteSelected && <label className="flex items-center gap-1.5 cursor-pointer">
-                      <input type="checkbox" checked={mergeFromMaster} onChange={(e) => setMergeFromMaster(e.target.checked)} className="rounded" style={{ accentColor: 'var(--color-claude)' }} />
+                      <input type="checkbox" checked={mergeFromMaster} onChange={(e) => setMergeFromMaster(e.target.checked)} className="rounded" style={{ accentColor: 'var(--color-accent)' }} />
                       <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Also merge from origin/master</span>
                     </label>}
-                    <button onClick={() => void handleSwitch()} disabled={switching} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>
+                    <button onClick={() => void handleSwitch()} disabled={switching} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
                       {switching ? 'Checking out…' : `Checkout ${selectedBranch}`}
                     </button>
                   </div>}
@@ -568,10 +568,10 @@ function BranchControls({
                 </select>
               </div>
               <label className="flex items-center gap-1.5 cursor-pointer">
-                <input type="checkbox" checked={pullFirst} onChange={(e) => setPullFirst(e.target.checked)} style={{ accentColor: 'var(--color-claude)' }} />
+                <input type="checkbox" checked={pullFirst} onChange={(e) => setPullFirst(e.target.checked)} style={{ accentColor: 'var(--color-accent)' }} />
                 <span className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>Pull origin first (use latest remote)</span>
               </label>
-              <button onClick={() => void handleCreate()} disabled={creating || !newName.trim() || !baseBranch} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>
+              <button onClick={() => void handleCreate()} disabled={creating || !newName.trim() || !baseBranch} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
                 {creating ? 'Creating…' : 'Create Branch'}
               </button>
             </div>
@@ -585,19 +585,19 @@ function BranchControls({
               ) : (
                 <div className="rounded overflow-y-auto space-y-0.5" style={{ maxHeight: 120, background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
                   {filteredAll.filter((branch) => branch !== currentBranch).length === 0 ? <p className="px-2 py-2 text-[10px] text-center" style={{ color: 'var(--color-text-muted)' }}>No branches match.</p> : filteredAll.filter((branch) => branch !== currentBranch).map((branch) => (
-                    <button key={branch} onClick={() => { setMergeSource(mergeSource === branch ? '' : branch); setMergeConflicts([]) }} className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 transition-colors" style={{ background: mergeSource === branch ? 'rgba(232,123,95,0.12)' : 'transparent', color: 'var(--color-text)' }}>
+                    <button key={branch} onClick={() => { setMergeSource(mergeSource === branch ? '' : branch); setMergeConflicts([]) }} className="flex w-full items-center gap-1.5 px-2 py-1 text-left hover:bg-white/5 transition-colors" style={{ background: mergeSource === branch ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent', color: 'var(--color-text)' }}>
                       <span className="text-[10px] font-mono truncate flex-1">{branch}</span>
                     </button>
                   ))}
                 </div>
               )}
               {mergeConflicts.length > 0 && (
-                <div className="rounded px-2 py-1.5 space-y-1" style={{ background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)' }}>
-                  <p className="text-[10px] font-semibold" style={{ color: '#f87171' }}>Conflicts in {mergeConflicts.length} file{mergeConflicts.length !== 1 ? 's' : ''} - resolve and commit:</p>
+                <div className="rounded px-2 py-1.5 space-y-1" style={{ background: 'color-mix(in srgb, var(--color-danger) 8%, transparent)', border: '1px solid color-mix(in srgb, var(--color-danger) 25%, transparent)' }}>
+                  <p className="text-[10px] font-semibold" style={{ color: 'var(--color-danger)' }}>Conflicts in {mergeConflicts.length} file{mergeConflicts.length !== 1 ? 's' : ''} - resolve and commit:</p>
                   <ul className="space-y-0.5">{mergeConflicts.map((file) => <li key={file} className="text-[10px] font-mono truncate" style={{ color: '#fca5a5' }} title={file}>{file}</li>)}</ul>
                 </div>
               )}
-              <button onClick={() => void handleMerge()} disabled={merging || !mergeSource} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>
+              <button onClick={() => void handleMerge()} disabled={merging || !mergeSource} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>
                 {merging ? 'Merging…' : mergeSource ? `Merge ${mergeSource}` : 'Merge'}
               </button>
             </div>
@@ -634,13 +634,13 @@ function BranchControls({
                             return next
                           })
                         }}
-                        style={{ accentColor: 'var(--color-claude)', flexShrink: 0 }}
+                        style={{ accentColor: 'var(--color-accent)', flexShrink: 0 }}
                       />
                       <span className="text-[10px] font-mono truncate" style={{ color: 'var(--color-text)' }}>{branch}</span>
                     </label>
                   ))}
                 </div>
-                <button onClick={() => void handleDeleteBranches()} disabled={deleting || selectedForDelete.size === 0} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'rgba(248, 113, 113, 0.15)', color: '#f87171', border: '1px solid rgba(248, 113, 113, 0.3)' }}>
+                <button onClick={() => void handleDeleteBranches()} disabled={deleting || selectedForDelete.size === 0} className="w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'color-mix(in srgb, var(--color-danger) 15%, transparent)', color: 'var(--color-danger)', border: '1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)' }}>
                   {deleting ? 'Deleting…' : selectedForDelete.size > 0 ? `Delete ${selectedForDelete.size} branch${selectedForDelete.size !== 1 ? 'es' : ''}` : 'Delete'}
                 </button>
               </>}
@@ -1282,13 +1282,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
               <button onClick={() => void refreshPullRequests({ force: true })} disabled={loadingPrs || (prCapability?.available === false && prCapability.reason === 'not-repository')} className="whitespace-nowrap rounded px-1.5 py-0.5 text-[10px] hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-text-muted)' }} title="Retry pull request refresh now">{loadingPrs ? 'Refreshing…' : 'Retry'}</button>
             </div>
           </div>
-          {!prsCollapsed && (prError ? <p className="text-[11px] leading-relaxed" style={{ color: '#f87171' }}>{prError}</p> : prCapability && !prCapability.available ? <div className="rounded px-2 py-2" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{prCapability.message}</p>{prCapability.setupCommand && <button onClick={() => void navigator.clipboard.writeText(prCapability.setupCommand!).catch(() => undefined)} className="mt-2 rounded px-2 py-1 text-[10px] hover:bg-white/10" style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Copy setup command</button>}</div> : <>
+          {!prsCollapsed && (prError ? <p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-danger)' }}>{prError}</p> : prCapability && !prCapability.available ? <div className="rounded px-2 py-2" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><p className="text-[11px] leading-relaxed" style={{ color: 'var(--color-text-muted)' }}>{prCapability.message}</p>{prCapability.setupCommand && <button onClick={() => void navigator.clipboard.writeText(prCapability.setupCommand!).catch(() => undefined)} className="mt-2 rounded px-2 py-1 text-[10px] hover:bg-white/10" style={{ border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Copy setup command</button>}</div> : <>
             <div className="mb-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}>
               <p className="text-[10px] uppercase tracking-wide" style={{ color: 'var(--color-text-muted)', opacity: 0.8 }}>Current PR</p>
               {currentPr ? <div className="mt-1">
                 <div className="flex items-center gap-1.5 min-w-0">
-                  <p className="text-xs truncate min-w-0 flex-1" style={{ color: 'var(--color-text)' }}>{currentPr.url ? <a href={currentPr.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{currentPr.id}</a> : `#${currentPr.id}`} {currentPr.title}</p>
-                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase" style={{ background: currentPrIsMerged ? 'rgba(74, 222, 128, 0.12)' : 'rgba(255, 255, 255, 0.08)', color: currentPrIsMerged ? '#4ade80' : 'var(--color-text-muted)' }}>{currentPr.status}</span>
+                  <p className="text-xs truncate min-w-0 flex-1" style={{ color: 'var(--color-text)' }}>{currentPr.url ? <a href={currentPr.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'var(--color-accent)' }}>#{currentPr.id}</a> : `#${currentPr.id}`} {currentPr.title}</p>
+                  <span className="shrink-0 rounded px-1.5 py-0.5 text-[9px] uppercase" style={{ background: currentPrIsMerged ? 'color-mix(in srgb, var(--color-success) 12%, transparent)' : 'rgba(255, 255, 255, 0.08)', color: currentPrIsMerged ? 'var(--color-success)' : 'var(--color-text-muted)' }}>{currentPr.status}</span>
                 </div>
                 <p className="text-[10px]" style={{ color: 'var(--color-text-muted)' }}>{currentPr.sourceBranch} → {currentPr.targetBranch}</p>
                 <PullRequestDetails pr={currentPr} />
@@ -1296,23 +1296,23 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
               </div> : <p className="mt-1 text-xs" style={{ color: 'var(--color-text-muted)' }}>No open PR for <code>{gitStatus.branch}</code>.</p>}
             </div>
             {otherOpenPrsAll.length > 5 && <input type="text" value={prSearch} onChange={(e) => setPrSearch(e.target.value)} placeholder={`Search ${otherOpenPrsAll.length} pull requests…`} className="mb-2 w-full rounded px-2 py-1 text-[11px] outline-none" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }} />}
-            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'var(--color-claude)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p><PullRequestDetails pr={pr} /></div><div className="flex shrink-0 overflow-hidden rounded" style={{ background: 'var(--color-claude)' }}><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ color: '#fff' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : checkingOutPrWorktreeId === pr.id ? 'Creating…' : 'C/O'}</button><button onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setPrCheckoutMenu({ pr, x: rect.right - 180, y: rect.bottom }) }} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-1 py-1 text-[10px] transition-opacity disabled:opacity-40 hover:bg-black/10" style={{ borderLeft: '1px solid rgba(255,255,255,0.25)', color: '#fff' }} title="More checkout options" aria-label={`More checkout options for PR #${pr.id}`} aria-haspopup="menu"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true"><path d="M0 2l4 4 4-4z" /></svg></button></div></div>)}</div>
+            <div className="space-y-1 mb-2 overflow-y-auto" style={{ maxHeight: '320px' }}>{otherOpenPrs.length === 0 ? <p className="text-xs" style={{ color: 'var(--color-text-muted)' }}>{otherOpenPrsAll.length === 0 ? 'No open pull requests.' : 'No matching pull requests.'}</p> : otherOpenPrs.map((pr) => <div key={pr.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)' }}><div className="min-w-0"><p className="text-xs truncate" style={{ color: 'var(--color-text)' }}>{pr.url ? <a href={pr.url} target="_blank" rel="noreferrer" className="hover:underline" style={{ color: 'var(--color-accent)' }}>#{pr.id}</a> : `#${pr.id}`} {pr.title}</p><p className="text-[10px] truncate" style={{ color: 'var(--color-text-muted)' }}>{pr.sourceBranch} → {pr.targetBranch}</p><PullRequestDetails pr={pr} /></div><div className="flex shrink-0 overflow-hidden rounded" style={{ background: 'var(--color-accent)' }}><button onClick={() => void handleCheckoutPr(pr.id)} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-2 py-1 text-[10px] font-medium transition-opacity disabled:opacity-40" style={{ color: 'var(--color-on-accent)' }} title={`Checkout PR #${pr.id}`}>{checkingOutPrId === pr.id ? 'Checking…' : checkingOutPrWorktreeId === pr.id ? 'Creating…' : 'C/O'}</button><button onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); setPrCheckoutMenu({ pr, x: rect.right - 180, y: rect.bottom }) }} disabled={checkingOutPrId === pr.id || checkingOutPrWorktreeId === pr.id} className="px-1 py-1 text-[10px] transition-opacity disabled:opacity-40 hover:bg-black/10" style={{ borderLeft: '1px solid rgba(255,255,255,0.25)', color: 'var(--color-on-accent)' }} title="More checkout options" aria-label={`More checkout options for PR #${pr.id}`} aria-haspopup="menu"><svg width="8" height="8" viewBox="0 0 8 8" fill="currentColor" aria-hidden="true"><path d="M0 2l4 4 4-4z" /></svg></button></div></div>)}</div>
             {prCheckoutMenu && <ContextMenu x={prCheckoutMenu.x} y={prCheckoutMenu.y} onClose={() => setPrCheckoutMenu(null)} items={[{ id: 'checkout-worktree', label: 'Checkout in worktree', onSelect: () => handleCheckoutPrInWorktree(prCheckoutMenu.pr) }]} />}
             <button onClick={() => setShowCreatePr(true)} disabled={!prProvider || prCapability?.available !== true} className="w-full rounded py-1.5 text-xs font-medium disabled:opacity-40" style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: 'var(--color-text)' }}>Create PR</button>
             {!currentPrIsMerged && postPrActionButton}
           </>)}
         </div>}
         <div className="px-3 pt-2.5 pb-2" style={{ borderBottom: '1px solid var(--color-border)' }}>
-          {isNotRepo ? <div className="py-3 flex flex-col items-center gap-2"><p className="text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No Git repository found.</p><button onClick={async () => { if (!projectPath) return; try { await initRepo(projectPath); addToast({ type: 'success', message: 'Git repository initialised', duration: 3000 }) } catch (err) { addToast({ type: 'error', title: 'Initialise Repository Failed', message: err instanceof Error ? err.message : 'Failed to initialise repository', details: formatErrorDetails({ action: 'git:init', projectPath }, err), duration: 0 }) } }} disabled={isInitializing || !projectPath} className="rounded px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }}>{isInitializing ? 'Initialising…' : 'Initialise Repository'}</button></div> : !gitStatus ? <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>{!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for this thread.' : 'Loading...'}</p> : <>
+          {isNotRepo ? <div className="py-3 flex flex-col items-center gap-2"><p className="text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>No Git repository found.</p><button onClick={async () => { if (!projectPath) return; try { await initRepo(projectPath); addToast({ type: 'success', message: 'Git repository initialised', duration: 3000 }) } catch (err) { addToast({ type: 'error', title: 'Initialise Repository Failed', message: err instanceof Error ? err.message : 'Failed to initialise repository', details: formatErrorDetails({ action: 'git:init', projectPath }, err), duration: 0 }) } }} disabled={isInitializing || !projectPath} className="rounded px-3 py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }}>{isInitializing ? 'Initialising…' : 'Initialise Repository'}</button></div> : !gitStatus ? <p className="py-2 text-xs text-center" style={{ color: 'var(--color-text-muted)' }}>{!thread ? 'Thread not loaded.' : !locationsLoaded ? 'Loading...' : !projectPath ? 'No location for this thread.' : 'Loading...'}</p> : <>
             <div className="relative">
-              <textarea value={commitMsg} onChange={(e) => handleSetCommitMsg(e.target.value)} placeholder={amendMode ? 'Leave unchanged to keep the existing commit message' : 'Commit message (Ctrl+Enter)'} rows={2} onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (!mainBranchCommitsBlocked) void handleCommit() } }} className="w-full resize-none rounded px-2 py-1.5 pr-7 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: amendMode ? '1px solid var(--color-claude)' : '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
-              <button onClick={() => void handleGenerateMessage()} disabled={isGeneratingMessage || totalChanges === 0} className="absolute right-1 top-1 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-claude)' }} title="Generate commit message with AI">{isGeneratingMessage ? <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <SparkleIcon />}</button>
+              <textarea value={commitMsg} onChange={(e) => handleSetCommitMsg(e.target.value)} placeholder={amendMode ? 'Leave unchanged to keep the existing commit message' : 'Commit message (Ctrl+Enter)'} rows={2} onKeyDown={(e) => { if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); if (!mainBranchCommitsBlocked) void handleCommit() } }} className="w-full resize-none rounded px-2 py-1.5 pr-7 text-xs outline-none" style={{ background: 'var(--color-surface-2)', border: amendMode ? '1px solid var(--color-accent)' : '1px solid var(--color-border)', color: 'var(--color-text)', fontFamily: 'inherit' }} />
+              <button onClick={() => void handleGenerateMessage()} disabled={isGeneratingMessage || totalChanges === 0} className="absolute right-1 top-1 rounded p-1 hover:bg-white/10 transition-colors disabled:opacity-40" style={{ color: 'var(--color-accent)' }} title="Generate commit message with AI">{isGeneratingMessage ? <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <SparkleIcon />}</button>
             </div>
-            {mainBranchCommitsBlocked && <p className="mt-1.5 text-[11px]" style={{ color: '#f87171' }}>Commits are disabled on {gitStatus.branch} for this project.</p>}
+            {mainBranchCommitsBlocked && <p className="mt-1.5 text-[11px]" style={{ color: 'var(--color-danger)' }}>Commits are disabled on {gitStatus.branch} for this project.</p>}
             {lastCommit && <div className="mt-1.5 flex items-center justify-between gap-2">
               <label className="flex items-center gap-1.5 cursor-pointer min-w-0 flex-1" title={lastCommit.message}>
-                <input type="checkbox" checked={amendMode} onChange={handleToggleAmend} style={{ accentColor: 'var(--color-claude)', flexShrink: 0 }} />
-                <span className="text-[10px] truncate" style={{ color: amendMode ? 'var(--color-claude)' : 'var(--color-text-muted)' }}>
+                <input type="checkbox" checked={amendMode} onChange={handleToggleAmend} style={{ accentColor: 'var(--color-accent)', flexShrink: 0 }} />
+                <span className="text-[10px] truncate" style={{ color: amendMode ? 'var(--color-accent)' : 'var(--color-text-muted)' }}>
                   Amend: <span className="font-mono">{lastCommit.subject}</span>
                 </span>
               </label>
@@ -1321,7 +1321,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                 {isUndoingCommit ? 'Undoing…' : 'Undo'}
               </button>}
             </div>}
-            <button onClick={() => void handleCommit()} disabled={mainBranchCommitsBlocked || committing || isAmending || isGeneratingMessage || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : totalChanges === 0)} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-claude)', color: '#fff' }} title={mainBranchCommitsBlocked ? `Commits are disabled on ${gitStatus.branch} for this project` : undefined}>{isGeneratingMessage ? 'Generating…' : committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : mainBranchCommitsBlocked ? `Commit disabled on ${gitStatus.branch}` : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
+            <button onClick={() => void handleCommit()} disabled={mainBranchCommitsBlocked || committing || isAmending || isGeneratingMessage || (amendMode ? (!commitMsg.trim() && totalChanges === 0) : totalChanges === 0)} className="mt-1.5 w-full rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: 'var(--color-accent)', color: 'var(--color-on-accent)' }} title={mainBranchCommitsBlocked ? `Commits are disabled on ${gitStatus.branch} for this project` : undefined}>{isGeneratingMessage ? 'Generating…' : committing || isAmending ? (amendMode ? 'Amending…' : 'Committing…') : mainBranchCommitsBlocked ? `Commit disabled on ${gitStatus.branch}` : amendMode ? `Amend${totalChanges > 0 ? ` (${totalChanges})` : ''}` : 'Commit'}</button>
             <div className="flex gap-1.5 mt-1.5">
               <button
                 onClick={async () => {
@@ -1348,13 +1348,13 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
                 }}
                 disabled={isPulling}
                 className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40"
-                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: gitStatus.behind > 0 ? '#f87171' : 'var(--color-text-muted)' }}
+                style={{ background: 'var(--color-surface-2)', border: '1px solid var(--color-border)', color: gitStatus.behind > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)' }}
                 title="Pull from remote (auto-stashes local changes if the tree is dirty)"
               >
                 {isPulling ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12l-4-4h2.5V4h3v4H12L8 12z" /></svg>}
                 Pull{gitStatus.behind > 0 ? ` ↓${gitStatus.behind}` : ''}
               </button>
-              <button onClick={async () => { if (!projectPath) return; try { await pushGit(projectPath); addToast({ type: 'success', message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully', duration: 3000 }); refreshCompareAfterGitOperation() } catch (err) { reportGitError(err, 'Push failed') } }} disabled={isPushing} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: !gitStatus.hasUpstream ? 'rgba(232, 123, 95, 0.12)' : 'var(--color-surface-2)', border: !gitStatus.hasUpstream ? '1px solid rgba(232, 123, 95, 0.4)' : '1px solid var(--color-border)', color: !gitStatus.hasUpstream ? 'var(--color-claude)' : gitStatus.ahead > 0 ? '#4ade80' : 'var(--color-text-muted)' }} title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin (--force-with-lease)` : 'Push to remote (--force-with-lease, safe after amend/rebase)'}>{isPushing ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4l4 4H9.5v4h-3V8H4l4-4z" /></svg>}{isPushing ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…') : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}</button>
+              <button onClick={async () => { if (!projectPath) return; try { await pushGit(projectPath); addToast({ type: 'success', message: !gitStatus.hasUpstream ? `Published branch "${gitStatus.branch}"` : 'Pushed successfully', duration: 3000 }); refreshCompareAfterGitOperation() } catch (err) { reportGitError(err, 'Push failed') } }} disabled={isPushing} className="flex-1 flex items-center justify-center gap-1 rounded py-1.5 text-xs font-medium transition-opacity disabled:opacity-40" style={{ background: !gitStatus.hasUpstream ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'var(--color-surface-2)', border: !gitStatus.hasUpstream ? '1px solid color-mix(in srgb, var(--color-accent) 40%, transparent)' : '1px solid var(--color-border)', color: !gitStatus.hasUpstream ? 'var(--color-accent)' : gitStatus.ahead > 0 ? 'var(--color-success)' : 'var(--color-text-muted)' }} title={!gitStatus.hasUpstream ? `Publish branch "${gitStatus.branch}" to origin (--force-with-lease)` : 'Push to remote (--force-with-lease, safe after amend/rebase)'}>{isPushing ? <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" className="animate-spin"><path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.418A6 6 0 1 1 8 2v1z" /></svg> : <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor"><path d="M8 4l4 4H9.5v4h-3V8H4l4-4z" /></svg>}{isPushing ? (!gitStatus.hasUpstream ? 'Publishing…' : 'Pushing…') : !gitStatus.hasUpstream ? 'Publish' : `Push${gitStatus.ahead > 0 ? ` ↑${gitStatus.ahead}` : ''}`}</button>
             </div>
           </>}
         </div>
@@ -1371,7 +1371,7 @@ export default function GitSection({ threadId, collapsed, onToggle }: { threadId
               <button
                 onClick={() => void handleDiscardAll()}
                 className="w-full flex items-center justify-center gap-1.5 rounded py-1.5 text-[11px] font-medium transition-colors"
-                style={{ background: 'transparent', border: '1px solid rgba(248, 113, 113, 0.3)', color: '#f87171' }}
+                style={{ background: 'transparent', border: '1px solid color-mix(in srgb, var(--color-danger) 30%, transparent)', color: 'var(--color-danger)' }}
                 title="Revert every tracked file to HEAD and delete untracked files"
               >
                 <DiscardIcon />

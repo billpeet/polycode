@@ -37,20 +37,20 @@ export default function ToolCallGroupBlock({ group }: Props) {
   const accentColor = isPending
     ? 'var(--color-tool-call-accent)'
     : hasCancelled && !hasError
-      ? 'rgba(107, 114, 128, 0.4)'
+      ? 'color-mix(in srgb, var(--color-text-muted) 40%, transparent)'
       : hasError
-        ? 'rgba(248, 113, 113, 0.6)'
+        ? 'color-mix(in srgb, var(--color-danger) 60%, transparent)'
         : 'var(--color-tool-result-accent)'
 
   const tintColor = isPending
     ? 'var(--color-tool-call-tint)'
     : hasCancelled && !hasError
-      ? 'rgba(107, 114, 128, 0.05)'
+      ? 'color-mix(in srgb, var(--color-text-muted) 5%, transparent)'
       : hasError
-        ? 'rgba(248, 113, 113, 0.05)'
+        ? 'color-mix(in srgb, var(--color-danger) 5%, transparent)'
         : 'var(--color-tool-result-tint)'
 
-  const iconColor = isPending ? 'var(--color-claude)' : hasCancelled && !hasError ? '#6b7280' : hasError ? '#f87171' : '#4ade80'
+  const iconColor = isPending ? 'var(--color-accent)' : hasCancelled && !hasError ? 'var(--color-text-muted)' : hasError ? 'var(--color-danger)' : 'var(--color-success)'
   const icon = isPending ? null : hasCancelled && !hasError ? '—' : hasError ? '✗' : '✓'
   const badge = isPending ? 'RUNNING' : hasCancelled && !hasError ? 'CANCELLED' : hasError ? 'FAILED' : 'DONE'
 
@@ -63,7 +63,7 @@ export default function ToolCallGroupBlock({ group }: Props) {
         style={{ height: 32, color: 'var(--color-text-muted)', cursor: 'pointer', background: 'transparent', border: 'none' }}
       >
         {isPending
-          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-claude)' }} />
+          ? <span className="status-spinner" style={{ width: '0.75rem', height: '0.75rem', flexShrink: 0, borderTopColor: 'var(--color-accent)' }} />
           : <span style={{ fontSize: '0.8rem', flexShrink: 0, color: iconColor }}>{icon}</span>
         }
 
@@ -83,7 +83,7 @@ export default function ToolCallGroupBlock({ group }: Props) {
           padding: '1px 6px',
           borderRadius: 999,
           flexShrink: 0,
-          background: isPending ? 'rgba(232, 123, 95, 0.15)' : hasCancelled && !hasError ? 'rgba(107, 114, 128, 0.15)' : hasError ? 'rgba(248, 113, 113, 0.15)' : 'rgba(74, 222, 128, 0.12)',
+          background: isPending ? 'color-mix(in srgb, var(--color-accent) 15%, transparent)' : hasCancelled && !hasError ? 'color-mix(in srgb, var(--color-text-muted) 15%, transparent)' : hasError ? 'color-mix(in srgb, var(--color-danger) 15%, transparent)' : 'color-mix(in srgb, var(--color-success) 12%, transparent)',
           color: iconColor,
         }}>
           {badge}

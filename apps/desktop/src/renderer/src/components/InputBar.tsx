@@ -768,10 +768,10 @@ function InputBarContent({ threadId }: Props) {
         onDrop={handleDrop}
         className="relative rounded-xl transition-all duration-200"
         style={{
-          background: isDragOver ? 'rgba(232, 123, 95, 0.05)' : 'var(--color-surface)',
-          border: `1px solid ${isFocused || isDragOver ? 'var(--color-claude)' : 'var(--color-border)'}`,
+          background: isDragOver ? 'color-mix(in srgb, var(--color-accent) 5%, transparent)' : 'var(--color-surface)',
+          border: `1px solid ${isFocused || isDragOver ? 'var(--color-accent)' : 'var(--color-border)'}`,
           boxShadow: isFocused || isDragOver
-            ? '0 0 0 3px rgba(232, 123, 95, 0.1), 0 4px 12px rgba(0, 0, 0, 0.2)'
+            ? '0 0 0 3px color-mix(in srgb, var(--color-accent) 10%, transparent), 0 4px 12px rgba(0, 0, 0, 0.2)'
             : '0 2px 8px rgba(0, 0, 0, 0.15)',
         }}
       >
@@ -886,14 +886,14 @@ function InputBarContent({ threadId }: Props) {
                   className="input-send-btn flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 disabled:cursor-not-allowed"
                   style={{
                     background: canInject
-                      ? 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)'
+                      ? 'linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-strong) 100%)'
                       : 'var(--color-surface-2)',
-                    boxShadow: canInject ? '0 2px 8px rgba(232, 123, 95, 0.3)' : 'none',
+                    boxShadow: canInject ? '0 2px 8px color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'none',
                     opacity: canInject ? 1 : 0.4,
                   }}
                   title="Send message immediately (Enter)"
                 >
-                  <SendIcon className={canInject ? 'text-white' : 'text-gray-500'} />
+                  <SendIcon className={canInject ? 'text-on-accent' : 'text-text-muted'} />
                 </button>
               )}
               {/* Queue button — hidden while stopping or when live input is supported */}
@@ -904,14 +904,14 @@ function InputBarContent({ threadId }: Props) {
                   className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 disabled:cursor-not-allowed"
                   style={{
                     background: canQueue
-                      ? 'linear-gradient(135deg, #a855f7 0%, #9333ea 100%)'
+                      ? 'linear-gradient(135deg, var(--color-purple) 0%, var(--color-purple-strong) 100%)'
                       : 'var(--color-surface-2)',
-                    boxShadow: canQueue ? '0 2px 8px rgba(168, 85, 247, 0.3)' : 'none',
+                    boxShadow: canQueue ? '0 2px 8px color-mix(in srgb, var(--color-purple) 30%, transparent)' : 'none',
                     opacity: canQueue ? 1 : 0.4,
                   }}
                   title={queuedMessage ? 'Message already queued' : 'Queue message (Enter)'}
                 >
-                  <QueueIcon className={canQueue ? 'text-white' : 'text-gray-500'} />
+                  <QueueIcon className={canQueue ? 'text-on-accent' : 'text-text-muted'} />
                 </button>
               )}
               {/* Stop button — disabled while already stopping */}
@@ -922,14 +922,14 @@ function InputBarContent({ threadId }: Props) {
                 style={{
                   background: isStopping
                     ? 'var(--color-surface-2)'
-                    : 'linear-gradient(135deg, #f87171 0%, #ef4444 100%)',
-                  boxShadow: isStopping ? 'none' : '0 2px 8px rgba(248, 113, 113, 0.3)',
+                    : 'linear-gradient(135deg, var(--color-danger) 0%, var(--color-danger-strong) 100%)',
+                  boxShadow: isStopping ? 'none' : '0 2px 8px color-mix(in srgb, var(--color-danger) 30%, transparent)',
                   opacity: isStopping ? 0.5 : 1,
                   cursor: isStopping ? 'not-allowed' : 'pointer',
                 }}
                 title={isStopping ? 'Stopping…' : 'Stop generation'}
               >
-                <StopIcon className={isStopping ? 'text-gray-500' : 'text-white'} />
+                <StopIcon className={isStopping ? 'text-text-muted' : 'text-on-accent'} />
               </button>
               {currentThread?.provider === 'codex' && (
                 <button
@@ -937,9 +937,9 @@ function InputBarContent({ threadId }: Props) {
                   disabled={isStopping}
                   className="flex h-9 flex-shrink-0 items-center justify-center rounded-lg px-2 text-[0.65rem] font-semibold transition-all duration-150"
                   style={{
-                    background: isStopping ? 'var(--color-surface-2)' : 'rgba(239, 68, 68, 0.18)',
-                    border: '1px solid rgba(248, 113, 113, 0.45)',
-                    color: isStopping ? '#6b7280' : '#f87171',
+                    background: isStopping ? 'var(--color-surface-2)' : 'color-mix(in srgb, var(--color-danger-strong) 18%, transparent)',
+                    border: '1px solid color-mix(in srgb, var(--color-danger) 45%, transparent)',
+                    color: isStopping ? 'var(--color-text-muted)' : 'var(--color-danger)',
                     opacity: isStopping ? 0.5 : 1,
                   }}
                   title="Stop this turn and terminate all background processes from the Codex thread"
@@ -955,14 +955,14 @@ function InputBarContent({ threadId }: Props) {
               className="input-send-btn flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all duration-150 disabled:cursor-not-allowed"
               style={{
                 background: canSend
-                  ? 'linear-gradient(135deg, var(--color-claude) 0%, #d06a50 100%)'
+                  ? 'linear-gradient(135deg, var(--color-accent) 0%, var(--color-accent-strong) 100%)'
                   : 'var(--color-surface-2)',
-                boxShadow: canSend ? '0 2px 8px rgba(232, 123, 95, 0.3)' : 'none',
+                boxShadow: canSend ? '0 2px 8px color-mix(in srgb, var(--color-accent) 30%, transparent)' : 'none',
                 opacity: canSend ? 1 : 0.4,
               }}
               title="Send message (Enter)"
             >
-              <SendIcon className={canSend ? 'text-white' : 'text-gray-500'} />
+              <SendIcon className={canSend ? 'text-on-accent' : 'text-text-muted'} />
             </button>
           )}
         </div>

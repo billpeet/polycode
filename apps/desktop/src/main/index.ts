@@ -9,7 +9,8 @@ import { initUpdater } from './updater'
 import { closeDb, getDatabasePath } from './db/index'
 import { startDatabase, type DatabaseRequiresNewerApp } from './db/startup'
 import { startOutputCleanupRunner, stopOutputCleanupRunner } from './output-cleanup-runner'
-import { resetRunningThreads, hasRunningThreads } from './db/queries'
+import { resetRunningThreads, hasRunningThreads, getSetting } from './db/queries'
+import { ACCENT_SETTING_KEY, CUSTOM_THEMES_SETTING_KEY, THEME_SETTING_KEY, isOpaqueHex, parseCustomThemes, resolveTheme } from '../shared/themes'
 import { registerIpcHandlers } from './ipc/handlers'
 import { cleanupAllAttachments, getAttachmentDir } from './attachments'
 import { ptyManager } from './terminal/manager'
@@ -228,13 +229,30 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
+/** The saved theme's background, so the window does not flash a different colour before the renderer paints. */
+function themeBackgroundColor(): string {
+  try {
+    const themeId = getSetting(THEME_SETTING_KEY)
+    const accent = getSetting(ACCENT_SETTING_KEY)
+    const customThemes = parseCustomThemes(getSetting(CUSTOM_THEMES_SETTING_KEY))
+    const bg = resolveTheme(themeId, accent, customThemes).colors.bg
+    if (isOpaqueHex(bg)) return bg
+    // A custom background may be rgb()/hsl() or translucent, which Electron cannot take;
+    // its base theme's is the nearest it can.
+    const custom = customThemes.find((t) => t.id === themeId)
+    return resolveTheme(custom?.base, custom?.accent).colors.bg
+  } catch {
+    return resolveTheme(null).colors.bg
+  }
+}
+
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#0f0f0f',
+    backgroundColor: themeBackgroundColor(),
     show: false,
     autoHideMenuBar: true,
     frame: false,

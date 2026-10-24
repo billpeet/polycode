@@ -26,6 +26,13 @@ export type PrefKey =
    * widen `settings:get` to remote callers, which would expose every key it holds.
    */
   | 'default_source_dir'
+  /** Appearance: theme id, Catppuccin accent, and font overrides (see lib/theme.ts). */
+  | 'appearance:theme'
+  | 'appearance:accent'
+  | 'appearance:fontSans'
+  | 'appearance:fontMono'
+  /** JSON array of the user's custom themes. */
+  | 'appearance:customThemes'
 
 const STORAGE_PREFIX = 'polycode:pref:'
 

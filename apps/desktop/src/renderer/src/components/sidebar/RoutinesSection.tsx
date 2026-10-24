@@ -14,7 +14,7 @@ interface RoutinesSectionProps {
 
 function runStateIcon(run: Thread) {
   if (run.run_state === 'active') return <div className="status-spinner h-2.5 w-2.5 flex-shrink-0" />
-  if (run.run_state === 'escalated') return <AlertTriangle size={10} className="flex-shrink-0" style={{ color: 'var(--color-warning, #d97706)' }} />
+  if (run.run_state === 'escalated') return <AlertTriangle size={10} className="flex-shrink-0" style={{ color: 'var(--color-warning-strong)' }} />
   if (run.run_state === 'success') return <Check size={10} className="flex-shrink-0 opacity-60" />
   return <X size={10} className="flex-shrink-0 opacity-40" />
 }

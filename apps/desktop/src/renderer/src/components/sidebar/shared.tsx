@@ -96,8 +96,8 @@ export function ConnectionBadge({ connectionType }: { connectionType: string }) 
     <span
       className="ml-1 flex-shrink-0 rounded px-1 py-0.5 text-[9px] font-semibold uppercase"
       style={{
-        background: isSSH ? 'rgba(99, 179, 237, 0.15)' : 'rgba(251, 191, 36, 0.15)',
-        color: isSSH ? '#63b3ed' : '#fbbf24',
+        background: isSSH ? 'color-mix(in srgb, var(--color-info) 15%, transparent)' : 'color-mix(in srgb, var(--color-warning) 15%, transparent)',
+        color: isSSH ? 'var(--color-info)' : 'var(--color-warning)',
       }}
     >
       {connectionType}
@@ -113,10 +113,10 @@ export function getThreadStatusColor(
   const status = statusMap[thread.id] ?? 'idle'
   const isUnread = unreadByThread[thread.id] ?? !!thread.unread
 
-  if (isUnread) return '#22c55e'
-  if (status === 'running') return '#4ade80'
-  if (status === 'stopping') return '#fb923c'
-  if (status === 'error') return '#f87171'
-  if (status === 'stopped') return '#facc15'
+  if (isUnread) return 'var(--color-success)'
+  if (status === 'running') return 'var(--color-success)'
+  if (status === 'stopping') return 'var(--color-orange)'
+  if (status === 'error') return 'var(--color-danger)'
+  if (status === 'stopped') return 'var(--color-warning)'
   return 'var(--color-text-muted)'
 }
